@@ -165,6 +165,8 @@ make_fixture() {
     "$fixture_root/remotes" \
     "$fixture_root/reverie" \
     "$fixture_root/liteinst2" \
+    "$fixture_root/cgroup" \
+    "$fixture_root/ignored/ci-hub" \
     "$fixture_root/proc" \
     "$fixture_root/scripts" \
     "$fixture_root/worktrees" \
@@ -172,6 +174,14 @@ make_fixture() {
   : >"$fixture_root/.gitmodules"
   cp "$script_dir/check-worktree-registry.rs" "$fixture_root/scripts/"
   printf 'must survive\n' >"$fixture_root/unrelated/sentinel.txt"
+  cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
+{
+  "schema_version": 1,
+  "captured_at": $(date +%s),
+  "agents": []
+}
+JSON
+  : >"$fixture_root/tmux-panes"
 
   local leaf_origin="$fixture_root/remotes/leaf.git"
   local leaf_seed="$fixture_root/leaf-seed"
@@ -226,16 +236,35 @@ make_fixture() {
 run_release() {
   local slot=$1
   shift
-  (cd "$fixture_root" && env HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
+  (cd "$fixture_root" && env \
+    HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
+    HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
+    HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
     "$@" "$script_dir/release-worktree.rs" --slot "$slot" --clean) \
     >"$output" 2>&1
 }
 
 run_release_force() {
   local slot=$1
-  (cd "$fixture_root" && env HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
+  (cd "$fixture_root" && env \
+    HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
+    HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
+    HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
     "$script_dir/release-worktree.rs" \
     --slot "$slot" --clean --force) >"$output" 2>&1
+}
+
+run_release_recover() {
+  local slot=$1
+  shift
+  (cd "$fixture_root" && env \
+    GIT_ALLOW_PROTOCOL=file \
+    HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
+    HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
+    HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
+    "$@" \
+    "$script_dir/release-worktree.rs" \
+    --slot "$slot" --clean --recover-submodule-cleanup) >"$output" 2>&1
 }
 
 assert_unrelated_survives() {
@@ -361,6 +390,29 @@ test "$local_only_head" = "$(git -C "$target" rev-parse HEAD)" \
   || fail 'unpushed branch HEAD changed during refusal'
 assert_target_retained unpushed-branch
 
+# BRANCH-AUTHORITY NEGATIVE: publishing HEAD only through remote HEAD, a tag,
+# and a custom ref is not a recoverable feature-branch handoff. None may stand
+# in for refs/heads reachability.
+make_fixture tag-only
+git -C "$target" commit -q --allow-empty -m 'tag-only commit'
+tag_only_head="$(git -C "$target" rev-parse HEAD)"
+git -C "$target" tag tag-only-recovery
+git -C "$target" push -q origin refs/tags/tag-only-recovery
+git -C "$target" push -q origin HEAD:refs/recovery/tag-only
+git -C "$fixture_root/remotes/hermit.git" update-ref --no-deref HEAD "$tag_only_head"
+test "$tag_only_head" = "$(git -C "$target" ls-remote origin refs/tags/tag-only-recovery | cut -f1)" \
+  || fail 'tag-only fixture did not publish its exact HEAD through a tag'
+test "$tag_only_head" = "$(git -C "$target" ls-remote origin HEAD | cut -f1)" \
+  || fail 'tag-only fixture did not advertise its exact commit through remote HEAD'
+test "$tag_only_head" = "$(git -C "$target" ls-remote origin refs/recovery/tag-only | cut -f1)" \
+  || fail 'tag-only fixture did not publish its exact HEAD through a custom ref'
+if run_release tag-only; then
+  fail 'non-branch remote reachability authorized worktree deletion'
+fi
+grep -Fq 'committed work not on origin' "$output" \
+  || fail 'non-branch-only refusal did not come from branch durability authority'
+assert_target_retained tag-only
+
 # EXPLICIT-FORCE POSITIVE: the dangerous override remains available only when
 # the user requests it. It reaches Git force directly, never by consuming the
 # normal path's marker or quarantined submodule admin.
@@ -371,6 +423,8 @@ force_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
 force_result="$fixture_root/force-result"
 if ! (cd "$fixture_root" && env \
     HERMIT_RELEASE_TEST_PROC_ROOT="$fixture_root/proc" \
+    HERMIT_RELEASE_TEST_CGROUP_ROOT="$fixture_root/cgroup" \
+    HERMIT_RELEASE_TEST_TMUX_PANES="$fixture_root/tmux-panes" \
     RELEASE_TEST_FORCE_ADMIN="$force_admin" \
     RELEASE_TEST_FORCE_RESULT="$force_result" \
     "$script_dir/release-worktree.rs" --slot explicit-force --clean --force) \
@@ -425,7 +479,7 @@ fi
 if run_release nested-undurable; then
   fail 'clean outer worktree with unpublished nested HEAD was removed'
 fi
-grep -Fq 'not reachable from any current origin ref' "$output" \
+grep -Fq 'not reachable from any current origin branch' "$output" \
   || fail 'nested durability refusal did not come from recursive origin proof'
 test "$nested_local_head" = "$(git -C "$target/deps/nested" rev-parse HEAD)" \
   || fail 'unpublished nested HEAD was lost'
@@ -491,51 +545,50 @@ test -f "$remove_admin/release-worktree.in-progress" \
   || fail 'failed submodule cleanup lost its crash-recovery marker'
 assert_target_retained remove-boundary-race
 
-# CRASH-RECOVERY NEGATIVE: a transaction marker left before deinitialization is
-# not a license to reuse the prior run's recursive proof. Even explicit force
-# must retain the target for coordinator recovery.
-make_fixture unfinished-cleanup
+# CRASH/RECOVERY BRACKET: production performs a real recursive deinit and exact
+# admin quarantine, then the fixture terminates before removal. Ordinary and
+# force retries refuse both artifacts. The guarded recovery restores the exact
+# quarantine, reinitializes, repeats every recursive branch proof, and reaches
+# ordinary non-force removal.
+make_fixture interrupted-deinit
 unfinished_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
-printf 'simulated interrupted cleanup\n' \
-  >"$unfinished_admin/release-worktree.in-progress"
-if run_release_force unfinished-cleanup; then
-  fail 'unfinished submodule-cleanup transaction was deleted by a retry'
+crash_evidence="$fixture_root/post-deinit-crash"
+: >"$crash_evidence"
+if run_release interrupted-deinit \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_DEINIT="$crash_evidence"; then
+  fail 'post-deinit crash injection unexpectedly completed cleanup'
 fi
-grep -Fq 'unfinished submodule cleanup artifact' "$output" \
-  || fail 'unfinished transaction did not reach the crash-recovery guardrail'
+grep -Fxq 'post-deinit crash injected' "$crash_evidence" \
+  || fail 'production did not reach the post-deinit crash boundary'
 test -f "$unfinished_admin/release-worktree.in-progress" \
-  || fail 'unfinished transaction marker was lost during refusal'
-assert_target_retained unfinished-cleanup
-
-# CRASH-RECOVERY NEGATIVE: a marker plus quarantined admin models termination
-# after deinitialization. Neither artifact may be consumed by a retry.
-make_fixture unfinished-quarantine
-unfinished_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
-printf 'simulated interrupted cleanup\n' \
-  >"$unfinished_admin/release-worktree.in-progress"
-mv "$unfinished_admin/modules" "$unfinished_admin/modules.release-worktree"
-if run_release_force unfinished-quarantine; then
-  fail 'unfinished submodule-admin quarantine was deleted by a retry'
-fi
-grep -Fq 'unfinished submodule cleanup artifact' "$output" \
-  || fail 'unfinished quarantine did not reach the crash-recovery guardrail'
-test -f "$unfinished_admin/release-worktree.in-progress" \
-  || fail 'unfinished transaction marker was lost during quarantine refusal'
+  || fail 'real interrupted deinit did not retain its recovery marker'
+test ! -e "$unfinished_admin/modules" \
+  || fail 'post-deinit crash did not reach exact admin quarantine'
 test -d "$unfinished_admin/modules.release-worktree" \
-  || fail 'unfinished quarantine was lost during refusal'
-assert_target_retained unfinished-quarantine
-
-# RECOVERY POSITIVE: restore the quarantined admin before removing the marker,
-# then require the ordinary path to repeat all recursive proofs and use its own
-# non-force transaction. The quarantine itself is never a deletion authority.
-mv "$unfinished_admin/modules.release-worktree" "$unfinished_admin/modules"
-rm -- "$unfinished_admin/release-worktree.in-progress"
-if ! run_release unfinished-quarantine; then
-  cat "$output" >&2
-  fail 'explicitly restored submodule cleanup could not be re-proved and removed'
+  || fail 'post-deinit crash lost the quarantined nested repository admin'
+submodule_state="$(git -C "$target" submodule status deps/nested)"
+[[ $submodule_state == -* ]] \
+  || fail 'post-deinit crash fixture still has an initialized nested worktree'
+if run_release_force interrupted-deinit; then
+  fail 'force consumed a real interrupted submodule-cleanup transaction'
 fi
+grep -Fq 'unfinished submodule cleanup artifact' "$output" \
+  || fail 'ordinary retry did not refuse the real interrupted transaction'
+assert_target_retained interrupted-deinit
+
+recovery_transaction_result="$fixture_root/recovery-transaction-result"
+if ! run_release_recover interrupted-deinit \
+    RELEASE_TEST_TRANSACTION_ADMIN="$unfinished_admin" \
+    RELEASE_TEST_TRANSACTION_RESULT="$recovery_transaction_result"; then
+  cat "$output" >&2
+  fail 'guarded recovery could not reinitialize, re-prove, and remove the target'
+fi
+grep -Fq 'recovered interrupted submodule cleanup' "$output" \
+  || fail 'guarded recovery did not report successful recursive reinitialization'
 grep -Fq 'verified 3 outer/nested repository HEAD(s) on origin' "$output" \
   || fail 'recovered cleanup did not repeat recursive durability proof'
+grep -Fxq 'active-nonforce' "$recovery_transaction_result" \
+  || fail 'recovered cleanup did not reach ordinary non-force removal'
 test ! -e "$target" || fail 'recovered target survived successful cleanup'
 assert_unrelated_survives
 
@@ -613,24 +666,151 @@ wait "$live_pid" 2>/dev/null || true
 live_pid=
 assert_target_retained live-owner
 
-# PROCESS-UNCERTAINTY NEGATIVE: a same-UID synthetic pid whose cwd cannot be
-# read must block cleanup, including explicit user force.
-make_fixture hidden-owner
-locked_proc_dir="$fixture_root/proc/424242"
-mkdir -p "$locked_proc_dir"
-ln -s "$target" "$locked_proc_dir/cwd"
-ln -s /bin/sleep "$locked_proc_dir/exe"
+# COOPERATIVE-OWNER NEGATIVE: a recorded live owner must bind through the fresh
+# ORC snapshot, its exact tmux pane pid, and that pid's unified cgroup lease.
+# Even explicit user force cannot recycle while the bound lease is nonempty.
+make_fixture recorded-live-owner
+cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
+{
+  "schema_version": 1,
+  "captured_at": $(date +%s),
+  "agents": [{
+    "name": "fixture-recorded-live-owner",
+    "status": "working",
+    "tmux_pane_id": "%42"
+  }]
+}
+JSON
+printf 'fixture-recorded-live-owner\t%%42\t424242\n' >"$fixture_root/tmux-panes"
+mkdir -p \
+  "$fixture_root/proc/424242" \
+  "$fixture_root/cgroup/agent.slice/fixture-recorded-live-owner.scope"
+printf '0::/agent.slice/fixture-recorded-live-owner.scope\n' \
+  >"$fixture_root/proc/424242/cgroup"
+printf '424242\n' \
+  >"$fixture_root/cgroup/agent.slice/fixture-recorded-live-owner.scope/cgroup.procs"
+printf 'DG_AGENT_NAME=fixture-recorded-live-owner\0' \
+  >"$fixture_root/proc/424242/environ"
+if run_release_force recorded-live-owner; then
+  fail 'exact live recorded-owner lease authorized worktree deletion'
+fi
+grep -Fq "recorded owner 'fixture-recorded-live-owner' remains live in pane %42" "$output" \
+  || fail 'live recorded owner did not bind to its exact pane and cgroup lease'
+grep -Fq 'cgroup /agent.slice/fixture-recorded-live-owner.scope, members=1' "$output" \
+  || fail 'live recorded owner refusal omitted its nonempty cgroup lease'
+assert_target_retained recorded-live-owner
+
+# TARGET-REFERENCE NEGATIVE: cwd/exe/root/maps are all unrelated, while one
+# readable open file descriptor alone references the target. It must refuse.
+make_fixture open-fd-owner
+mkdir -p \
+  "$fixture_root/proc/31337/fd" \
+  "$fixture_root/proc/31337/map_files"
+ln -s / "$fixture_root/proc/31337/cwd"
+ln -s /bin/sleep "$fixture_root/proc/31337/exe"
+ln -s / "$fixture_root/proc/31337/root"
+ln -s "$target/parent.txt" "$fixture_root/proc/31337/fd/7"
+printf 'DG_AGENT_NAME=unrelated-fd-holder\0' >"$fixture_root/proc/31337/environ"
+: >"$fixture_root/proc/31337/maps"
+if run_release_force open-fd-owner; then
+  fail 'open-fd-only target ownership authorized worktree deletion'
+fi
+grep -Fq "pid 31337 fd/7=$target/parent.txt" "$output" \
+  || fail 'open-fd-only target reference was not observed'
+assert_target_retained open-fd-owner
+
+# OWNER-AUTHORITY NEGATIVE: an unavailable canonical ORC snapshot is not
+# absence evidence, even when explicit force is requested.
+make_fixture owner-authority-unavailable
+rm "$fixture_root/ignored/ci-hub/agent-snapshot.json"
+if run_release_force owner-authority-unavailable; then
+  fail 'unavailable cooperative-owner authority authorized deletion'
+fi
+grep -Fq 'canonical ORC owner snapshot unavailable' "$output" \
+  || fail 'missing ORC snapshot did not fail owner resolution closed'
+assert_target_retained owner-authority-unavailable
+
+# OWNER-AUTHORITY AMBIGUITY NEGATIVE: a pane id cannot identify two processes.
+# A malformed/ambiguous canonical tmux query is uncertainty, never absence.
+make_fixture owner-authority-ambiguous
+cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
+{
+  "schema_version": 1,
+  "captured_at": $(date +%s),
+  "agents": [{
+    "name": "fixture-owner-authority-ambiguous",
+    "status": "working",
+    "tmux_pane_id": "%99"
+  }]
+}
+JSON
+printf 'fixture-owner-authority-ambiguous\t%%99\t99991\nother-agent\t%%99\t99992\n' \
+  >"$fixture_root/tmux-panes"
+if run_release_force owner-authority-ambiguous; then
+  fail 'ambiguous cooperative-owner authority authorized deletion'
+fi
+grep -Fq 'canonical tmux pane query duplicated %99' "$output" \
+  || fail 'ambiguous tmux owner query did not fail closed'
+assert_target_retained owner-authority-ambiguous
+
+# LEGACY-OWNER NEGATIVE: an ORC-live registry owner without a canonical pane
+# identity cannot be proven absent. It must be migrated/recycled, not guessed
+# away from a correlated status or name.
+make_fixture legacy-owner-unresolved
+cat >"$fixture_root/ignored/ci-hub/agent-snapshot.json" <<JSON
+{
+  "schema_version": 1,
+  "captured_at": $(date +%s),
+  "agents": [{
+    "name": "fixture-legacy-owner-unresolved",
+    "status": "working"
+  }]
+}
+JSON
+if run_release_force legacy-owner-unresolved; then
+  fail 'unresolved legacy owner authorized deletion'
+fi
+grep -Fq "recorded live owner 'fixture-legacy-owner-unresolved' has no canonical tmux pane identity" "$output" \
+  || fail 'unresolved legacy owner did not fail cooperative resolution closed'
+assert_target_retained legacy-owner-unresolved
+
+# UNRELATED-PROTECTED POSITIVE: a system service with a different agent name
+# and system.slice cgroup may have a protected process-evidence namespace. A
+# fresh ORC/tmux query has already established every recorded owner's absence,
+# so unrelated PermissionDenied evidence is not a global same-UID veto.
+make_fixture unrelated-protected-service
+protected_pid_dir="$fixture_root/proc/525252"
+locked_proc_dir="$protected_pid_dir/map_files"
+mkdir -p \
+  "$protected_pid_dir/fd" \
+  "$locked_proc_dir" \
+  "$fixture_root/cgroup/system.slice/protected-systemd.service"
+ln -s / "$protected_pid_dir/cwd"
+ln -s /usr/lib/systemd/systemd "$protected_pid_dir/exe"
+ln -s / "$protected_pid_dir/root"
+printf 'DG_AGENT_NAME=systemd-helper\0' >"$protected_pid_dir/environ"
+printf '0::/system.slice/protected-systemd.service\n' >"$protected_pid_dir/cgroup"
+printf '525252\n' \
+  >"$fixture_root/cgroup/system.slice/protected-systemd.service/cgroup.procs"
+: >"$protected_pid_dir/maps"
 chmod 000 "$locked_proc_dir"
-if run_release_force hidden-owner; then
+if ls -A "$locked_proc_dir" >/dev/null 2>&1; then
   chmod 700 "$locked_proc_dir"
   locked_proc_dir=
-  fail 'PermissionDenied process ownership was treated as absent'
+  fail 'protected-service fixture is inert: map_files remained readable'
+fi
+if ! run_release unrelated-protected-service; then
+  chmod 700 "$locked_proc_dir"
+  locked_proc_dir=
+  cat "$output" >&2
+  fail 'unrelated protected system service globally vetoed safe cleanup'
 fi
 chmod 700 "$locked_proc_dir"
 locked_proc_dir=
-grep -Eq 'could not inspect live process link|Permission denied' "$output" \
-  || fail 'hidden process did not expose fail-closed ownership uncertainty'
-assert_target_retained hidden-owner
+test -d "$protected_pid_dir" \
+  || fail 'release modified unrelated protected process evidence'
+test ! -e "$target" || fail 'unrelated-protected positive target survived release'
+assert_unrelated_survives
 
 # TOKEN NEGATIVE: path-like slot text must be rejected before state/path lookup.
 make_fixture valid-token
@@ -641,4 +821,4 @@ grep -Fq "invalid slot name: '../valid-token'" "$output" \
   || fail 'invalid slot token did not reach the token guard'
 assert_target_retained valid-token
 
-echo 'release-worktree-test: PASS (22 fixtures: 4 clean/locked/recovered/explicit-force removals; 19 planted refusals; unrelated path+worktree survived)'
+echo 'release-worktree-test: PASS (27 fixtures: 5 clean/locked/recovered/explicit-force/protected-unrelated removals; 23 planted refusals; unrelated path+worktree survived)'

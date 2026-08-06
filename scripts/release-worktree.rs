@@ -18,14 +18,17 @@
 //! ```
 use fs2::FileExt;
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
-use std::ffi::CString;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{CString, OsStr};
 use std::fs;
 use std::io::{self, ErrorKind, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const AGENT_SNAPSHOT_MAX_AGE_SECS: u64 = 10 * 60;
 
 const USAGE: &str = r#"Usage: release-worktree.rs --slot SLOT [OPTIONS]
 
@@ -44,6 +47,10 @@ Options:
   --push              Before removal, push any unpushed slot feature branches to
                       their upstream (with-proxy) so removal is fully recoverable
                       (the "push-then-remove" safe reclaim protocol).
+  --recover-submodule-cleanup
+                      Recover an interrupted normal cleanup: restore any exact
+                      quarantined admin, reinitialize recursively, and repeat all
+                      proofs. Requires --clean and is incompatible with --force.
   --force             Allow --clean despite uncommitted/unpushed work (dangerous).
   -h, --help          Show this help.
 
@@ -542,10 +549,10 @@ fn proxy_git_inspect(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     Ok(output.stdout)
 }
 
-/// Prove HEAD is reachable from at least one current ref advertised by this
-/// repository's own `origin`. Detached submodule HEADs receive the same proof
-/// as branch checkouts; merely being pinned by the outer repository is not a
-/// durability claim.
+/// Prove HEAD is reachable from a current branch advertised by this
+/// repository's own `origin`. Tags, remote HEAD, and custom refs are not
+/// recoverable feature-branch authorities. Detached submodule HEADs receive
+/// the same branch-ancestry proof as branch checkouts.
 fn remote_durable(snapshot: &RepoSnapshot) -> Result<bool, String> {
     let stdout = String::from_utf8(proxy_git_inspect(&snapshot.path, &["ls-remote", "origin"])?)
         .map_err(|_| {
@@ -554,7 +561,6 @@ fn remote_durable(snapshot: &RepoSnapshot) -> Result<bool, String> {
                 snapshot.path.display()
             )
         })?;
-    let mut remote_tips = BTreeSet::new();
     let mut branch_tips = BTreeSet::new();
     for (index, line) in stdout.lines().enumerate() {
         let mut fields = line.split_whitespace();
@@ -583,13 +589,12 @@ fn remote_durable(snapshot: &RepoSnapshot) -> Result<bool, String> {
                 snapshot.path.display()
             ));
         }
-        remote_tips.insert(sha.to_string());
         if remote_ref.starts_with("refs/heads/") {
             branch_tips.insert(sha.to_string());
         }
     }
 
-    if remote_tips.contains(&snapshot.head) {
+    if branch_tips.contains(&snapshot.head) {
         return Ok(true);
     }
     if branch_tips.is_empty() {
@@ -661,19 +666,20 @@ fn push_branch(path: &Path) -> Result<bool, String> {
 }
 
 fn link_inside_target(link: &Path, targets: &[PathBuf]) -> bool {
-    let text = link.to_string_lossy();
-    let link = Path::new(text.strip_suffix(" (deleted)").unwrap_or(&text));
+    let bytes = link.as_os_str().as_bytes();
+    let bytes = bytes.strip_suffix(b" (deleted)").unwrap_or(bytes);
+    let link = Path::new(OsStr::from_bytes(bytes));
     targets
         .iter()
         .any(|target| link == target || link.starts_with(target))
 }
 
-fn process_root(root: &Path) -> Result<PathBuf, String> {
-    let Some(test_root) = std::env::var_os("HERMIT_RELEASE_TEST_PROC_ROOT") else {
-        return Ok(PathBuf::from("/proc"));
+fn restricted_fixture_path(root: &Path, variable: &str) -> Result<Option<PathBuf>, String> {
+    let Some(test_path) = std::env::var_os(variable) else {
+        return Ok(None);
     };
     let workspace = fs::canonicalize(root)
-        .map_err(|error| format!("could not canonicalize workspace for proc scan: {error}"))?;
+        .map_err(|error| format!("could not canonicalize fixture workspace: {error}"))?;
     let temp = fs::canonicalize(std::env::temp_dir())
         .map_err(|error| format!("could not canonicalize temporary directory: {error}"))?;
     let fixture_workspace = workspace.starts_with(&temp)
@@ -684,33 +690,377 @@ fn process_root(root: &Path) -> Result<PathBuf, String> {
                 .map(|name| name.starts_with("release-worktree-test."))
                 .unwrap_or(false)
         });
-    let test_root = fs::canonicalize(PathBuf::from(test_root))
-        .map_err(|error| format!("could not canonicalize test proc root: {error}"))?;
-    if !fixture_workspace || !test_root.starts_with(&workspace) {
-        return Err(
-            "HERMIT_RELEASE_TEST_PROC_ROOT is restricted to disposable release fixtures"
-                .to_string(),
+    let test_path = fs::canonicalize(PathBuf::from(test_path))
+        .map_err(|error| format!("could not canonicalize {variable}: {error}"))?;
+    if !fixture_workspace || !test_path.starts_with(&workspace) {
+        return Err(format!(
+            "{variable} is restricted to disposable release fixtures"
+        ));
+    }
+    Ok(Some(test_path))
+}
+
+fn process_root(root: &Path) -> Result<PathBuf, String> {
+    Ok(
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_PROC_ROOT")?
+            .unwrap_or_else(|| PathBuf::from("/proc")),
+    )
+}
+
+fn cgroup_root(root: &Path) -> Result<PathBuf, String> {
+    Ok(
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CGROUP_ROOT")?
+            .unwrap_or_else(|| PathBuf::from("/sys/fs/cgroup")),
+    )
+}
+
+#[derive(Clone, Debug)]
+struct AgentPresence {
+    live: bool,
+    pane: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct TmuxPane {
+    window: String,
+    pane: String,
+    pid: u32,
+}
+
+fn recorded_owner_names(slot_state: &Value) -> BTreeSet<String> {
+    slot_state["agents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|agent| agent["name"].as_str().map(str::to_string))
+        .collect()
+}
+
+fn agent_snapshot(root: &Path) -> Result<BTreeMap<String, AgentPresence>, String> {
+    let path = root.join("ignored/ci-hub/agent-snapshot.json");
+    let text = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "canonical ORC owner snapshot unavailable at {}: {error}",
+            path.display()
+        )
+    })?;
+    let envelope: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("parse canonical ORC owner snapshot: {error}"))?;
+    if envelope["schema_version"].as_u64() != Some(1) {
+        return Err("canonical ORC owner snapshot has unsupported schema".to_string());
+    }
+    let captured_at = envelope["captured_at"]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| "canonical ORC owner snapshot has invalid captured_at".to_string())?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock precedes Unix epoch: {error}"))?
+        .as_secs_f64();
+    let age = now - captured_at;
+    if !(0.0..=AGENT_SNAPSHOT_MAX_AGE_SECS as f64).contains(&age) {
+        return Err(format!(
+            "canonical ORC owner snapshot is not fresh: age={}s max={}s",
+            age.max(0.0) as u64,
+            AGENT_SNAPSHOT_MAX_AGE_SECS
+        ));
+    }
+    let agents = envelope["agents"]
+        .as_array()
+        .ok_or_else(|| "canonical ORC owner snapshot agents is not an array".to_string())?;
+    let terminal: BTreeSet<&str> = [
+        "closed",
+        "crashed",
+        "dead",
+        "disconnected",
+        "error",
+        "exited",
+        "failed",
+        "retired",
+        "terminated",
+        "unreachable",
+        "unresponsive",
+    ]
+    .into_iter()
+    .collect();
+    let mut result = BTreeMap::new();
+    for (index, agent) in agents.iter().enumerate() {
+        let raw_name = agent["name"]
+            .as_str()
+            .ok_or_else(|| format!("canonical ORC owner snapshot agent {index} has no name"))?;
+        let name = raw_name.trim();
+        if name.is_empty() {
+            return Err(format!(
+                "canonical ORC owner snapshot agent {index} has no name"
+            ));
+        }
+        let status = agent["status"]
+            .as_str()
+            .unwrap_or("unknown")
+            .trim()
+            .to_ascii_lowercase();
+        let pane = agent["tmux_pane_id"]
+            .as_str()
+            .filter(|pane| !pane.is_empty())
+            .map(str::to_string);
+        let presence = AgentPresence {
+            live: !terminal.contains(status.as_str()),
+            pane,
+        };
+        if result.insert(name.to_string(), presence).is_some() {
+            return Err(format!(
+                "canonical ORC owner snapshot has duplicate agent '{name}'"
+            ));
+        }
+    }
+    Ok(result)
+}
+
+fn tmux_panes(root: &Path) -> Result<Vec<TmuxPane>, String> {
+    let bytes = if let Some(path) = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_TMUX_PANES")?
+    {
+        fs::read(&path)
+            .map_err(|error| format!("read test tmux pane authority {}: {error}", path.display()))?
+    } else {
+        let output = Command::new("tmux")
+            .args([
+                "list-panes",
+                "-a",
+                "-F",
+                "#{window_name}\t#{pane_id}\t#{pane_pid}",
+            ])
+            .output()
+            .map_err(|error| format!("canonical tmux pane query unavailable: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "canonical tmux pane query failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        output.stdout
+    };
+    let text = String::from_utf8(bytes)
+        .map_err(|_| "canonical tmux pane query returned non-UTF8 data".to_string())?;
+    let mut panes = Vec::new();
+    let mut pane_ids = BTreeSet::new();
+    for (index, line) in text.lines().enumerate() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() != 3 || fields.iter().any(|field| field.is_empty()) {
+            return Err(format!(
+                "malformed canonical tmux pane row {}: {line}",
+                index + 1
+            ));
+        }
+        let pid = fields[2]
+            .parse::<u32>()
+            .map_err(|_| format!("tmux pane {} has invalid pid", fields[1]))?;
+        if !pane_ids.insert(fields[1].to_string()) {
+            return Err(format!(
+                "canonical tmux pane query duplicated {}",
+                fields[1]
+            ));
+        }
+        panes.push(TmuxPane {
+            window: fields[0].to_string(),
+            pane: fields[1].to_string(),
+            pid,
+        });
+    }
+    Ok(panes)
+}
+
+fn unified_cgroup(proc_path: &Path) -> Result<String, String> {
+    let text = fs::read_to_string(proc_path.join("cgroup")).map_err(|error| {
+        format!(
+            "could not inspect owner cgroup {}: {error}",
+            proc_path.join("cgroup").display()
+        )
+    })?;
+    let groups: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("0::"))
+        .collect();
+    if groups.len() != 1 || !groups[0].starts_with('/') {
+        return Err(format!(
+            "owner process {} has no unique unified cgroup",
+            proc_path.display()
+        ));
+    }
+    let relative = Path::new(groups[0].trim_start_matches('/'));
+    if relative
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+        && !relative.as_os_str().is_empty()
+    {
+        return Err(format!(
+            "owner cgroup path '{}' is not normalized",
+            groups[0]
+        ));
+    }
+    Ok(groups[0].to_string())
+}
+
+fn cgroup_members(cgroup_root: &Path, cgroup: &str) -> Result<Vec<u32>, String> {
+    let path = cgroup_root
+        .join(cgroup.trim_start_matches('/'))
+        .join("cgroup.procs");
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("could not inspect owner lease {}: {error}", path.display()))?;
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.trim().parse::<u32>().map_err(|_| {
+                format!(
+                    "owner lease {} contains invalid pid '{line}'",
+                    path.display()
+                )
+            })
+        })
+        .collect()
+}
+
+/// Resolve every registry owner through the freshness-bounded ORC snapshot and
+/// exact tmux identity used by agent-podman, then bind a live pane pid to its
+/// unified cgroup lease. Cleanup proceeds only after authoritative absence.
+fn verify_recorded_owners_absent(
+    root: &Path,
+    proc_root: &Path,
+    cgroup_root: &Path,
+    owners: &BTreeSet<String>,
+) -> Result<(), String> {
+    let agents = agent_snapshot(root)?;
+    let panes = tmux_panes(root)?;
+    for owner in owners {
+        let snapshot = agents.get(owner);
+        let named_panes: Vec<&TmuxPane> =
+            panes.iter().filter(|pane| pane.window == *owner).collect();
+        match snapshot {
+            None | Some(AgentPresence { live: false, .. }) => {
+                if !named_panes.is_empty() {
+                    return Err(format!(
+                        "recorded owner '{owner}' is absent/terminal in ORC but retains {} exact-name tmux pane(s)",
+                        named_panes.len()
+                    ));
+                }
+                if let Some(pane) = snapshot.and_then(|entry| entry.pane.as_deref()) {
+                    if panes.iter().any(|candidate| candidate.pane == pane) {
+                        return Err(format!(
+                            "recorded owner '{owner}' is terminal but tmux pane {pane} remains"
+                        ));
+                    }
+                }
+            }
+            Some(AgentPresence {
+                live: true,
+                pane: Some(pane_id),
+            }) => {
+                let matches: Vec<&TmuxPane> =
+                    panes.iter().filter(|pane| pane.pane == *pane_id).collect();
+                if matches.len() != 1 {
+                    return Err(format!(
+                        "recorded live owner '{owner}' pane {pane_id} resolved {} times",
+                        matches.len()
+                    ));
+                }
+                let pane = matches[0];
+                let proc_path = proc_root.join(pane.pid.to_string());
+                let cgroup = unified_cgroup(&proc_path)?;
+                let members = cgroup_members(cgroup_root, &cgroup)?;
+                if !members.contains(&pane.pid) {
+                    return Err(format!(
+                        "recorded live owner '{owner}' pane pid {} is not bound to cgroup lease {cgroup}",
+                        pane.pid
+                    ));
+                }
+                return Err(format!(
+                    "recorded owner '{owner}' remains live in pane {pane_id}, cgroup {cgroup}, members={}",
+                    members.len()
+                ));
+            }
+            Some(AgentPresence {
+                live: true,
+                pane: None,
+            }) => {
+                return Err(format!(
+                    "recorded live owner '{owner}' has no canonical tmux pane identity"
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn process_agent_name(proc_path: &Path) -> Option<String> {
+    let raw = fs::read(proc_path.join("environ")).ok()?;
+    raw.split(|byte| *byte == 0).find_map(|field| {
+        field
+            .strip_prefix(b"DG_AGENT_NAME=")
+            .and_then(|value| String::from_utf8(value.to_vec()).ok())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn inspect_process_link(
+    pid: u32,
+    label: &str,
+    path: &Path,
+    targets: &[PathBuf],
+    users: &mut Vec<String>,
+) {
+    if let Ok(link) = fs::read_link(path) {
+        if link_inside_target(&link, targets) {
+            users.push(format!("pid {pid} {label}={}", link.display()));
+        }
+    }
+}
+
+fn inspect_process_directory_links(
+    pid: u32,
+    label: &str,
+    path: &Path,
+    targets: &[PathBuf],
+    users: &mut Vec<String>,
+) {
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        inspect_process_link(
+            pid,
+            &format!("{label}/{}", entry.file_name().to_string_lossy()),
+            &entry.path(),
+            targets,
+            users,
         );
     }
-    Ok(test_root)
 }
 
-fn read_proc_link(path: &Path) -> Result<Option<PathBuf>, String> {
-    match fs::read_link(path) {
-        Ok(link) => Ok(Some(link)),
-        // A vanished process is an expected race. PermissionDenied is not: a
-        // hidden same-UID owner is uncertainty, so cleanup must remain blocked.
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!(
-            "could not inspect live process link {}: {error}",
-            path.display()
-        )),
+fn inspect_process_maps(pid: u32, proc_path: &Path, targets: &[PathBuf], users: &mut Vec<String>) {
+    if let Ok(text) = fs::read_to_string(proc_path.join("maps")) {
+        for line in text.lines() {
+            let mapped = line
+                .split_whitespace()
+                .skip(5)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if mapped.starts_with('/') && link_inside_target(Path::new(&mapped), targets) {
+                users.push(format!("pid {pid} map={mapped}"));
+            }
+        }
     }
 }
 
-/// Refuse while a same-UID process has its cwd or executable below a target,
-/// and fail closed when that ownership cannot be inspected.
-fn live_process_users(proc_root: &Path, targets: &[PathBuf]) -> Result<Vec<String>, String> {
+/// Refuse every readable same-UID reference into the target. Unreadable links
+/// from unrelated protected services are not global vetoes: recorded-owner
+/// uncertainty was already resolved fail-closed through ORC/tmux/cgroup above.
+fn live_process_users(
+    root: &Path,
+    proc_root: &Path,
+    cgroup_root: &Path,
+    owners: &BTreeSet<String>,
+    targets: &[PathBuf],
+) -> Result<Vec<String>, String> {
+    verify_recorded_owners_absent(root, proc_root, cgroup_root, owners)?;
     let own_uid = fs::metadata("/proc/self")
         .map_err(|error| format!("could not inspect /proc/self: {error}"))?
         .uid();
@@ -742,13 +1092,24 @@ fn live_process_users(proc_root: &Path, targets: &[PathBuf]) -> Result<Vec<Strin
         if metadata.uid() != own_uid {
             continue;
         }
-        for kind in ["cwd", "exe"] {
-            if let Some(link) = read_proc_link(&entry.path().join(kind))? {
-                if link_inside_target(&link, targets) {
-                    users.push(format!("pid {pid} {kind}={}", link.display()));
-                }
-            }
+        let proc_path = entry.path();
+        if process_agent_name(&proc_path).is_some_and(|name| owners.contains(&name)) {
+            return Err(format!(
+                "recorded owner process pid {pid} remains despite authoritative ORC absence"
+            ));
         }
+        for kind in ["cwd", "exe", "root"] {
+            inspect_process_link(pid, kind, &proc_path.join(kind), targets, &mut users);
+        }
+        inspect_process_directory_links(pid, "fd", &proc_path.join("fd"), targets, &mut users);
+        inspect_process_maps(pid, &proc_path, targets, &mut users);
+        inspect_process_directory_links(
+            pid,
+            "map_files",
+            &proc_path.join("map_files"),
+            targets,
+            &mut users,
+        );
     }
     users.sort();
     users.dedup();
@@ -768,6 +1129,8 @@ fn snapshots(inspections: &[RepoInspection]) -> Vec<RepoSnapshot> {
 fn final_removal_boundary(
     root: &Path,
     proc_root: &Path,
+    cgroup_root: &Path,
+    owners: &BTreeSet<String>,
     slot: &str,
     expected_slot: &Value,
     expected_target: &CleanTarget,
@@ -814,7 +1177,13 @@ fn final_removal_boundary(
         }
     }
 
-    let users = live_process_users(proc_root, &[rebound.path.clone()])?;
+    let users = live_process_users(
+        root,
+        proc_root,
+        cgroup_root,
+        owners,
+        &[rebound.path.clone()],
+    )?;
     if !users.is_empty() {
         return Err(format!(
             "live process ownership below {}: {}",
@@ -921,6 +1290,115 @@ fn ensure_no_submodule_cleanup_artifacts(target: &CleanTarget) -> Result<(), Str
     }
 }
 
+/// Restore an interrupted normal transaction to a fully initialized state.
+/// The marker remains authoritative until recursive initialization succeeds;
+/// the caller then repeats cleanliness, branch durability, and process proofs.
+fn recover_submodule_cleanup(target: &CleanTarget) -> Result<bool, String> {
+    let paths = submodule_admin_paths(target)?;
+    match fs::symlink_metadata(&paths.in_progress) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return match fs::symlink_metadata(&paths.quarantine) {
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+                Ok(_) => Err(format!(
+                    "submodule-admin quarantine {} has no recovery marker",
+                    paths.quarantine.display()
+                )),
+                Err(error) => Err(format!(
+                    "could not inspect submodule-admin quarantine {}: {error}",
+                    paths.quarantine.display()
+                )),
+            }
+        }
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(format!(
+                "submodule-cleanup marker {} is not an exact file",
+                paths.in_progress.display()
+            ))
+        }
+        Err(error) => {
+            return Err(format!(
+                "could not inspect submodule-cleanup marker {}: {error}",
+                paths.in_progress.display()
+            ))
+        }
+    }
+
+    match fs::symlink_metadata(&paths.quarantine) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            match fs::symlink_metadata(&paths.modules) {
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Ok(_) => {
+                    return Err(format!(
+                        "both submodule admin {} and quarantine {} exist",
+                        paths.modules.display(),
+                        paths.quarantine.display()
+                    ))
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "could not inspect submodule admin {}: {error}",
+                        paths.modules.display()
+                    ))
+                }
+            }
+            restore_submodule_admin(&paths)?;
+        }
+        Ok(_) => {
+            return Err(format!(
+                "submodule-admin quarantine {} is not an exact directory",
+                paths.quarantine.display()
+            ))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "could not inspect submodule-admin quarantine {}: {error}",
+                paths.quarantine.display()
+            ))
+        }
+    }
+    match fs::symlink_metadata(&paths.modules) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(format!(
+                "recoverable submodule admin {} is not an exact directory",
+                paths.modules.display()
+            ))
+        }
+        Err(error) => {
+            return Err(format!(
+                "recoverable submodule admin {} is unavailable: {error}",
+                paths.modules.display()
+            ))
+        }
+    }
+
+    proxy_git_inspect(
+        &target.path,
+        &["submodule", "update", "--init", "--recursive"],
+    )
+    .map_err(|error| format!("submodule cleanup recovery reinitialization failed: {error}"))?;
+    let repositories = initialized_repositories(&target.path)?;
+    if repositories.len() <= 1 {
+        return Err(format!(
+            "submodule cleanup recovery initialized no nested repositories below {}",
+            target.path.display()
+        ));
+    }
+    fs::remove_file(&paths.in_progress).map_err(|error| {
+        format!(
+            "could not clear recovered submodule-cleanup marker {}: {error}",
+            paths.in_progress.display()
+        )
+    })?;
+    eprintln!(
+        "✓ recovered interrupted submodule cleanup for {}; recursive proofs will be repeated",
+        target.path.display()
+    );
+    Ok(true)
+}
+
 /// Mark the transaction before deinitialization changes what the next process
 /// can enumerate. Any later error intentionally leaves this marker in place.
 fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
@@ -946,6 +1424,19 @@ fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, 
             )
         })?;
     Ok(paths)
+}
+
+fn maybe_inject_post_deinit_crash(marker: Option<&Path>) -> Result<(), String> {
+    let Some(marker) = marker else {
+        return Ok(());
+    };
+    fs::write(marker, b"post-deinit crash injected\n").map_err(|error| {
+        format!(
+            "could not write post-deinit crash evidence {}: {error}",
+            marker.display()
+        )
+    })?;
+    exit(86);
 }
 
 fn quarantine_submodule_admin(paths: &SubmoduleAdminPaths) -> Result<(), String> {
@@ -983,11 +1474,18 @@ fn restore_submodule_admin(paths: &SubmoduleAdminPaths) -> Result<(), String> {
 /// submodules are first deinitialized without force after recursive proof; an
 /// explicit user `--force` is the only path that reaches Git-level force.
 fn remove_target(
+    root: &Path,
     target: &CleanTarget,
     repositories: &[RepoSnapshot],
     proc_root: &Path,
+    cgroup_root: &Path,
+    owners: &BTreeSet<String>,
     allow_dirty: bool,
 ) -> Result<(), String> {
+    // Validate the test-only crash hook before creating a transaction marker or
+    // deinitializing anything. A leaked test variable in production therefore
+    // refuses without changing the target.
+    let crash_marker = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_DEINIT")?;
     ensure_no_submodule_cleanup_artifacts(target)?;
     let submodule_cleanup = if !allow_dirty && repositories.len() > 1 {
         let paths = begin_submodule_cleanup(target)?;
@@ -1014,19 +1512,21 @@ fn remove_target(
     // ordinary removal can retain Git's own non-force dirty boundary.
     if let Some(paths) = &submodule_cleanup {
         quarantine_submodule_admin(paths)?;
+        maybe_inject_post_deinit_crash(crash_marker.as_deref())?;
     }
 
     // Last user-space ownership boundary. This also catches cwd/exe links that
     // became "(deleted)" during submodule deinitialization.
-    let users = match live_process_users(proc_root, &[target.path.clone()]) {
-        Ok(users) => users,
-        Err(error) => {
-            if let Some(paths) = &submodule_cleanup {
-                restore_submodule_admin(paths)?;
+    let users =
+        match live_process_users(root, proc_root, cgroup_root, owners, &[target.path.clone()]) {
+            Ok(users) => users,
+            Err(error) => {
+                if let Some(paths) = &submodule_cleanup {
+                    restore_submodule_admin(paths)?;
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
     if !users.is_empty() {
         if let Some(paths) = &submodule_cleanup {
             restore_submodule_admin(paths)?;
@@ -1074,6 +1574,7 @@ fn main() {
     let mut clean = false;
     let mut force = false;
     let mut push = false;
+    let mut recover_submodules = false;
 
     let mut i = 0;
     let take = |i: &mut usize, argv: &[String], flag: &str| -> String {
@@ -1090,6 +1591,7 @@ fn main() {
             "--clean" => clean = true,
             "--force" => force = true,
             "--push" => push = true,
+            "--recover-submodule-cleanup" => recover_submodules = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return;
@@ -1106,6 +1608,9 @@ fn main() {
         die(&format!(
             "invalid slot name: '{slot}' (expected a lowercase [a-z0-9-]+ token)"
         ));
+    }
+    if recover_submodules && (!clean || force) {
+        die("--recover-submodule-cleanup requires --clean and is incompatible with --force");
     }
 
     let root = find_root();
@@ -1171,20 +1676,51 @@ fn main() {
     if clean {
         let proc_root = process_root(&root)
             .unwrap_or_else(|error| die(&format!("process inspection setup failed: {error}")));
+        let cgroup_root = cgroup_root(&root)
+            .unwrap_or_else(|error| die(&format!("cgroup inspection setup failed: {error}")));
+        let owners = recorded_owner_names(&state["slots"][&slot]);
         verify_registry(&root)
             .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
         let clean_targets = clean_targets_from_state(&root, &state, &slot)
             .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
+        let preflight_target_paths: Vec<PathBuf> = clean_targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect();
+        let preflight_users = live_process_users(
+            &root,
+            &proc_root,
+            &cgroup_root,
+            &owners,
+            &preflight_target_paths,
+        )
+        .unwrap_or_else(|error| die(&format!("owner authority refused cleanup: {error}")));
+        if !preflight_users.is_empty() {
+            die(&format!(
+                "refusing --clean while live processes use the slot: {}",
+                preflight_users.join(", ")
+            ));
+        }
         let mut proofs: Vec<(&'static str, Vec<RepoSnapshot>)> = Vec::new();
         let mut any_dirty = false;
+        let mut recovered_any = false;
 
         for target in &clean_targets {
-            ensure_no_submodule_cleanup_artifacts(target).unwrap_or_else(|error| {
-                die(&format!(
-                    "clean preflight failed for {}: {error}",
-                    target.label
-                ))
-            });
+            if recover_submodules {
+                recovered_any |= recover_submodule_cleanup(target).unwrap_or_else(|error| {
+                    die(&format!(
+                        "submodule cleanup recovery failed for {}: {error}",
+                        target.label
+                    ))
+                });
+            } else {
+                ensure_no_submodule_cleanup_artifacts(target).unwrap_or_else(|error| {
+                    die(&format!(
+                        "clean preflight failed for {}: {error}",
+                        target.label
+                    ))
+                });
+            }
             let inspections = inspect_target_repositories(&target.path).unwrap_or_else(|error| {
                 die(&format!(
                     "could not inspect {} target recursively: {error}",
@@ -1205,6 +1741,9 @@ fn main() {
             }
             proofs.push((target.label, snapshots(&inspections)));
         }
+        if recover_submodules && !recovered_any {
+            die("--recover-submodule-cleanup found no interrupted transaction marker");
+        }
         if any_dirty {
             eprintln!(
                 "⚠  {slot} has uncommitted changes. Commit and push to a feature branch first."
@@ -1224,7 +1763,7 @@ fn main() {
                     Ok(true) => {}
                     Ok(false) => {
                         eprintln!(
-                            "⚠  {}: HEAD {} is not reachable from any current origin ref",
+                            "⚠  {}: HEAD {} is not reachable from any current origin branch",
                             repository.path.display(),
                             &repository.head[..repository.head.len().min(12)]
                         );
@@ -1282,7 +1821,7 @@ fn main() {
             .iter()
             .map(|target| target.path.clone())
             .collect();
-        let users = live_process_users(&proc_root, &target_paths)
+        let users = live_process_users(&root, &proc_root, &cgroup_root, &owners, &target_paths)
             .unwrap_or_else(|error| die(&format!("live-process inspection failed: {error}")));
         if !users.is_empty() {
             die(&format!(
@@ -1300,6 +1839,8 @@ fn main() {
             final_removal_boundary(
                 &root,
                 &proc_root,
+                &cgroup_root,
+                &owners,
                 &slot,
                 &state["slots"][&slot],
                 target,
@@ -1313,8 +1854,16 @@ fn main() {
                 ))
             });
 
-            remove_target(target, expected_repositories, &proc_root, force)
-                .unwrap_or_else(|error| die(&format!("{error}; registry state retained")));
+            remove_target(
+                &root,
+                target,
+                expected_repositories,
+                &proc_root,
+                &cgroup_root,
+                &owners,
+                force,
+            )
+            .unwrap_or_else(|error| die(&format!("{error}; registry state retained")));
             println!(
                 "  removed {} worktree {}",
                 target.label,
