@@ -1,107 +1,140 @@
-# Giving tg the ancestry check: the mechanism works; the population number does not yet
+# TaskGraph-derived landing state: repository-bound mechanism and migration gate
 
-**Task:** `tg-cannot-verify-landing-which-is-why-the-directives-ledger-exists` · hermit-clone (opus-5), 2026-08-06
-**Local, no egress.** Delivered: `ci-hub/directives/tg_landed.py` +
-`ci-hub/directives/tests/test_tg_landed.py` (15 tests). Directives suite: **24 passed**.
+**Task:** `tg-cannot-verify-landing-which-is-why-the-directives-ledger-exists`<br>
+**Date:** 2026-08-06 · **local only, no egress**
 
-## The gap, restated in one line
+## Outcome
 
-tg's status is **asserted by an agent**. The directives ledger's status is **derived** by checking
-ancestry against a freshly-fetched target. That difference — not the storage — is the whole reason
-two systems exist.
+`ci-hub/directives/tg_landed.py` now derives landing from TaskGraph evidence without
+trusting TaskGraph's asserted status or `implemented` tag. Each verdict carries the
+authority tuple:
 
-`tg_landed.py` teaches the ancestry check to tg's own data without forking tg: it reads the task DB
-read-only via `tg sql`, extracts the implementation references an agent named in its notes (40-hex
-commits, PR numbers), and derives a landed state per task with
-`git merge-base --is-ancestor`. **The derived state never inherits the asserted one.**
-
-`PARTIAL` — a task naming several commits of which only some landed — is reported rather than
-rounded, because rounding a half-landed obligation is how it reads as done. It is the state tg
-cannot express at all.
-
-## Verify by mutation, both directions — done
-
-15 tests, covering exactly the bar the task set:
-
-- an ancestor reports **landed**
-- a non-ancestor reports **not_landed while the task is tagged `implemented` and status `closed`** —
-  the derivation contradicting both assertions is the point
-- **absent-from-checkout is `UNVERIFIABLE`, not `not_landed`** — conflating them would manufacture
-  false negatives on any partial clone
-- some-landed-some-not is **PARTIAL**, not rounded
-- a task naming no commit is `NO_REFERENCE` — "the asserted status is all there is", which *is* the gap
-- a stale target **annotates every positive derivation** and the report says so in its header
-- a short SHA is not accepted as a reference (a prefix cannot be compared safely)
-- **positive control**, the third leg the task names explicitly: given three landed commits the
-  reporter says three landed and gap 0 — it is not a checker that says "no" to everything
-- **self-consistency**: the state counts must sum to the population (see the regression below)
-
-## The population run, and why its number is not yet a measurement
-
-Over the full live population, target **not freshly fetched** (no egress):
-
-```
-examined       : 810      derived: landed 28 | partial 319 | not_landed 241
-asserted impl  : 810               unverifiable 114 | no_reference 108
-DERIVED LANDED : 28       consistent: True (sums to 810)
-ASSERTION GAP  : 782
+```text
+{repository, checkout, implementation SHA, target, target_freshly_fetched}
 ```
 
-**I am not reporting 782 as the assertion gap.** Before believing it I checked whether the
-unresolved SHAs were actually missing — they are mostly in a *different repository*:
+It supports the canonical parent, Hermit, Reverie, LiteInst2, and agent-utils
+repositories. A reference present in exactly one repository is compared only with that
+repository's target. A reference with genuinely ambiguous provenance is
+`UNVERIFIABLE`; the checker never chooses the first convenient green.
 
-| sampled | result |
-|---|---|
-| 25 SHAs "absent from hermit" | **16 exist in the dev-hermit parent**, 3 in `reverie/` — 19/25 are simply elsewhere |
-| 25 SHAs "unlanded in hermit" | **7 exist in `reverie/`** — checked against the wrong repo's main |
+The checker is ready for fresh-target reconciliation. The ledger migration is not:
+TaskGraph currently has only **2** tasks tagged `owner-directive`, while
+`ci-hub/directives/ledger.json` contains **20 obligations across 13 unique tasks**.
+Retiring the ledger before those child obligations, gates, and typed implementation
+tuples are represented in TaskGraph would lose state.
 
-So the checker resolves against **one** checkout while the population is **multi-repo** (hermit,
-reverie, dev-hermit parent). That inflates `partial`, `not_landed` and `unverifiable`, and it
-explains why `partial` is the largest bucket: a task naming a landed hermit SHA *and* a reverie SHA
-lands in `PARTIAL` purely as an artefact.
+## Root causes removed
 
-**Correct disposition: the mechanism is verified, the population number is a lower bound on landed
-and an upper bound on the gap.** The fix is per-reference repo resolution — try each SHA against
-hermit, reverie, and the parent, and record which repo answered — not a re-run of the same query.
+### One checkout was asked to interpret every repository
 
-## Two corrections to my own work, disclosed
+The first version checked every SHA in `hermit/`. A measured sample showed 16/25
+apparently absent SHAs in the dev-hermit parent and 3/25 in Reverie; another 7/25
+apparently unlanded Hermit SHAs belonged to Reverie. Cross-repository tasks therefore
+became false `PARTIAL` results.
 
-1. **A denominator bug in the reporter itself** — this task's own defect class. `tg sql` renders one
-   row per line, so multi-line notes were parsed as extra rows: 40 tasks classified as **51**. Fixed
-   by stripping newlines inside SQL; a `test_report_counts_sum_to_the_population` regression now
-   pins it, and the full run reports `consistent: True`.
-2. **A false rationale in my own docstring.** I wrote that the exact JSON-element tag match was
-   needed because a substring match "returns 808 vs ~106 genuinely tagged". Measured: **both forms
-   return the same count (812)**. The 106 was the owner's 2026-08-04 figure and the population has
-   simply grown; it was never a substring artefact. The docstring now says so, and keeps the element
-   form for a stated forward-looking reason instead of a false past one.
+The resolver now discovers all canonical repositories, binds each SHA to repository
+provenance, and records the binding in JSON. Tests cover two-repository positive,
+negative, mixed/partial, absent, ambiguity, and comparison-error cases.
 
-Also worth recording: the count moved **808 → 810 → 812 during this session** as other agents tagged
-work. The denominator is live, not fixed — any figure quoted from it needs its timestamp.
+### Object visibility was mistaken for repository ownership
 
-## On consolidation (items 2 and 3 of the design)
+Hermit's object database can see Reverie commits. `git cat-file` alone therefore
+reported the same SHA in both checkouts even though only Reverie refs reached it.
+Ownership discovery now prefers commits reachable from the repository's refs; raw
+object presence is only a fallback for a rebased-away/unreferenced commit. The output
+records both `repository_candidates` and `object_database_candidates` so the binding is
+observable.
 
-The task's step (2) — "the ledger becomes a view over tasks tagged `owner-directive`" — is
-deliberately **not** done. It is a data migration that would retire a working, owner-visible store
-on the strength of a derivation whose population resolution is still single-repo (above). Doing it
-now would replace a correct ledger with an artefact-ridden view. Sequence: fix repo resolution,
-reconcile the derived states against the ledger's existing `satisfied 8 / partial 3 / open 7 /
-not_landed 1 / missing_owner 1`, and only then collapse.
+### A local probe silently attempted GitHub access
 
-Step (3) — keep the hourly tick — needs no work here: the value is that *something re-derives on a
-schedule*, and `hermit-health-tick.timer` plus the relay restored earlier today already provide that
-substrate.
+Hermit is a promisor/partial repository. A batch containing absent objects produced
+**162 rows and repeated GitHub 403 failures** because `cat-file` tried lazy fetches.
+Every Git probe now sets `GIT_NO_LAZY_FETCH=1`. A regression test verifies that both
+single and batch probes carry the setting. Local absence no longer means "network
+lookup failed and was mistaken for absence."
 
-## Honest limits
+### Every historical SHA was treated as an implementation
 
-- **Single-repo resolution**, measured above — the one thing to fix before any number is quotable.
-- **No fresh fetch** (egress down), so every positive derivation carries `[STALE TARGET]` and the
-  CLI exits non-zero. That is deliberate: a stale answer must not read as success.
-- **PR references are extracted but not resolved.** `mergeCommit.oid` needs `gh`; the extraction is
-  there so the resolution is a small addition, but today only 40-hex commits are dereferenced.
-- **Nothing calls this yet.** It is a reporter, not a gate — flagged rather than left implicit.
+The first version concatenated every task note and extracted every 40-hex value. Base
+commits, validation inputs, superseded heads, and unrelated handoffs accumulated as
+permanent landing obligations; the full run reported 403 `PARTIAL` tasks.
 
-## Files
+Note boundaries are now preserved with SQL JSON aggregation. Only
+`IMPLEMENTED`/`CLOSURE-VERIFIED` notes are authorities, and only explicitly bound
+`SHA`, `commit`, `mergeCommit.oid`, `main`, or closure-tuple `@SHA` values are selected.
+Incidental progress-note SHAs are ignored. Ambiguous prose becomes `NO_REFERENCE`
+instead of guessed evidence.
 
-`ci-hub/directives/tg_landed.py` (new) · `ci-hub/directives/tests/test_tg_landed.py` (new).
-Uncommitted — egress down.
+### Population probing was too expensive for a health tick
+
+Per-SHA `for-each-ref --contains` and `merge-base` calls made a 50-task sample exceed a
+minute. The implementation now performs one batch object query and cached reachable
+and target graph scans per repository. The full local population completes in about
+**2.6 seconds** on this host.
+
+## Verification
+
+```text
+python3 -m pytest -q ci-hub/directives/tests
+36 passed in 0.07s
+
+python3 -m py_compile \
+  ci-hub/directives/tg_landed.py \
+  ci-hub/directives/tests/test_tg_landed.py
+PASS
+
+git diff --check -- \
+  ci-hub/directives/tg_landed.py \
+  ci-hub/directives/tests/test_tg_landed.py
+PASS
+```
+
+The mutation bracket includes:
+
+- ancestor -> `LANDED`;
+- nonancestor/rebased-away -> `NOT_LANDED` even when status says closed and tag says
+  implemented;
+- three landed controls -> three positives, so the checker is not inert;
+- absent -> `UNVERIFIABLE`, not a manufactured negative;
+- mixed repository results -> genuine `PARTIAL`;
+- same SHA with multiple provenance candidates -> refused;
+- foreign object visible in another object database -> owned by the repository whose
+  refs reach it;
+- stale positive names the specific stale repository;
+- progress-note SHAs do not become implementation authorities; and
+- local probing cannot lazy-fetch.
+
+## Non-authoritative stale-target population
+
+The local run examined a live denominator of **857** `implemented` tasks in 2.6s:
+
+```text
+landed 85 | partial 96 | not_landed 367 | unverifiable 11 | no_reference 298
+```
+
+Bindings found: dev-hermit 147, Hermit 526, Reverie 119, agent-utils 27,
+LiteInst2 4. There were 20 absent refs and zero ambiguous-repository refs.
+
+**These are diagnostic counts, not current landing facts.** None of the five targets
+was freshly fetched under the no-egress constraint, so the CLI exits nonzero and every
+definitive affected result carries its stale repository. The 772 assertion gap must not
+be quoted as a current metric.
+
+## What remains before the ledger can collapse
+
+1. Fresh-fetch every configured target and rerun the derived view.
+2. Represent all 20 current ledger obligations as typed TaskGraph owner-directive
+   records, including child/parent relationships, named gates, repository, target, and
+   null/open implementations. Merely tagging 13 tasks and extracting SHAs would hide
+   the ledger's open and gated child obligations.
+3. Reconcile the TaskGraph-derived view against the existing ledger row by row. Positive
+   and planted-negative controls must agree.
+4. Make `ci-hub/directives/check.py` and the existing hourly health tick consume that
+   TaskGraph view; only then demote `ledger.json` from authority to generated view (or
+   remove it).
+5. Resolve PR references through a recorded merge OID. A PR number alone is mutable and
+   cannot authorize landing locally.
+
+Until those steps are complete, this work improves the derivation mechanism but does
+not authorize retiring the working ledger or closing the task.
