@@ -34,6 +34,32 @@ sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 receipt_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 mkdir -p "$tmp/receipts/$receipt_commit"
 
+# --- PRODUCER DEFINITION BINDING (task bind_receipt_to_producer) -------------
+# The verifier reads the registered producer definition from the immutable
+# parent commit. This bracket points it at a FIXTURE registry so the cases are
+# stable against real blob churn on hermit main -- registering real blobs here
+# would make the bracket fail every time validate.sh legitimately changes.
+REG_VALIDATE=1111111111111111111111111111111111111111   # stand-in registration
+REG_PORTABLE=2222222222222222222222222222222222222222
+STALE_VALIDATE=9a9c31ce24abaa764089af7c4cafc820709c4c77 # a REAL older validate.sh blob
+cat >"$tmp/producer-registry.json" <<REG
+{"registered": {"validate.sh": "$REG_VALIDATE",
+                ".github/workflows/ci-portable.yml": "$REG_PORTABLE"}}
+REG
+export PRODUCER_DEFINITION_REGISTRY=$tmp/producer-registry.json
+
+# Assert a mutation actually changed the receipt before its refusal is believed.
+# A mutation harness whose expression silently no-ops reports that the code is
+# robust when nothing was tested -- the anchor must be shown to have matched.
+mutation_anchor_failures=0
+assert_mutated() { # assert_mutated <base> <mutant> <label>
+    if cmp -s "$1" "$2"; then
+        printf 'BAD  ANCHOR    mutation did not change the receipt: %s\n' "$3" >&2
+        mutation_anchor_failures=$((mutation_anchor_failures + 1))
+        bracket_fail=1
+    fi
+}
+
 neg_refused=0
 neg_total=0
 pos_accepted=0
@@ -44,7 +70,8 @@ make_receipt() { make_receipt_at "$sha" "$1" "$2"; }
 
 make_receipt_at() {
     local sha=$1 executed=$2 output=$3
-    jq -cnS --arg sha "$sha" --argjson executed "$executed" '{
+    jq -cnS --arg sha "$sha" --argjson executed "$executed" \
+            --arg reg_validate "$REG_VALIDATE" --arg reg_portable "$REG_PORTABLE" '{
       schema_version: 1,
       repository: "rrnewton/hermit",
       commit: $sha,
@@ -52,6 +79,13 @@ make_receipt_at() {
       source_log_file: "/tmp/validate.log",
       durable_log_file: "/durable/validate.log",
       log_sha256: ("c" * 64),
+      producer: {
+        resolved_from: "/fixture/worktree",
+        definition: {
+          "validate.sh": $reg_validate,
+          ".github/workflows/ci-portable.yml": $reg_portable
+        }
+      },
       ledger_record: {
         schema_version: 1,
         started_at: "2026-08-04T12:00:00Z",
@@ -195,6 +229,7 @@ cp "$tmp/receipt.json" "$tmp/receipts/$receipt_commit/$path"   # restore
 while IFS='|' read -r label expr; do
     [ -n "$label" ] || continue
     jq -cS "$expr" "$tmp/receipt.json" >"$tmp/mut.json"
+    assert_mutated "$tmp/receipt.json" "$tmp/mut.json" "ENVELOPE $label"
     verify_digest=$(sha256sum "$tmp/mut.json" | awk '{print $1}')
     plant_at "$tmp/mut.json" "validation-receipts/rrnewton/hermit/$sha/$verify_digest.json"
     run_case NEG 1 "ENVELOPE $label"
@@ -228,6 +263,7 @@ run_case NEG 1 "COVERAGE schema5 receipt carries no coverage block"
 while IFS='|' read -r label expr; do
     [ -n "$label" ] || continue
     jq -cS "$expr" "$tmp/schema5-missing.json" >"$tmp/cov.json"
+    assert_mutated "$tmp/schema5-missing.json" "$tmp/cov.json" "COVERAGE $label"
     plant_for_head "$tmp/cov.json" "$sha"
     run_case NEG 1 "COVERAGE $label"
 done <<'CASES'
@@ -247,6 +283,48 @@ jq '.ledger_record.schema_version = 5
         planned_test_nodes: 2, executed_test_nodes: 2,
         zero_executed_nodes: [], absent_nodes: []
       }' "$tmp/schema5-head2-base.json" >"$tmp/schema5-valid.json"
+
+# --- PRODUCER DEFINITION BINDING: a receipt minted by a different/older check
+#     definition cannot authorize a landing, even though every other clause --
+#     exact head, counts, coverage, host identity, digest -- is impeccable.
+#     This is the residual #1579 left open: that check binds the GATE FILE at the
+#     run's own sha; nothing bound the PRODUCER that minted the receipt.
+while IFS='|' read -r label expr; do
+    [ -n "$label" ] || continue
+    jq -cS "$expr" "$tmp/receipt.json" >"$tmp/prod.json"
+    assert_mutated "$tmp/receipt.json" "$tmp/prod.json" "PRODUCER $label"
+    plant_for_head "$tmp/prod.json" "$sha"
+    run_case NEG 1 "PRODUCER $label"
+done <<CASES
+STALE: receipt minted by an older validate.sh|.producer.definition["validate.sh"] = "$STALE_VALIDATE"
+STALE: older ci-portable.yml|.producer.definition[".github/workflows/ci-portable.yml"] = "$STALE_VALIDATE"
+ABSENT: no producer block at all (a pre-binding receipt)|del(.producer)
+ABSENT: producer present but definition missing|.producer = {resolved_from: "/fixture/worktree"}
+EMPTY: definition is an empty object|.producer.definition = {}
+OMITTED FILE: validate.sh dropped to dodge comparison|del(.producer.definition["validate.sh"])
+OMITTED FILE: ci-portable.yml dropped|del(.producer.definition[".github/workflows/ci-portable.yml"])
+EXTRA FILE: superset of the registered definition|.producer.definition["extra.sh"] = "$REG_VALIDATE"
+NULL: definition explicitly null|.producer.definition = null
+TYPE: definition is a string, not a map|.producer.definition = "$REG_VALIDATE"
+CASES
+
+# --- Registry deploy defects must stay LOUD (exit 2), and an UNBOUND producer
+#     registration must fail closed rather than vacuously accept every producer.
+plant_at "$tmp/receipt.json" "$path"
+PRODUCER_DEFINITION_REGISTRY=$tmp/no-such-registry.json \
+    run_case NEG 2 "DEPLOY DEFECT: producer registry unreadable"
+printf 'not json at all\n' >"$tmp/prod-broken.json"
+PRODUCER_DEFINITION_REGISTRY=$tmp/prod-broken.json \
+    run_case NEG 2 "DEPLOY DEFECT: producer registry is not JSON"
+printf '{"registered": {}}\n' >"$tmp/prod-empty.json"
+PRODUCER_DEFINITION_REGISTRY=$tmp/prod-empty.json \
+    run_case NEG 2 "UNBOUND: producer registry registers no files (must not accept-all)"
+printf '{"note": "no registered key"}\n' >"$tmp/prod-nokey.json"
+PRODUCER_DEFINITION_REGISTRY=$tmp/prod-nokey.json \
+    run_case NEG 2 "UNBOUND: producer registry has no .registered"
+printf '{"registered": {"validate.sh": "not-a-blob"}}\n' >"$tmp/prod-badblob.json"
+PRODUCER_DEFINITION_REGISTRY=$tmp/prod-badblob.json \
+    run_case NEG 2 "DEPLOY DEFECT: registered blob is not 40-hex"
 
 # --- Deploy defect must stay LOUD (exit 2), never a silent lenient fallback and
 #     never confused with an honest refusal.
@@ -289,6 +367,31 @@ plant_for_head "$tmp/schema5-valid.json" "$sha2"
 run_case POS 0 "schema5 complete-coverage receipt at a second exact head" "$sha2"
 [[ $pos_accepted -eq $((before_b + 1)) ]] && legacy_accepted=$((legacy_accepted + 1))
 
+# --- PRODUCER positive leg: the registered definition is still accepted, and
+#     the acceptance TRACKS THE REGISTRY rather than being hardcoded. Without
+#     the rotation case a check that ignored the registry entirely would still
+#     look green here.
+plant_at "$tmp/receipt.json" "$path"
+run_case POS 0 "PRODUCER receipt carrying the registered current definition"
+
+rot_validate=3333333333333333333333333333333333333333
+cat >"$tmp/producer-rotated.json" <<REG
+{"registered": {"validate.sh": "$rot_validate",
+                ".github/workflows/ci-portable.yml": "$REG_PORTABLE"}}
+REG
+jq -cS --arg v "$rot_validate" '.producer.definition["validate.sh"] = $v' \
+    "$tmp/receipt.json" >"$tmp/rotated-receipt.json"
+assert_mutated "$tmp/receipt.json" "$tmp/rotated-receipt.json" "PRODUCER rotation"
+plant_for_head "$tmp/rotated-receipt.json" "$sha"
+PRODUCER_DEFINITION_REGISTRY=$tmp/producer-rotated.json \
+    run_case POS 0 "PRODUCER rotation: receipt matching a NEWLY registered definition is accepted"
+# ...and the previously-good receipt is refused under the rotated registration,
+# which is the same fact from the other side: the binding is to the CURRENT
+# definition, not to any definition that was ever valid.
+plant_at "$tmp/receipt.json" "$path"
+PRODUCER_DEFINITION_REGISTRY=$tmp/producer-rotated.json \
+    run_case NEG 1 "PRODUCER rotation: yesterday's registered definition no longer authorizes"
+
 plant_root=$tmp
 rm -rf -- "$plant_root"
 if [[ -e $plant_root ]]; then
@@ -304,8 +407,15 @@ printf 'PASS: %d/2 legitimate exact-head landing receipts accepted; stale-head, 
     "$legacy_accepted"
 printf 'NEGATIVE refusals: %d/%d   POSITIVE acceptances: %d/%d\n' \
     "$neg_refused" "$neg_total" "$pos_accepted" "$pos_total"
+# Every mutant must be shown to have actually changed the receipt. A silently
+# no-op mutation would otherwise be scored as "the guard refused it", i.e. the
+# harness would report robustness it never tested.
+printf 'MUTATION ANCHORS: %s\n' \
+    "$([[ $mutation_anchor_failures -eq 0 ]] && echo 'all mutants differed from their base' \
+       || echo "$mutation_anchor_failures MUTANT(S) DID NOT DIFFER -- results not believable")"
 if [[ $bracket_fail -ne 0 ]] || [[ $neg_refused -ne $neg_total ]] ||
-   [[ $pos_accepted -ne $pos_total ]] || [[ $legacy_accepted -ne 2 ]]; then
+   [[ $pos_accepted -ne $pos_total ]] || [[ $legacy_accepted -ne 2 ]] ||
+   [[ $mutation_anchor_failures -ne 0 ]]; then
     echo "FAIL: receipt-consumer bracket" >&2
     exit 1
 fi

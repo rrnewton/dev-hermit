@@ -1,0 +1,13 @@
+{
+  "_comment": "SINGLE canonical registration of the VALIDATE PRODUCER DEFINITION -- which check definition is currently allowed to mint a landing-authorizing receipt. Colocated with qualifying-receipt.json / rebase-base-floors.json. Task bind-receipt-to-producer-definition-not-only-the-gate-file.",
+  "_why": "hermit #1579 bound the GATE FILE: the run's own .github/workflows/merge-gate.yml blob must equal vars.MERGE_GATE_V4_BLOB. It did NOT bind the PRODUCER. A PR could therefore present a CURRENT gate file while its receipt had been minted by an OLDER validate.sh -- i.e. by an older, weaker definition of what 'validated' means. That is the #231 shape (signal not bound to fact) applied to the producer instead of the consumer. This file is the producer-side half, symmetric with MERGE_GATE_V4_BLOB.",
+  "_not_hypothetical": "Measured 2026-08-06: validate.sh blob was 9a9c31ce24abaa764089af7c4cafc820709c4c77 at hermit f89c69766371806d3c9b2c3003531df2d59d6118 and 836a070e5e02017ae232e243904fb033a5c45b17 at 4c70658e785834737cbe1524f77330c781a6f5ea -- the producer definition changed within 8 commits on main in a single day, while ci-portable.yml did not move. A receipt minted at the older head was produced by a different definition than the current one.",
+  "_generalises_the_anchor": "The pre-anchor rule (a PR head must descend from hermit bfb0a9ef, else it runs its own older validate.sh) is a SINGLE-COMMIT ANCHOR: it goes stale every time the producer changes and must be hand-advanced. This registration is its hash-valued generalisation, exactly as #1579 generalised the gate-file case.",
+  "_semantics": "EXACT SET EQUALITY, fail closed. A qualifying receipt MUST carry producer.definition whose key set and blob values equal `registered` exactly. A receipt with no producer block, a missing file, an extra file, or any differing blob is REFUSED -- refusing only on mismatch would let a stale producer omit the block and be waved through, which is the very fake-green shape this closes. An unreadable or malformed registration is a DEPLOY DEFECT (exit 2), never a lenient fallback.",
+  "_advancing_this": "When validate.sh or ci-portable.yml legitimately changes on hermit main, update `registered` (and `registered_at`) in the SAME review that lands the producer change, then re-mint receipts. Landing a producer change without advancing this file will refuse every subsequent receipt -- loudly and at the gate, which is the intended failure direction.",
+  "registered_at": "rrnewton/hermit@4c70658e785834737cbe1524f77330c781a6f5ea",
+  "registered": {
+    "validate.sh": "836a070e5e02017ae232e243904fb033a5c45b17",
+    ".github/workflows/ci-portable.yml": "6d47112dbbd6566e6d0453551a0c730bc7aeb8d9"
+  }
+}

@@ -92,6 +92,59 @@ def preserve_log(ledger: Path, sha: str, row: dict[str, Any]) -> Path:
     return destination
 
 
+def producer_registry_path() -> Path:
+    override = os.environ.get("PRODUCER_DEFINITION_REGISTRY")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[1] / "validate" / "producer-definition.json"
+
+
+def registered_producer() -> dict[str, str]:
+    """The registered current producer definition (file -> git blob)."""
+    path = producer_registry_path()
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read producer-definition registry {path}: {error}")
+    registered = value.get("registered")
+    if not isinstance(registered, dict) or not registered:
+        fail(f"malformed producer-definition registry (no non-empty .registered): {path}")
+    return registered
+
+
+def producer_definition(row: dict[str, Any], sha: str) -> dict[str, Any]:
+    """Identify the check definition that produced this row.
+
+    Derived from the VALIDATED COMMIT (`git rev-parse <sha>:<path>`), not
+    self-reported by the producer: the blobs are a property of the commit that
+    was validated, so a producer cannot claim a definition it did not run
+    without also changing the commit under test.  Failure to resolve is fatal --
+    a receipt that cannot name its producer must not be minted at all, because a
+    producer-less receipt is exactly what the consumer now refuses.
+    """
+    checkout = row.get("cwd")
+    if not checkout or not Path(checkout).is_dir():
+        fail(
+            "ledger row has no usable `cwd`, so the producing check definition "
+            f"cannot be resolved for {sha}"
+        )
+    definition: dict[str, str] = {}
+    for relative in sorted(registered_producer()):
+        result = subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", f"{sha}:{relative}"],
+            text=True,
+            capture_output=True,
+        )
+        blob = result.stdout.strip()
+        if result.returncode != 0 or len(blob) != 40:
+            fail(
+                f"cannot resolve producer blob for {relative} at {sha} in {checkout}: "
+                f"{result.stderr.strip() or 'no output'}"
+            )
+        definition[relative] = blob
+    return {"resolved_from": str(checkout), "definition": definition}
+
+
 def build_receipt(repo: str, sha: str, row: dict[str, Any], durable_log: Path) -> tuple[dict[str, Any], bytes, str]:
     log_digest = hashlib.sha256(durable_log.read_bytes()).hexdigest()
     # Host-in-identity (Req2): the receipt identity carries the producing host,
@@ -106,6 +159,11 @@ def build_receipt(repo: str, sha: str, row: dict[str, Any], durable_log: Path) -
         "source_log_file": row["log_file"],
         "durable_log_file": str(durable_log),
         "log_sha256": log_digest,
+        # Producer binding: WHICH check definition produced this receipt, at
+        # which head. The consumer requires this to equal the registered
+        # current definition, so a receipt minted by an older/foreign
+        # validate.sh cannot authorize a landing (task bind_receipt_to_producer).
+        "producer": producer_definition(row, sha),
         "ledger_record": row,
     }
     body = canonical(receipt)

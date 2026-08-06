@@ -89,6 +89,37 @@ for _v in "$p_counts_schema" "$p_exec_min" "$p_cov_schema" "$p_cov_pernode" \
     fi
 done
 
+# Resolve the registered PRODUCER DEFINITION -- which check definition is
+# currently allowed to mint a landing-authorizing receipt. #1579 bound the GATE
+# FILE (merge-gate.yml blob == vars.MERGE_GATE_V4_BLOB); it did NOT bind the
+# producer, so a PR could present a current gate file while its receipt was
+# minted by an older validate.sh. This is the producer-side half, and like the
+# predicate above it is read from the immutable parent commit, never the PR
+# under test. $PRODUCER_DEFINITION_REGISTRY overrides for the mutation test;
+# NEVER point it at the live file. (task bind_receipt_to_producer)
+producer_registry=${PRODUCER_DEFINITION_REGISTRY:-}
+if [[ -z $producer_registry ]]; then
+    script_dir=${script_dir:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}
+    producer_registry="$script_dir/../validate/producer-definition.json"
+fi
+if [[ ! -r $producer_registry ]]; then
+    printf 'producer-definition registry unreadable: %s\n' "$producer_registry" >&2
+    exit 2
+fi
+# A malformed/empty registration is a deploy defect -> exit 2 (loud). It must
+# never degrade into "no files registered", which would vacuously accept every
+# producer -- the fake-green direction.
+p_producer=$(jq -c '.registered' "$producer_registry" 2>/dev/null)
+if [[ -z $p_producer || $p_producer == null ]] || \
+   ! jq -e '
+       (.registered | type == "object")
+       and ((.registered | length) > 0)
+       and (.registered | to_entries | all(.value | type == "string" and test("^[0-9a-f]{40}$")))
+   ' "$producer_registry" >/dev/null 2>&1; then
+    printf 'malformed producer-definition registry: %s\n' "$producer_registry" >&2
+    exit 2
+fi
+
 for candidate in "${candidates[@]}"; do
     IFS=$'\t' read -r receipt_commit receipt_path receipt_digest <<<"$candidate"
     expected_prefix="validation-receipts/${repo}/${sha}/"
@@ -143,10 +174,17 @@ for candidate in "${candidates[@]}"; do
         --argjson counts_schema "$p_counts_schema" \
         --argjson cov_schema "$p_cov_schema" \
         --argjson cov_pernode "$p_cov_pernode" \
-        --argjson gate_filtered "$p_gate_filtered" '
+        --argjson gate_filtered "$p_gate_filtered" \
+        --argjson registered_producer "$p_producer" '
         .schema_version == 1
         and .repository == $repo
         and .commit == $sha
+        # PRODUCER BINDING: the receipt must name the check definition that
+        # produced it, and that definition must be the registered current one.
+        # EXACT equality of the whole map -- not a subset check -- so a receipt
+        # cannot drop a file to escape the comparison, and not "compare only
+        # what is present", which would make an absent block a free pass.
+        and ((.producer.definition // null) == $registered_producer)
         # Host-in-identity (Req2): the run_id binds sha + started_at + producing
         # host, so the ledger host cannot be swapped without breaking identity.
         and (.ledger_record.host | (type == "string") and (length > 0))

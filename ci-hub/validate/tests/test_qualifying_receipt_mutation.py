@@ -46,6 +46,7 @@ from pathlib import Path
 CI_HUB = Path(__file__).resolve().parents[2]
 REPO_ROOT = CI_HUB.parent
 LIVE_PREDICATE = CI_HUB / "validate" / "qualifying-receipt.json"
+PRODUCER_REGISTRY = CI_HUB / "validate" / "producer-definition.json"
 CI_HUB_RS = CI_HUB / "ci-hub.rs"
 QUERY_PY = CI_HUB / "history" / "query.py"
 PUBLISH_PY = CI_HUB / "validation" / "publish_receipt.py"
@@ -203,6 +204,16 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
                 "log_sha256": "c" * 64,
                 "source_log_file": row["log_file"],
                 "durable_log_file": "/durable" + row["log_file"],
+                # This suite mutates the QUALIFYING-RECEIPT predicate, so the
+                # producer binding must be satisfied and held constant here --
+                # otherwise every row would be refused for the wrong reason and
+                # the predicate leg would prove nothing. Read from the live
+                # registration so this fixture follows a producer advance
+                # instead of silently rotting into a false REJECT.
+                "producer": {
+                    "resolved_from": "/fixture/worktree",
+                    "definition": json.loads(PRODUCER_REGISTRY.read_text())["registered"],
+                },
                 "ledger_record": row,
             }
             blob = json.dumps(receipt, sort_keys=True).encode()
