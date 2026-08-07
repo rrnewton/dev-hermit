@@ -29,11 +29,13 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
-    capture_and_freeze_residuals, current_host, enable_child_subreaper, exact_process_liveness,
-    exit_status_code, heartbeat_test_helper_delay, print_cleanup_record, process_group_exists,
-    process_start_ticks, reap_exited_children, remove_cleanup_record, signal_group,
-    spawn_gated_child, suffix, verify_cleanup_record, write_cleanup_record, CleanupPhase,
-    CleanupRecord, CleanupVerification, GatedChild, ProcessIdentity, ResidualCapture,
+    capture_and_freeze_residuals, cgroup_population, current_host, enable_child_subreaper,
+    exact_process_liveness, exit_status_code, heartbeat_test_helper_delay, print_cleanup_record,
+    payload_cgroup_anchor, process_group_exists,
+    process_start_ticks, reap_exited_children,
+    remove_cleanup_record, safe_ci_slice_for, signal_group, spawn_gated_child, suffix,
+    verify_cleanup_record, write_cleanup_record, CgroupCensus, CleanupPhase, CleanupRecord,
+    CleanupVerification, GatedChild, ProcessIdentity, ResidualCapture,
 };
 
 const DEFAULT_WAIT_SECONDS: u64 = 1_800;
@@ -116,15 +118,21 @@ pub struct CensusOrphanedDomainArgs {
     pub pgid: u32,
     /// Affirms that the payload's process domain was observed empty by a
     /// supervisor-independent authority (unit cgroup absent/empty AND every
-    /// cgroup the payload can migrate into empty). This is the ONLY fact the
-    /// kernel cannot answer once the subreaper anchor died; everything else is
-    /// checked mechanically and is not attestable.
+    /// cgroup the payload can migrate into empty).
+    ///
+    /// NOT required when the record carries a cgroup anchor and the kernel
+    /// already says the domain is empty -- that census is mechanical. This is
+    /// only for records with no anchor, or where the anchor cannot be read.
     #[arg(long)]
     pub attest_domain_empty: bool,
     /// The exact observations backing `--attest-domain-empty`. Recorded in the
-    /// refusal/acceptance transcript so the attestation is auditable rather than
-    /// anonymous. Must be non-empty.
-    #[arg(long)]
+    /// transcript so the attestation is auditable rather than anonymous. Must be
+    /// non-empty whenever `--attest-domain-empty` is used.
+    ///
+    /// Optional at the CLI so a mechanically provable census can be run exactly
+    /// as `status` prints it, with no attestation flags at all; it is still
+    /// enforced as non-empty on every path that actually consumes it.
+    #[arg(long, default_value = "")]
     pub evidence: String,
 }
 
@@ -717,6 +725,9 @@ impl ValidateLock {
         target: &str,
         expected: fn(&CleanupPhase) -> bool,
         next: CleanupPhase,
+        // `Some` only at publish, the one transition that learns the payload's
+        // cgroup. Every other transition preserves whatever is already there.
+        cgroup: Option<String>,
     ) -> Result<(), ValidateLockError> {
         self.with_guard(|| {
             let holder = self.read_holder()?.ok_or_else(|| {
@@ -750,6 +761,9 @@ impl ValidateLock {
                 )));
             }
             record.phase = next;
+            if cgroup.is_some() {
+                record.cgroup = cgroup.clone();
+            }
             write_cleanup_record(&self.paths.cleanup, &record)
                 .map_err(|source| io_error("write", &self.paths.cleanup, source))
         })
@@ -770,6 +784,27 @@ impl ValidateLock {
             CleanupPhase::Published {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
+            },
+            // Read from the payload itself while it is demonstrably alive, and
+            // ONLY when that cgroup is exclusive to this run. Best effort by
+            // design: if it cannot be read, or is shared with unrelated work,
+            // the record simply carries no anchor and the census keeps its
+            // attestation path -- the status quo, never a new failure. Anchoring
+            // to a shared cgroup would be worse than no anchor at all, since a
+            // permanently populated domain can never be censused.
+            match payload_cgroup_anchor(gated.leader.pid) {
+                Ok(cgroup) => Some(cgroup),
+                Err(why) => {
+                    // Say so rather than silently omitting it: without an anchor
+                    // an orphan census of THIS run will need a human attestation,
+                    // and that is worth knowing at publish time, not at 3am.
+                    eprintln!(
+                        "validate-lock: no cgroup anchor recorded for this run ({why}); if the \
+                         supervisor dies, censusing the orphaned domain will require \
+                         --attest-domain-empty"
+                    );
+                    None
+                }
             },
         )
     }
@@ -820,6 +855,7 @@ impl ValidateLock {
                 domain_complete: capture.complete,
                 residuals: capture.identities,
             },
+            None,
         )
     }
 
@@ -839,6 +875,7 @@ impl ValidateLock {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
             },
+            None,
         )
     }
 
@@ -1146,17 +1183,35 @@ impl ValidateLock {
                 if let CleanupPhase::Published { leader, pgid }
                 | CleanupPhase::CensusPending { leader, pgid } = &record.phase
                 {
+                    // Say up front whether the kernel can settle this, so the
+                    // operator is not told to attest something already provable
+                    // -- or told it is mechanical when the domain is still live.
+                    let domain = census_recorded_domain(record.cgroup.as_deref());
+                    let attestation = match &domain {
+                        DomainEvidence::ProvenEmpty(_) => "",
+                        _ => " --attest-domain-empty --evidence '<observations>'",
+                    };
                     println!(
                         "  recovery=ci-hub validate-lock census-orphaned-domain \
-                         --agent {} --operation {} --leader {}:{} --pgid {pgid} \
-                         --attest-domain-empty --evidence '<observations>'",
+                         --agent {} --operation {} --leader {}:{} --pgid {pgid}{attestation}",
                         record.agent, record.operation, leader.pid, leader.start_ticks
                     );
-                    println!(
-                        "  recovery_precondition=confirm the payload's unit cgroup is absent/empty \
-                         AND every cgroup it migrates into is empty; reclaim-dead alone CANNOT \
-                         clear this state"
-                    );
+                    match domain {
+                        DomainEvidence::ProvenEmpty(detail) => println!(
+                            "  recovery_precondition=none; the domain is ALREADY proven empty \
+                             from the recorded cgroup anchor ({detail}), so no attestation is \
+                             required. reclaim-dead alone still CANNOT clear this state."
+                        ),
+                        DomainEvidence::Populated(detail) => println!(
+                            "  recovery_precondition=BLOCKED: {detail}. No census can run and no \
+                             attestation can override a live domain."
+                        ),
+                        DomainEvidence::Unproven(why) => println!(
+                            "  recovery_precondition={why}, so confirm by hand that the payload's \
+                             unit cgroup is absent/empty AND every cgroup it migrates into is \
+                             empty; reclaim-dead alone CANNOT clear this state"
+                        ),
+                    }
                 }
             }
             CleanupVerification::Unknown { record, reason } => {
@@ -1298,15 +1353,8 @@ impl ValidateLock {
         &self,
         args: CensusOrphanedDomainArgs,
     ) -> Result<i32, ValidateLockError> {
-        if args.evidence.trim().is_empty() {
-            return Err(ValidateLockError::RecoveryNotProven(
-                "--evidence must record the observations backing --attest-domain-empty; \
-                 an anonymous attestation is not auditable"
-                    .into(),
-            ));
-        }
         let restated = parse_leader_identity(&args.leader)?;
-        let (leader, pgid) = self.with_guard(|| {
+        let (leader, pgid, disposition) = self.with_guard(|| {
             let holder = self.read_holder()?.ok_or_else(|| {
                 ValidateLockError::RecoveryNotProven(
                     "no lock holder; a census only discharges a quarantine bound to one".into(),
@@ -1422,18 +1470,19 @@ impl ValidateLock {
                 )));
             }
 
-            // (5) Only now is the attestation consumed, and only for the one
-            // fact no mechanical check above can supply.
-            if !args.attest_domain_empty {
-                return Err(ValidateLockError::RecoveryNotProven(format!(
-                    "every mechanical precondition passes (supervisor dead, leader {}:{} absent, \
-                     pgid {pgid} absent), but an escaped descendant cannot be excluded from the \
-                     record alone. Re-run with --attest-domain-empty --evidence '<observations>' \
-                     after confirming the payload's unit cgroup is absent/empty AND every cgroup \
-                     the payload migrates into is empty.",
+            // (5) The domain itself. With a recorded cgroup anchor the kernel
+            // answers this directly and NO attestation is consumed; without one
+            // the operator attestation remains the only available evidence.
+            let disposition = census_disposition(
+                census_recorded_domain(record.cgroup.as_deref()),
+                args.attest_domain_empty,
+                &args.evidence,
+                &format!(
+                    "supervisor dead, leader {}:{} absent, pgid {pgid} absent",
                     leader.pid, leader.start_ticks
-                )));
-            }
+                ),
+            )
+            .map_err(ValidateLockError::RecoveryNotProven)?;
 
             let mut recovered = record.clone();
             recovered.phase = CleanupPhase::Residual {
@@ -1443,12 +1492,15 @@ impl ValidateLock {
             };
             write_cleanup_record(&self.paths.cleanup, &recovered)
                 .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
-            Ok((leader, pgid))
+            Ok((leader, pgid, disposition))
         })?;
+        // Truthful about WHICH evidence discharged this: a mechanically proven
+        // census and an operator attestation are not the same claim, and a
+        // reader must be able to tell them apart in the transcript.
         eprintln!(
             "validate-lock: CENSUSED orphaned domain agent={} operation={} leader={}:{} pgid={pgid}; \
-             supervisor proven dead, leader and process group proven absent, empty domain attested: {}",
-            args.agent, args.operation, leader.pid, leader.start_ticks, args.evidence.trim()
+             supervisor proven dead, leader and process group proven absent, {}",
+            args.agent, args.operation, leader.pid, leader.start_ticks, disposition
         );
         eprintln!(
             "validate-lock: quarantine is now RECOVERABLE; run `validate-lock reclaim-dead` to \
@@ -1989,6 +2041,140 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> ValidateLoc
     }
 }
 
+/// What the KERNEL can still say about a recorded payload domain once the
+/// supervisor is gone.
+///
+/// Three outcomes, not two: "I could not look" must never be collapsed into
+/// "nothing is there", which is exactly the mistake that would let a census
+/// bury a live domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DomainEvidence {
+    /// Every domain named by the record is empty, verified against the kernel.
+    ProvenEmpty(String),
+    /// At least one live process remains. Not overridable by attestation.
+    Populated(String),
+    /// Not determinable from the record alone; attestation is the only recourse.
+    Unproven(String),
+}
+
+/// Census the payload domain post-hoc from the recorded cgroup anchor.
+///
+/// This is what closes the UNCENSUSED one-way door. `leader`/`pgid` are both
+/// dead ends after the supervisor exits — a ppid walk needs the subreaper that
+/// died with it, and pgid membership does not survive `setsid()`. Cgroup
+/// membership survives both, so a recorded cgroup can be read directly.
+///
+/// Two domains are checked, and BOTH must be empty: the payload's own cgroup
+/// subtree, and `safe-ci.slice`, the one place a payload legitimately migrates
+/// out of its unit cgroup (via `safe-ci-dag-runner`).
+fn census_recorded_domain(cgroup: Option<&str>) -> DomainEvidence {
+    let Some(payload) = cgroup else {
+        return DomainEvidence::Unproven(
+            "the cleanup record carries no cgroup anchor (written before cgroup anchoring, or \
+             the payload's cgroup was unreadable at publish time)"
+                .into(),
+        );
+    };
+
+    let mut proven = Vec::new();
+    let mut census = |label: &str, path: &str| -> Result<(), DomainEvidence> {
+        match cgroup_population(path) {
+            CgroupCensus::Empty { absent } => {
+                // Absence is a POSITIVE proof, not a skipped check: a cgroup can
+                // only be removed once it holds no processes.
+                proven.push(format!(
+                    "{label} {path} {}",
+                    if absent { "is absent" } else { "is empty" }
+                ));
+                Ok(())
+            }
+            CgroupCensus::Populated(pids) => Err(DomainEvidence::Populated(format!(
+                "{label} {path} still holds {} process(es): {}",
+                pids.len(),
+                pids.iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))),
+            CgroupCensus::Unknown(why) => Err(DomainEvidence::Unproven(format!(
+                "{label} {path} could not be censused: {why}"
+            ))),
+        }
+    };
+
+    if let Err(evidence) = census("payload cgroup", payload) {
+        return evidence;
+    }
+    let Some(safe_ci) = safe_ci_slice_for(payload) else {
+        return DomainEvidence::Unproven(format!(
+            "payload cgroup {payload} is not user-manager shaped, so safe-ci.slice cannot be \
+             derived and the migration target would go uncensused"
+        ));
+    };
+    if let Err(evidence) = census("migration target", &safe_ci) {
+        return evidence;
+    }
+    DomainEvidence::ProvenEmpty(proven.join("; "))
+}
+
+/// What discharges this census, if anything.
+///
+/// Pure on purpose: this is the entire policy change of the cgroup-anchor work,
+/// so it is testable without fabricating lock state. `Ok` is the disposition to
+/// record in the transcript, `Err` the refusal.
+fn census_disposition(
+    domain: DomainEvidence,
+    attested: bool,
+    evidence: &str,
+    mechanical_context: &str,
+) -> Result<String, String> {
+    match domain {
+        // Mechanical. An attestation, if supplied, is simply not needed.
+        DomainEvidence::ProvenEmpty(detail) => Ok(format!("empty domain PROVEN: {detail}")),
+        // Refused by default. An override is possible but never silent: the
+        // exact occupant pids are echoed into the transcript and the
+        // disposition is labelled so nobody can later read it as a clean census.
+        DomainEvidence::Populated(detail) => {
+            if !attested {
+                return Err(format!(
+                    "the recorded payload domain is NOT empty: {detail}. Wait for it to drain, \
+                     or kill it by exact identity. Overriding requires an explicit \
+                     --attest-domain-empty --evidence and will be recorded as an override."
+                ));
+            }
+            if evidence.trim().is_empty() {
+                return Err("--evidence must record the observations backing \
+                            --attest-domain-empty; an anonymous attestation is not auditable"
+                    .to_string());
+            }
+            Ok(format!(
+                "empty domain ATTESTED OVER A POPULATED CGROUP -- the kernel disagrees ({detail}): {}",
+                evidence.trim()
+            ))
+        }
+        DomainEvidence::Unproven(why) => {
+            if !attested {
+                return Err(format!(
+                    "every mechanical precondition passes ({mechanical_context}), but the \
+                     domain could not be censused mechanically: {why}. Re-run with \
+                     --attest-domain-empty --evidence '<observations>' after confirming the \
+                     payload's unit cgroup is absent/empty AND every cgroup the payload \
+                     migrates into is empty."
+                ));
+            }
+            if evidence.trim().is_empty() {
+                return Err("--evidence must record the observations backing \
+                            --attest-domain-empty; an anonymous attestation is not auditable"
+                    .to_string());
+            }
+            Ok(format!(
+                "empty domain ATTESTED (not mechanically provable: {why}): {}",
+                evidence.trim()
+            ))
+        }
+    }
+}
+
 /// How a supervised `run` child ended.
 enum ChildOutcome {
     Exited { status: ExitStatus, pgid: u32 },
@@ -2448,6 +2634,203 @@ wait
         assert!(!process_group_exists(pgid));
         assert!(lock.read_holder().unwrap().is_none());
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    // THE POLICY BRACKET. Six cases, covering every way a census can and cannot
+    // be discharged. `census_disposition` is the whole behavioural change of the
+    // cgroup anchor, so each branch is pinned explicitly.
+    const CTX: &str = "supervisor dead, leader 1:2 absent, pgid 3 absent";
+
+    // Mechanical, no attestation offered: accepted, and the transcript says
+    // PROVEN. This is the case that did not exist before.
+    #[test]
+    fn a_proven_empty_domain_is_discharged_without_any_attestation() {
+        let ok = census_disposition(
+            DomainEvidence::ProvenEmpty("payload cgroup /x is absent".into()),
+            false,
+            "",
+            CTX,
+        )
+        .expect("a mechanically proven domain must discharge with no attestation");
+        assert!(ok.contains("PROVEN"), "got: {ok}");
+        assert!(!ok.contains("ATTESTED"), "must not claim attestation: {ok}");
+    }
+
+    // An attestation supplied alongside mechanical proof is redundant, not
+    // corrupting: the transcript must still report PROVEN, not ATTESTED.
+    #[test]
+    fn mechanical_proof_outranks_a_supplied_attestation() {
+        let ok = census_disposition(
+            DomainEvidence::ProvenEmpty("payload cgroup /x is absent".into()),
+            true,
+            "I looked",
+            CTX,
+        )
+        .unwrap();
+        assert!(ok.contains("PROVEN") && !ok.contains("ATTESTED"), "got: {ok}");
+    }
+
+    // A live domain is refused by DEFAULT: no attestation, no discharge.
+    #[test]
+    fn a_populated_domain_is_refused_without_an_explicit_override() {
+        let refusal = census_disposition(
+            DomainEvidence::Populated("payload cgroup /x still holds 2 process(es): 11,22".into()),
+            false,
+            "",
+            CTX,
+        )
+        .expect_err("a populated domain must not discharge on its own");
+        assert!(refusal.contains("NOT empty"), "got: {refusal}");
+        assert!(refusal.contains("11,22"), "must name the occupants, got: {refusal}");
+    }
+
+    // An override IS possible -- refusing outright would create a NEW
+    // undischargeable state, the very thing this work exists to remove -- but it
+    // can never be silent. The disposition must be unmistakably labelled and
+    // must carry the pids the kernel reported, so it can never later be read as
+    // a clean mechanical census.
+    #[test]
+    fn overriding_a_populated_domain_is_allowed_but_loudly_recorded() {
+        let ok = census_disposition(
+            DomainEvidence::Populated("payload cgroup /x still holds 2 process(es): 11,22".into()),
+            true,
+            "operator checked: strays are unrelated",
+            CTX,
+        )
+        .expect("an explicit, evidenced override must be possible");
+        assert!(
+            ok.contains("ATTESTED OVER A POPULATED CGROUP"),
+            "an override must be labelled as one, got: {ok}"
+        );
+        assert!(ok.contains("11,22"), "must carry the occupants, got: {ok}");
+        assert!(!ok.contains("PROVEN"), "must never read as mechanical: {ok}");
+    }
+
+    // ...and an anonymous override is still refused.
+    #[test]
+    fn an_anonymous_override_of_a_populated_domain_is_refused() {
+        assert!(census_disposition(
+            DomainEvidence::Populated("/x holds 1".into()),
+            true,
+            "  ",
+            CTX,
+        )
+        .unwrap_err()
+        .contains("not auditable"));
+    }
+
+    // Unprovable and unattested: refused, and the refusal must name BOTH why it
+    // could not be proven and the exact remedy.
+    #[test]
+    fn an_unprovable_domain_without_attestation_is_refused_with_the_remedy() {
+        let refusal = census_disposition(
+            DomainEvidence::Unproven("no cgroup anchor".into()),
+            false,
+            "",
+            CTX,
+        )
+        .unwrap_err();
+        assert!(refusal.contains("no cgroup anchor"), "got: {refusal}");
+        assert!(refusal.contains("--attest-domain-empty"), "got: {refusal}");
+        assert!(refusal.contains(CTX), "must state what DID pass, got: {refusal}");
+    }
+
+    // The attestation must stay auditable; an anonymous one is still refused.
+    #[test]
+    fn an_anonymous_attestation_is_still_refused() {
+        let refusal = census_disposition(
+            DomainEvidence::Unproven("no cgroup anchor".into()),
+            true,
+            "   ",
+            CTX,
+        )
+        .unwrap_err();
+        assert!(refusal.contains("not auditable"), "got: {refusal}");
+    }
+
+    // LEGACY PATH INTACT: unprovable + attested + real evidence still
+    // discharges, exactly as before this change, and is labelled ATTESTED.
+    #[test]
+    fn an_attested_unprovable_domain_still_discharges_as_before() {
+        let ok = census_disposition(
+            DomainEvidence::Unproven("no cgroup anchor".into()),
+            true,
+            "unit gone; safe-ci.slice 0 procs",
+            CTX,
+        )
+        .unwrap();
+        assert!(ok.contains("ATTESTED"), "got: {ok}");
+        assert!(ok.contains("safe-ci.slice 0 procs"), "evidence must be echoed: {ok}");
+        assert!(!ok.contains("PROVEN:"), "must not claim mechanical proof: {ok}");
+    }
+
+    // LEGACY FALLBACK PRESERVED: a record written before cgroup anchoring has
+    // no anchor, so the domain is Unproven and the operator attestation stays
+    // the only route. This is the compatibility guarantee of the version bump.
+    #[test]
+    fn a_record_without_a_cgroup_anchor_is_unprovable_and_keeps_attestation() {
+        match census_recorded_domain(None) {
+            DomainEvidence::Unproven(why) => assert!(
+                why.contains("no cgroup anchor"),
+                "the reason must name the missing anchor, got: {why}"
+            ),
+            other => panic!("an anchorless record must be Unproven, got {other:?}"),
+        }
+    }
+
+    // NEGATIVE CONTROL, and the safety property that matters most: pointed at a
+    // domain that really does hold a live process -- this one -- the census must
+    // report Populated. `census_orphaned_domain` refuses that unconditionally,
+    // so --attest-domain-empty cannot bury a live domain.
+    #[test]
+    fn a_live_domain_is_reported_populated_and_never_provable_empty() {
+        let Some(mine) = crate::landing_lock::process_cgroup(std::process::id()) else {
+            eprintln!("skipping: no cgroup-v2 entry for self on this host");
+            return;
+        };
+        match census_recorded_domain(Some(&mine)) {
+            DomainEvidence::Populated(detail) => assert!(
+                detail.contains(&std::process::id().to_string()),
+                "must name the live pid, got: {detail}"
+            ),
+            other => panic!("a live domain must be Populated, got {other:?}"),
+        }
+    }
+
+    // POSITIVE: an absent payload cgroup whose derived safe-ci.slice is also
+    // absent is PROVEN empty with no attestation at all. This is the case that
+    // was unrepresentable before -- during the 2026-08-06 wedge the domain was
+    // provably empty and the tool still could not say so.
+    #[test]
+    fn an_absent_domain_is_proven_empty_with_no_attestation() {
+        let absent = "/user.slice/user-999999.slice/user@999999.service/ci-hub-absent.scope";
+        match census_recorded_domain(Some(absent)) {
+            DomainEvidence::ProvenEmpty(detail) => {
+                assert!(detail.contains("payload cgroup"), "got: {detail}");
+                // Both domains must be named: proving only the payload cgroup
+                // while silently skipping the migration target is exactly the
+                // hole this check exists to close.
+                assert!(
+                    detail.contains("migration target"),
+                    "the proof must cover safe-ci.slice too, got: {detail}"
+                );
+            }
+            other => panic!("an absent domain must be ProvenEmpty, got {other:?}"),
+        }
+    }
+
+    // A payload path that is not user-manager shaped cannot yield safe-ci.slice.
+    // That must degrade to Unproven -- NOT to ProvenEmpty, which would be
+    // "proof" that skipped a whole domain.
+    #[test]
+    fn an_underivable_migration_target_is_unproven_not_empty() {
+        match census_recorded_domain(Some("/system.slice/ci-hub-absent.scope")) {
+            DomainEvidence::Unproven(why) => assert!(
+                why.contains("safe-ci.slice"),
+                "the reason must name the uncensused domain, got: {why}"
+            ),
+            other => panic!("an underivable migration target must be Unproven, got {other:?}"),
+        }
     }
 
     // The async-signal-safe recorder in isolation: the FIRST signal latches and
