@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""Send a message to the Orc Hermit coordinator TUI."""
+"""Send a message to the Orc Hermit coordinator TUI.
+
+Delivery is acknowledged, not assumed. ``tmux send-keys`` and ``paste-buffer``
+exit 0 for any live pane whether or not the application consumed the keystrokes,
+so their exit status is a proxy for delivery, not delivery. This script instead
+observes the composer transition it caused:
+
+    empty  --(inject)-->  non-empty  --(Enter)-->  empty
+
+and, when the submitted text can be found again above the composer, the `[user]`
+transcript echo that only appears once Orc has accepted the message. Exit status
+is 0 only when that transition was observed; every other outcome logs
+``status="failed"`` and exits nonzero.
+
+Composer recognition is structural (the region between the two horizontal rules
+at the bottom of the pane) rather than textual. Every text probe tried before
+has been invalidated by an Orc build: the border title flipped twice, and the
+post-1.0 TUI dropped both the ``orc (hermit)`` header and the
+``Type / for commands`` placeholder that readiness used to key on, which
+silently failed 12 consecutive relays over six hours.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +60,26 @@ ORC_LS_RETRY_SLEEP = 2.0
 # a prior message is still rendering; retry instead of dropping the tick.
 COMPOSER_ATTEMPTS = 6
 COMPOSER_RETRY_SLEEP = 2.0
+# The TUI repaints asynchronously: `tmux paste-buffer` returns as soon as the
+# bytes are in the pane, and under fleet load the composer took several seconds
+# to render them. Capturing once immediately after injecting therefore reads the
+# PRE-paste screen and reports a false non-delivery, so both post-write checks
+# poll instead of sampling once.
+INJECT_ATTEMPTS = 20
+INJECT_RETRY_SLEEP = 0.5
+DRAIN_ATTEMPTS = 20
+DRAIN_RETRY_SLEEP = 0.5
+# How much scrollback to search for the submitted message echoed as a `[user]`
+# transcript block. A long message can scroll its own opening off the visible
+# screen, so the echo check must look above it.
+TRANSCRIPT_SCROLLBACK_LINES = 200
+# Longest slice of the message used to recognise it on screen. It must be long
+# enough to tell THIS relay from the previous one: the hourly reminder sends a
+# byte-identical file every tick, and the only thing distinguishing two of them
+# is the Eastern-time stamp prefix_eastern_time() embeds ~50 characters in. A
+# shorter probe would match the last hour's copy still on screen and report a
+# corroborated delivery for a message that never arrived.
+PROBE_LENGTH = 120
 HTML_COMMENT_OPEN = "<!--"
 HTML_COMMENT_CLOSE = "-->"
 EASTERN_TIME_ZONE = ZoneInfo("America/New_York")
@@ -48,6 +88,28 @@ ACTIVE_SESSION_HEADER_RE = re.compile(
     r"^Active sessions on this socket \((?P<count>\d+)\):$"
 )
 ACTIVE_SESSION_ENTRY_RE = re.compile(r"^  (?P<name>orc-\S+)\s*$")
+# The composer is the region delimited by two horizontal rules at the bottom of
+# the Orc TUI. This structural shape is the ONLY part of the composer that has
+# survived every Orc build so far, which is why readiness keys on it. Text
+# probes did not survive: `orc (hermit)` and the `Type / for commands`
+# placeholder both vanished in the post-1.0 TUI (which shows a `Session:`/`DB:`
+# footer and a bare prompt instead), and the border title had already flipped
+# between builds before that. See the module docstring.
+COMPOSER_RULE_RE = re.compile(r"^-{20,}$")
+# U+203A is the post-1.0 empty-input prompt; '>' covers a plain-ASCII build.
+COMPOSER_PROMPT_CHARS = "›>"
+# `[idle]` / `[streaming]` / ... — the post-1.0 readiness marker, rendered on the
+# key-hint line just above the composer. Recorded as evidence, never used as the
+# delivery test: a state label is a proxy for acceptance, the composer
+# transition is the acceptance itself.
+COMPOSER_STATE_RE = re.compile(
+    r"^\[(?P<state>[a-z][a-z0-9 _-]*)\]\s+Enter:\s*submit\b"
+)
+COMPOSER_STATE_SEARCH_LINES = 3
+# Submitting while a turn is streaming does not drop the message: Orc parks it
+# and renders `[queued] N pending` above the composer. Recorded so a reader can
+# tell "the coordinator has read this" from "the coordinator will read this".
+COMPOSER_QUEUE_RE = re.compile(r"^\[queued\]\s+(?P<pending>\d+)\s+pending\b")
 
 
 class OrcMessageError(RuntimeError):
@@ -59,6 +121,50 @@ class CoordinatorPane:
     session: str
     window: str
     pane_id: str
+
+
+@dataclass(frozen=True)
+class Composer:
+    """The Orc input box as rendered on screen, parsed structurally.
+
+    ``text`` is the draft currently in the box with the prompt glyph removed;
+    ``state`` is the readiness marker (``idle``, ``streaming``, ...) when the
+    build renders one, else None.
+    """
+
+    text: str
+    state: str | None
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.text
+
+
+@dataclass(frozen=True)
+class DeliveryAck:
+    """What was actually observed about a submitted message.
+
+    ``echo`` distinguishes the two strengths of evidence: a drained composer
+    proves Orc consumed the draft, while finding the message again above the
+    composer proves Orc took ownership of it — either rendered as a `[user]`
+    transcript turn or parked in the `[queued]` list. ``pending`` is the queue
+    depth when Orc reported one, so "delivered" never silently means "will be
+    read at some point".
+
+    ``echo`` is POSITIVE-ONLY evidence and is never allowed to gate the exit
+    status. Messages observed arriving on the live pane were logged with
+    ``echo=False`` because the render had not caught up inside the capture
+    window, so treating its absence as non-delivery would invent failures.
+    Absence of echo means "not corroborated", not "not delivered".
+    """
+
+    composer_state: str | None
+    echo: bool
+    pending: int | None
+
+    @property
+    def evidence(self) -> str:
+        return "composer-drained+echo" if self.echo else "composer-drained"
 
 
 @dataclass(frozen=True)
@@ -111,16 +217,31 @@ def run_tmux(
     return result.stdout
 
 
-def resolve_socket(socket: Path) -> Path:
+def resolve_socket(socket: Path, *, allow_fallback: bool = True) -> Path:
     """Return a live tmux socket, tolerating a relocated orc-tmux dir.
 
     The default path is deterministic from the UID, but if orc restarts into a
-    differently-named socket the hourly tick must still find it. Prefer the
-    requested socket when it exists; otherwise pick the most-recently-modified
-    socket under the orc-tmux runtime dir.
+    differently-named socket the hourly tick must still find it, so a missing
+    DEFAULT socket falls back to the most-recently-modified one under the
+    orc-tmux runtime dir.
+
+    An EXPLICIT ``--socket`` never falls back. Searching for a substitute is
+    only ever right for "wherever orc happens to be listening"; applied to a
+    socket the caller named, it silently retargets the message to a different
+    server. That is not hypothetical: a test aimed at a deliberately
+    nonexistent socket path was rewritten to the live coordinator and delivered
+    a self-test message to the owner. A named destination that is absent is a
+    refusal, not an invitation to pick another one.
     """
     if socket.exists():
         return socket
+    if not allow_fallback:
+        raise OrcMessageError(
+            f"tmux socket does not exist: {socket}. Refusing to look for another "
+            "socket because --socket named this one explicitly; a message must go "
+            "to the server the caller asked for or to none at all. Omit --socket "
+            "to use the default and allow discovery of a relocated orc socket"
+        )
     orc_tmux_dir = DEFAULT_RUNTIME_DIR / "orc-tmux"
     candidates = [
         path
@@ -408,30 +529,253 @@ def find_coordinator_pane(
     )
 
 
-def verify_empty_orc_composer(socket: Path, pane_id: str) -> None:
-    # The composer is empty and ready when it shows the orc header and the
-    # empty-input placeholder. Older Orc builds also rendered an
-    # "Input (Enter, ...)" border title, but the current build shows
-    # "Paste not available here" there instead (it does not enable terminal
-    # bracketed paste); delivery is by typed keys, not paste, so that title is
-    # no longer a readiness signal. The "Type / for commands" placeholder only
-    # appears while the input box is empty, which is the invariant we need.
-    required_text = ("orc (hermit)", "Type / for commands")
-    missing: list[str] = []
+def squash(text: str) -> str:
+    """Drop all whitespace so a probe survives the pane's own line wrapping.
+
+    tmux wraps at the pane width with no continuation marker and can split
+    mid-word, so neither a raw substring test nor whitespace-collapsing is
+    reliable. Removing whitespace entirely from both sides matches either way.
+    """
+    return re.sub(r"\s+", "", text)
+
+
+def message_probe(message: str) -> str:
+    """A short distinctive slice of the message, used to recognise it on screen."""
+    return squash(message)[:PROBE_LENGTH]
+
+
+def parse_composer(screen: str) -> Composer | None:
+    """Parse the input box out of a captured pane, or None if it is not there.
+
+    The composer is the region between the last two horizontal rules; the Orc
+    footer (``Session:``/``Agents:``/``DB:``) sits below the closing rule and
+    contains no rules of its own. Returning None means "this pane does not look
+    like an Orc composer at all", which is a different operator action from
+    "the composer is busy", so the two must not collapse into one result.
+    """
+    lines = [line.rstrip() for line in screen.splitlines()]
+    rules = [
+        index for index, line in enumerate(lines) if COMPOSER_RULE_RE.match(line.strip())
+    ]
+    if len(rules) < 2:
+        return None
+    open_index, close_index = rules[-2], rules[-1]
+
+    body: list[str] = []
+    for line in lines[open_index + 1 : close_index]:
+        body.append(line.lstrip().lstrip(COMPOSER_PROMPT_CHARS).strip())
+
+    state: str | None = None
+    for line in reversed(lines[max(0, open_index - COMPOSER_STATE_SEARCH_LINES) : open_index]):
+        match = COMPOSER_STATE_RE.match(line.strip())
+        if match is not None:
+            state = match.group("state")
+            break
+
+    return Composer(text="\n".join(body).strip(), state=state)
+
+
+def parse_pending(screen: str) -> int | None:
+    """Depth of Orc's pending-message queue, when it renders one."""
+    for line in reversed(screen.splitlines()):
+        match = COMPOSER_QUEUE_RE.match(line.strip())
+        if match is not None:
+            return int(match.group("pending"))
+    return None
+
+
+def capture_pane(socket: Path, pane_id: str, *, scrollback: int = 0) -> str:
+    args = ["capture-pane", "-p"]
+    if scrollback:
+        args += ["-S", f"-{scrollback}"]
+    return run_tmux(socket, *args, "-t", pane_id)
+
+
+def _pane_tail(screen: str, lines: int = 12) -> str:
+    return " / ".join(line.strip() for line in screen.splitlines()[-lines:] if line.strip())
+
+
+def wait_for_ready_composer(socket: Path, pane_id: str) -> Composer:
+    """Block until the composer is present and empty.
+
+    Emptiness is the load-bearing precondition: it is what makes it safe to
+    type, because injecting into an occupied box would corrupt somebody else's
+    draft and submit the concatenation. Readiness deliberately does NOT require
+    the `[idle]` marker — requiring an idle coordinator is what silently dropped
+    17 relays in one day on a busy fleet, and the composer accepts input while a
+    turn is streaming. The observed state travels with the result instead.
+    """
+    screen = ""
+    composer: Composer | None = None
     for attempt in range(COMPOSER_ATTEMPTS):
-        screen = run_tmux(socket, "capture-pane", "-p", "-t", pane_id)
-        missing = [text for text in required_text if text not in screen]
-        if not missing:
-            return
-        # The composer is transiently busy (coordinator typing, prior message
-        # still rendering); wait and re-check rather than dropping the tick.
+        screen = capture_pane(socket, pane_id)
+        composer = parse_composer(screen)
+        if composer is not None and composer.is_empty:
+            return composer
         if attempt + 1 < COMPOSER_ATTEMPTS:
             time.sleep(COMPOSER_RETRY_SLEEP)
+
+    if composer is None:
+        raise OrcMessageError(
+            f"pane {pane_id} does not render an Orc composer: found no input box "
+            f"between horizontal rules after {COMPOSER_ATTEMPTS} attempts. This is "
+            "not a busy coordinator — the pane layout is unrecognised, so nothing "
+            f"was typed. Pane tail: {_pane_tail(screen)}"
+        )
     raise OrcMessageError(
-        "coordinator pane did not show the expected empty Orc input box after "
-        f"{COMPOSER_ATTEMPTS} attempts; missing "
-        f"{', '.join(repr(text) for text in missing)}"
+        f"Orc composer on {pane_id} still holds an unsent draft after "
+        f"{COMPOSER_ATTEMPTS} attempts (state={composer.state or 'unknown'}); "
+        "refusing to type into it and concatenate with somebody else's message. "
+        f"Draft: {composer.text[:200]!r}"
     )
+
+
+def inject_message(socket: Path, pane_id: str, message: str) -> None:
+    """Type the message into the Orc composer WITHOUT submitting it.
+
+    The Orc TUI composer does not enable terminal bracketed-paste mode, so
+    ``tmux paste-buffer -p`` is silently dropped and never reaches the input box
+    — the send appears to succeed while nothing arrives. Deliver by injecting
+    the text as typed input instead: paste each line UNBRACKETED via a tmux
+    buffer (safe for arbitrary content, including lines that start with '-',
+    which ``send-keys -l`` misparses as flags), and separate lines with Ctrl+J,
+    which the composer inserts as a newline (Enter submits).
+    """
+    token = secrets.token_hex(4)
+    for index, line in enumerate(message.split("\n")):
+        if index > 0:
+            # Ctrl+J inserts a newline in the composer without submitting.
+            run_tmux(socket, "send-keys", "-t", pane_id, "C-j")
+        if not line:
+            continue
+        buffer_name = f"orc-hermit-msg-{os.getpid()}-{token}-{index}"
+        run_tmux(socket, "load-buffer", "-b", buffer_name, "-", input_text=line)
+        try:
+            # No -p: an unbracketed paste is injected as if typed. -d removes
+            # the buffer afterwards.
+            run_tmux(
+                socket,
+                "paste-buffer",
+                "-d",
+                "-b",
+                buffer_name,
+                "-t",
+                pane_id,
+            )
+        except OrcMessageError:
+            with contextlib.suppress(OrcMessageError):
+                run_tmux(socket, "delete-buffer", "-b", buffer_name)
+            raise
+
+
+def clear_composer(socket: Path, pane_id: str) -> bool:
+    """Best-effort: wipe a draft we injected but are not going to submit.
+
+    Only ever called on a composer this process found EMPTY beforehand, so
+    whatever is in it now is ours to remove. Without this a refused relay wedges
+    every later one, because the next run correctly refuses to type into an
+    occupied box.
+
+    Ctrl+U (kill-line), verified against the live coordinator, not Escape: the
+    key hints bind Esc to "cancel", which aborts the coordinator's in-flight
+    turn — a far worse side effect than a leftover draft.
+    """
+    with contextlib.suppress(OrcMessageError):
+        run_tmux(socket, "send-keys", "-t", pane_id, "C-u")
+        time.sleep(INJECT_RETRY_SLEEP)
+        composer = parse_composer(capture_pane(socket, pane_id))
+        return composer is not None and composer.is_empty
+    return False
+
+
+def verify_injected(socket: Path, pane_id: str, probe: str) -> None:
+    """Confirm the keystrokes reached the input box, before pressing Enter.
+
+    This is the check that turns a blind rc=0 into a real result: every tmux
+    call above exits 0 for a pane that ignored the input entirely, so without it
+    a total non-delivery is indistinguishable from a successful one.
+
+    Either signal is sufficient, because each independently shows the box took
+    the text: the composer is no longer empty, or the message is visible on
+    screen. Both are needed as alternatives because a draft long enough to
+    scroll the box can hide the message's opening, while a draft containing a
+    horizontal rule of its own can confuse the structural parse.
+    """
+    screen = ""
+    for attempt in range(INJECT_ATTEMPTS):
+        screen = capture_pane(socket, pane_id)
+        composer = parse_composer(screen)
+        if (composer is not None and not composer.is_empty) or probe in squash(screen):
+            return
+        if attempt + 1 < INJECT_ATTEMPTS:
+            time.sleep(INJECT_RETRY_SLEEP)
+
+    cleared = clear_composer(socket, pane_id)
+    raise OrcMessageError(
+        f"the message did not reach the Orc composer on {pane_id} within "
+        f"{INJECT_ATTEMPTS * INJECT_RETRY_SLEEP:.0f}s: the input box is still empty "
+        "after typing it, so tmux accepted the keystrokes but the TUI did not. NOT "
+        "submitting — nothing was delivered and no Enter was sent. "
+        + (
+            "Composer cleared for the next relay."
+            if cleared
+            else "WARNING: could not clear the composer; a partial draft may remain "
+            "and will block the next relay until removed."
+        )
+        + f" Pane tail: {_pane_tail(screen)}"
+    )
+
+
+def submit_and_acknowledge(
+    socket: Path, pane_id: str, probe: str, state: str | None
+) -> DeliveryAck:
+    """Press Enter once, then confirm Orc consumed the draft.
+
+    Enter is sent exactly once and never retried: a resend after an ambiguous
+    outcome is how a relay delivers twice. If the composer does not drain we
+    report failure and leave the draft in place rather than guessing.
+    """
+    run_tmux(socket, "send-keys", "-t", pane_id, "Enter")
+
+    screen = ""
+    composer: Composer | None = None
+    for attempt in range(DRAIN_ATTEMPTS):
+        screen = capture_pane(socket, pane_id)
+        composer = parse_composer(screen)
+        if composer is not None and composer.is_empty:
+            # The composer is empty, so any remaining match is the message
+            # rendered back by Orc — as a `[user]` transcript turn if it was
+            # taken up immediately, or as a `[queued]` entry if a turn was still
+            # streaming. Either way Orc owns it now, which is the thing a
+            # cleared input box alone does not prove.
+            transcript = capture_pane(
+                socket, pane_id, scrollback=TRANSCRIPT_SCROLLBACK_LINES
+            )
+            return DeliveryAck(
+                composer_state=state,
+                echo=probe in squash(transcript),
+                pending=parse_pending(screen),
+            )
+        if attempt + 1 < DRAIN_ATTEMPTS:
+            time.sleep(DRAIN_RETRY_SLEEP)
+
+    remaining = "composer no longer parses" if composer is None else repr(composer.text[:200])
+    raise OrcMessageError(
+        f"Enter was sent to {pane_id} but the Orc composer did not drain within "
+        f"{DRAIN_ATTEMPTS * DRAIN_RETRY_SLEEP:.0f}s, so the message was NOT "
+        f"accepted and is left in the input box ({remaining}). Not resending: a "
+        "retry here is how a relay delivers twice. Clear the composer before the "
+        f"next relay. Pane tail: {_pane_tail(screen)}"
+    )
+
+
+def send_message(socket: Path, pane_id: str, message: str) -> DeliveryAck:
+    """Deliver the message and return what was observed about its acceptance."""
+    composer = wait_for_ready_composer(socket, pane_id)
+    probe = message_probe(message)
+    inject_message(socket, pane_id, message)
+    verify_injected(socket, pane_id, probe)
+    return submit_and_acknowledge(socket, pane_id, probe, composer.state)
 
 
 def validate_message(message: str) -> None:
@@ -502,12 +846,24 @@ def log_delivery(
     message: str | None,
     message_file: Path | None,
     error: str | None = None,
+    ack: DeliveryAck | None = None,
 ) -> None:
+    # A bare "sent" does not say what was verified, and this log is the only
+    # durable record of a relay. Every `sent` therefore carries the evidence it
+    # rests on and the composer state it was submitted from; every `failed`
+    # carries the stage that refused, so a reader can tell "nothing was typed"
+    # from "typed but never accepted" without re-deriving it from the message.
     record: dict[str, object] = {
         "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
         "status": status,
         "target": f"{session}:{window}",
     }
+    if ack is not None:
+        record["ack"] = ack.evidence
+        record["echo"] = ack.echo
+        record["composer_state"] = ack.composer_state or "unknown"
+        if ack.pending is not None:
+            record["pending"] = ack.pending
     if pane_id is not None:
         record["pane"] = pane_id
     if message_file is not None:
@@ -525,46 +881,6 @@ def log_delivery(
         log_file.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         log_file.flush()
         os.fsync(log_file.fileno())
-
-
-def send_message(socket: Path, pane_id: str, message: str) -> None:
-    """Type the message into the Orc composer and submit it.
-
-    The Orc TUI composer does not enable terminal bracketed-paste mode (its
-    border reads "Paste not available here"), so ``tmux paste-buffer -p`` is
-    silently dropped and never reaches the input box — the send appears to
-    succeed while nothing arrives. Deliver by injecting the text as typed input
-    instead: paste each line UNBRACKETED via a tmux buffer (safe for arbitrary
-    content, including lines that start with '-', which ``send-keys -l``
-    misparses as flags), separate lines with Ctrl+J which the composer inserts
-    as a newline (Enter submits), and submit once at the end with Enter.
-    """
-    token = secrets.token_hex(4)
-    for index, line in enumerate(message.split("\n")):
-        if index > 0:
-            # Ctrl+J inserts a newline in the composer without submitting.
-            run_tmux(socket, "send-keys", "-t", pane_id, "C-j")
-        if not line:
-            continue
-        buffer_name = f"orc-hermit-msg-{os.getpid()}-{token}-{index}"
-        run_tmux(socket, "load-buffer", "-b", buffer_name, "-", input_text=line)
-        try:
-            # No -p: an unbracketed paste is injected as if typed. -d removes
-            # the buffer afterwards.
-            run_tmux(
-                socket,
-                "paste-buffer",
-                "-d",
-                "-b",
-                buffer_name,
-                "-t",
-                pane_id,
-            )
-        except OrcMessageError:
-            with contextlib.suppress(OrcMessageError):
-                run_tmux(socket, "delete-buffer", "-b", buffer_name)
-            raise
-    run_tmux(socket, "send-keys", "-t", pane_id, "Enter")
 
 
 def locked(lock_path: Path) -> TextIO:
@@ -585,8 +901,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--socket",
         type=Path,
-        default=DEFAULT_SOCKET,
-        help=f"tmux server socket (default: {DEFAULT_SOCKET})",
+        default=None,
+        help=f"tmux server socket (default: {DEFAULT_SOCKET}). When given "
+        "explicitly it is used verbatim: a missing socket is an error rather "
+        "than a cue to search for another server to deliver to",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve the coordinator and check the composer is ready, then "
+        "stop. Nothing is typed and no Enter is sent, so detection can be "
+        "validated without delivering anything",
     )
     parser.add_argument(
         "--orc-command",
@@ -621,7 +946,7 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.message_file is not None and args.message is not None:
         parser.error("message and --message-file are mutually exclusive")
-    if args.message_file is None and args.message is None:
+    if args.message_file is None and args.message is None and not args.dry_run:
         parser.error("provide a message or use --message-file")
     return args
 
@@ -638,8 +963,12 @@ def main() -> int:
             message = prefix_eastern_time(load_message_file(args.message_file))
         else:
             message = args.message
-        validate_message(message)
-        socket = resolve_socket(args.socket)
+        if message is not None:
+            validate_message(message)
+        socket = resolve_socket(
+            args.socket if args.socket is not None else DEFAULT_SOCKET,
+            allow_fallback=args.socket is None,
+        )
         lock_path = socket.parent / f".{args.orc_db}-msg.lock"
         with locked(lock_path):
             try:
@@ -663,8 +992,30 @@ def main() -> int:
             session = coordinator.session
             window = coordinator.window
             pane_id = coordinator.pane_id
-            verify_empty_orc_composer(socket, pane_id)
-            send_message(socket, pane_id, message)
+            if args.dry_run:
+                # Detection only. Nothing is typed and no Enter is sent, so a
+                # readiness regression can be caught without putting a single
+                # character in front of a human.
+                composer = wait_for_ready_composer(socket, pane_id)
+                log_delivery(
+                    args.log_file,
+                    "dry-run",
+                    session=session,
+                    window=window,
+                    pane_id=pane_id,
+                    message=None,
+                    message_file=None,
+                )
+                print(
+                    f"orc-hermit-msg: dry-run OK: {session}:{window} ({pane_id}) "
+                    f"composer ready [state={composer.state or 'unknown'}]; "
+                    "nothing was typed or sent"
+                )
+                return 0
+            # send_message returns only if the composer was observed to take the
+            # message and then drain. Anything else raises, so there is no path
+            # that logs "sent" or exits 0 on a message that was not accepted.
+            ack = send_message(socket, pane_id, message)
             submitted = True
             log_delivery(
                 args.log_file,
@@ -674,6 +1025,7 @@ def main() -> int:
                 pane_id=pane_id,
                 message=message,
                 message_file=args.message_file,
+                ack=ack,
             )
     except (OrcMessageError, OSError) as exc:
         if not submitted:
@@ -690,7 +1042,10 @@ def main() -> int:
                 )
         fail(str(exc))
 
-    print(f"orc-hermit-msg: sent to {session}:{window} ({pane_id})")
+    print(
+        f"orc-hermit-msg: sent to {session}:{window} ({pane_id}) "
+        f"[ack={ack.evidence} composer_state={ack.composer_state or 'unknown'}]"
+    )
     return 0
 
 

@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""End-to-end relay tests against an INERT fake Orc pane.
+
+These drive the real `scripts/orc-hermit-msg.py` through a real tmux server, a
+real pane, and a real terminal application that really consumes the keystrokes —
+but the application is `fake_orc_pane.py`, which can reach nobody. The unit
+tests in `test_orc_hermit_msg.py` stub `run_tmux` and so cannot catch a mistake
+in the tmux invocations themselves; these can, without the cost that discovered
+the need for them (a self-test message delivered to the owner from the live
+coordinator pane).
+
+SAFETY INVARIANTS, asserted rather than assumed:
+
+* every tmux server used here lives on a private socket inside a temp dir, so
+  the orc runtime socket cannot be reached even by accident;
+* `--socket` is always passed explicitly, which after this change disables the
+  "find some other socket" fallback that caused that delivery;
+* `test_the_default_socket_is_never_touched` proves the default path is not
+  consulted at all.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+RELAY = HERE.parent / "orc-hermit-msg.py"
+FAKE_PANE = HERE / "fake_orc_pane.py"
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location("orc_hermit_msg_inert", RELAY)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["orc_hermit_msg_inert"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ohm = _load_module()
+
+
+@unittest.skipIf(shutil.which("tmux") is None, "tmux is not installed")
+class InertPaneTestCase(unittest.TestCase):
+    """One private tmux server per test, torn down unconditionally."""
+
+    DB = "faketest"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="orc-msg-inert-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.socket = self.tmp / "tmux.sock"
+        self.record = self.tmp / "delivered.jsonl"
+        self.log = self.tmp / "relay.log"
+
+        # tmux reports `pane_current_command` from the exec'd file's basename,
+        # so running the interpreter through a symlink named `orc` is what makes
+        # this pane discoverable by a relay that (correctly) only talks to a
+        # pane running `orc`.
+        self.orc_shim = self.tmp / "orc"
+        self.orc_shim.symlink_to(sys.executable)
+
+    def start_pane(self, *extra: str) -> None:
+        command = " ".join(
+            [
+                str(self.orc_shim),
+                str(FAKE_PANE),
+                "--db",
+                self.DB,
+                "--record",
+                str(self.record),
+                *extra,
+            ]
+        )
+        subprocess.run(
+            [
+                "tmux", "-S", str(self.socket), "new-session", "-d",
+                "-s", f"orc-{self.DB}", "-n", "orc",
+                "-x", "200", "-y", "50", command,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        self.addCleanup(
+            subprocess.run,
+            ["tmux", "-S", str(self.socket), "kill-server"],
+            capture_output=True,
+        )
+        self.wait_for_pane()
+
+    def wait_for_pane(self) -> None:
+        for _ in range(100):
+            result = subprocess.run(
+                ["tmux", "-S", str(self.socket), "capture-pane", "-p", "-t", "%0"],
+                capture_output=True,
+                text=True,
+            )
+            if ohm.parse_composer(result.stdout) is not None:
+                return
+            time.sleep(0.1)
+        self.fail("fake Orc pane never rendered a composer")
+
+    def relay(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                sys.executable, str(RELAY),
+                "--socket", str(self.socket),
+                "--orc-db", self.DB,
+                # There is no orc CLI here; discovery falls back to scanning the
+                # socket, which is the path the live fleet uses under load.
+                "--orc-command", str(self.tmp / "no-such-orc"),
+                "--log-file", str(self.log),
+                *args,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def delivered(self) -> list[str]:
+        if not self.record.exists():
+            return []
+        return [
+            json.loads(line)["message"]
+            for line in self.record.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    def log_records(self) -> list[dict]:
+        if not self.log.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in self.log.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+
+class TestInertDeliveryPositiveBracket(InertPaneTestCase):
+    def test_a_message_is_delivered_once_and_reported_sent(self):
+        self.start_pane()
+        result = self.relay("hello inert coordinator")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.delivered(), ["hello inert coordinator"])
+        records = self.log_records()
+        self.assertEqual([record["status"] for record in records], ["sent"])
+        self.assertTrue(records[0]["echo"])
+
+    def test_a_multiline_message_survives_the_wire(self):
+        self.start_pane()
+        result = self.relay("first line\nsecond line")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.delivered(), ["first line\nsecond line"])
+
+    def test_a_message_beginning_with_a_dash_is_not_read_as_a_flag(self):
+        # `send-keys -l` misparses these; the buffer-paste path must not.
+        self.start_pane()
+        result = self.relay("--not-a-flag but a message")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.delivered(), ["--not-a-flag but a message"])
+
+    def test_a_submission_queued_mid_turn_is_still_a_delivery(self):
+        self.start_pane("--state", "streaming", "--queue-submissions")
+        result = self.relay("queued while streaming")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.delivered(), ["queued while streaming"])
+        self.assertEqual(self.log_records()[0]["pending"], 1)
+
+
+class TestInertDeliveryNegativeBracket(InertPaneTestCase):
+    def test_a_pane_that_consumes_nothing_fails_and_delivers_nothing(self):
+        # Every tmux call still succeeds here; only the application ignores the
+        # input. This is the exact shape that used to exit 0 and log "sent".
+        self.start_pane("--ignore-input")
+        result = self.relay("this must not be reported as sent")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.delivered(), [])
+        self.assertEqual(
+            [record["status"] for record in self.log_records()], ["failed"]
+        )
+
+    def test_an_occupied_composer_is_refused_without_delivering(self):
+        self.start_pane()
+        subprocess.run(
+            ["tmux", "-S", str(self.socket), "send-keys", "-t", "%0",
+             "somebody elses draft"],
+            check=True, capture_output=True,
+        )
+        time.sleep(0.5)
+        result = self.relay("must not be concatenated")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsent draft", result.stderr)
+        self.assertEqual(self.delivered(), [])
+
+    def test_a_dry_run_checks_readiness_and_delivers_nothing(self):
+        self.start_pane()
+        result = self.relay("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("dry-run OK", result.stdout)
+        self.assertEqual(self.delivered(), [])
+        self.assertEqual(
+            [record["status"] for record in self.log_records()], ["dry-run"]
+        )
+
+    def test_no_orc_pane_on_the_socket_fails_without_delivering(self):
+        subprocess.run(
+            ["tmux", "-S", str(self.socket), "new-session", "-d",
+             "-s", f"orc-{self.DB}", "-n", "sh", "sh"],
+            check=True, capture_output=True,
+        )
+        self.addCleanup(
+            subprocess.run,
+            ["tmux", "-S", str(self.socket), "kill-server"],
+            capture_output=True,
+        )
+        result = self.relay("nowhere to go")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.delivered(), [])
+
+
+class TestExplicitSocketNeverRetargets(InertPaneTestCase):
+    """The regression that delivered a self-test message to the owner.
+
+    An explicit --socket that does not exist used to be replaced by the
+    most-recently-modified socket under the orc runtime dir — the live
+    coordinator — and the message was delivered there.
+    """
+
+    def test_a_missing_explicit_socket_is_refused_not_substituted(self):
+        missing = self.tmp / "definitely-absent.sock"
+        result = self.relay_to(missing, "must never be redirected")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Refusing to look for another socket", result.stderr)
+
+    def test_a_missing_explicit_socket_does_not_reach_a_live_pane(self):
+        # A real inert pane exists on self.socket. Aiming at a different,
+        # absent path must NOT fall through to it.
+        self.start_pane()
+        missing = self.tmp / "definitely-absent.sock"
+        result = self.relay_to(missing, "must never be redirected")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.delivered(), [])
+
+    def test_the_default_socket_is_never_touched(self):
+        # Proves these tests cannot reach the orc runtime socket at all.
+        self.start_pane()
+        self.relay("harmless")
+        self.assertFalse(str(ohm.DEFAULT_SOCKET).startswith(str(self.tmp)))
+        for record in self.log_records():
+            self.assertNotIn("orc-tmux", json.dumps(record))
+
+    def test_resolve_socket_still_falls_back_for_the_default(self):
+        # The fallback exists so the hourly tick survives an orc restart into a
+        # renamed socket; narrowing it must not delete it.
+        missing = self.tmp / "absent.sock"
+        with self.assertRaises(ohm.OrcMessageError):
+            ohm.resolve_socket(missing, allow_fallback=False)
+        self.assertEqual(ohm.resolve_socket(self.socket_placeholder()), self.socket_placeholder())
+
+    def socket_placeholder(self) -> Path:
+        path = self.tmp / "present.sock"
+        path.touch()
+        return path
+
+    def relay_to(self, socket: Path, message: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [
+                sys.executable, str(RELAY),
+                "--socket", str(socket),
+                "--orc-db", self.DB,
+                "--orc-command", str(self.tmp / "no-such-orc"),
+                "--log-file", str(self.log),
+                message,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
