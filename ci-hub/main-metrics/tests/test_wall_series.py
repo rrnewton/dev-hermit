@@ -25,6 +25,22 @@ def pt(wall, cpu, conc, commit="c", started="2026-08-07T00:00:00Z"):
                     dag_jobs=None, cache_state=None, peak_memory_kb=None)
 
 
+def ledger_row(commit, finished, *, executed=1):
+    return {
+        "commit": commit,
+        "profile": "full",
+        "result": "pass",
+        "executed_tests": executed,
+        "gates_run": 1,
+        "gates_expected": 1,
+        "finished_at": finished,
+        "started_at": finished,
+        "real_seconds": 10,
+        "user_seconds": 5,
+        "sys_seconds": 5,
+    }
+
+
 # ---------------------------------------------------------------- buckets
 
 def test_bucket_boundaries_follow_the_measured_knee():
@@ -150,11 +166,18 @@ def test_gate_breakdown_ignores_gates_without_a_duration():
 
 # ------------------------------------------------------- loader hygiene
 
-def test_loader_skips_blank_and_malformed_lines(tmp_path):
+def test_loader_qualifies_rows_and_orders_by_finished_at(tmp_path):
     f = tmp_path / "l.jsonl"
-    f.write_text('{"a":1}\n\nnot json\n["a list"]\n{"b":2}\n', encoding="utf-8")
+    late = ledger_row("late", "2026-08-07T02:00:00Z")
+    early = ledger_row("early", "2026-08-07T01:00:00Z")
+    empty = ledger_row("zero-executed", "2026-08-07T00:00:00Z", executed=0)
+    f.write_text(
+        json.dumps(late) + "\n\nnot json\n[\"a list\"]\n"
+        + json.dumps(empty) + "\n" + json.dumps(early) + "\n",
+        encoding="utf-8",
+    )
     rows = ws.load_rows(f)
-    assert rows == [{"a": 1}, {"b": 2}]
+    assert [row["commit"] for row in rows] == ["early", "late"]
 
 
 def test_rows_without_wall_are_dropped_not_zeroed():

@@ -52,7 +52,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
-DEFAULT_LEDGER = "ignored/validate-run-ledger.jsonl"
+VALIDATE_DIR = Path(__file__).resolve().parents[1] / "validate"
+if str(VALIDATE_DIR) not in sys.path:
+    sys.path.insert(0, str(VALIDATE_DIR))
+
+from qualified_rows import DEFAULT_LEDGER  # noqa: E402
+from qualified_rows import load_rows as load_ledger_rows  # noqa: E402
+from qualified_rows import qualified_rows  # noqa: E402
 
 # Concurrency buckets, from the measured knee: the curve is a STEP at ~6, not a
 # slope, so these boundaries are the measurement's own and not round numbers.
@@ -94,19 +100,15 @@ class Point:
 
 
 def load_rows(path: Path) -> list[dict]:
-    rows = []
-    with path.open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(obj, dict):
-                rows.append(obj)
-    return rows
+    """Return the canonical complete, nonempty PASS population."""
+    rows, _malformed = load_ledger_rows(path)
+    return qualified_rows(rows)
+
+
+def load_population(path: Path) -> tuple[list[dict], int, int]:
+    """Return qualified rows plus transparent raw/malformed denominators."""
+    rows, malformed = load_ledger_rows(path)
+    return qualified_rows(rows), len(rows), malformed
 
 
 def main_commits(repo: Path, commits: Iterable[str], ref: str = "origin/main") -> set[str]:
@@ -155,7 +157,9 @@ def to_points(rows: Sequence[dict], keep: set[str] | None) -> list[Point]:
             peak_memory_kb=None,
             gates=[g for g in (r.get("gates") or []) if isinstance(g, dict)],
         ))
-    pts.sort(key=lambda p: p.started_at)
+    # Preserve qualified_rows() event-time order. Sorting by started_at here
+    # would undo its finished_at ordering and recreate the positional defect
+    # the canonical accessor exists to prevent.
     return pts
 
 
@@ -238,8 +242,7 @@ def compare(baseline: Sequence[Point], candidate: Sequence[Point],
 
 def build(ledger: Path, repo: Path, only_main: bool, profile: str | None,
           result: str | None) -> dict:
-    rows = load_rows(ledger)
-    total = len(rows)
+    rows, total, malformed = load_population(ledger)
     sel = rows
     if profile:
         sel = [r for r in sel if r.get("profile") == profile]
@@ -251,6 +254,8 @@ def build(ledger: Path, repo: Path, only_main: bool, profile: str | None,
     pts = to_points(sel, keep)
     rep = {
         "ledger_rows_total": total,
+        "ledger_rows_malformed": malformed,
+        "qualified_rows_total": len(rows),
         "rows_after_profile_result_filter": len(sel),
         "rows_on_main": len(pts) if only_main else None,
         "only_main": only_main,
@@ -265,6 +270,8 @@ def render(rep: dict) -> str:
     s = rep["summary"]
     L = ["validate WALL on main -- standing series (not the per-run 600s gate)"]
     L.append(f"  ledger rows total                 : {rep['ledger_rows_total']}")
+    L.append(f"  malformed rows skipped            : {rep['ledger_rows_malformed']}")
+    L.append(f"  complete nonempty PASS rows       : {rep['qualified_rows_total']}")
     L.append(f"  after profile/result filter       : {rep['rows_after_profile_result_filter']}")
     if rep["only_main"]:
         L.append(f"  ON MAIN (ancestry-checked)        : {rep['rows_on_main']}")

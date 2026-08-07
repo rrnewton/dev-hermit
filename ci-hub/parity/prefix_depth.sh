@@ -133,9 +133,9 @@ esac
 # Identity alone is not staleness. The stamp above says WHICH binary; this says
 # how far behind main it is -- the 23-commits-behind binary that produced three
 # false nondeterminism verdicts on 2026-08-07 had a perfectly precise identity.
-BIN_PROV=$(python3 - "$H" "/home/newton/work/dev-hermit/hermit" 2>/dev/null <<'PROV'
+BIN_PROV=$(python3 - "$H" "$ROOT_DIR/hermit" "$ROOT_DIR/ci-hub" 2>/dev/null <<'PROV'
 import sys
-sys.path.insert(0, "/home/newton/work/dev-hermit/ci-hub")
+sys.path.insert(0, sys.argv[3])
 try:
     from provenance import binary_provenance
 except ImportError:

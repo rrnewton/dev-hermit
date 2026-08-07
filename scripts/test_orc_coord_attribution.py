@@ -131,22 +131,21 @@ class PrLabelTests(unittest.TestCase):
 
 
 class PolicyTextTests(unittest.TestCase):
-    """The wrappers are the enforcement; AGENTS.md must still state the rule."""
+    """The plugin tests follow the canonical, team-agnostic attribution policy."""
 
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = AGENTS_MD.read_text()
 
-    def test_agents_md_states_both_requirements(self) -> None:
-        self.assertIn("Team identity", self.text)
-        self.assertIn(TEAM_TAG, self.text)
-        self.assertIn("`orc-coord`", self.text)
-        self.assertIn("`orc-coord-014`", self.text)
+    def test_agents_md_states_role_and_full_team_requirements(self) -> None:
+        self.assertIn("Role + team tag", self.text)
+        self.assertIn("[<role>, MODEL] [<full-team-name>]", self.text)
+        self.assertIn("team name includes the machine", self.text)
 
-    def test_agents_md_names_the_enforcing_wrappers(self) -> None:
-        # A policy that does not name its enforcement is remembered, not enforced.
-        self.assertIn("gh-coord-comment", self.text)
-        self.assertIn("gh-coord-pr-create", self.text)
+    def test_agents_md_requires_the_tag_on_all_three_surfaces(self) -> None:
+        self.assertIn("Every commit message", self.text)
+        self.assertIn("Every PR description", self.text)
+        self.assertIn("prefix of every GitHub comment", self.text)
 
     def test_wrappers_are_executable(self) -> None:
         for script in (COMMENT, PR_CREATE):

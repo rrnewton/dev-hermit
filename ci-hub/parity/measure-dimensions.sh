@@ -27,10 +27,9 @@ if [ ! -x "$H" ]; then echo "no hermit at $H (set HERMIT=)" >&2; exit 2; fi
 # The binary was internally consistent and gave no signal it was stale -- a
 # surprising result from a stale artifact looks identical to a discovery. So the
 # binary states its own distance from main here, beside the cells it produces.
-python3 - "$H" "$ROOT/hermit" <<'PROV' >&2
+python3 - "$H" "$ROOT/hermit" "$ROOT/ci-hub" <<'PROV' >&2
 import sys
-sys.path.insert(0, "/home/newton/work/dev-hermit/ci-hub")
-sys.path.insert(0, __import__("os").environ.get("CI_HUB_DIR", ""))
+sys.path.insert(0, sys.argv[3])
 try:
     from provenance import binary_provenance
 except ImportError:
