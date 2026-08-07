@@ -1,0 +1,24 @@
+From 204a89ecc01d233763d39fdd4fffb89f922c12ee Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Sat, 1 Aug 2026 20:42:01 -0700
+Subject: [PATCH 6/7] Mark the LiteInst plain-fork dispatch entry
+
+---
+ reverie-liteinst/src/tool_host.rs | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/reverie-liteinst/src/tool_host.rs b/reverie-liteinst/src/tool_host.rs
+index a9a1f50..7b19998 100644
+--- a/reverie-liteinst/src/tool_host.rs
++++ b/reverie-liteinst/src/tool_host.rs
+@@ -552,6 +552,7 @@ impl<T: Tool> GlobalRPC<T::GlobalState> for LiteinstGuest<'_, T> {
+     }
+ }
+ 
++// AUTONOMOUS-BOT-IMPLEMENTED
+ // TODO-HUMAN-REVIEW(PR-326): Review the plain-fork injection boundary.
+ fn is_plain_fork(number: i64, args: [u64; 6]) -> bool {
+     if number == libc::SYS_fork {
+-- 
+2.53.0-Meta
+

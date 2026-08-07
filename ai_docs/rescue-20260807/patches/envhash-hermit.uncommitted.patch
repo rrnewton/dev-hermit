@@ -1,0 +1,23 @@
+diff --git a/hermit-cli/src/bin/hermit/backends.rs b/hermit-cli/src/bin/hermit/backends.rs
+index d24ad1435..23a24172f 100644
+--- a/hermit-cli/src/bin/hermit/backends.rs
++++ b/hermit-cli/src/bin/hermit/backends.rs
+@@ -397,7 +397,17 @@ pub(super) fn run_dbi(
+              remove --no-sequentialize-threads (or --strace-only) to run under --backend dbi",
+         ));
+     }
+-    let config_json = serde_json::to_string(config).map_err(|error| {
++    // The DBI post-exec tool hook fires from the first syscall event (after the
++    // dynamic loader and libc startup have run), so `%rsp` is a deep call frame
++    // rather than the entry-point `argc` pointer; the env-hash initial-stack read
++    // would fault under the in-process `LocalMemory` accessor (a raw SIGSEGV that
++    // never returns a recoverable `Errno`). This CLI dispatch path does not run
++    // `prepare_backend_config`, so enforce the invariant at the DBI boundary
++    // itself: DBI cannot read the initial stack at post-exec, so the env-hash
++    // line is emitted as `unavailable` instead of attempting the read.
++    let mut config = config.clone();
++    config.initial_stack_unavailable_at_post_exec = true;
++    let config_json = serde_json::to_string(&config).map_err(|error| {
+         Error::msg(format!(
+             "failed to serialize the Detcore config for the DBI backend: {error}"
+         ))

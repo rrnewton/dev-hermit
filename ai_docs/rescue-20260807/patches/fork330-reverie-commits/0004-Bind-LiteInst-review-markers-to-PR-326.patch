@@ -1,0 +1,48 @@
+From 9821b65486903a9d4a0dbdf907cc8e67d915553d Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Sat, 1 Aug 2026 20:22:07 -0700
+Subject: [PATCH 4/7] Bind LiteInst review markers to PR 326
+
+---
+ reverie-liteinst/src/rpc.rs       | 2 +-
+ reverie-liteinst/src/tool_host.rs | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/reverie-liteinst/src/rpc.rs b/reverie-liteinst/src/rpc.rs
+index 2f8e851..bcafa42 100644
+--- a/reverie-liteinst/src/rpc.rs
++++ b/reverie-liteinst/src/rpc.rs
+@@ -71,7 +71,7 @@ struct RpcConnection<G: GlobalTool> {
+     client: BlockingRpcClient<G>,
+ }
+ 
+-// TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the common blocking
++// TODO-HUMAN-REVIEW(PR-326): Review the common blocking
+ // transport and fork-child reconnect used by LiteInst's synchronous Tool callback.
+ /// Blocking guest-side RPC handle backed by the common Reverie RPC transport.
+ ///
+diff --git a/reverie-liteinst/src/tool_host.rs b/reverie-liteinst/src/tool_host.rs
+index 6493b93..248fb45 100644
+--- a/reverie-liteinst/src/tool_host.rs
++++ b/reverie-liteinst/src/tool_host.rs
+@@ -500,7 +500,7 @@ impl<T: Tool> GlobalRPC<T::GlobalState> for LiteinstGuest<'_, T> {
+     }
+ }
+ 
+-// TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the plain-fork injection boundary.
++// TODO-HUMAN-REVIEW(PR-326): Review the plain-fork injection boundary.
+ fn is_plain_fork(number: i64, args: [u64; 6]) -> bool {
+     if number == libc::SYS_fork {
+         return true;
+@@ -726,7 +726,7 @@ impl<T: Tool> Guest<T> for LiteinstGuest<'_, T> {
+         std::future::pending().await
+     }
+ 
+-    // TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the coarse
++    // TODO-HUMAN-REVIEW(PR-326): Review the coarse
+     // syscall-boundary clock until the minimal ptrace supervisor wires PMU delivery.
+     fn set_timer(&mut self, _sched: TimerSchedule) -> Result<(), Error> {
+         // Every intercepted syscall remains a deterministic scheduling boundary,
+-- 
+2.53.0-Meta
+

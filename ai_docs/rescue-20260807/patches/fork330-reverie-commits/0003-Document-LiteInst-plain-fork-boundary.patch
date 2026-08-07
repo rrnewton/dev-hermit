@@ -1,0 +1,252 @@
+From b9890defc634bd448de4c9be6f04facf0a774349 Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Sat, 1 Aug 2026 20:20:12 -0700
+Subject: [PATCH 3/7] Document LiteInst plain-fork boundary
+
+Strengthen the coordinator RPC regression to prove a fork child is attributed as a distinct sender. Document the single-threaded process boundary and the lifecycle, timer, and ptrace fallback work that remains.
+---
+ reverie-liteinst/AGENTS.md                 | 11 ++++++----
+ reverie-liteinst/README.md                 | 22 ++++++++++---------
+ reverie-liteinst/src/backend.rs            |  7 ++++++
+ reverie-liteinst/src/bin/rpc_tool_guest.rs | 25 +++++++++++++++++-----
+ reverie-liteinst/src/rpc.rs                |  4 ++++
+ reverie-liteinst/src/tool_host.rs          |  5 ++++-
+ reverie-liteinst/tests/rpc_tool.rs         | 15 ++++++++++---
+ 7 files changed, 66 insertions(+), 23 deletions(-)
+
+diff --git a/reverie-liteinst/AGENTS.md b/reverie-liteinst/AGENTS.md
+index 61e7846..7edcdd7 100644
+--- a/reverie-liteinst/AGENTS.md
++++ b/reverie-liteinst/AGENTS.md
+@@ -89,10 +89,13 @@ The expected regression signature for a repeatedly executed syscall site is
+ ## Supported Boundary
+ 
+ Current support is Linux x86-64, dynamically linked non-`AT_SECURE` guests.
+-Tool mode supports one process/thread. Timer and clock APIs, PMU preemption,
+-guest callable signal handlers, exec bootstrap, and general clone/fork
+-injection are not implemented. CPUID, RDTSC/RDTSCP, RDRAND/RDSEED, and signal
+-death events are not routed as Reverie events.
++Tool mode supports one thread per process and single-threaded plain-fork
++children sharing the coordinator GlobalTool. Thread clone, clone3, vfork, exec
++bootstrap, vDSO interception, unpatchable-site fallback, PMU preemption, and
++guest callable signal handlers are not implemented. Timer arming does not
++deliver events and the RCB clock is fixed at zero. CPUID, RDTSC/RDTSCP,
++RDRAND/RDSEED, descendant signal-death, and root-exits-first lifecycle events
++are not routed as Reverie events.
+ 
+ Do not turn a direct LiteInst smoke test into a Hermit determinism claim.
+ Reverie-only validation is L0 evidence. L1 or L2 requires the landed Hermit CLI
+diff --git a/reverie-liteinst/README.md b/reverie-liteinst/README.md
+index 16e8997..a84c65c 100644
+--- a/reverie-liteinst/README.md
++++ b/reverie-liteinst/README.md
+@@ -84,26 +84,28 @@ with the shared default. The `alt_stack_from_env_value` parser and the
+ ## Current boundaries
+ 
+ - Dynamically linked, non-`AT_SECURE` Linux x86-64 guests only.
+-- One process and one thread are supported by `LiteinstBackend`. The
+-  coordinator can service multiple simultaneous tool connections, but
+-  tool-mode clone/fork/vfork injection is rejected, and process-tree reconnect
+-  and exec rebootstrap are not implemented.
+-- Syscalls are hosted, and intercepted normal exits route thread and process
+-  callbacks on the supported single-process path. Signal deaths, CPUID,
++- One thread per process is supported by `LiteinstBackend`. Plain `fork` creates
++  a fresh child-local `Tool` and reconnects to the shared coordinator; thread
++  clone, `clone3`, and `vfork` fail closed. The launcher waits only for the root
++  child, so outliving descendants and signal-death lifecycle are not complete.
++- Patchable syscalls dispatch the Tool in guest, and intercepted normal exits
++  route thread and process callbacks on the supported single-threaded path.
++  Signal deaths, CPUID,
+   RDTSC/RDTSCP, and RDRAND/RDSEED events are not routed yet.
+ - Tool mode resets callable signal dispositions before activation, rejects
+   later callable handlers, and validates that SIGSYS came from seccomp.
+   `SIG_DFL` and `SIG_IGN` remain supported; guest signal handlers remain
+   unsupported.
+-- Timer arming and clock reads return an unsupported error because no RCB timer
+-  or preemption event is delivered. The single-thread smoke path is not strict
+-  scheduling or an L1/L2 determinism claim.
++- Timer arming currently returns success without delivery and clock reads return
++  zero because no RCB timer or preemption event is delivered. This coarse
++  syscall-boundary behavior is deterministic for the supported single-threaded
++  slice, but it is not PMU preemption or complete scheduling support.
+ - Rust tool futures must make progress synchronously. Coordinator RPC and guest
+   syscall injection do so; a tool future that depends on an unrelated executor
+   can stall.
+ - The five-byte patch window and executable mapping must be supported by
+   `liteinst2`. Dynamic executable mappings without a prepared reachable arena
+-  retain the trap fallback.
++  fail closed; there is no ptrace slow-path supervisor in the in-guest backend.
+ - `execve` cannot safely cross the inherited filter because the handler and DSO
+   mappings disappear. A future exec bootstrap must be controller-owned.
+ - This is in-process instrumentation, not a security sandbox.
+diff --git a/reverie-liteinst/src/backend.rs b/reverie-liteinst/src/backend.rs
+index af8dcc5..1aa0119 100644
+--- a/reverie-liteinst/src/backend.rs
++++ b/reverie-liteinst/src/backend.rs
+@@ -334,6 +334,13 @@ impl LiteinstBackend {
+     }
+ 
+     /// Runs a tool using an explicit tool-specific preload library.
++    ///
++    /// This path dispatches patchable syscalls in the guest and keeps the
++    /// `GlobalTool` in this coordinator. It supports single-threaded plain-fork
++    /// children, which reconnect to the shared coordinator. It does not attach
++    /// a ptrace lifecycle supervisor: thread clone, clone3, vfork, exec, vDSO,
++    /// and unpatchable-site fallback remain unsupported, and completion follows
++    /// only the root child.
+     pub async fn run_with_preload<T>(
+         command: Command,
+         config: <T::GlobalState as GlobalTool>::Config,
+diff --git a/reverie-liteinst/src/bin/rpc_tool_guest.rs b/reverie-liteinst/src/bin/rpc_tool_guest.rs
+index ddb84cc..a6998b6 100644
+--- a/reverie-liteinst/src/bin/rpc_tool_guest.rs
++++ b/reverie-liteinst/src/bin/rpc_tool_guest.rs
+@@ -2,9 +2,11 @@ use core::arch::global_asm;
+ use core::sync::atomic::AtomicI64;
+ use core::sync::atomic::AtomicU64;
+ use core::sync::atomic::Ordering;
++use std::collections::BTreeSet;
+ use std::io::Write;
+ use std::path::Path;
+ use std::sync::Arc;
++use std::sync::Mutex;
+ 
+ use reverie::Error;
+ use reverie::ExitStatus;
+@@ -23,6 +25,7 @@ use reverie_rpc_transport::RpcServer;
+ 
+ const CALLS: u64 = 32;
+ static LAST_TOTAL: AtomicU64 = AtomicU64::new(0);
++static LAST_SENDERS: AtomicU64 = AtomicU64::new(0);
+ static LAST_NESTED_UID: AtomicI64 = AtomicI64::new(-1);
+ static LAST_MASK_RESULT: AtomicI64 = AtomicI64::new(0);
+ static LAST_FIRST_USE_EXEC_RESULT: AtomicI64 = AtomicI64::new(0);
+@@ -31,16 +34,20 @@ static LAST_FIRST_USE_SIGNAL_RESULT: AtomicI64 = AtomicI64::new(0);
+ #[derive(Default)]
+ struct CounterGlobal {
+     calls: AtomicU64,
++    senders: Mutex<BTreeSet<i32>>,
+ }
+ 
+ #[reverie::global_tool]
+ impl GlobalTool for CounterGlobal {
+     type Request = u64;
+-    type Response = u64;
++    type Response = (u64, u64);
+     type Config = ();
+ 
+-    async fn receive_rpc(&self, _from: reverie::Tid, amount: u64) -> u64 {
+-        self.calls.fetch_add(amount, Ordering::Relaxed) + amount
++    async fn receive_rpc(&self, from: reverie::Tid, amount: u64) -> (u64, u64) {
++        let total = self.calls.fetch_add(amount, Ordering::Relaxed) + amount;
++        let mut senders = self.senders.lock().unwrap();
++        senders.insert(from.as_raw());
++        (total, senders.len() as u64)
+     }
+ }
+ 
+@@ -78,8 +85,9 @@ impl Tool for CounterTool {
+             LAST_FIRST_USE_SIGNAL_RESULT.store(signal_result, Ordering::Relaxed);
+         }
+         *guest.thread_state_mut() += 1;
+-        let total = guest.send_rpc(1).await;
++        let (total, senders) = guest.send_rpc(1).await;
+         LAST_TOTAL.store(total, Ordering::Relaxed);
++        LAST_SENDERS.store(senders, Ordering::Relaxed);
+         Ok(guest.inject(syscall).await?)
+     }
+ }
+@@ -441,6 +449,9 @@ fn injected_exit_guest(path: &Path) -> ! {
+ 
+ fn fork_guest(path: &Path) {
+     unsafe { reverie_liteinst::install_tool::<CounterTool>(path) }.unwrap();
++    let parent = unsafe { reverie_liteinst_rpc_getpid() };
++    assert_eq!(parent, i64::from(unsafe { libc::getpid() }));
++    let senders_before_fork = LAST_SENDERS.load(Ordering::Relaxed);
+     let child = unsafe { libc::fork() };
+     assert!(
+         child >= 0,
+@@ -459,7 +470,11 @@ fn fork_guest(path: &Path) {
+     assert_eq!(libc::WEXITSTATUS(status), 0);
+     let observed = unsafe { reverie_liteinst_rpc_getpid() };
+     assert_eq!(observed, i64::from(unsafe { libc::getpid() }));
+-    println!("fork-rpc-total={}", LAST_TOTAL.load(Ordering::Relaxed));
++    let sender_delta = LAST_SENDERS.load(Ordering::Relaxed) - senders_before_fork;
++    println!(
++        "fork-rpc-total={} fork-rpc-sender-delta={sender_delta}",
++        LAST_TOTAL.load(Ordering::Relaxed)
++    );
+ }
+ 
+ fn main() {
+diff --git a/reverie-liteinst/src/rpc.rs b/reverie-liteinst/src/rpc.rs
+index ba96f7c..2f8e851 100644
+--- a/reverie-liteinst/src/rpc.rs
++++ b/reverie-liteinst/src/rpc.rs
+@@ -74,6 +74,10 @@ struct RpcConnection<G: GlobalTool> {
+ // TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the common blocking
+ // transport and fork-child reconnect used by LiteInst's synchronous Tool callback.
+ /// Blocking guest-side RPC handle backed by the common Reverie RPC transport.
++///
++/// The connection is process-local and reconnects after `fork`. Thread-style
++/// clone remains rejected: [`BlockingRpcClient`] stamps its connect-time TID,
++/// and Detcore requires one independently blocking connection per guest thread.
+ pub struct CoordinatorRpc<G: GlobalTool> {
+     connection: SpinMutex<RpcConnection<G>>,
+     config: G::Config,
+diff --git a/reverie-liteinst/src/tool_host.rs b/reverie-liteinst/src/tool_host.rs
+index cbc594e..6493b93 100644
+--- a/reverie-liteinst/src/tool_host.rs
++++ b/reverie-liteinst/src/tool_host.rs
+@@ -160,6 +160,10 @@ where
+         let pid = raw_pid(libc::SYS_getpid);
+         let ppid = (pid != self.root_pid).then(|| raw_pid(libc::SYS_getppid));
+ 
++        // These process-wide locks are valid only while thread creation stays
++        // fail-closed. A scheduler RPC may block until a sibling runs, so MT
++        // support requires per-thread RPC/state ownership before relaxing the
++        // clone guard below.
+         let mut tool_slot = self.tool.lock();
+         let tool = tool_slot.as_ref().unwrap_or_else(|| fatal(126));
+         let mut states = self.states.lock();
+@@ -263,7 +267,6 @@ where
+                 child_tid,
+                 child_pid,
+             } => {
+-                drop(guest);
+                 let parent_state = states
+                     .remove(&parent_tid.as_raw())
+                     .unwrap_or_else(|| fatal(126));
+diff --git a/reverie-liteinst/tests/rpc_tool.rs b/reverie-liteinst/tests/rpc_tool.rs
+index 24dd64e..4bdd401 100644
+--- a/reverie-liteinst/tests/rpc_tool.rs
++++ b/reverie-liteinst/tests/rpc_tool.rs
+@@ -100,13 +100,22 @@ fn installed_hook_reentry_bypasses_tool_with_shared_coordinator_rpc() {
+         .unwrap();
+     assert!(fork_guest.status.success(), "{fork_guest:?}");
+     let fork_stdout = String::from_utf8(fork_guest.stdout).unwrap();
+-    let fork_total: u64 = fork_stdout
+-        .trim()
+-        .strip_prefix("fork-rpc-total=")
++    let mut fields = fork_stdout.split_whitespace();
++    let fork_total: u64 = fields
++        .next()
++        .and_then(|field| field.strip_prefix("fork-rpc-total="))
+         .expect("fork guest must print the shared RPC total")
+         .parse()
+         .unwrap();
++    let sender_delta: u64 = fields
++        .next()
++        .and_then(|field| field.strip_prefix("fork-rpc-sender-delta="))
++        .expect("fork guest must print the shared RPC sender delta")
++        .parse()
++        .unwrap();
++    assert_eq!(fields.next(), None, "{fork_stdout}");
+     assert!(fork_total >= 5, "{fork_stdout}");
++    assert_eq!(sender_delta, 1, "{fork_stdout}");
+ 
+     let guest = Command::new(binary)
+         .arg("guest")
+-- 
+2.53.0-Meta
+

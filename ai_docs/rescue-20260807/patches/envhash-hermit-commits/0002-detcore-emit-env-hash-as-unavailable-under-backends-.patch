@@ -1,0 +1,131 @@
+From dfeacd1512f6f5dd97f421d2e7bb22632e18cb81 Mon Sep 17 00:00:00 2001
+From: coalesce-coordinator <bot@dev-hermit.local>
+Date: Tue, 4 Aug 2026 22:03:05 -0700
+Subject: [PATCH 2/2] detcore: emit env-hash as unavailable under backends
+ without initial-stack access at post-exec
+
+Under --backend dbi the post-exec tool hook fires from the first syscall
+event (after the dynamic loader + libc startup), so %rsp is a deep call
+frame rather than the entry-point argc pointer. hash_guest_env walking
+argv/envp from it faults under the in-process LocalMemory accessor (a raw
+SIGSEGV that never surfaces as a recoverable Errno) -> run_dbi_forwards_
+detcore_info_logs exit 255.
+
+Add Config::initial_stack_unavailable_at_post_exec (default false,
+set = backend==Dbi in prepare_backend_config); when set, detlog_guest_env
+emits '[env, dtid N] unavailable' instead of attempting the read. Confined
+to the detcore env-hash path; no broader DBI memory-read change.
+---
+ detcore-model/src/config.rs        | 14 ++++++++++++++
+ detcore/src/lib.rs                 | 12 ++++++++++++
+ detcore/tests/testutils/src/lib.rs |  3 +++
+ hermit-cli/src/lib.rs              |  4 ++++
+ hermit-cli/src/metadata.rs         |  1 +
+ 5 files changed, 34 insertions(+)
+
+diff --git a/detcore-model/src/config.rs b/detcore-model/src/config.rs
+index 62e046708..ddd3ec840 100644
+--- a/detcore-model/src/config.rs
++++ b/detcore-model/src/config.rs
+@@ -82,6 +82,20 @@ pub struct Config {
+     #[clap(skip)]
+     pub syscall_clobbers_virtualized_by_backend: bool,
+ 
++    /// The execution backend does not present the initial process stack
++    /// (argc/argv/envp) at the post-exec hook, so `hash_guest_env` cannot read
++    /// the guest environment there. Under DBI the post-exec tool hook fires from
++    /// the first syscall event -- after the dynamic loader and libc startup have
++    /// run -- so `%rsp` is a deep call frame rather than the entry-point `argc`
++    /// pointer; walking argv/envp from it would either fault (a raw SIGSEGV under
++    /// the in-process `LocalMemory` accessor, which never returns a recoverable
++    /// `Errno`) or, worse, hash stack garbage into a spurious difference. Set
++    /// per-backend in `prepare_backend_config`; when true the env-hash line is
++    /// emitted as `unavailable` instead of attempting the read.
++    #[serde(default)]
++    #[clap(skip)]
++    pub initial_stack_unavailable_at_post_exec: bool,
++
+     // AUTONOMOUS-BOT-IMPLEMENTED
+     // TODO-HUMAN-REVIEW(PR-845): Review backend-local exit-group RPC cancellation.
+     /// Logically killed guest threads need an explicit scheduler response because the backend
+diff --git a/detcore/src/lib.rs b/detcore/src/lib.rs
+index 9bcfab060..2e149fc2c 100644
+--- a/detcore/src/lib.rs
++++ b/detcore/src/lib.rs
+@@ -793,6 +793,18 @@ impl<T: RecordOrReplay> Detcore<T> {
+     /// feeds guest-visible state, so it cannot affect determinism.
+     async fn detlog_guest_env<G: Guest<Self>>(&self, guest: &mut G) {
+         let dettid = guest.thread_state().dettid;
++        // Some backends do not expose the initial process stack at this hook
++        // (see `Config::initial_stack_unavailable_at_post_exec`). Reading
++        // argv/envp from `%rsp` there would fault under the in-process memory
++        // accessor or hash unrelated stack contents, so report the environment
++        // as unavailable rather than attempting the read.
++        if self.cfg.initial_stack_unavailable_at_post_exec {
++            detlog!(
++                "[env, dtid {}] unavailable (backend cannot read initial stack)",
++                dettid
++            );
++            return;
++        }
+         match Self::hash_guest_env(guest).await {
+             Ok(env) => detlog!(
+                 "[env, dtid {}] count={} hash={} keys_hash={} keys={}",
+diff --git a/detcore/tests/testutils/src/lib.rs b/detcore/tests/testutils/src/lib.rs
+index 63823dcd7..122611ff0 100644
+--- a/detcore/tests/testutils/src/lib.rs
++++ b/detcore/tests/testutils/src/lib.rs
+@@ -77,6 +77,7 @@ pub static BOTTOM_CFG: LazyLock<Config> = LazyLock::new(|| Config {
+     use_thread_local_clock_reads: false,
+     detect_host_clock_futex_timeouts: false,
+     syscall_clobbers_virtualized_by_backend: false,
++    initial_stack_unavailable_at_post_exec: false,
+     cancel_killed_thread_rpcs: false,
+     backend_reports_physical_process_exits: false,
+     backend_serializes_fork_children: false,
+@@ -153,6 +154,7 @@ pub static MIDDLE_CFG: LazyLock<Config> = LazyLock::new(|| Config {
+     use_thread_local_clock_reads: false,
+     detect_host_clock_futex_timeouts: false,
+     syscall_clobbers_virtualized_by_backend: false,
++    initial_stack_unavailable_at_post_exec: false,
+     cancel_killed_thread_rpcs: false,
+     backend_reports_physical_process_exits: false,
+     backend_serializes_fork_children: false,
+@@ -229,6 +231,7 @@ pub static TOP_CFG: LazyLock<Config> = LazyLock::new(|| Config {
+     use_thread_local_clock_reads: false,
+     detect_host_clock_futex_timeouts: false,
+     syscall_clobbers_virtualized_by_backend: false,
++    initial_stack_unavailable_at_post_exec: false,
+     cancel_killed_thread_rpcs: false,
+     backend_reports_physical_process_exits: false,
+     backend_serializes_fork_children: false,
+diff --git a/hermit-cli/src/lib.rs b/hermit-cli/src/lib.rs
+index bc93d65ae..8e091e582 100644
+--- a/hermit-cli/src/lib.rs
++++ b/hermit-cli/src/lib.rs
+@@ -1471,6 +1471,10 @@ fn prepare_backend_config(mut config: DetConfig, backend: Backend) -> DetConfig
+     config.backend_serializes_fork_children = false;
+     config.backend_dispatches_thread_tools = true;
+     config.backend_requires_thread_directed_process_signals = backend == Backend::Dbi;
++    // Under DBI the post-exec hook fires from the first syscall event (after
++    // libc startup), so %rsp is no longer the entry-point argc pointer and the
++    // env-hash initial-stack read cannot be performed safely.
++    config.initial_stack_unavailable_at_post_exec = backend == Backend::Dbi;
+     config.backend_virtualizes_capability_prctls = backend == Backend::Kvm;
+     // AUTONOMOUS-BOT-IMPLEMENTED
+     // TODO-HUMAN-REVIEW(PR-1152): KVM defers the vfork child spawn, so the child
+diff --git a/hermit-cli/src/metadata.rs b/hermit-cli/src/metadata.rs
+index 25bba1678..554c37fe2 100644
+--- a/hermit-cli/src/metadata.rs
++++ b/hermit-cli/src/metadata.rs
+@@ -168,6 +168,7 @@ pub fn record_or_replay_config(data: &Path) -> detcore::Config {
+         use_thread_local_clock_reads: false,
+         detect_host_clock_futex_timeouts: false,
+         syscall_clobbers_virtualized_by_backend: false,
++        initial_stack_unavailable_at_post_exec: false,
+         cancel_killed_thread_rpcs: false,
+         backend_reports_physical_process_exits: false,
+         backend_serializes_fork_children: false,
+-- 
+2.53.0-Meta
+

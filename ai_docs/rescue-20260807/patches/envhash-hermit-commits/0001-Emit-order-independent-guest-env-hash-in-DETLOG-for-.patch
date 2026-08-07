@@ -1,0 +1,398 @@
+From 556d5ea46a83567e36bafb5adccffad5eb16ebed Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@users.noreply.github.com>
+Date: Mon, 3 Aug 2026 11:17:41 -0700
+Subject: [PATCH 1/2] Emit order-independent guest env hash in DETLOG for
+ cross-backend diffing
+
+Add a one-shot DETLOG line at exec that summarizes the guest's environment,
+lazily computed only when INFO logging is active so a normal run pays nothing:
+
+    DETLOG [env, dtid N] count=163 hash=<sha256> keys_hash=<sha256> keys=A,B,...
+
+The environment is read from the guest's initial process stack through
+`guest.memory()`, which behaves identically across backends (ptrace/KVM/DBI);
+reading /proc/<pid>/environ would be wrong under KVM, where guest.pid() is the
+host VMM. Entries are sorted before hashing, so the digest is order-independent
+and a backend that enumerates `environ` in a different order does not
+manufacture a spurious difference.
+
+Two hashes plus a name list make environment divergence a one-line comparison:
+- `hash` covers the sorted VAR=VALUE set and moves on any value change;
+- `keys_hash` covers just the sorted variable names, so a key-set difference
+  is visible even when a value change would otherwise mask it;
+- `keys` is the sorted, comma-joined name list (values excluded, as they may
+  be secrets or host-specific paths), answering "which vars differ".
+
+This directly serves flaky-failure attribution: a single line distinguishes
+"the environments differed" (and in which keys) from Hermit nondeterminism,
+and answers "did ptrace and KVM see the same environment?".
+
+Add a hermetic cli regression test (env cleared then controlled) proving:
+default runs emit no line (zero-cost), identical envs hash identically,
+reordered envs hash identically (order-independence), a value-only change
+moves `hash` but not `keys_hash`/`keys`, and adding a key moves all three.
+---
+ detcore/src/lib.rs      | 144 ++++++++++++++++++++++++++++++++++
+ hermit-cli/tests/cli.rs | 170 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 314 insertions(+)
+
+diff --git a/detcore/src/lib.rs b/detcore/src/lib.rs
+index 89faa5708..9bcfab060 100644
+--- a/detcore/src/lib.rs
++++ b/detcore/src/lib.rs
+@@ -98,6 +98,7 @@ use reverie::Tid;
+ use reverie::TimerSchedule;
+ use reverie::Tool;
+ pub use reverie::process::Namespace;
++use reverie::syscalls::Addr;
+ use reverie::syscalls::CloneFlags;
+ use reverie::syscalls::Displayable;
+ use reverie::syscalls::EpollCreate1;
+@@ -255,6 +256,22 @@ fn choose_rcb_timer(
+     (max_rcbs_remaining, true)
+ }
+ 
++/// Order-independent summary of a guest's environment, used to make
++/// cross-backend environment differences a one-line comparison in DETLOG.
++struct GuestEnvDigest {
++    /// Number of environment variables.
++    count: usize,
++    /// SHA-256 over the sorted `VAR=VALUE` entries (captures value differences).
++    hash: digest::Digest,
++    /// SHA-256 over just the sorted variable names, so a key-set difference is
++    /// still visible even when it would otherwise be masked by a value change.
++    keys_hash: digest::Digest,
++    /// Sorted, comma-joined variable names. Values are excluded because they may
++    /// be secrets or host-specific paths; the names alone answer "which vars
++    /// differ".
++    keys: String,
++}
++
+ impl<T: RecordOrReplay> Detcore<T> {
+     /// Registers a child whose native backend executed the clone syscall.
+     ///
+@@ -765,6 +782,126 @@ impl<T: RecordOrReplay> Detcore<T> {
+         Ok(())
+     }
+ 
++    /// Emit a one-shot DETLOG line summarizing the guest's environment at exec:
++    /// the variable count, an order-independent SHA-256 of the full
++    /// `VAR=VALUE` set, a separate SHA-256 of just the variable names, and the
++    /// sorted name list itself. A cross-backend environment difference (for
++    /// example KVM vs. ptrace) then surfaces as a single differing line instead
++    /// of an eyeballed syscall stream, and the name list makes "they differ in
++    /// TMPDIR and HOSTNAME" a one-line comparison rather than a full diff.
++    /// Callers must gate this on active INFO logging; it is read-only and never
++    /// feeds guest-visible state, so it cannot affect determinism.
++    async fn detlog_guest_env<G: Guest<Self>>(&self, guest: &mut G) {
++        let dettid = guest.thread_state().dettid;
++        match Self::hash_guest_env(guest).await {
++            Ok(env) => detlog!(
++                "[env, dtid {}] count={} hash={} keys_hash={} keys={}",
++                dettid,
++                env.count,
++                env.hash,
++                env.keys_hash,
++                env.keys
++            ),
++            // A backend may legitimately be unable to read the initial stack
++            // (e.g. an out-of-process guest at an unexpected stop). Report it on
++            // the same line rather than propagating an error that would abort
++            // the guest.
++            Err(errno) => detlog!("[env, dtid {}] unavailable ({:?})", dettid, errno),
++        }
++    }
++
++    /// Read the guest's environment strings from its initial process stack and
++    /// summarize them. This reads through `guest.memory()` so it behaves
++    /// identically across backends (ptrace/KVM/DBI/e9patch); reading
++    /// `/proc/<pid>/environ` would be wrong under KVM, where `guest.pid()` is
++    /// the host VMM process rather than the guest.
++    ///
++    /// The hashes are **order-independent**: the entries are sorted before
++    /// hashing, so a backend that enumerates `environ` in a different order does
++    /// not produce a spurious difference (which would be worse than no hash at
++    /// all). Values are excluded from the key view because they may be secrets
++    /// or host-specific paths.
++    async fn hash_guest_env<G: Guest<Self>>(guest: &mut G) -> Result<GuestEnvDigest, Errno> {
++        // System V x86-64 process-entry stack layout, in ascending addresses:
++        //   [ argc:u64 ][ argv[0..argc]:*const u8 ][ NULL ]
++        //   [ envp[0..]:*const u8 ][ NULL ][ auxv... ]
++        // At the post-exec stop the guest has not executed any instruction yet,
++        // so %rsp still points at `argc`.
++        let sp = guest.regs().await.rsp;
++        let memory = guest.memory();
++
++        let read_word = |addr: u64| -> Result<u64, Errno> {
++            let addr = Addr::<u64>::from_raw(addr as usize).ok_or(Errno::EFAULT)?;
++            memory.read_value(addr)
++        };
++
++        let argc = read_word(sp)?;
++        // envp begins after `argc` (1 word), the `argc` argv pointers, and the
++        // NULL word that terminates argv.
++        let skip_words = argc.checked_add(2).ok_or(Errno::EFAULT)?;
++        let mut cursor = sp
++            .checked_add(skip_words.checked_mul(8).ok_or(Errno::EFAULT)?)
++            .ok_or(Errno::EFAULT)?;
++
++        // Bound the scan so a corrupt or unexpected stack cannot loop or
++        // allocate without limit.
++        const MAX_ENTRIES: usize = 1 << 16;
++        const MAX_BYTES: usize = 1 << 20;
++        let mut entries: Vec<Vec<u8>> = Vec::new();
++        let mut total_bytes: usize = 0;
++        while entries.len() < MAX_ENTRIES && total_bytes < MAX_BYTES {
++            let ptr = read_word(cursor)?;
++            if ptr == 0 {
++                break; // NULL terminator ends the envp array.
++            }
++            let str_addr = Addr::<u8>::from_raw(ptr as usize).ok_or(Errno::EFAULT)?;
++            let bytes = memory.read_cstring(str_addr)?.into_bytes();
++            total_bytes += bytes.len();
++            entries.push(bytes);
++            cursor = cursor.checked_add(8).ok_or(Errno::EFAULT)?;
++        }
++        let count = entries.len();
++
++        // Order-independence: sort the raw entries so backend iteration order
++        // cannot change the hash.
++        entries.sort_unstable();
++
++        // Full hash over the sorted "VAR=VALUE" entries, each NUL-terminated so
++        // that e.g. {"A=", "B"} and {"A", "=B"} hash differently.
++        let mut all: Vec<u8> = Vec::with_capacity(total_bytes + count);
++        // Variable names only (the bytes before the first '='; the whole entry
++        // if there is no '='), sorted independently.
++        let mut keys: Vec<&[u8]> = Vec::with_capacity(count);
++        for entry in &entries {
++            all.extend_from_slice(entry);
++            all.push(0);
++            let key = match entry.iter().position(|&b| b == b'=') {
++                Some(i) => &entry[..i],
++                None => &entry[..],
++            };
++            keys.push(key);
++        }
++        keys.sort_unstable();
++
++        let mut key_buf: Vec<u8> = Vec::new();
++        for key in &keys {
++            key_buf.extend_from_slice(key);
++            key_buf.push(0);
++        }
++        // Human-readable sorted name list (values excluded).
++        let key_names: Vec<String> = keys
++            .iter()
++            .map(|k| String::from_utf8_lossy(k).into_owned())
++            .collect();
++
++        Ok(GuestEnvDigest {
++            count,
++            hash: digest::Digest::new(&all),
++            keys_hash: digest::Digest::new(&key_buf),
++            keys: key_names.join(","),
++        })
++    }
++
+     fn display_syscall_finished<'a, M: MemoryAccess>(
+         syscall: &'a Syscall,
+         memory: &'a M,
+@@ -1354,6 +1491,13 @@ impl<T: RecordOrReplay> Tool for Detcore<T> {
+             guest.memory().write_value(ptr, &bytes)?;
+         }
+ 
++        // Emit an order-independent hash of the guest's environment for
++        // cross-backend diffing. The read + hash runs only when INFO logging
++        // (and thus DETLOG) is active, so a normal run pays nothing.
++        if tracing::enabled!(tracing::Level::INFO) {
++            self.detlog_guest_env(guest).await;
++        }
++
+         self.post_handler_hook(guest).await;
+         Ok(())
+     }
+diff --git a/hermit-cli/tests/cli.rs b/hermit-cli/tests/cli.rs
+index 9a364d482..9158a6664 100644
+--- a/hermit-cli/tests/cli.rs
++++ b/hermit-cli/tests/cli.rs
+@@ -548,6 +548,176 @@ fn run_ptrace_verify_emits_no_unsupported_syscall_warning() {
+         stderr(&output)
+     );
+ }
++
++/// Parsed fields of the one-shot `DETLOG [env, ...]` line emitted at exec.
++struct EnvDigest {
++    count: usize,
++    hash: String,
++    keys_hash: String,
++    keys: String,
++}
++
++/// Run `hermit --log info run -- /bin/true` under a FULLY CONTROLLED environment
++/// (cleared, then `env` applied) so the digest depends only on `env` and on the
++/// small deterministic set Hermit injects, and parse the single env-hash DETLOG
++/// line. A controlled environment keeps the assertions relative (run-vs-run)
++/// rather than pinned to a host's ambient variables.
++fn env_digest(env: &[(&str, &str)]) -> EnvDigest {
++    let output = Command::new(env!("CARGO_BIN_EXE_hermit"))
++        .args(["--log", "info", "run", "--", "/bin/true"])
++        .env_clear()
++        .envs(env.iter().copied())
++        .output()
++        .unwrap_or_else(|error| panic!("failed to run hermit: {error}"));
++    assert!(
++        output.status.success(),
++        "hermit --log info run failed with {}\nstderr:\n{}",
++        output.status,
++        String::from_utf8_lossy(&output.stderr),
++    );
++    parse_env_line(&String::from_utf8(output.stderr).expect("hermit stderr should be UTF-8"))
++}
++
++fn parse_env_line(stderr: &str) -> EnvDigest {
++    let line = stderr
++        .lines()
++        .find(|l| l.contains("DETLOG [env,"))
++        .unwrap_or_else(|| panic!("no DETLOG [env, ...] line in stderr:\n{stderr}"));
++    // `field("hash")` is unambiguous even though "keys_hash=" also contains the
++    // substring "hash=": splitting on "hash=" and taking the first whitespace
++    // token after the first occurrence yields the full hash value.
++    let field = |name: &str| -> String {
++        line.split(&format!("{name}="))
++            .nth(1)
++            .unwrap_or_else(|| panic!("env line missing {name}=: {line}"))
++            .split_whitespace()
++            .next()
++            .unwrap_or("")
++            .to_string()
++    };
++    // `keys=` is the final field and runs to end of line (values were excluded,
++    // so it is a comma-joined name list with no spaces).
++    let keys = line
++        .split("keys=")
++        .nth(1)
++        .unwrap_or_else(|| panic!("env line missing keys=: {line}"))
++        .trim()
++        .to_string();
++    EnvDigest {
++        count: field("count")
++            .parse()
++            .expect("env count should be a number"),
++        hash: field("hash"),
++        keys_hash: field("keys_hash"),
++        keys,
++    }
++}
++
++fn assert_sha256_hex(value: &str, what: &str) {
++    assert_eq!(value.len(), 64, "{what} is not 64 hex chars: {value:?}");
++    assert!(
++        value
++            .bytes()
++            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
++        "{what} is not lowercase hex: {value:?}"
++    );
++}
++
++/// The env-hash DETLOG line is emitted once per exec, only when INFO logging is
++/// active (the read + hash cost is not paid otherwise), and is an
++/// ORDER-INDEPENDENT function of the guest environment. It is the diagnostic for
++/// cross-backend environment divergence (for example KVM vs. ptrace), so the two
++/// separate hashes must behave precisely: the full `hash` moves on any value
++/// change, while `keys_hash` and the `keys` list move only when the variable
++/// name set changes.
++#[test]
++fn run_info_logging_emits_order_independent_env_hash() {
++    // Default (non-INFO) run: the env line must be ABSENT — the zero-cost path.
++    let quiet_args = ["run", "--", "/bin/true"];
++    let quiet = hermit(&quiet_args);
++    assert_success(&quiet, &quiet_args);
++    assert!(
++        !stderr(&quiet).contains("[env,"),
++        "env hash line leaked into a default (non-INFO) run:\n{}",
++        stderr(&quiet)
++    );
++
++    // Baseline: three variables, INFO logging on.
++    let base = env_digest(&[("A", "1"), ("B", "2"), ("C", "3")]);
++    assert_sha256_hex(&base.hash, "env hash");
++    assert_sha256_hex(&base.keys_hash, "env keys_hash");
++    assert!(
++        base.keys.contains("A") && base.keys.contains("B") && base.keys.contains("C"),
++        "keys list missing A/B/C: {}",
++        base.keys
++    );
++
++    // Determinism: identical environment -> identical digest in every field.
++    let repeat = env_digest(&[("A", "1"), ("B", "2"), ("C", "3")]);
++    assert_eq!(base.count, repeat.count, "count not deterministic");
++    assert_eq!(base.hash, repeat.hash, "hash not deterministic");
++    assert_eq!(
++        base.keys_hash, repeat.keys_hash,
++        "keys_hash not deterministic"
++    );
++    assert_eq!(base.keys, repeat.keys, "keys not deterministic");
++
++    // Order-independence: the SAME variables supplied in a different order must
++    // produce a byte-identical digest (a backend iterating `environ` in another
++    // order must not manufacture a spurious difference).
++    let reordered = env_digest(&[("C", "3"), ("B", "2"), ("A", "1")]);
++    assert_eq!(
++        base.count, reordered.count,
++        "count changed under reordering"
++    );
++    assert_eq!(base.hash, reordered.hash, "hash changed under reordering");
++    assert_eq!(
++        base.keys_hash, reordered.keys_hash,
++        "keys_hash changed under reordering"
++    );
++    assert_eq!(base.keys, reordered.keys, "keys changed under reordering");
++
++    // Value-only change: same names, one different value. The full `hash` must
++    // move, but the key view (`keys_hash` and `keys`) must NOT — this is what
++    // lets a reader say "same variables, different values".
++    let value_changed = env_digest(&[("A", "1"), ("B", "2"), ("C", "changed")]);
++    assert_eq!(
++        base.count, value_changed.count,
++        "value change altered count"
++    );
++    assert_ne!(
++        base.hash, value_changed.hash,
++        "value change did not move the full hash"
++    );
++    assert_eq!(
++        base.keys_hash, value_changed.keys_hash,
++        "value change wrongly moved keys_hash"
++    );
++    assert_eq!(
++        base.keys, value_changed.keys,
++        "value change wrongly moved keys"
++    );
++
++    // Key-set change: adding a variable moves everything and grows the count.
++    let key_added = env_digest(&[("A", "1"), ("B", "2"), ("C", "3"), ("D", "4")]);
++    assert_eq!(
++        base.count + 1,
++        key_added.count,
++        "adding a key did not grow count"
++    );
++    assert_ne!(base.hash, key_added.hash, "adding a key did not move hash");
++    assert_ne!(
++        base.keys_hash, key_added.keys_hash,
++        "adding a key did not move keys_hash"
++    );
++    assert!(
++        key_added.keys.contains("D") && !base.keys.contains("D"),
++        "added key D not reflected in keys list: {} vs {}",
++        base.keys,
++        key_added.keys
++    );
++}
++
+ // AUTONOMOUS-BOT-IMPLEMENTED
+ // TODO-HUMAN-REVIEW(PR-644): Review DBI normal aggregation and strict failure coverage.
+ #[test]
+-- 
+2.53.0-Meta
+

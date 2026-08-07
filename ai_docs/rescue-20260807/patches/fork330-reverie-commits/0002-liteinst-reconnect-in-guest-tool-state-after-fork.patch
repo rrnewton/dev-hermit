@@ -1,0 +1,444 @@
+From 21042f6b13f5fba8ef2228a6da7766240e20a4e8 Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Sat, 1 Aug 2026 20:02:55 -0700
+Subject: [PATCH 2/7] liteinst: reconnect in-guest tool state after fork
+
+---
+ reverie-liteinst/src/bin/rpc_tool_guest.rs |  24 ++++
+ reverie-liteinst/src/rpc.rs                |  57 ++++++--
+ reverie-liteinst/src/runtime.rs            |  15 +++
+ reverie-liteinst/src/tool_host.rs          | 150 ++++++++++++++++++---
+ reverie-liteinst/tests/rpc_tool.rs         |  15 +++
+ 5 files changed, 227 insertions(+), 34 deletions(-)
+
+diff --git a/reverie-liteinst/src/bin/rpc_tool_guest.rs b/reverie-liteinst/src/bin/rpc_tool_guest.rs
+index da7d03a..ddb84cc 100644
+--- a/reverie-liteinst/src/bin/rpc_tool_guest.rs
++++ b/reverie-liteinst/src/bin/rpc_tool_guest.rs
+@@ -439,6 +439,29 @@ fn injected_exit_guest(path: &Path) -> ! {
+     panic!("injected exit returned");
+ }
+ 
++fn fork_guest(path: &Path) {
++    unsafe { reverie_liteinst::install_tool::<CounterTool>(path) }.unwrap();
++    let child = unsafe { libc::fork() };
++    assert!(
++        child >= 0,
++        "fork failed: {}",
++        std::io::Error::last_os_error()
++    );
++    if child == 0 {
++        let observed = unsafe { reverie_liteinst_rpc_getpid() };
++        assert_eq!(observed, i64::from(unsafe { libc::getpid() }));
++        unsafe { libc::_exit(0) };
++    }
++
++    let mut status = 0;
++    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
++    assert!(libc::WIFEXITED(status));
++    assert_eq!(libc::WEXITSTATUS(status), 0);
++    let observed = unsafe { reverie_liteinst_rpc_getpid() };
++    assert_eq!(observed, i64::from(unsafe { libc::getpid() }));
++    println!("fork-rpc-total={}", LAST_TOTAL.load(Ordering::Relaxed));
++}
++
+ fn main() {
+     let mut args = std::env::args_os();
+     let _program = args.next();
+@@ -453,6 +476,7 @@ fn main() {
+         Some("spoof-sigsys") => spoof_sigsys_guest(Path::new(&path)),
+         Some("unsubscribed-lifecycle") => unsubscribed_lifecycle_guest(Path::new(&path)),
+         Some("injected-exit") => injected_exit_guest(Path::new(&path)),
++        Some("fork-guest") => fork_guest(Path::new(&path)),
+         _ => panic!("expected coordinator or guest"),
+     }
+ }
+diff --git a/reverie-liteinst/src/rpc.rs b/reverie-liteinst/src/rpc.rs
+index 285d5e6..ba96f7c 100644
+--- a/reverie-liteinst/src/rpc.rs
++++ b/reverie-liteinst/src/rpc.rs
+@@ -2,10 +2,12 @@
+ 
+ use core::cell::UnsafeCell;
+ use core::sync::atomic::AtomicBool;
++use core::sync::atomic::AtomicI32;
+ use core::sync::atomic::Ordering;
+ use std::io;
+ use std::os::fd::AsRawFd;
+ use std::path::Path;
++use std::path::PathBuf;
+ 
+ use reverie::GlobalRPC;
+ use reverie::GlobalTool;
+@@ -64,49 +66,76 @@ impl<T> Drop for SpinGuard<'_, T> {
+     }
+ }
+ 
++struct RpcConnection<G: GlobalTool> {
++    pid: Pid,
++    client: BlockingRpcClient<G>,
++}
++
+ // TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the common blocking
+-// transport used by LiteInst's synchronous in-guest Tool callback.
++// transport and fork-child reconnect used by LiteInst's synchronous Tool callback.
+ /// Blocking guest-side RPC handle backed by the common Reverie RPC transport.
+ pub struct CoordinatorRpc<G: GlobalTool> {
+-    client: BlockingRpcClient<G>,
+-    fd: libc::c_int,
++    connection: SpinMutex<RpcConnection<G>>,
++    config: G::Config,
++    path: PathBuf,
++    fd: AtomicI32,
+ }
+ 
+ impl<G: GlobalTool> CoordinatorRpc<G> {
+-    pub(crate) const fn raw_fd(&self) -> libc::c_int {
+-        self.fd
++    pub(crate) fn raw_fd(&self) -> libc::c_int {
++        self.fd.load(Ordering::Acquire)
+     }
+ 
+     /// Connect before installing seccomp and decode the coordinator config.
+     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
+-        let tid = current_tid()?;
+-        let client = BlockingRpcClient::connect(path, tid)
++        let path = path.as_ref().to_path_buf();
++        let pid = current_id(libc::SYS_getpid)?;
++        let tid = current_id(libc::SYS_gettid)?;
++        let client: BlockingRpcClient<G> = BlockingRpcClient::connect(&path, tid)
+             .map_err(|error| io::Error::other(error.to_string()))?;
++        let config = client.config().clone();
+         let fd = client.as_raw_fd();
+-        Ok(Self { client, fd })
++        Ok(Self {
++            connection: SpinMutex::new(RpcConnection { pid, client }),
++            config,
++            path,
++            fd: AtomicI32::new(fd),
++        })
+     }
+ }
+ 
+ #[reverie::tool]
+ impl<G: GlobalTool> GlobalRPC<G> for CoordinatorRpc<G> {
+     async fn send_rpc(&self, message: G::Request) -> G::Response {
+-        match self.client.try_send_rpc(message) {
++        let pid = current_id(libc::SYS_getpid).unwrap_or_else(|_| rpc_fatal(122));
++        let tid = current_id(libc::SYS_gettid).unwrap_or_else(|_| rpc_fatal(122));
++        let mut connection = self.connection.lock();
++        if connection.pid != pid {
++            let client =
++                BlockingRpcClient::connect(&self.path, tid).unwrap_or_else(|_| rpc_fatal(123));
++            let new_fd = client.as_raw_fd();
++            let old_fd = self.fd.swap(new_fd, Ordering::AcqRel);
++            crate::runtime::replace_coordinator_fd(old_fd, new_fd)
++                .unwrap_or_else(|_| rpc_fatal(123));
++            *connection = RpcConnection { pid, client };
++        }
++        match connection.client.try_send_rpc(message) {
+             Ok(response) => response,
+             Err(_) => rpc_fatal(123),
+         }
+     }
+ 
+     fn config(&self) -> &G::Config {
+-        self.client.config()
++        &self.config
+     }
+ }
+ 
+-fn current_tid() -> io::Result<Pid> {
+-    let tid = unsafe { raw_syscall6(libc::SYS_gettid, [0; 6]) };
+-    if tid <= 0 {
++fn current_id(number: i64) -> io::Result<Pid> {
++    let id = unsafe { raw_syscall6(number, [0; 6]) };
++    if id <= 0 {
+         Err(io::Error::last_os_error())
+     } else {
+-        Ok(Pid::from_raw(tid as i32))
++        Ok(Pid::from_raw(id as i32))
+     }
+ }
+ 
+diff --git a/reverie-liteinst/src/runtime.rs b/reverie-liteinst/src/runtime.rs
+index 2da3443..08a09f1 100644
+--- a/reverie-liteinst/src/runtime.rs
++++ b/reverie-liteinst/src/runtime.rs
+@@ -221,6 +221,21 @@ pub(crate) fn reserve_coordinator_fd(fd: libc::c_int) -> io::Result<()> {
+         })
+ }
+ 
++/// Rebinds the protected coordinator descriptor after a fork child reconnects.
++///
++/// `COORDINATOR_FD` is process-local after fork, so this changes only the
++/// child's protection slot; the parent's connection and descriptor are intact.
++pub(crate) fn replace_coordinator_fd(old: libc::c_int, new: libc::c_int) -> io::Result<()> {
++    COORDINATOR_FD
++        .compare_exchange(old, new, Ordering::AcqRel, Ordering::Acquire)
++        .map(|_| ())
++        .map_err(|actual| {
++            io::Error::other(format!(
++                "coordinator FD changed concurrently: expected {old}, observed {actual}"
++            ))
++        })
++}
++
+ struct RuntimeArena {
+     mapping_start: u64,
+     mapping_end: u64,
+diff --git a/reverie-liteinst/src/tool_host.rs b/reverie-liteinst/src/tool_host.rs
+index ec3c560..cbc594e 100644
+--- a/reverie-liteinst/src/tool_host.rs
++++ b/reverie-liteinst/src/tool_host.rs
+@@ -41,6 +41,7 @@ const STACK_CAPACITY: usize = 4096;
+ const TAIL_NONE: u8 = 0;
+ const TAIL_RESULT: u8 = 1;
+ const TAIL_EXIT: u8 = 2;
++const TAIL_FORK_CHILD: u8 = 3;
+ 
+ static COMMITTED_STACKS: SpinMutex<Vec<Box<[u8]>>> = SpinMutex::new(Vec::new());
+ 
+@@ -256,6 +257,43 @@ where
+                 );
+                 event.result = unsafe { raw_syscall6(number, args) };
+             }
++            SyscallOutcome::ForkChild {
++                parent_tid,
++                parent_pid,
++                child_tid,
++                child_pid,
++            } => {
++                drop(guest);
++                let parent_state = states
++                    .remove(&parent_tid.as_raw())
++                    .unwrap_or_else(|| fatal(126));
++                let child_tool = T::new(child_pid, self.rpc.config());
++                let child_state =
++                    child_tool.init_thread_state(child_tid, Some((parent_tid, &parent_state)));
++                states.clear();
++                states.insert(child_tid.as_raw(), child_state);
++                *tool_slot = Some(child_tool);
++                runtime::reset_fallback_observability();
++
++                let tool = tool_slot.as_ref().unwrap_or_else(|| fatal(126));
++                let state = states
++                    .get_mut(&child_tid.as_raw())
++                    .unwrap_or_else(|| fatal(126));
++                let child_tail = TailResult::default();
++                let mut child_guest = LiteinstGuest::<T> {
++                    event,
++                    tid: child_tid,
++                    pid: child_pid,
++                    ppid: Some(parent_pid),
++                    state,
++                    rpc: &self.rpc,
++                    tail: &child_tail,
++                };
++                if let Err(error) = drive_ready(tool.handle_thread_start(&mut child_guest)) {
++                    tool_fatal(124, &error);
++                }
++                child_guest.event.result = 0;
++            }
+         }
+     }
+ }
+@@ -323,12 +361,30 @@ where
+ 
+ enum SyscallOutcome {
+     Return(Result<i64, Error>),
+-    Exit { number: i64, args: [u64; 6] },
++    Exit {
++        number: i64,
++        args: [u64; 6],
++    },
++    ForkChild {
++        parent_tid: Pid,
++        parent_pid: Pid,
++        child_tid: Pid,
++        child_pid: Pid,
++    },
+ }
+ 
+ enum TailAction {
+     Result(i64),
+-    Exit { number: i64, args: [u64; 6] },
++    Exit {
++        number: i64,
++        args: [u64; 6],
++    },
++    ForkChild {
++        parent_tid: Pid,
++        parent_pid: Pid,
++        child_tid: Pid,
++        child_pid: Pid,
++    },
+ }
+ 
+ fn drive_syscall<F>(future: F, tail: &TailResult) -> SyscallOutcome
+@@ -348,6 +404,19 @@ where
+                 Some(TailAction::Exit { number, args }) => {
+                     return SyscallOutcome::Exit { number, args };
+                 }
++                Some(TailAction::ForkChild {
++                    parent_tid,
++                    parent_pid,
++                    child_tid,
++                    child_pid,
++                }) => {
++                    return SyscallOutcome::ForkChild {
++                        parent_tid,
++                        parent_pid,
++                        child_tid,
++                        child_pid,
++                    };
++                }
+                 None => core::hint::spin_loop(),
+             },
+         }
+@@ -376,6 +445,16 @@ impl TailResult {
+         self.action.store(TAIL_EXIT, Ordering::Release);
+     }
+ 
++    fn set_fork_child(&self, parent_tid: Pid, parent_pid: Pid, child_tid: Pid, child_pid: Pid) {
++        self.number
++            .store(i64::from(parent_tid.as_raw()), Ordering::Relaxed);
++        self.value
++            .store(i64::from(parent_pid.as_raw()), Ordering::Relaxed);
++        self.args[0].store(child_tid.as_raw() as u64, Ordering::Relaxed);
++        self.args[1].store(child_pid.as_raw() as u64, Ordering::Relaxed);
++        self.action.store(TAIL_FORK_CHILD, Ordering::Release);
++    }
++
+     fn take(&self) -> Option<TailAction> {
+         match self.action.swap(TAIL_NONE, Ordering::AcqRel) {
+             TAIL_RESULT => Some(TailAction::Result(self.value.load(Ordering::Relaxed))),
+@@ -383,6 +462,12 @@ impl TailResult {
+                 number: self.number.load(Ordering::Relaxed),
+                 args: std::array::from_fn(|index| self.args[index].load(Ordering::Relaxed)),
+             }),
++            TAIL_FORK_CHILD => Some(TailAction::ForkChild {
++                parent_tid: Pid::from_raw(self.number.load(Ordering::Relaxed) as i32),
++                parent_pid: Pid::from_raw(self.value.load(Ordering::Relaxed) as i32),
++                child_tid: Pid::from_raw(self.args[0].load(Ordering::Relaxed) as i32),
++                child_pid: Pid::from_raw(self.args[1].load(Ordering::Relaxed) as i32),
++            }),
+             _ => None,
+         }
+     }
+@@ -412,14 +497,28 @@ impl<T: Tool> GlobalRPC<T::GlobalState> for LiteinstGuest<'_, T> {
+     }
+ }
+ 
++// TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the plain-fork injection boundary.
++fn is_plain_fork(number: i64, args: [u64; 6]) -> bool {
++    if number == libc::SYS_fork {
++        return true;
++    }
++    if number != libc::SYS_clone {
++        return false;
++    }
++    const SIGNAL_MASK: u64 = 0xff;
++    let allowed_flags =
++        (libc::CLONE_CHILD_CLEARTID | libc::CLONE_CHILD_SETTID | libc::CLONE_PARENT_SETTID) as u64;
++    args[1] == 0
++        && args[0] & SIGNAL_MASK == libc::SIGCHLD as u64
++        && args[0] & !(SIGNAL_MASK | allowed_flags) == 0
++}
++
+ // TODO-HUMAN-REVIEW(PR-127): Review injected process/signal safety policy.
+ fn injected_syscall_guard(number: i64, args: [u64; 6]) -> Option<Errno> {
+     let unsupported_process =
+         // AUTONOMOUS-BOT-IMPLEMENTED
+-        matches!(
+-            number,
+-            libc::SYS_clone | libc::SYS_clone3 | libc::SYS_fork | libc::SYS_vfork
+-        )
++        matches!(number, libc::SYS_clone3 | libc::SYS_vfork)
++            || (number == libc::SYS_clone && !is_plain_fork(number, args))
+         // AUTONOMOUS-BOT-IMPLEMENTED
+         || matches!(number, libc::SYS_execve | libc::SYS_execveat);
+     let protected_signal =
+@@ -541,12 +640,32 @@ impl<T: Tool> Guest<T> for LiteinstGuest<'_, T> {
+     async fn inject<S: SyscallInfo>(&mut self, syscall: S) -> Result<i64, Errno> {
+         let (number, args) = syscall.into_parts();
+         let number = number.id() as i64;
++        let mut raw_args = [
++            args.arg0 as u64,
++            args.arg1 as u64,
++            args.arg2 as u64,
++            args.arg3 as u64,
++            args.arg4 as u64,
++            args.arg5 as u64,
++        ];
++
++        if is_plain_fork(number, raw_args) {
++            let parent_tid = self.tid;
++            let parent_pid = self.pid;
++            let result = unsafe { raw_syscall6(number, raw_args) };
++            if result == 0 {
++                let child_tid = raw_pid(libc::SYS_gettid);
++                let child_pid = raw_pid(libc::SYS_getpid);
++                self.tail
++                    .set_fork_child(parent_tid, parent_pid, child_tid, child_pid);
++                return std::future::pending().await;
++            }
++            return Errno::from_ret(result as usize).map(|value| value as i64);
++        }
++
+         // AUTONOMOUS-BOT-IMPLEMENTED
+-        if matches!(
+-            number,
+-            libc::SYS_clone | libc::SYS_clone3 | libc::SYS_fork | libc::SYS_vfork
+-        ) {
+-            const MESSAGE: &[u8] = b"reverie-liteinst: clone/fork injection is unsupported\n";
++        if matches!(number, libc::SYS_clone | libc::SYS_clone3 | libc::SYS_vfork) {
++            const MESSAGE: &[u8] = b"reverie-liteinst: clone injection requires ptrace fallback\n";
+             unsafe {
+                 let _ = raw_syscall6(
+                     libc::SYS_write,
+@@ -562,15 +681,6 @@ impl<T: Tool> Guest<T> for LiteinstGuest<'_, T> {
+             }
+             return Err(Errno::EOPNOTSUPP);
+         }
+-
+-        let mut raw_args = [
+-            args.arg0 as u64,
+-            args.arg1 as u64,
+-            args.arg2 as u64,
+-            args.arg3 as u64,
+-            args.arg4 as u64,
+-            args.arg5 as u64,
+-        ];
+         if let Some(error) = injected_syscall_guard(number, raw_args) {
+             return Err(error);
+         }
+diff --git a/reverie-liteinst/tests/rpc_tool.rs b/reverie-liteinst/tests/rpc_tool.rs
+index c882cad..24dd64e 100644
+--- a/reverie-liteinst/tests/rpc_tool.rs
++++ b/reverie-liteinst/tests/rpc_tool.rs
+@@ -93,6 +93,21 @@ fn installed_hook_reentry_bypasses_tool_with_shared_coordinator_rpc() {
+         b"injected-thread=Exited(52)\ninjected-process=Exited(52)\n"
+     );
+ 
++    let fork_guest = Command::new(binary)
++        .arg("fork-guest")
++        .arg(&socket)
++        .output()
++        .unwrap();
++    assert!(fork_guest.status.success(), "{fork_guest:?}");
++    let fork_stdout = String::from_utf8(fork_guest.stdout).unwrap();
++    let fork_total: u64 = fork_stdout
++        .trim()
++        .strip_prefix("fork-rpc-total=")
++        .expect("fork guest must print the shared RPC total")
++        .parse()
++        .unwrap();
++    assert!(fork_total >= 5, "{fork_stdout}");
++
+     let guest = Command::new(binary)
+         .arg("guest")
+         .arg(&socket)
+-- 
+2.53.0-Meta
+

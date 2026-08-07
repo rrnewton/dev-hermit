@@ -1,0 +1,154 @@
+From 186c1f135ebebe25bfd8cf645e1969c3dec9b924 Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Sat, 1 Aug 2026 19:43:47 -0700
+Subject: [PATCH 1/7] Run LiteInst tools over common coordinator RPC
+
+Use reverie-rpc-transport BlockingRpcClient for the in-guest Tool and expose the deterministic syscall-boundary clock required to activate Detcore without importing host time. PMU preemption remains the minimal-supervisor follow-up.
+---
+ reverie-liteinst/src/rpc.rs       | 48 ++++++++++++++-----------------
+ reverie-liteinst/src/tool_host.rs | 26 +++++++----------
+ 2 files changed, 33 insertions(+), 41 deletions(-)
+
+diff --git a/reverie-liteinst/src/rpc.rs b/reverie-liteinst/src/rpc.rs
+index fdcab96..285d5e6 100644
+--- a/reverie-liteinst/src/rpc.rs
++++ b/reverie-liteinst/src/rpc.rs
+@@ -1,17 +1,17 @@
+ //! Coordinator RPC adapter for in-guest Reverie tools.
+ 
+ use core::cell::UnsafeCell;
+-use core::marker::PhantomData;
+ use core::sync::atomic::AtomicBool;
+ use core::sync::atomic::Ordering;
+ use std::io;
++use std::os::fd::AsRawFd;
+ use std::path::Path;
+ 
+ use reverie::GlobalRPC;
+ use reverie::GlobalTool;
+ use reverie::Pid;
+-use reverie_preload::rpc::CoordinatorClient;
+ use reverie_preload::trap::raw_syscall6;
++use reverie_rpc_transport::BlockingRpcClient;
+ 
+ pub(crate) struct SpinMutex<T> {
+     held: AtomicBool,
+@@ -64,13 +64,12 @@ impl<T> Drop for SpinGuard<'_, T> {
+     }
+ }
+ 
+-// TODO-HUMAN-REVIEW(PR-127): Review blocking trusted-gate RPC semantics.
+-/// Blocking guest-side RPC handle backed by the shared preload wire protocol.
++// TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the common blocking
++// transport used by LiteInst's synchronous in-guest Tool callback.
++/// Blocking guest-side RPC handle backed by the common Reverie RPC transport.
+ pub struct CoordinatorRpc<G: GlobalTool> {
+-    client: SpinMutex<CoordinatorClient>,
+-    config: G::Config,
++    client: BlockingRpcClient<G>,
+     fd: libc::c_int,
+-    _global: PhantomData<fn() -> G>,
+ }
+ 
+ impl<G: GlobalTool> CoordinatorRpc<G> {
+@@ -80,37 +79,34 @@ impl<G: GlobalTool> CoordinatorRpc<G> {
+ 
+     /// Connect before installing seccomp and decode the coordinator config.
+     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
+-        let client = CoordinatorClient::connect(path)?;
+-        let config = client.config::<G::Config>()?;
+-        let fd = client.raw_fd();
+-        Ok(Self {
+-            client: SpinMutex::new(client),
+-            config,
+-            fd,
+-            _global: PhantomData,
+-        })
++        let tid = current_tid()?;
++        let client = BlockingRpcClient::connect(path, tid)
++            .map_err(|error| io::Error::other(error.to_string()))?;
++        let fd = client.as_raw_fd();
++        Ok(Self { client, fd })
+     }
+ }
+ 
+ #[reverie::tool]
+ impl<G: GlobalTool> GlobalRPC<G> for CoordinatorRpc<G> {
+     async fn send_rpc(&self, message: G::Request) -> G::Response {
+-        let tid = unsafe { raw_syscall6(libc::SYS_gettid, [0; 6]) };
+-        if tid <= 0 {
+-            rpc_fatal(122);
+-        }
+-        match self
+-            .client
+-            .lock()
+-            .send_trusted(Pid::from_raw(tid as i32), message)
+-        {
++        match self.client.try_send_rpc(message) {
+             Ok(response) => response,
+             Err(_) => rpc_fatal(123),
+         }
+     }
+ 
+     fn config(&self) -> &G::Config {
+-        &self.config
++        self.client.config()
++    }
++}
++
++fn current_tid() -> io::Result<Pid> {
++    let tid = unsafe { raw_syscall6(libc::SYS_gettid, [0; 6]) };
++    if tid <= 0 {
++        Err(io::Error::last_os_error())
++    } else {
++        Ok(Pid::from_raw(tid as i32))
+     }
+ }
+ 
+diff --git a/reverie-liteinst/src/tool_host.rs b/reverie-liteinst/src/tool_host.rs
+index cd4a474..ec3c560 100644
+--- a/reverie-liteinst/src/tool_host.rs
++++ b/reverie-liteinst/src/tool_host.rs
+@@ -613,28 +613,24 @@ impl<T: Tool> Guest<T> for LiteinstGuest<'_, T> {
+         std::future::pending().await
+     }
+ 
++    // TODO-HUMAN-REVIEW(PR-liteinst-multiproc-inguest): Review the coarse
++    // syscall-boundary clock until the minimal ptrace supervisor wires PMU delivery.
+     fn set_timer(&mut self, _sched: TimerSchedule) -> Result<(), Error> {
+-        Err(io::Error::new(
+-            io::ErrorKind::Unsupported,
+-            "LiteInst does not implement RCB timer delivery",
+-        )
+-        .into())
++        // Every intercepted syscall remains a deterministic scheduling boundary,
++        // but a CPU-bound thread cannot yet be preempted between syscalls.
++        Ok(())
+     }
+ 
+     fn set_timer_precise(&mut self, _sched: TimerSchedule) -> Result<(), Error> {
+-        Err(io::Error::new(
+-            io::ErrorKind::Unsupported,
+-            "LiteInst does not implement precise RCB timer delivery",
+-        )
+-        .into())
++        // Same coarse boundary as set_timer; never synthesize host time.
++        Ok(())
+     }
+ 
+     fn read_clock(&mut self) -> Result<u64, Error> {
+-        Err(io::Error::new(
+-            io::ErrorKind::Unsupported,
+-            "LiteInst does not implement an RCB clock",
+-        )
+-        .into())
++        // DBI likewise exposes a boundary sample rather than a continuously
++        // advancing PMU clock. LiteInst has no sample yet, so zero is the honest
++        // deterministic lower bound. Detcore separately charges syscall time.
++        Ok(0)
+     }
+ }
+ 
+-- 
+2.53.0-Meta
+

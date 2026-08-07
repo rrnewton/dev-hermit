@@ -1,0 +1,162 @@
+diff --git a/tests/backend-parity/README.md b/tests/backend-parity/README.md
+index 74bb89523..40000cf09 100644
+--- a/tests/backend-parity/README.md
++++ b/tests/backend-parity/README.md
+@@ -126,10 +126,26 @@ is not reached.
+ | `random_sources` | pass / detlog | pass / detlog | pass / guest |
+ | `virtual_pid` | pass / detlog | pass / detlog | pass / guest |
+ | `scheduler_policy_queries` | pass / detlog | pass / detlog | pass / guest |
++<<<<<<< HEAD
+ | `signal_disposition` | pass / detlog | pass / detlog | **gap** / gap |
+ | `sigaction_state` | pass / detlog | pass / detlog | **gap** / gap |
+ | `sigprocmask_state` | pass / detlog | pass / detlog | **gap** / gap |
+ | `sigaltstack_state` | pass / detlog | pass / detlog | **gap** / gap |
++=======
++| `getcpu_identity` | pass / detlog | pass / detlog | pass / guest |
++
++The `getcpu_identity` contract pins Detcore's `getcpu(2)` determinization. The
++guest poisons its `cpu`/`node` output words with a sentinel, then issues the raw
++`SYS_getcpu` syscall (never the vDSO `sched_getcpu`, which does not route through
++interception) repeatedly and across all three pointer combinations (both
++pointers, `cpu` only, `node` only). Detcore's `handle_getcpu` always writes
++`cpu = 0` and `node = 0` and returns `0`, so the guest observes a fixed,
++host-independent placement on every call regardless of which physical CPU the
++supervisor happened to run it on — a native run reports the real host CPU (e.g.
++115) and diverges. Because the determinization lives in the shared Detcore tool,
++the result is identical across ptrace, DBI, and KVM and across the `--verify`
++double run.
++>>>>>>> b82c71f0 (Add getcpu_identity backend-parity contract fixture)
+ 
+ The `scheduler_policy_queries` contract pins Detcore's inert-scheduler-policy
+ model: the guest arms and re-reads an `ITIMER_REAL` one-shot against virtual
+diff --git a/tests/backend-parity/matrix.tsv b/tests/backend-parity/matrix.tsv
+index 9b2f657db..27aa644e1 100644
+--- a/tests/backend-parity/matrix.tsv
++++ b/tests/backend-parity/matrix.tsv
+@@ -23,7 +23,11 @@ virtual_clock	pass	pass	pass	-	-	detlog	detlog	guest	-	-
+ random_sources	pass	pass	pass	-	-	detlog	detlog	guest	-	-
+ virtual_pid	pass	pass	pass	-	-	detlog	detlog	guest	-	-
+ scheduler_policy_queries	pass	pass	pass	-	-	detlog	detlog	guest	-	-
++<<<<<<< HEAD
+ signal_disposition	pass	pass	gap	-	KVM parity not re-verified during signal-wave consolidation (build host KVM saturated under concurrent load); recorded as a gap pending a dedicated KVM ratchet	detlog	detlog	gap	-	inherited from the L1 KVM gap: no verified L2 KVM run was produced during consolidation
+ sigaction_state	pass	pass	gap	-	KVM parity not re-verified during signal-wave consolidation (build host KVM saturated under concurrent load); recorded as a gap pending a dedicated KVM ratchet	detlog	detlog	gap	-	inherited from the L1 KVM gap: no verified L2 KVM run was produced during consolidation
+ sigprocmask_state	pass	pass	gap	-	KVM parity not re-verified during signal-wave consolidation (build host KVM saturated under concurrent load); recorded as a gap pending a dedicated KVM ratchet	detlog	detlog	gap	-	inherited from the L1 KVM gap: no verified L2 KVM run was produced during consolidation
+ sigaltstack_state	pass	pass	gap	-	KVM parity not re-verified during signal-wave consolidation (build host KVM saturated under concurrent load); recorded as a gap pending a dedicated KVM ratchet	detlog	detlog	gap	-	inherited from the L1 KVM gap: no verified L2 KVM run was produced during consolidation
++=======
++getcpu_identity	pass	pass	pass	-	-	detlog	detlog	guest	-	-
++>>>>>>> b82c71f0 (Add getcpu_identity backend-parity contract fixture)
+diff --git a/tests/backend-parity/run_matrix.py b/tests/backend-parity/run_matrix.py
+index c7f6cee13..edb8792f4 100755
+--- a/tests/backend-parity/run_matrix.py
++++ b/tests/backend-parity/run_matrix.py
+@@ -207,6 +207,10 @@ class Fixtures:
+                 local / "sigaltstack_state.c",
+                 ("-D_GNU_SOURCE",),
+             ),
++            "getcpu_identity": (
++                REPOSITORY / "tests/c/getcpu_identity.c",
++                (),
++            ),
+         }
+         source, flags = sources[name]
+         binary = compile_fixture(source, self.root / name, *flags)
+@@ -329,6 +333,11 @@ def case_command(name: str, fixtures: Fixtures) -> tuple[list[str], int, bytes |
+             0,
+             b"sigaltstack ok=4\n",
+         ),
++        "getcpu_identity": (
++            [str(fixtures.binary("getcpu_identity"))],
++            0,
++            b"getcpu-identity-ok\n",
++        ),
+     }
+     try:
+         return cases[name]
+diff --git a/tests/c/getcpu_identity.c b/tests/c/getcpu_identity.c
+new file mode 100644
+index 000000000..f1fac618f
+--- /dev/null
++++ b/tests/c/getcpu_identity.c
+@@ -0,0 +1,82 @@
++/*
++ * Copyright (c) Meta Platforms, Inc. and affiliates.
++ * All rights reserved.
++ *
++ * This source code is licensed under the BSD-style license found in the
++ * LICENSE file in the root directory of this source tree.
++ */
++
++/*
++ * getcpu_identity — backend-parity contract for the getcpu(2) determinization.
++ *
++ * Detcore virtualizes a single logical CPU on a single virtual NUMA node, so
++ * the raw SYS_getcpu syscall must always report CPU 0 / node 0 and succeed,
++ * regardless of which host CPU actually ran the guest. That constant answer is
++ * what makes the value bitwise-identical across --verify repeat runs and under
++ * record/replay, and it must be identical across backends: the DBI backend has
++ * to match the golden ptrace reference exactly.
++ *
++ * This fixture exercises the raw syscall (not glibc's vDSO-accelerated
++ * sched_getcpu, which does not route through syscall interception) across the
++ * optional-output-pointer combinations that detcore's handler special-cases —
++ * both pointers set, cpu-only, node-only — and repeats the query to prove the
++ * answer does not drift. Any nonzero CPU/node or a differing value between
++ * calls means the container leaked host topology or the backend diverged.
++ */
++
++#include <stdint.h>
++#include <stdio.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++
++/* Poison sentinel: if detcore fails to write the output, the check catches it. */
++#define SENTINEL 0x7fu
++
++static int query(unsigned *cpu_out, unsigned *node_out) {
++  if (cpu_out) {
++    *cpu_out = SENTINEL;
++  }
++  if (node_out) {
++    *node_out = SENTINEL;
++  }
++  /* Third argument (tcache) has been ignored by the kernel since Linux 2.6.24. */
++  return (int)syscall(SYS_getcpu, cpu_out, node_out, NULL);
++}
++
++int main(void) {
++  unsigned cpu = SENTINEL;
++  unsigned node = SENTINEL;
++
++  /* Repeat to prove the determinized answer is stable, not incidental. */
++  for (int i = 0; i < 4; i++) {
++    /* Both output pointers set. */
++    cpu = SENTINEL;
++    node = SENTINEL;
++    if (query(&cpu, &node) != 0) {
++      fprintf(stderr, "iter %d: getcpu(cpu,node) did not return 0\n", i);
++      return 1;
++    }
++    if (cpu != 0 || node != 0) {
++      fprintf(stderr, "iter %d: getcpu(cpu,node) reported cpu=%u node=%u, expected 0/0\n",
++              i, cpu, node);
++      return 1;
++    }
++
++    /* cpu only (node pointer NULL): handler must still write cpu=0. */
++    cpu = SENTINEL;
++    if (query(&cpu, NULL) != 0 || cpu != 0) {
++      fprintf(stderr, "iter %d: getcpu(cpu,NULL) reported cpu=%u, expected 0\n", i, cpu);
++      return 1;
++    }
++
++    /* node only (cpu pointer NULL): handler must still write node=0. */
++    node = SENTINEL;
++    if (query(NULL, &node) != 0 || node != 0) {
++      fprintf(stderr, "iter %d: getcpu(NULL,node) reported node=%u, expected 0\n", i, node);
++      return 1;
++    }
++  }
++
++  puts("getcpu-identity-ok");
++  return 0;
++}

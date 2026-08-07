@@ -1,0 +1,994 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 2e3a05fad..7b9023c73 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1342,7 +1342,7 @@ dependencies = [
+ [[package]]
+ name = "nostd-print"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "syscalls",
+ ]
+@@ -1680,7 +1680,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+ [[package]]
+ name = "reverie-core"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "addr2line",
+  "anyhow",
+@@ -1706,7 +1706,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-dbi"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bincode 2.0.1",
+  "libc",
+@@ -1724,7 +1724,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-kvm"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "futures 0.3.33",
+  "goblin",
+@@ -1738,8 +1738,9 @@ dependencies = [
+ [[package]]
+ name = "reverie-liteinst"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
++ "bincode 2.0.1",
+  "libc",
+  "liteinst2",
+  "reverie-core",
+@@ -1754,7 +1755,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-memory"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "syscalls",
+ ]
+@@ -1762,7 +1763,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-preload"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bincode 2.0.1",
+  "libc",
+@@ -1773,7 +1774,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-process"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bincode 2.0.1",
+  "bitflags 2.13.1",
+@@ -1790,7 +1791,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-ptrace"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "anyhow",
+  "async-trait",
+@@ -1821,7 +1822,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-rpc"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "async-trait",
+  "bincode 1.3.3",
+@@ -1832,7 +1833,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-rpc-macros"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "darling",
+  "heck 0.3.3",
+@@ -1844,7 +1845,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-rpc-transport"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "async-trait",
+  "bincode 2.0.1",
+@@ -1857,7 +1858,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-sabre"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "atomic 0.5.3",
+  "cc",
+@@ -1881,7 +1882,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-sabre-macros"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "darling",
+  "heck 0.3.3",
+@@ -1893,7 +1894,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-sabre-stats"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "libc",
+  "reverie-core",
+@@ -1902,7 +1903,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-syscalls"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bitflags 2.13.1",
+  "derive_more",
+@@ -1960,7 +1961,7 @@ dependencies = [
+ [[package]]
+ name = "safeptrace"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bitflags 2.13.1",
+  "futures 0.3.33",
+diff --git a/README.md b/README.md
+index 13f3c6b93..a7a8de68e 100644
+--- a/README.md
++++ b/README.md
+@@ -108,33 +108,29 @@ For backwards compatibility, `run` still accepts `--backend` after the
+ subcommand (`hermit run --backend=ptrace -- /bin/echo hello`).
+ 
+ Backend selection fails closed. Hermit never substitutes ptrace after an
+-explicit backend request. LiteInst is an experimental ptrace-hosted hybrid for
+-dynamically linked Linux x86-64 guests:
++explicit backend request. LiteInst is an experimental direct in-guest backend
++for dynamically linked Linux x86-64 guests:
+ 
+ ```bash
+-./scripts/stage-liteinst-runtime.sh dev \
+-  "$PWD/target/debug/libreverie_liteinst.so" \
+-  "$PWD/target/liteinst-runtime-build"
+-cargo build --locked -p hermit --bin hermit
++cargo build --locked -p hermit --lib --bin hermit
+ ./target/debug/hermit run --backend=liteinst --strict --verify -- /bin/echo hello
+ ```
+ 
+-The ptrace host owns the sole generic Reverie `Detcore` Tool and GlobalTool.
+-The standalone manifest enables and statically verifies the preload constructor;
+-Hermit rejects non-runtime or constructor-free overrides before activation.
+-The resulting Reverie preload DSO initializes only the LiteInst patch/helper
+-side; it never installs another Tool in the guest. The host observes the first
+-invocation of each eligible syscall site and installs an instruction-punning
+-hook. Later invocations enter the LiteInst trampoline and return to the same
+-ptrace-owned Detcore lifecycle.
++Hermit preloads `libhermit.so`, verifies its constructor, and installs a
++`Detcore` Tool in the guest before the program starts. The first invocation of
++each eligible syscall or subscribed CPU-instruction site faults to the in-guest
++runtime and installs a LiteInst hook; later invocations enter that hook without
++a ptracer in the syscall path. RCB accounting reads the current thread's PMU
++counter in guest, CPUID/RDTSC events are dispatched to the Tool in guest, and
++the shared Reverie vDSO patcher routes time symbols through the same Tool.
+ 
+ `--verify` runs the normal Detcore comparison over captured status, output,
+ and deterministic scheduler logs, so a successful result is an L2 claim.
+ Current support is limited to single-threaded, single-process guests. Thread
+ clone, `fork`, and `vfork` fail closed with `EOPNOTSUPP`; `exec` is also
+ unsupported because runtime rebootstrap after image replacement is not yet
+-implemented. RCB preemption and CPUID/RDTSC interception use the ptrace host
+-and retain its PMU and CPU capability requirements.
++implemented. The direct backend retains the PMU and CPU-faulting capability
++requirements needed by its in-guest RCB and instruction mechanisms.
+ The default Hermit namespace path is supported; `--no-namespace` remains an
+ explicit option for trusted guests. The in-guest patch runtime is experimental
+ and continues to receive compatibility and lifecycle improvements.
+diff --git a/detcore-dbi/Cargo.toml b/detcore-dbi/Cargo.toml
+index 2f7ba3238..7c1caac5f 100644
+--- a/detcore-dbi/Cargo.toml
++++ b/detcore-dbi/Cargo.toml
+@@ -15,7 +15,7 @@ detcore = { package = "hermit-detcore", version = "0.2.0", path = "../detcore" }
+ hermit-resources = { version = "0.2.0", path = "../hermit-resources" }
+ libc = "0.2.186"
+ rand = "0.10.2"
+-reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-dbi = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f", default-features = false }
++reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-dbi = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f", default-features = false }
+ serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+ tracing = "0.1.41"
+diff --git a/detcore-model/Cargo.toml b/detcore-model/Cargo.toml
+index 5bc6e9891..7b745f572 100644
+--- a/detcore-model/Cargo.toml
++++ b/detcore-model/Cargo.toml
+@@ -16,7 +16,7 @@ chrono = { version = "0.4.45", features = ["clock", "serde", "std"], default-fea
+ clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
+ libc = "0.2.186"
+ nix = { version = "0.30.1", features = ["dir", "event", "hostname", "inotify", "ioctl", "mman", "mount", "net", "poll", "ptrace", "reboot", "resource", "sched", "signal", "term", "time", "user", "zerocopy"] }
+-reverie-syscalls = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
++reverie-syscalls = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
+ serde = { version = "1.0.219", features = ["derive", "rc"] }
+ serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+ shell-words = "1.1.1"
+diff --git a/detcore-sabre/Cargo.toml b/detcore-sabre/Cargo.toml
+index 8aaccb23e..7d3eec807 100644
+--- a/detcore-sabre/Cargo.toml
++++ b/detcore-sabre/Cargo.toml
+@@ -13,9 +13,9 @@ crate-type = ["cdylib", "rlib"]
+ [dependencies]
+ detcore = { package = "hermit-detcore", version = "0.2.0", path = "../detcore" }
+ libc = "0.2.186"
+-reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-memory = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-rpc-transport = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-sabre = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-syscalls = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
++reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-memory = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-rpc-transport = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-sabre = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-syscalls = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
+ syscalls = { version = "0.6.7", features = ["serde"] }
+diff --git a/detcore/Cargo.toml b/detcore/Cargo.toml
+index 6d19f162c..115e33f41 100644
+--- a/detcore/Cargo.toml
++++ b/detcore/Cargo.toml
+@@ -72,7 +72,7 @@ raw-cpuid = "10.7.0"
+ regex = "1.13.1"
+ # Abstract Reverie interface ONLY. Never add a concrete backend here (see the
+ # BACKEND-ABSTRACTION COMMANDMENT at the top of this file).
+-reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
++reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
+ serde = { version = "1.0.219", features = ["derive", "rc"] }
+ serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+ sha2 = "0.10.6"
+@@ -85,6 +85,6 @@ detcore-testutils = { version = "0.2.0", path = "tests/testutils" }
+ # ALLOWED test-only backend: detcore's integration tests drive a real tracer to
+ # exercise the tool. This is a dev-dependency and never reaches the shipped
+ # `detcore` rlib. It is the ONLY backend crate permitted in this manifest.
+-reverie-ptrace = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
++reverie-ptrace = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
+ test-allocator = { version = "0.2.0", path = "../common/test-allocator" }
+ test-case = "3.3.1"
+diff --git a/detcore/tests/testutils/Cargo.toml b/detcore/tests/testutils/Cargo.toml
+index 63cc1cf3e..6e1df065f 100644
+--- a/detcore/tests/testutils/Cargo.toml
++++ b/detcore/tests/testutils/Cargo.toml
+@@ -12,8 +12,8 @@ publish = false
+ [dependencies]
+ detcore = { package = "hermit-detcore", version = "0.2.0", path = "../.." }
+ pretty_assertions = { version = "1.4.1", features = ["alloc"], default-features = false }
+-reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-ptrace = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
++reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-ptrace = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
+ test-allocator = { version = "0.2.0", path = "../../../common/test-allocator" }
+ tokio = { version = "1.52.4", features = ["full", "test-util", "tracing"] }
+ tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
+diff --git a/docs/USER_GUIDE.md b/docs/USER_GUIDE.md
+index 7e08cd680..c8f2ef995 100644
+--- a/docs/USER_GUIDE.md
++++ b/docs/USER_GUIDE.md
+@@ -160,25 +160,20 @@ subcommand (`hermit run --backend=ptrace -- /bin/echo hello`).
+ 
+ Hermit detects whether the requested backend is integrated and available on
+ the current host. It does not silently fall back to a different backend.
+-LiteInst requires `libreverie_liteinst.so` beside the Hermit executable. That
+-DSO initializes only the in-guest patch/helper runtime. The ptrace host owns the
+-sole `Detcore` Tool and GlobalTool from the initial exec; it observes the first
+-syscall at each site and installs a LiteInst trampoline for later invocations.
+-There is no second in-guest Detcore instance or coordinator RPC Tool.
+-
+-Build and stage the constructor-enabled runtime with its locked standalone
+-manifest before building Hermit:
++LiteInst requires the constructor-enabled `libhermit.so` Detcore Tool beside
++the Hermit executable. Build the binary and tool DSO together:
+ 
+ ```bash
+-./scripts/stage-liteinst-runtime.sh dev \
+-  "$PWD/target/debug/libreverie_liteinst.so" \
+-  "$PWD/target/liteinst-runtime-build"
+-cargo build --locked -p hermit --bin hermit
++cargo build --locked -p hermit --lib --bin hermit
+ ```
+ 
+ Hermit verifies the DSO architecture, required exports, and preload constructor
+-before activation; an arbitrary shared object or constructor-free runtime is
+-rejected rather than silently falling back.
++before activation; an arbitrary shared object or constructor-free Tool is
++rejected rather than silently falling back. The Tool is installed in the guest
++before program startup. First faults install LiteInst hooks for subscribed
++syscalls and CPU instructions, current-thread PMU reads supply RCB accounting,
++and the shared Reverie vDSO patcher routes time symbols through the same Tool.
++No ptracer owns the steady-state syscall path.
+ 
+ LiteInst uses the normal Hermit run and verification paths. A successful
+ `--strict --verify` run compares captured status/output and Detcore scheduler
+@@ -187,9 +182,9 @@ logs and is therefore an L2 result. Verification currently supplies
+ linked, single-threaded, single-process Linux x86-64 guests. Thread clone,
+ `fork`, and `vfork` fail closed with `EOPNOTSUPP`, and `exec` remains
+ unsupported because the patch runtime is not yet re-bootstrapped and
+-revalidated after image replacement. PMU/RCB timer delivery, CPUID, RDTSC, and
+-RDTSCP use the ptrace host path and therefore have the same host capability
+-requirements as the normal ptrace backend.
++revalidated after image replacement. PMU/RCB accounting, CPUID, RDTSC, and
++RDTSCP execute through in-guest mechanisms and retain their hardware/kernel
++capability requirements.
+ 
+ The default namespace, mount, and network setup is shared with Hermit's other
+ backends; `--no-namespace` remains available for trusted guests. The preload
+diff --git a/hermit-cli/Cargo.toml b/hermit-cli/Cargo.toml
+index 11d24261d..8b4b758e5 100644
+--- a/hermit-cli/Cargo.toml
++++ b/hermit-cli/Cargo.toml
+@@ -50,12 +50,12 @@ rand_pcg = { version = "0.10.2", features = ["serde"] }
+ regex = "1.13.1"
+ # Reverie is pinned to a specific commit for reproducibility. Keep this rev in
+ # sync across all crates and bump it via docs/updating-reverie.md.
+-reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-dbi = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f", default-features = false, optional = true }
+-reverie-kvm = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-ptrace = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
+-reverie-liteinst = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f", default-features = false }
+-reverie-rpc-transport = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f" }
++reverie = { package = "reverie-core", version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-dbi = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f", default-features = false, optional = true }
++reverie-kvm = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-ptrace = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
++reverie-liteinst = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f", default-features = false }
++reverie-rpc-transport = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f" }
+ serde = { version = "1.0.219", features = ["derive", "rc"] }
+ serde_json = { version = "1.0.140", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
+ shell-words = "1.1.1"
+diff --git a/hermit-cli/src/bin/hermit/main.rs b/hermit-cli/src/bin/hermit/main.rs
+index d1998143a..b3008f448 100644
+--- a/hermit-cli/src/bin/hermit/main.rs
++++ b/hermit-cli/src/bin/hermit/main.rs
+@@ -126,7 +126,7 @@ fn liteinst_activation_probe() -> Option<ExitStatus> {
+         "hermit-liteinst-activation calls={LITEINST_ACTIVATION_CALLS} traps={traps} hooks={hooks}"
+     );
+     Some(ExitStatus::Exited(i32::from(
+-        traps != 1 || hooks != LITEINST_ACTIVATION_CALLS - 1,
++        traps != 1 || hooks != LITEINST_ACTIVATION_CALLS,
+     )))
+ }
+ 
+diff --git a/hermit-cli/src/bin/hermit/run.rs b/hermit-cli/src/bin/hermit/run.rs
+index e9deba37a..01f524c33 100644
+--- a/hermit-cli/src/bin/hermit/run.rs
++++ b/hermit-cli/src/bin/hermit/run.rs
+@@ -1783,7 +1783,7 @@ impl RunOpts {
+             &None,
+             Backend::Liteinst,
+         )?;
+-        let expected = b"hermit-liteinst-activation calls=32 traps=1 hooks=31\n";
++        let expected = b"hermit-liteinst-activation calls=32 traps=1 hooks=32\n";
+         if output.status != ExitStatus::Exited(0) || output.stdout != expected {
+             anyhow::bail!(
+                 "LiteInst activation probe failed closed: status={:?}, stdout={:?}, stderr={:?}",
+@@ -1898,7 +1898,7 @@ impl RunOpts {
+         if backend == Backend::Liteinst {
+             self.verify_liteinst_activation()?;
+             eprintln!(
+-                "hermit: [liteinst host hybrid] activation verified (traps=1, hooks=31); Detcore Tool active in ptrace host"
++                "hermit: [liteinst direct] activation verified (traps=1, hooks=32); Detcore Tool active in guest"
+             );
+         }
+ 
+@@ -2809,7 +2809,7 @@ impl RunOpts {
+         let backend_banner = match self.selected_backend() {
+             Backend::Kvm => Some("KVM (reverie-kvm KvmGuest<Detcore>)"),
+             Backend::Liteinst => {
+-                Some("LiteInst host hybrid (reverie-liteinst patch runtime + ptrace Detcore Tool)")
++                Some("LiteInst direct (reverie-liteinst patch runtime + in-guest Detcore Tool)")
+             }
+             _ => None,
+         };
+diff --git a/hermit-cli/src/lib.rs b/hermit-cli/src/lib.rs
+index 544cd23ad..7adb31976 100644
+--- a/hermit-cli/src/lib.rs
++++ b/hermit-cli/src/lib.rs
+@@ -107,6 +107,35 @@ enum KvmStdinReservation {
+ 
+ static KVM_STDIN_RESERVATION: Mutex<Option<KvmStdinReservation>> = Mutex::new(None);
+ 
++/// Install Detcore inside a LiteInst guest when this cdylib is preloaded by the
++/// direct backend. The ordinary Hermit executable also links this crate, so an
++/// absent coordinator is deliberately a no-op.
++#[doc(hidden)]
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn hermit_liteinst_initialize() {
++    let Some(coordinator) = std::env::var_os(reverie_liteinst::COORDINATOR_ENV) else {
++        // The standalone Reverie constructor is not retained automatically
++        // when its crate is linked into this larger cdylib. Delegate its host
++        // and compatibility selectors explicitly; with no selector it is a
++        // no-op, including in the ordinary Hermit executable.
++        unsafe { reverie_liteinst::reverie_liteinst_initialize() };
++        return;
++    };
++    if let Err(error) =
++        unsafe { reverie_liteinst::install_tool_quiescent::<Detcore>(PathBuf::from(coordinator)) }
++    {
++        let message = format!("hermit: LiteInst Detcore constructor failed: {error}\n");
++        unsafe {
++            libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
++            libc::_exit(126);
++        }
++    }
++}
++
++#[used]
++#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
++static HERMIT_LITEINST_CONSTRUCTOR: unsafe extern "C" fn() = hermit_liteinst_initialize;
++
+ /// Saves stdin captured before Rust's process startup can reuse a closed fd 0.
+ pub fn reserve_kvm_stdin(stdin: Option<fs::File>) -> io::Result<()> {
+     let mut reservation = KVM_STDIN_RESERVATION
+@@ -412,7 +441,7 @@ fn dbi_runtime_unavailable_reason() -> Option<String> {
+ }
+ 
+ // AUTONOMOUS-BOT-IMPLEMENTED
+-// TODO-HUMAN-REVIEW(#688): Review LiteInst runtime discovery.
++// TODO-HUMAN-REVIEW(#688): Review LiteInst tool DSO discovery.
+ fn validate_liteinst_runtime_library(path: &Path) -> io::Result<PathBuf> {
+     let bytes = fs::read(path).map_err(|error| {
+         io::Error::new(
+@@ -443,7 +472,7 @@ fn validate_liteinst_runtime_library(path: &Path) -> io::Result<PathBuf> {
+     }
+ 
+     let required = [
+-        "reverie_liteinst_initialize",
++        "hermit_liteinst_initialize",
+         "reverie_liteinst_site_trap_count",
+         "reverie_liteinst_site_hook_count",
+     ];
+@@ -467,7 +496,7 @@ fn validate_liteinst_runtime_library(path: &Path) -> io::Result<PathBuf> {
+         .iter()
+         .enumerate()
+         .find(|(_, symbol)| {
+-            elf.dynstrtab.get_at(symbol.st_name) == Some("reverie_liteinst_initialize")
++            elf.dynstrtab.get_at(symbol.st_name) == Some("hermit_liteinst_initialize")
+         })
+         .ok_or_else(|| io::Error::other("checked LiteInst initializer disappeared"))?;
+     let init_array = elf
+@@ -510,7 +539,7 @@ fn validate_liteinst_runtime_library(path: &Path) -> io::Result<PathBuf> {
+         return Err(io::Error::new(
+             io::ErrorKind::InvalidData,
+             format!(
+-                "LiteInst runtime {} does not register reverie_liteinst_initialize as a preload constructor",
++                "LiteInst tool {} does not register hermit_liteinst_initialize as a preload constructor",
+                 path.display()
+             ),
+         ));
+@@ -518,7 +547,7 @@ fn validate_liteinst_runtime_library(path: &Path) -> io::Result<PathBuf> {
+     path.canonicalize()
+ }
+ 
+-/// Returns the LiteInst preload cdylib produced beside the Hermit binary.
++/// Returns the Detcore LiteInst tool cdylib produced beside the Hermit binary.
+ #[doc(hidden)]
+ pub fn liteinst_runtime_library_path() -> io::Result<PathBuf> {
+     if let Some(path) = std::env::var_os("HERMIT_LITEINST_RUNTIME") {
+@@ -545,15 +574,15 @@ pub fn liteinst_runtime_library_path() -> io::Result<PathBuf> {
+         )
+     })?;
+     if let Some(path) = [
+-        directory.join("libreverie_liteinst.so"),
+-        directory.join("deps/libreverie_liteinst.so"),
++        directory.join("libhermit.so"),
++        directory.join("deps/libhermit.so"),
+     ]
+     .into_iter()
+     .find(|path| path.is_file())
+     {
+         return validate_liteinst_runtime_library(&path);
+     }
+-    if let Some(path) = hermit_resources::resource("libreverie_liteinst.so")?
++    if let Some(path) = hermit_resources::resource("libhermit.so")?
+         && path.is_file()
+     {
+         return validate_liteinst_runtime_library(&path);
+@@ -561,7 +590,7 @@ pub fn liteinst_runtime_library_path() -> io::Result<PathBuf> {
+     Err(io::Error::new(
+         io::ErrorKind::NotFound,
+         format!(
+-            "libreverie_liteinst.so was not built beside {} or staged as an installed resource",
++            "libhermit.so was not built beside {} or staged as an installed resource",
+             executable.display()
+         ),
+     ))
+@@ -570,7 +599,7 @@ pub fn liteinst_runtime_library_path() -> io::Result<PathBuf> {
+ fn liteinst_runtime_unavailable_reason() -> Option<String> {
+     liteinst_runtime_library_path().err().map(|error| {
+         format!(
+-            "the LiteInst preload runtime is unavailable: {error}; build the locked liteinst-runtime-build manifest and stage its constructor-enabled DSO beside hermit"
++            "the LiteInst Detcore tool is unavailable: {error}; build the hermit cdylib beside the hermit executable"
+         )
+     })
+ }
+@@ -598,7 +627,7 @@ pub enum Backend {
+     Ptrace,
+     /// Use the DynamoRIO backend.
+     Dbi,
+-    /// Use the ptrace-hosted LiteInst hybrid with one Detcore Tool.
++    /// Use the direct in-guest LiteInst backend with one Detcore Tool per process.
+     Liteinst,
+     /// Use the SaBRe static binary rewriting backend.
+     Sabre,
+@@ -1510,7 +1539,7 @@ fn liteinst_requires_forced_shutdown(status: ExitStatus) -> bool {
+ 
+ #[tokio::main(flavor = "current_thread")]
+ async fn run_with_backend_inner(
+-    command: Command,
++    mut command: Command,
+     config: DetConfig,
+     print_summary: bool,
+     print_summary_to_json_file: &Option<PathBuf>,
+@@ -1550,9 +1579,10 @@ async fn run_with_backend_inner(
+         .status);
+     }
+     if backend == Backend::Liteinst {
++        command.env(reverie_liteinst::PROCESS_FORK_ENV, "1");
+         let preload = liteinst_runtime_library_path()?;
+         let (exit_status, mut global_state) =
+-            reverie_liteinst::LiteinstBackend::run_host_with_preload::<Detcore>(
++            reverie_liteinst::LiteinstBackend::run_with_preload::<Detcore>(
+                 command, config, preload,
+             )
+             .await?;
+@@ -1661,13 +1691,14 @@ async fn run_with_output_backend_inner(
+     }
+     if backend == Backend::Liteinst {
+         command.stdin(output_backend_stdin()?);
++        command.env(reverie_liteinst::PROCESS_FORK_ENV, "1");
+         let preload = liteinst_runtime_library_path()?;
+         let (output, mut global_state) =
+-            reverie_liteinst::LiteinstBackend::run_host_with_output_and_preload::<Detcore>(
++            reverie_liteinst::LiteinstBackend::run_with_output_and_preload::<Detcore>(
+                 command, config, preload,
+             )
+             .await?;
+-        let status = output.status;
++        let status: ExitStatus = output.status.into();
+         if liteinst_requires_forced_shutdown(status) {
+             global_state.force_shutdown_with_error();
+             global_state.cancel_internal_scheduler().await;
+@@ -1994,7 +2025,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn liteinst_host_backend_preserves_ptrace_rcb_timeslices() {
++    fn liteinst_backend_preserves_rcb_timeslice_configuration() {
+         let config = super::DetConfig::default();
+         assert!(config.max_timeslice.is_some());
+         assert!(
+@@ -2057,7 +2088,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn liteinst_public_dispatch_runs_ptrace_host_hybrid() {
++    fn liteinst_public_dispatch_runs_direct_in_guest_backend() {
+         if Backend::Liteinst.ensure_available().is_err() {
+             return;
+         }
+@@ -2071,7 +2102,7 @@ mod tests {
+             &None,
+             Backend::Liteinst,
+         )
+-        .expect("run /bin/echo through the ptrace-hosted LiteInst hybrid");
++        .expect("run /bin/echo through direct in-guest LiteInst");
+         assert_eq!(output.status, super::ExitStatus::Exited(0));
+         assert_eq!(output.stdout, b"hello\n");
+ 
+@@ -2082,7 +2113,7 @@ mod tests {
+             &None,
+             Backend::Liteinst,
+         )
+-        .expect("run /bin/true through the ptrace-hosted LiteInst hybrid");
++        .expect("run /bin/true through direct in-guest LiteInst");
+         assert_eq!(status, super::ExitStatus::Exited(0));
+     }
+ 
+diff --git a/hermit-cli/tests/cli.rs b/hermit-cli/tests/cli.rs
+index 9a364d482..fb79fb444 100644
+--- a/hermit-cli/tests/cli.rs
++++ b/hermit-cli/tests/cli.rs
+@@ -712,7 +712,7 @@ fn run_liteinst_verifies_detcore_backend() {
+     let stderr = stderr(&output);
+     assert!(
+         stderr.contains(
+-            "liteinst host hybrid] activation verified (traps=1, hooks=31); Detcore Tool active in ptrace host"
++            "liteinst direct] activation verified (traps=1, hooks=32); Detcore Tool active in guest"
+         ),
+         "{stderr}"
+     );
+@@ -721,9 +721,7 @@ fn run_liteinst_verifies_detcore_backend() {
+         "{stderr}"
+     );
+     assert!(
+-        stderr.contains(
+-            "LiteInst host hybrid (reverie-liteinst patch runtime + ptrace Detcore Tool)"
+-        ),
++        stderr.contains("LiteInst direct (reverie-liteinst patch runtime + in-guest Detcore Tool)"),
+         "{stderr}"
+     );
+ }
+@@ -785,7 +783,7 @@ fn run_liteinst_rejects_an_inert_dso_before_activation_claim() {
+     assert!(!output.status.success(), "{output:?}");
+     let stderr = stderr(&output);
+     assert!(
+-        stderr.contains("does not register reverie_liteinst_initialize as a preload constructor"),
++        stderr.contains("does not register hermit_liteinst_initialize as a preload constructor"),
+         "{stderr}"
+     );
+     assert!(!stderr.contains("activation verified"), "{stderr}");
+diff --git a/hermit-cli/tests/common/liteinst.rs b/hermit-cli/tests/common/liteinst.rs
+index 75cacddcb..f5263796e 100644
+--- a/hermit-cli/tests/common/liteinst.rs
++++ b/hermit-cli/tests/common/liteinst.rs
+@@ -24,7 +24,7 @@ pub(super) fn liteinst_runtime_library() -> PathBuf {
+     hermit_binary()
+         .parent()
+         .expect("Hermit test binary should have a profile directory")
+-        .join("libreverie_liteinst.so")
++        .join("libhermit.so")
+ }
+ 
+ pub(super) fn ensure_liteinst_runtime() {
+@@ -47,26 +47,40 @@ pub(super) fn ensure_liteinst_runtime() {
+         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+             .parent()
+             .expect("hermit-cli should be inside the repository");
+-        // stage-liteinst-runtime.sh appends the current Reverie pin itself, so
+-        // cache invalidation has the same source of truth as the pin gate.
+-        let runtime_target = target_dir.join("liteinst-runtime-build");
++        let runtime_target = target_dir.join("liteinst-tool-build");
+         let runtime = liteinst_runtime_library();
+-        let output = Command::new(repository.join("scripts/stage-liteinst-runtime.sh"))
++        if runtime.is_file() {
++            return;
++        }
++        let output = Command::new(env!("CARGO"))
+             .current_dir(repository)
++            .args(["build", "--package", "hermit", "--lib", "--profile"])
+             .arg(cargo_profile)
+-            .arg(&runtime)
+-            .arg(&runtime_target)
++            .env("CARGO_TARGET_DIR", &runtime_target)
+             .output()
+-            .expect("failed to build the LiteInst runtime");
++            .expect("failed to build the LiteInst Detcore tool DSO");
+         assert!(
+             output.status.success(),
+-            "LiteInst runtime build failed:\nstdout:\n{}\nstderr:\n{}",
++            "LiteInst tool DSO build failed:\nstdout:\n{}\nstderr:\n{}",
+             String::from_utf8_lossy(&output.stdout),
+             String::from_utf8_lossy(&output.stderr),
+         );
++        let artifact_profile = if cargo_profile == OsStr::new("dev") {
++            OsStr::new("debug")
++        } else {
++            cargo_profile
++        };
++        let built = runtime_target.join(artifact_profile).join("libhermit.so");
++        std::fs::copy(&built, &runtime).unwrap_or_else(|error| {
++            panic!(
++                "failed to stage LiteInst tool {} as {}: {error}",
++                built.display(),
++                runtime.display()
++            )
++        });
+         assert!(
+             runtime.is_file(),
+-            "standalone LiteInst runtime build did not stage {}",
++            "LiteInst tool build did not stage {}",
+             runtime.display(),
+         );
+     });
+diff --git a/hermit-cli/tests/liteinst_advanced.rs b/hermit-cli/tests/liteinst_advanced.rs
+index da2db0c41..c57bf2b8d 100644
+--- a/hermit-cli/tests/liteinst_advanced.rs
++++ b/hermit-cli/tests/liteinst_advanced.rs
+@@ -274,7 +274,7 @@ fn assert_liteinst_strict_verify_output(output: Output) -> Output {
+     let stderr = String::from_utf8_lossy(&output.stderr);
+     assert!(
+         stderr.contains(
+-            "liteinst host hybrid] activation verified (traps=1, hooks=31); Detcore Tool active in ptrace host"
++            "liteinst direct] activation verified (traps=1, hooks=32); Detcore Tool active in guest"
+         ),
+         "{stderr}"
+     );
+@@ -289,9 +289,7 @@ fn assert_liteinst_strict_verify_output(output: Output) -> Output {
+         "{stderr}"
+     );
+     assert!(
+-        stderr.contains(
+-            "LiteInst host hybrid (reverie-liteinst patch runtime + ptrace Detcore Tool)"
+-        ),
++        stderr.contains("LiteInst direct (reverie-liteinst patch runtime + in-guest Detcore Tool)"),
+         "{stderr}"
+     );
+     output
+@@ -810,14 +808,11 @@ fn assert_clone_boundary(mode: &str) {
+         String::from_utf8_lossy(&output.stderr),
+     );
+     let stderr = String::from_utf8_lossy(&output.stderr);
+-    assert!(
+-        stderr.contains("ENOTSUPP (Operation is not supported)"),
+-        "{stderr}"
+-    );
++    assert!(stderr.contains("Operation not supported"), "{stderr}");
+     assert!(!stderr.contains("Bad system call"), "{stderr}");
+ }
+ 
+-/// Path to the freshly built `libreverie_liteinst.so` preload runtime.
++/// Path to the freshly built `libhermit.so` Detcore preload tool.
+ ///
+ /// [`liteinst_runtime::ensure_liteinst_runtime`] builds it beside the Hermit
+ /// test binary, so it lives in the same profile directory.
+@@ -826,17 +821,13 @@ fn liteinst_runtime_library() -> PathBuf {
+     liteinst_runtime::liteinst_runtime_library()
+ }
+ 
+-/// A bare preload must not create a second in-guest Detcore Tool.
+-///
+-/// Host mode is selected only by `run_host_with_preload`. Without that private
+-/// selector, even a stale legacy coordinator variable must leave the patch DSO
+-/// inert and let the program run normally.
++/// The Detcore tool DSO must fail closed when its coordinator is stale.
+ #[test]
+-fn liteinst_preload_is_inert_without_host_runtime_selector() {
++fn liteinst_tool_preload_rejects_a_stale_coordinator() {
+     let runtime = liteinst_runtime_library();
+     assert!(
+         runtime.is_file(),
+-        "expected LiteInst preload runtime at {}",
++        "expected LiteInst Detcore tool at {}",
+         runtime.display(),
+     );
+ 
+@@ -847,19 +838,19 @@ fn liteinst_preload_is_inert_without_host_runtime_selector() {
+         )
+         .env("LD_PRELOAD", &runtime)
+         .output()
+-        .expect("failed to launch /bin/true under the LiteInst preload");
++        .expect("failed to launch /bin/true under the LiteInst tool preload");
+ 
+     assert_eq!(
+         output.status.code(),
+-        Some(0),
+-        "bare patch preload must remain inert\nstatus={:?}\nstdout={}\nstderr={}",
++        Some(126),
++        "stale coordinator must fail closed\nstatus={:?}\nstdout={}\nstderr={}",
+         output.status,
+         String::from_utf8_lossy(&output.stdout),
+         String::from_utf8_lossy(&output.stderr),
+     );
+     assert!(
+-        !String::from_utf8_lossy(&output.stderr).contains("reverie-liteinst initialization failed"),
+-        "bare preload attempted to install an in-guest Detcore Tool: stderr={}",
++        String::from_utf8_lossy(&output.stderr).contains("LiteInst Detcore constructor failed"),
++        "tool preload did not report the stale coordinator: stderr={}",
+         String::from_utf8_lossy(&output.stderr),
+     );
+ }
+diff --git a/hermit-install/Cargo.toml b/hermit-install/Cargo.toml
+index ba74169aa..09320f8d3 100644
+--- a/hermit-install/Cargo.toml
++++ b/hermit-install/Cargo.toml
+@@ -10,4 +10,4 @@ publish = false
+ path = "src/lib.rs"
+ 
+ [build-dependencies]
+-reverie-dbi = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f", default-features = false }
++reverie-dbi = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f", default-features = false }
+diff --git a/hermit-install/build.rs b/hermit-install/build.rs
+index b6e659b60..8f0b374f6 100644
+--- a/hermit-install/build.rs
++++ b/hermit-install/build.rs
+@@ -265,53 +265,10 @@ fn replace_symlink(destination: &Path, target: &Path) -> io::Result<()> {
+     symlink(target, destination)
+ }
+ 
+-fn replace_copy(source: &Path, destination: &Path) {
+-    match fs::symlink_metadata(destination) {
+-        Ok(metadata) if metadata.is_dir() => {
+-            panic!(
+-                "refusing to replace directory {} with a runtime file",
+-                destination.display()
+-            )
+-        }
+-        Ok(_) => fs::remove_file(destination)
+-            .unwrap_or_else(|error| panic!("failed to remove {}: {error}", destination.display())),
+-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+-        Err(error) => panic!("failed to inspect {}: {error}", destination.display()),
+-    }
+-    copy_file(source, destination);
+-}
+-
+-fn build_liteinst_runtime(
+-    repository: &Path,
+-    build_root: &Path,
+-    profile_dir: &Path,
+-    resources: &Path,
+-) {
+-    // stage-liteinst-runtime.sh appends the canonical Reverie pin to this stable
+-    // root, so cache invalidation has the same source of truth as the pin gate.
+-    let target = build_root.join("liteinst-runtime");
+-    let runtime = profile_dir.join("libreverie_liteinst.so");
+-    run(
+-        Command::new(repository.join("scripts/stage-liteinst-runtime.sh"))
+-            .current_dir(repository)
+-            .arg("release")
+-            .arg(&runtime)
+-            .arg(&target),
+-        "build the constructor-enabled LiteInst runtime",
+-    );
+-    assert!(
+-        runtime.is_file(),
+-        "standalone build did not stage {}",
+-        runtime.display()
+-    );
+-    replace_copy(&runtime, &resources.join("libreverie_liteinst.so"));
+-}
+-
+ fn main() {
+     println!("cargo:rerun-if-changed=build.rs");
+     println!("cargo:rerun-if-changed=Cargo.toml");
+     println!("cargo:rerun-if-env-changed=HERMIT_INSTALL_FORCE_RESTAGE");
+-    println!("cargo:rerun-if-changed=../scripts/stage-liteinst-runtime.sh");
+     println!("cargo:rerun-if-changed=native-client/CMakeLists.txt");
+     println!("cargo:rerun-if-changed=native-client/detcore_dbi_link_stub.c");
+ 
+@@ -349,7 +306,7 @@ fn main() {
+     fs::create_dir_all(&build_root)
+         .unwrap_or_else(|error| panic!("failed to create {}: {error}", build_root.display()));
+ 
+-    for library in ["libdetcore_dbi.so", "libdetcore_sabre.so"] {
++    for library in ["libdetcore_dbi.so", "libdetcore_sabre.so", "libhermit.so"] {
+         replace_symlink(
+             &resources.join(library),
+             &Path::new("../../release").join(library),
+@@ -363,8 +320,6 @@ fn main() {
+     let repository = manifest_dir
+         .parent()
+         .expect("hermit-install is not inside the Hermit repository");
+-    build_liteinst_runtime(repository, &build_root, &profile_dir, &resources);
+-
+     let reverie_root = reverie_dbi::native_client_source_dir()
+         .parent()
+         .and_then(Path::parent)
+diff --git a/liteinst-runtime-build/Cargo.lock b/liteinst-runtime-build/Cargo.lock
+index a6837c8c9..4051275f8 100644
+--- a/liteinst-runtime-build/Cargo.lock
++++ b/liteinst-runtime-build/Cargo.lock
+@@ -896,7 +896,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+ [[package]]
+ name = "reverie-core"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "addr2line",
+  "anyhow",
+@@ -922,8 +922,9 @@ dependencies = [
+ [[package]]
+ name = "reverie-liteinst"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
++ "bincode",
+  "libc",
+  "liteinst2",
+  "reverie-core",
+@@ -938,7 +939,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-memory"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "syscalls",
+ ]
+@@ -946,7 +947,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-preload"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bincode",
+  "libc",
+@@ -957,7 +958,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-process"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bincode",
+  "bitflags 2.13.1",
+@@ -974,7 +975,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-ptrace"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "anyhow",
+  "async-trait",
+@@ -1005,7 +1006,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-rpc-transport"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "async-trait",
+  "bincode",
+@@ -1018,7 +1019,7 @@ dependencies = [
+ [[package]]
+ name = "reverie-syscalls"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bitflags 2.13.1",
+  "derive_more",
+@@ -1076,7 +1077,7 @@ dependencies = [
+ [[package]]
+ name = "safeptrace"
+ version = "0.2.0"
+-source = "git+https://github.com/rrnewton/reverie.git?rev=6144323c5dab8b521278fce206f8774360c2b05f#6144323c5dab8b521278fce206f8774360c2b05f"
++source = "git+https://github.com/rrnewton/reverie.git?rev=f6a7e7248f0415fe88284cae3e38a317571c288f#f6a7e7248f0415fe88284cae3e38a317571c288f"
+ dependencies = [
+  "bitflags 2.13.1",
+  "futures 0.3.33",
+diff --git a/liteinst-runtime-build/runtime/Cargo.toml b/liteinst-runtime-build/runtime/Cargo.toml
+index 9e5de6497..4ba5ee7d0 100644
+--- a/liteinst-runtime-build/runtime/Cargo.toml
++++ b/liteinst-runtime-build/runtime/Cargo.toml
+@@ -5,4 +5,4 @@ edition = "2024"
+ publish = false
+ 
+ [dependencies]
+-reverie-liteinst = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "6144323c5dab8b521278fce206f8774360c2b05f", default-features = false, features = ["preload-constructor"] }
++reverie-liteinst = { version = "0.2.0", git = "https://github.com/rrnewton/reverie.git", rev = "f6a7e7248f0415fe88284cae3e38a317571c288f", default-features = false, features = ["preload-constructor"] }
+diff --git a/tests/c/liteinst_inert_runtime.c b/tests/c/liteinst_inert_runtime.c
+index 1b1a067c5..01406fac8 100644
+--- a/tests/c/liteinst_inert_runtime.c
++++ b/tests/c/liteinst_inert_runtime.c
+@@ -8,7 +8,7 @@
+ 
+ #include <stdint.h>
+ 
+-void reverie_liteinst_initialize(void) {}
++void hermit_liteinst_initialize(void) {}
+ 
+ uint64_t reverie_liteinst_site_trap_count(uint64_t address) {
+   (void)address;

@@ -1,0 +1,317 @@
+From fc0c6494eea1df53b72ce964719249862cab1038 Mon Sep 17 00:00:00 2001
+From: Ryan Newton <rrnewton@gmail.com>
+Date: Sat, 1 Aug 2026 20:31:31 -0700
+Subject: [PATCH 5/7] Reconstruct fork children on every Tool path
+
+Route subscribed inject, subscribed tail-inject, and unsubscribed plain fork through one child Tool/thread-state reconstruction path. Add regressions for the previously bypassed tail and unsubscribed cases.
+---
+ reverie-liteinst/src/bin/rpc_tool_guest.rs |  81 +++++++++++++
+ reverie-liteinst/src/tool_host.rs          | 126 ++++++++++++++++-----
+ reverie-liteinst/tests/rpc_tool.rs         |  16 +++
+ 3 files changed, 193 insertions(+), 30 deletions(-)
+
+diff --git a/reverie-liteinst/src/bin/rpc_tool_guest.rs b/reverie-liteinst/src/bin/rpc_tool_guest.rs
+index a6998b6..b8fda8f 100644
+--- a/reverie-liteinst/src/bin/rpc_tool_guest.rs
++++ b/reverie-liteinst/src/bin/rpc_tool_guest.rs
+@@ -1,4 +1,5 @@
+ use core::arch::global_asm;
++use core::sync::atomic::AtomicBool;
+ use core::sync::atomic::AtomicI64;
+ use core::sync::atomic::AtomicU64;
+ use core::sync::atomic::Ordering;
+@@ -30,6 +31,7 @@ static LAST_NESTED_UID: AtomicI64 = AtomicI64::new(-1);
+ static LAST_MASK_RESULT: AtomicI64 = AtomicI64::new(0);
+ static LAST_FIRST_USE_EXEC_RESULT: AtomicI64 = AtomicI64::new(0);
+ static LAST_FIRST_USE_SIGNAL_RESULT: AtomicI64 = AtomicI64::new(0);
++static CHILD_RECONSTRUCTED: AtomicBool = AtomicBool::new(false);
+ 
+ #[derive(Default)]
+ struct CounterGlobal {
+@@ -167,6 +169,54 @@ impl Tool for InjectExitTool {
+     }
+ }
+ 
++#[derive(Default)]
++struct UnsubscribedForkTool;
++
++#[reverie::tool]
++impl Tool for UnsubscribedForkTool {
++    type GlobalState = CounterGlobal;
++    type ThreadState = ();
++
++    fn subscriptions(_cfg: &()) -> Subscription {
++        Subscription::none()
++    }
++
++    async fn handle_thread_start<G: Guest<Self>>(&self, guest: &mut G) -> Result<(), Error> {
++        if guest.ppid().is_some() {
++            CHILD_RECONSTRUCTED.store(true, Ordering::Release);
++        }
++        Ok(())
++    }
++}
++
++#[derive(Default)]
++struct TailForkTool;
++
++#[reverie::tool]
++impl Tool for TailForkTool {
++    type GlobalState = CounterGlobal;
++    type ThreadState = ();
++
++    fn subscriptions(_cfg: &()) -> Subscription {
++        [Sysno::clone, Sysno::fork].into_iter().collect()
++    }
++
++    async fn handle_thread_start<G: Guest<Self>>(&self, guest: &mut G) -> Result<(), Error> {
++        if guest.ppid().is_some() {
++            CHILD_RECONSTRUCTED.store(true, Ordering::Release);
++        }
++        Ok(())
++    }
++
++    async fn handle_syscall_event<G: Guest<Self>>(
++        &self,
++        guest: &mut G,
++        syscall: Syscall,
++    ) -> Result<i64, Error> {
++        guest.tail_inject(syscall).await
++    }
++}
++
+ global_asm!(
+     r#"
+     .text
+@@ -477,6 +527,35 @@ fn fork_guest(path: &Path) {
+     );
+ }
+ 
++fn check_reconstructed_fork(label: &str) {
++    CHILD_RECONSTRUCTED.store(false, Ordering::Release);
++    let child = unsafe { libc::fork() };
++    assert!(
++        child >= 0,
++        "fork failed: {}",
++        std::io::Error::last_os_error()
++    );
++    if child == 0 {
++        assert!(CHILD_RECONSTRUCTED.load(Ordering::Acquire));
++        unsafe { libc::_exit(0) };
++    }
++    let mut status = 0;
++    assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
++    assert!(libc::WIFEXITED(status));
++    assert_eq!(libc::WEXITSTATUS(status), 0);
++    println!("{label}-fork-reconstructed");
++}
++
++fn unsubscribed_fork_guest(path: &Path) {
++    unsafe { reverie_liteinst::install_tool::<UnsubscribedForkTool>(path) }.unwrap();
++    check_reconstructed_fork("unsubscribed");
++}
++
++fn tail_fork_guest(path: &Path) {
++    unsafe { reverie_liteinst::install_tool::<TailForkTool>(path) }.unwrap();
++    check_reconstructed_fork("tail");
++}
++
+ fn main() {
+     let mut args = std::env::args_os();
+     let _program = args.next();
+@@ -492,6 +571,8 @@ fn main() {
+         Some("unsubscribed-lifecycle") => unsubscribed_lifecycle_guest(Path::new(&path)),
+         Some("injected-exit") => injected_exit_guest(Path::new(&path)),
+         Some("fork-guest") => fork_guest(Path::new(&path)),
++        Some("unsubscribed-fork") => unsubscribed_fork_guest(Path::new(&path)),
++        Some("tail-fork") => tail_fork_guest(Path::new(&path)),
+         _ => panic!("expected coordinator or guest"),
+     }
+ }
+diff --git a/reverie-liteinst/src/tool_host.rs b/reverie-liteinst/src/tool_host.rs
+index 248fb45..a9a1f50 100644
+--- a/reverie-liteinst/src/tool_host.rs
++++ b/reverie-liteinst/src/tool_host.rs
+@@ -216,7 +216,26 @@ where
+         if !self.subscriptions.contains(&number) {
+             let number = guest.event.number;
+             let args = guest.event.args;
+-            if is_exit_syscall(number) {
++            if is_plain_fork(number, args) {
++                let result = unsafe { raw_syscall6(number, args) };
++                if result == 0 {
++                    finish_fork_child(
++                        &mut tool_slot,
++                        &mut states,
++                        &self.rpc,
++                        event,
++                        ForkChildContext {
++                            parent_tid: tid,
++                            parent_pid: pid,
++                            child_tid: raw_pid(libc::SYS_gettid),
++                            child_pid: raw_pid(libc::SYS_getpid),
++                        },
++                    );
++                } else {
++                    event.result = result;
++                }
++                return;
++            } else if is_exit_syscall(number) {
+                 finish_tool_exit(
+                     &mut tool_slot,
+                     &mut states,
+@@ -267,40 +286,73 @@ where
+                 child_tid,
+                 child_pid,
+             } => {
+-                let parent_state = states
+-                    .remove(&parent_tid.as_raw())
+-                    .unwrap_or_else(|| fatal(126));
+-                let child_tool = T::new(child_pid, self.rpc.config());
+-                let child_state =
+-                    child_tool.init_thread_state(child_tid, Some((parent_tid, &parent_state)));
+-                states.clear();
+-                states.insert(child_tid.as_raw(), child_state);
+-                *tool_slot = Some(child_tool);
+-                runtime::reset_fallback_observability();
+-
+-                let tool = tool_slot.as_ref().unwrap_or_else(|| fatal(126));
+-                let state = states
+-                    .get_mut(&child_tid.as_raw())
+-                    .unwrap_or_else(|| fatal(126));
+-                let child_tail = TailResult::default();
+-                let mut child_guest = LiteinstGuest::<T> {
++                finish_fork_child(
++                    &mut tool_slot,
++                    &mut states,
++                    &self.rpc,
+                     event,
+-                    tid: child_tid,
+-                    pid: child_pid,
+-                    ppid: Some(parent_pid),
+-                    state,
+-                    rpc: &self.rpc,
+-                    tail: &child_tail,
+-                };
+-                if let Err(error) = drive_ready(tool.handle_thread_start(&mut child_guest)) {
+-                    tool_fatal(124, &error);
+-                }
+-                child_guest.event.result = 0;
++                    ForkChildContext {
++                        parent_tid,
++                        parent_pid,
++                        child_tid,
++                        child_pid,
++                    },
++                );
+             }
+         }
+     }
+ }
+ 
++fn finish_fork_child<T: Tool>(
++    tool_slot: &mut Option<T>,
++    states: &mut HashMap<i32, T::ThreadState>,
++    rpc: &CoordinatorRpc<T::GlobalState>,
++    event: &mut SyscallEvent,
++    context: ForkChildContext,
++) {
++    let ForkChildContext {
++        parent_tid,
++        parent_pid,
++        child_tid,
++        child_pid,
++    } = context;
++    let parent_state = states
++        .remove(&parent_tid.as_raw())
++        .unwrap_or_else(|| fatal(126));
++    let child_tool = T::new(child_pid, rpc.config());
++    let child_state = child_tool.init_thread_state(child_tid, Some((parent_tid, &parent_state)));
++    states.clear();
++    states.insert(child_tid.as_raw(), child_state);
++    *tool_slot = Some(child_tool);
++    runtime::reset_fallback_observability();
++
++    let tool = tool_slot.as_ref().unwrap_or_else(|| fatal(126));
++    let state = states
++        .get_mut(&child_tid.as_raw())
++        .unwrap_or_else(|| fatal(126));
++    let child_tail = TailResult::default();
++    let mut child_guest = LiteinstGuest::<T> {
++        event,
++        tid: child_tid,
++        pid: child_pid,
++        ppid: Some(parent_pid),
++        state,
++        rpc,
++        tail: &child_tail,
++    };
++    if let Err(error) = drive_ready(tool.handle_thread_start(&mut child_guest)) {
++        tool_fatal(124, &error);
++    }
++    child_guest.event.result = 0;
++}
++
++struct ForkChildContext {
++    parent_tid: Pid,
++    parent_pid: Pid,
++    child_tid: Pid,
++    child_pid: Pid,
++}
++
+ // TODO-HUMAN-REVIEW(PR-143): Review single-process Tool exit lifecycle.
+ fn finish_tool_exit<T: Tool>(
+     tool_slot: &mut Option<T>,
+@@ -715,7 +767,21 @@ impl<T: Tool> Guest<T> for LiteinstGuest<'_, T> {
+             syscall_args.arg5 as u64,
+         ];
+         let number = number.id() as i64;
+-        if let Some(error) = injected_syscall_guard(number, args) {
++        if is_plain_fork(number, args) {
++            let parent_tid = self.tid;
++            let parent_pid = self.pid;
++            let result = unsafe { raw_syscall6(number, args) };
++            if result == 0 {
++                self.tail.set_fork_child(
++                    parent_tid,
++                    parent_pid,
++                    raw_pid(libc::SYS_gettid),
++                    raw_pid(libc::SYS_getpid),
++                );
++            } else {
++                self.tail.set_result(result);
++            }
++        } else if let Some(error) = injected_syscall_guard(number, args) {
+             self.tail.set_result(-i64::from(error.into_raw()));
+         } else if is_exit_syscall(number) {
+             self.tail.set_exit(number, args);
+diff --git a/reverie-liteinst/tests/rpc_tool.rs b/reverie-liteinst/tests/rpc_tool.rs
+index 4bdd401..56b2e98 100644
+--- a/reverie-liteinst/tests/rpc_tool.rs
++++ b/reverie-liteinst/tests/rpc_tool.rs
+@@ -117,6 +117,22 @@ fn installed_hook_reentry_bypasses_tool_with_shared_coordinator_rpc() {
+     assert!(fork_total >= 5, "{fork_stdout}");
+     assert_eq!(sender_delta, 1, "{fork_stdout}");
+ 
++    for (mode, expected) in [
++        (
++            "unsubscribed-fork",
++            b"unsubscribed-fork-reconstructed\n".as_slice(),
++        ),
++        ("tail-fork", b"tail-fork-reconstructed\n".as_slice()),
++    ] {
++        let output = Command::new(binary)
++            .arg(mode)
++            .arg(&socket)
++            .output()
++            .unwrap();
++        assert!(output.status.success(), "{mode}: {output:?}");
++        assert_eq!(output.stdout, expected, "{mode}: {output:?}");
++    }
++
+     let guest = Command::new(binary)
+         .arg("guest")
+         .arg(&socket)
+-- 
+2.53.0-Meta
+
