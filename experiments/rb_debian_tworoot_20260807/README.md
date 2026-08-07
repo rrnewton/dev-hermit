@@ -13,18 +13,19 @@ own, so a high percentage can be mostly free.
 So instead: **for a package whose build demonstrably depends on where it is
 built, does Hermit make it independent of that?**
 
-## Design: four builds, one variable, an internal control
+## Design: six builds, one variable, an internal control
 
-Prepare a source package once, then build it **four** times from that same
-prepared tree, in **four different root paths**:
+Prepare a source package once, then build it **six** times from that same
+prepared tree, in **six different root paths**, across three arms:
 
 ```
-   native  in root N1        hermit  in root A
-   native  in root N2        hermit  in root B
+   native  in root N1        hermit  in root A        hermit --no-rcb-time in root A'
+   native  in root N2        hermit  in root B        hermit --no-rcb-time in root B'
 ```
 
-and compare `N1` vs `N2` and `A` vs `B`. The only thing varied is the path the
-build runs in.
+and compare each pair. The only thing varied within a pair is the path the build
+runs in. (The third arm exists because this host's PMU is broken; see below. The
+first two arms are the original design.)
 
 The native pair is the experiment's own control. It establishes, per package,
 that the build really is root-sensitive. A matching hermit pair is then evidence
@@ -43,59 +44,79 @@ transcribed):
 
 | package | version | native | hermit | hermit `--no-rcb-time` |
 |---|---|---|---|---|
+| ack-grep | 1.96-2 | DIVERGES | pending | pending |
 | bridge-utils | 1.5-6 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| bsdiff | 4.3-14 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | bsdmainutils | 9.0.3 | DIVERGES | pending | pending |
 | bzip2 | 1.0.6-4 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| cabextract | 1.4-3 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | cflow | 1:1.4+dfsg1-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | cgdb | 0.6.6-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| cmatrix | 1.2a-4 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| cscope | 15.7a-3.6 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | dialog | 1.1-20120215-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | dos2unix | 6.0-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | ed | 1.6-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | ethtool | 1:3.4.2-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | figlet | 2.2.5-2 | DIVERGES | DIVERGES | **IDENTICAL** |
 | file | 5.11-2+deb7u8 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| flex | 2.5.35-10.1 | DIVERGES | pending | pending |
+| gperf | 3.0.3-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | grep | 2.12-2 | DIVERGES | DIVERGES | **IDENTICAL** |
 | groff | 1.21-9 | DIVERGES | pending | pending |
 | hdparm | 9.39-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | hostname | 3.11 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| httping | 1.5.3-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | indent | 2.2.11-2 | DIVERGES | DIVERGES | **IDENTICAL** |
+| lftp | 4.3.6-1+deb7u2 | DIVERGES | pending | pending |
 | ltrace | 0.5.3-2.1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| lzop | 1.03-3 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | moreutils | 0.47 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | mtools | 4.0.17-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | nano | 2.2.6-1 | DIVERGES | DIVERGES | **IDENTICAL** |
+| ncompress | 4.2.4.4-5 | DIVERGES | pending | pending |
 | netcat-openbsd | 1.105-7 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | ngrep | 1.45.ds2-12 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | numactl | 2.0.8~rc4-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| pax | 1:20120606-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| pbzip2 | 1.1.8-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| pmount | 0.9.23-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | psmisc | 22.19-1+deb7u1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | pv | 1.2.0-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| sdparm | 1.07-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | sipcalc | 1.1.5-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | strace | 4.5.20-2.3 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| stress | 1.0.1-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | sysfsutils | 2.1.0+repack-2 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | sysstat | 10.0.5-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | time | 1.7-24 | DIVERGES | DIVERGES | **IDENTICAL** |
+| tofrodos | 1.7.9.debian.1-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| toilet | 0.3-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | tree | 1.6.0-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| tty-clock | 1.1-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| uncrustify | 0.59-2 | DIVERGES | pending | pending |
 | units | 1.88-1 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | vlan | 1.9-3 | DIVERGES | IDENTICAL | **IDENTICAL** |
 | wdiff | 1.1.2-1 | DIVERGES | DIVERGES | **IDENTICAL** |
 | whois | 5.1.1~deb7u1 | DIVERGES | IDENTICAL | **IDENTICAL** |
+| xdelta | 1.1.3-9 | DIVERGES | pending | pending |
 | zip | 3.0-6 | DIVERGES | IDENTICAL | **IDENTICAL** |
 
-**36/36 packages diverge natively across two build roots. 34/34 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.**
+**57/57 packages diverge natively across two build roots. 49/49 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.**
 
-*(Table and totals generated by `./summarize.sh` from `results.csv`; regenerate
-with that command after any new run.)*
+*(Table and totals generated by `./regen_readme.py` from `results.csv`;
+regenerate after any new run.)*
 
-The control fired on **every** package, so not one of the 28 wins is vacuous:
-each is a package that provably *was* root-sensitive and provably stopped being
-so. Rows marked `pending` were still building when measurement stopped; they are
+The control fired on **every** package, so not one of the wins is vacuous: each
+is a package that provably *was* root-sensitive and provably stopped being so. Rows marked `pending` were still building when measurement stopped; they are
 excluded from every total, and `summarize.sh` counts each arm against its own
 completed denominator rather than crediting one arm's progress to another.
 
 ### The two hermit arms, and why the first one is confounded
 
-The `hermit` column is the arm I ran first, without `--no-rcb-time`. It shows
-23/29, and **that shortfall is an artifact of this host, not a property of
-Hermit.**
+The `hermit` column is the arm I ran first, without `--no-rcb-time`. It shows a
+shortfall against the corrected arm, and **that shortfall is an artifact of this
+host, not a property of Hermit.**
 
 This machine's PMU fails validation — every run logs
 `PMU validation failed; RCB timers may be unreliable
@@ -176,9 +197,9 @@ differs, and the build never sees it.
 So this experiment **holds the guest-visible path constant and varies the host
 root**: it isolates mechanism 2 by construction, and mechanism 1 is excluded
 rather than merely absent. The correct reading of the headline is therefore
-sharper than "Hermit made 13 packages reproducible":
+sharper than "Hermit made N packages reproducible":
 
-> **Hermit eliminated every path-*triggered* divergence in the set (13/13). The experiment says nothing about path-*embedded* divergence.**
+> **Hermit eliminated every path-*triggered* divergence in the set. The experiment says nothing about path-*embedded* divergence.**
 
 ### Closing that gap: varying the guest-visible path
 
@@ -192,7 +213,7 @@ length (`/work/build` vs
 | tree 1.6.0-1 | DIFFERS | DIFFERS |
 | zip 3.0-6 | DIFFERS | DIFFERS |
 
-**Control** (`/tmp/samepath-control.sh` logic, same long path built twice under
+**Control** (`./samepath_control.sh`, same long path built twice under
 Hermit): `hostname`, `tree`, `zip` all **IDENTICAL**. So the short-vs-long
 difference is caused by the path itself, not by residual run-to-run
 nondeterminism — Hermit is deterministic at either path, and legitimately
@@ -213,11 +234,12 @@ localized here; it is recorded as an observation, not an explanation.
 
 ## Scope and honesty about the denominator
 
-This is **35 packages attempted**, selected as small, fast-building members of the
-8,688-name ASPLOS'20 target set (the intersection of baseline-irreproducible and
-Dettrace-reproducible). It is **not** a sample of that set and must not be
-reported as a percentage of it — 35 of 8,688 is a rounding error, and the
-selection was convenience-biased toward small packages.
+This is a convenience-biased selection, not a sample, drawn from as small, fast-building members of the
+the 8,688-name ASPLOS'20 target set (the intersection of baseline-irreproducible
+and Dettrace-reproducible). It **must not** be reported as a percentage of that
+set — the count here is a rounding error against 8,688, and packages were chosen
+for being small and fast to build, which plausibly correlates with being easy to
+determinize. A defensible percentage needs a randomized draw; see followups.
 
 What it *is*: a working, controlled, one-command experiment with a real internal
 control, on a rootfs and pipeline that did not run at all at the start of the
@@ -277,13 +299,16 @@ export DRB_CONTAINER_PROXY="http://[::1]:13129"
 ## Attempted but not measured, and why
 
 Not every package selected produced a verdict. Recording the taxonomy so the
-denominator is auditable rather than quietly shrinking:
+denominator is auditable rather than quietly shrinking. Note the shape: of the
+packages that failed, exactly one (`ack-grep`) is an unexplained Hermit-side
+failure; the rest are package-side, harness-side, or explained.
 
 | package | outcome | cause |
 |---|---|---|
 | `socat` | native build failed | `dh_auto_build: make -j1 returned exit code 2` — does not build in this Wheezy reconstruction at all. Excluded; nothing to do with Hermit. |
 | `bsdmainutils` | native OK, **Hermit build failed** | `chown: changing ownership of .../usr/bin/bsd-write: Invalid argument` — see the id-mapping note below. |
 | `less`, `bc` | prepare refused | A partially prepared root from an earlier aborted run exists and `rebuild.sh prepare` preserves it rather than overwrite. `rebuild.sh resume-prepare` is the intended path; not run here. Harness resumability gap, not a package or Hermit problem. |
+| `ack-grep` | native OK, **Hermit build failed** | `make[1]: /work/build/0: Command not found` — a Perl `ExtUtils::MakeMaker` Makefile expanded a command variable to the literal `0`, so the build ran `/work/build/0`. Undiagnosed; unlike `bsdmainutils` this one is **not** explained by the id-mapping asymmetry, so it is a genuine lead for a Hermit/Perl interaction rather than a known-benign difference. |
 
 ### The two executors do not have the same privilege environment
 
@@ -319,13 +344,14 @@ cd ../debian_reproducible_builds_2026
 DRB_CONTAINER_PROXY="http://[::1]:13129" with-proxy ./rebuild.sh fetch-metadata
 DRB_CONTAINER_PROXY="http://[::1]:13129" with-proxy ./rebuild.sh bootstrap
 
-# per package set: prepare (if needed) + four builds + compare
+# per package set: prepare (if needed) + six builds across three arms + compare
 cd ../rb_debian_tworoot_20260807
 DRB_CONTAINER_PROXY="http://[::1]:13129" ./tworoot.sh \
   --hermit-bin /path/to/hermit/target/release/hermit  hostname tree ed units
-# On a host whose PMU fails validation, add --no-rcb-time to the hermit builds
-# in tworoot.sh (build_hermit); without it Hermit's own clock is a
-# nondeterminism source and the measurement is confounded.
+# tworoot.sh runs the corrected --no-rcb-time arm itself. On a host whose PMU
+# fails validation that arm is the authoritative one; the plain arm is kept only
+# so the confound stays auditable.
+# KEEP_ROOTS=1 retains the run roots (check_path_embedding.sh needs them).
 
 ./summarize.sh          # regenerate the verdict table from results.csv
 ```
@@ -380,7 +406,20 @@ which `check_path_embedding.sh` needs since it reads the native payloads.
 
 ## Files
 
-- `tworoot.sh` — the experiment: prepare, four builds in four roots, compare.
-- `summarize.sh` — derives the verdict table and totals from `results.csv`.
-- `results.csv` — append-only artifact manifest, four rows per package.
-- `metadata.json` — SHAs, host, toolchain, method, scope.
+- `tworoot.sh` — the experiment: prepare, then six builds across three arms in
+  six roots, compare each pair, and reclaim the roots.
+- `summarize.sh` — derives the verdict table and each arm's own denominator from
+  `results.csv`. **Regenerate the table above with this after any new run.**
+- `check_path_embedding.sh` — mechanism-1 grep over both native payloads.
+- `guestpath_arm.sh` — mechanism-1 probe: varies the guest-visible build path.
+- `samepath_control.sh` — its control: same long guest path built twice.
+- `results.csv` — append-only artifact manifest, six rows per fully measured
+  package, keyed by `(package, source_version, root, executor, artifact_sha256,
+  hermit_sha256, utc)`.
+- `mechanism_probe.csv` — guest-path arm and control verdicts.
+- `mechanism_probe_hashes.csv` — their artifact hashes, captured before those
+  roots were reclaimed.
+- `path_embedding_check.txt` — raw output of `check_path_embedding.sh`.
+- `regen_readme.py` — regenerates the table and headline above from
+  `results.csv`, so the prose cannot drift from the manifest.
+- `metadata.json` — SHAs, host, toolchain, method, scope, caveats.
