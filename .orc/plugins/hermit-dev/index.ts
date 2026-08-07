@@ -118,6 +118,17 @@ const SPECULATIVE_LAND_WAKE_COMMAND =
   'cd "' + SHELL_WORKSPACE_ROOT + '" && ' +
   './ci-hub/ci-hub record-obligation-wake --target "$1" --source orc';
 const SPECULATIVE_LAND_INTERVAL_MS = 15 * 1000;
+// Measured 2026-08-06/07: live ticks 5.1-19.3s (n=8) and 5.55-5.85s (n=5 at
+// 03:03-03:05Z), out-of-band 5.1-16.8s (n=6); worst case a cold ci-hub rebuild
+// at ~14s. 240s is ~12x the observed maximum. The 11-19s tail is ci-hub REBUILD
+// cost, not poll cost: other agents edit ci-hub/lib/*.rs constantly and ci-hub's
+// shebang is `rust-script --force`, so every call enters Cargo.
+// Do NOT lower this to "tighten" it -- that converts ordinary rebuild ticks into
+// false failures. Do NOT raise it either; nothing observed needs more. Exactly
+// one 240s timeout exists in the whole orc log corpus, and it is still the only
+// SCRIPT-effect timeout on record (the other 72 timeouts there are `sendAgent`
+// effects at 120s and `summon` subprocesses at 15s -- different subsystems).
+const SPECULATIVE_LAND_TIMEOUT_SEC = 240;
 const SPECULATIVE_LAND_WORKFLOW_NAME =
   "hermit-dev-speculative-land-remediation-v1";
 const SPECULATIVE_LAND_ALERT_CACHE_KEY =
@@ -567,15 +578,67 @@ export async function speculativeLandRemediationHeartbeat(
   wf: WfContext,
 ): Promise<void> {
   await wf.loop(async () => {
-    const result = await orc.scripts.hermitSpeculativeLandObligations() as {
-      exitCode: number;
-      stdout?: string;
-      stderr?: string;
-    };
+    // A tick may exceed its effect bound. When it did (once, 2026-08-07T01:16:45Z),
+    // the throw escaped this loop body and KILLED the workflow; it survived only
+    // because HEARTBEAT_RESTARTABLE caught the corpse and restarted 5s later.
+    // That is survival by safety net, not reporting: nothing recorded that a tick
+    // had timed out, or how long it ran. Convert the throw into a typed value the
+    // existing pollFailed branch already alerts on and dedupes.
+    const startedMs = Date.now();
+    let result: { exitCode: number; stdout?: string; stderr?: string };
+    let timedOut = false;
+    try {
+      result = await orc.scripts.hermitSpeculativeLandObligations() as {
+        exitCode: number;
+        stdout?: string;
+        stderr?: string;
+      };
+    } catch (err) {
+      // Exit code 3 is deliberate: >1 so `pollFailed` picks it up, and not 2 so
+      // it can never be mistaken for `remediation-required`. Reusing that branch
+      // avoids a parallel alert path that would need its own dedupe and could rot.
+      timedOut = true;
+      result = {
+        exitCode: 3,
+        stdout: "",
+        stderr: "speculative-land poll did not complete: " +
+          String((err as any)?.message || err),
+      };
+    }
+    const elapsedMs = Date.now() - startedMs;
     const exitCode = Number(result.exitCode);
     const stdout = String(result.stdout || "").trim();
     const stderr = String(result.stderr || "").trim();
     const report = [stdout, stderr].filter(Boolean).join("\n");
+    const outcome = timedOut ? "timeout" : (exitCode > 1 ? "error" : "ok");
+    // The bound travels WITH the duration: "ran 19s" means nothing to a reader
+    // who does not know whether the budget was 20s or 240s.
+    const timing = "outcome=" + outcome + " elapsed_ms=" + elapsedMs +
+      " bound_ms=" + (SPECULATIVE_LAND_TIMEOUT_SEC * 1000) +
+      " exit_code=" + exitCode;
+    // Every tick, not only failing ones: a duration series is what turns the NEXT
+    // outlier into one log line instead of another investigation. Steady state is
+    // ~5.6s, so an anomaly is obvious against its own history.
+    //
+    // WRAPPED DELIBERATELY, and this is not defensive noise. Every other orc.log
+    // in this file sits inside registerPluginSurface(), i.e. the full-capability
+    // PLUGIN-LOAD context. This is the first orc.log in a `wf.loop`, which the
+    // engine re-evaluates under the REDUCED workflow-restart preset (see the
+    // contract at the top of this file). If `log` is absent there, the call does
+    // not return undefined -- it fails the dispatch and crashes the workflow,
+    // which restarts, re-evaluates, and crashes again until the engine gives up.
+    // That is the exact crash-loop that killed both workflows in this plugin.
+    // Instrumentation must never be able to kill the thing it instruments, so a
+    // missing surface degrades to a silent no-op and the tick proceeds.
+    try {
+      orc.log(
+        timedOut ? "error" : "info",
+        SPECULATIVE_LAND_SCRIPT_NAME + " " + timing,
+      );
+    } catch (_logErr) {
+      // Intentionally swallowed: losing one telemetry line is strictly better
+      // than losing the remediation heartbeat.
+    }
     const remediationRequired =
       exitCode === 2 && stdout.includes("state=remediation-required");
     const pollFailed = exitCode > 1 && !remediationRequired;
@@ -598,10 +661,17 @@ export async function speculativeLandRemediationHeartbeat(
         const targets = remediationRequired && landerAlive
           ? ["hermit-lander"]
           : [];
+        // `timing` is appended to the BODY only, never folded into `report`.
+        // `report` feeds stableAlertSignature(), which strips only "COST " lines,
+        // so an elapsed_ms embedded there would make every tick a fresh signature
+        // and defeat the dedupe entirely -- turning a repeating fault into an
+        // alert storm. The body carries the varying evidence; the signature stays
+        // keyed on the invariant part of the failure.
         await orc.sendWakeup(
           targets,
           title,
           (report || "speculative-land watcher returned no diagnostic output") +
+            "\n" + timing +
             (remediationRequired
               ? "\nThis wake is advisory; the durable obligation is authoritative. " +
                 "Discover and acknowledge it with ci-hub inherit-obligations, execute " +
@@ -662,7 +732,7 @@ function registerPluginSurface(): void {
   orc.registerScript(SPECULATIVE_LAND_SCRIPT_NAME, {
     script: SPECULATIVE_LAND_COMMAND,
     description: "Poll exact-SHA speculative-land obligations for immediate remediation",
-    timeoutSec: 240,
+    timeoutSec: SPECULATIVE_LAND_TIMEOUT_SEC,
   });
 
   orc.registerScript(SPECULATIVE_LAND_WAKE_SCRIPT_NAME, {
