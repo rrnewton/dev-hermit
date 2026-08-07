@@ -71,6 +71,16 @@ NON_POSITIVE_TIERS = {"gap"}
 # stripped-tier row could cite any string at all and still pass -- the same
 # unknown-policy hole, one rung down.
 KNOWN_COMPARATORS = {"stripped", "canonical", "syscall-count-across-reps"}
+# The determinism field itself. Until now this was checked for PRESENCE only: the
+# audit loop below started `if deterministic != "1": continue`, so every other
+# value -- "0" and blank, but equally "yes", "true", "2", "PASS", a typo -- fell
+# straight through unaudited. An illegal value was therefore indistinguishable
+# from an honest negative, and the one field this whole validator is named after
+# was the one field whose value nothing checked.
+#   1   a determinism positive (must then EARN it, per every rule below)
+#   0   an explicit negative
+#   ""  unmeasured; blank is legitimate and is counted as such in the summary
+KNOWN_DETERMINISM = {"0", "1", ""}
 # Comparators that record the ABSENCE of a verdict. These are legitimate values --
 # a producer that could not obtain a typed verdict must say so rather than leave the
 # field blank, because blank cannot distinguish "no verdict existed" from "a verdict
@@ -98,9 +108,15 @@ def parse_counts(raw):
         return None
 
 
-unearned, unlabelled, overtiered = [], [], []
+unearned, unlabelled, overtiered, illegal = [], [], [], []
 for i, r in enumerate(rows, start=2):
-    if r.get("deterministic") != "1":
+    # Validate the VALUE before the skip. Doing it after would reproduce the bug:
+    # a non-"1" value would `continue` out and never be seen again.
+    det = (r.get("deterministic") or "").strip()
+    if det not in KNOWN_DETERMINISM:
+        illegal.append((i, det, r.get("test_id", "")))
+        continue
+    if det != "1":
         continue
     mode = r.get("test_mode", "")
     compare = (r.get("verify_compare") or "").strip()
@@ -168,6 +184,14 @@ blank    = sum(1 for r in rows if not (r.get("deterministic") or "").strip())
 print(f"rows={len(rows)}  deterministic=1 by mode: {dict(by_mode)}  blank(unmeasured)={blank}")
 
 rc = 0
+if illegal:
+    rc = 1
+    print(f"\nILLEGAL determinism values: {len(illegal)} "
+          f"(allowlist: {sorted(KNOWN_DETERMINISM)!r}). A value outside the "
+          f"allowlist is not an honest negative — it is an unaudited row, because "
+          f"every non-'1' value skips the checks below.", file=sys.stderr)
+    for line, det, tid in illegal[:10]:
+        print(f"  line {line}: deterministic={det!r} test={tid}", file=sys.stderr)
 if unearned:
     rc = 1
     print(f"\nUNEARNED determinism claims: {len(unearned)} "
