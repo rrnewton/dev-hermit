@@ -127,12 +127,23 @@ def coverage_verdict(cov: Any) -> CoverageVerdict:
     if not isinstance(cov, dict):
         return CoverageVerdict.UNAVAILABLE
     planned = cov.get("planned_test_nodes")
+    executed = cov.get("executed_test_nodes")
     zero_executed = cov.get("zero_executed_nodes")
     absent = cov.get("absent_nodes")
     if (
         not isinstance(planned, int)
         or isinstance(planned, bool)
         or not 0 < planned <= U64_MAX
+        # Rust's CoverageRow defaults an omitted diagnostic count to zero, but
+        # serde refuses a present value that cannot be represented as u64.
+        or (
+            "executed_test_nodes" in cov
+            and (
+                not isinstance(executed, int)
+                or isinstance(executed, bool)
+                or not 0 <= executed <= U64_MAX
+            )
+        )
         or not isinstance(zero_executed, list)
         or not isinstance(absent, list)
         or any(not isinstance(name, str) for name in zero_executed)

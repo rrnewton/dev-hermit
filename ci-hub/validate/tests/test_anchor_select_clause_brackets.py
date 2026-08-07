@@ -129,6 +129,42 @@ def test_coverage_planned_count_outside_u64_is_unavailable() -> None:
         )
 
 
+def test_coverage_executed_count_outside_u64_is_unavailable() -> None:
+    for executed in ("4", 1.5, True, -1, 1 << 64, None):
+        cov = {
+            "planned_test_nodes": 10,
+            "executed_test_nodes": executed,
+            "zero_executed_nodes": [],
+            "absent_nodes": [],
+        }
+        ok, reason = A.row_qualifies(_row(coverage=cov), PREDICATE)
+        assert ok is False, cov
+        assert reason == "count-capable receipt coverage unavailable", cov
+        assert (
+            A.qualifying_receipt.coverage_verdict(cov)
+            is A.qualifying_receipt.CoverageVerdict.UNAVAILABLE
+        )
+
+
+def test_coverage_executed_count_accepts_rust_u64_domain() -> None:
+    for executed in (None, 0, (1 << 64) - 1):
+        cov = {
+            "planned_test_nodes": 10,
+            "zero_executed_nodes": [],
+            "absent_nodes": [],
+        }
+        if executed is not None:
+            cov["executed_test_nodes"] = executed
+        assert (
+            A.qualifying_receipt.coverage_verdict(cov)
+            is A.qualifying_receipt.CoverageVerdict.SATISFIED
+        ), cov
+        assert A.row_qualifies(_row(coverage=cov), PREDICATE) == (
+            True,
+            "qualifies",
+        ), cov
+
+
 def test_non_string_failure_list_entries_are_unavailable() -> None:
     malformed_values = (None, False, 7, 1.5, {}, [])
     for field in ("zero_executed_nodes", "absent_nodes"):

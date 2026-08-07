@@ -59,6 +59,7 @@ VERIFY_SH = CI_HUB / "validation" / "verify_receipt.sh"
 SHA = "a" * 40
 RECEIPT_COMMIT = "b" * 40  # the parent commit a receipt was committed at
 REPO = "rrnewton/hermit"
+_MISSING = object()
 
 
 def _green_row(sha: str) -> dict:
@@ -131,6 +132,16 @@ def _overflow_coverage_count_row(sha: str) -> dict:
     """A Python integer that cannot deserialize into Rust's u64 authority."""
     row = _green_row(sha)
     row["coverage"]["planned_test_nodes"] = 1 << 64
+    return row
+
+
+def _executed_coverage_count_row(sha: str, value: object = _MISSING) -> dict:
+    """Set or omit the diagnostic node count without changing any obligation."""
+    row = _green_row(sha)
+    if value is _MISSING:
+        del row["coverage"]["executed_test_nodes"]
+    else:
+        row["coverage"]["executed_test_nodes"] = value
     return row
 
 
@@ -452,6 +463,44 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             any(panel.values()),
             f"planned_test_nodes above u64 must be rejected everywhere: {panel}",
         )
+
+    def test_live_rejects_malformed_executed_node_count_unanimously(self) -> None:
+        """A present diagnostic count must deserialize as Rust u64 everywhere."""
+        malformed = (
+            ("string", "4"),
+            ("float", 1.5),
+            ("bool", True),
+            ("negative", -1),
+            ("above-u64", 1 << 64),
+            ("null", None),
+        )
+        for name, value in malformed:
+            with self.subTest(name=name):
+                panel = self._panel(
+                    _executed_coverage_count_row(SHA, value), predicate=None
+                )
+                self.assertFalse(
+                    any(panel.values()),
+                    "malformed executed_test_nodes "
+                    f"({name}) must be rejected everywhere: {panel}",
+                )
+
+    def test_live_accepts_rust_compatible_executed_node_counts_unanimously(self) -> None:
+        """Missing defaults to zero; the full inclusive u64 domain is valid."""
+        for name, value in (
+            ("missing", _MISSING),
+            ("zero", 0),
+            ("u64-max", (1 << 64) - 1),
+        ):
+            with self.subTest(name=name):
+                panel = self._panel(
+                    _executed_coverage_count_row(SHA, value), predicate=None
+                )
+                self.assertTrue(
+                    all(panel.values()),
+                    "Rust-compatible executed_test_nodes "
+                    f"({name}) must be accepted everywhere: {panel}",
+                )
 
     def test_live_rejects_non_string_failure_entries_unanimously(self) -> None:
         """Present-but-malformed name lists are unavailable, never failures."""
