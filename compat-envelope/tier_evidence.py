@@ -57,6 +57,7 @@ import argparse
 import csv
 import datetime as _dt
 import importlib.util
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,9 +103,10 @@ TIER_CLAIMS = {
                  "stack": CADENCED, "heap": CADENCED},
 }
 
-#: Where a per-run component's evidence lives on the row. `stack`/`heap` have no
-#: column in the core schema today; named here so widening the schema is the only
-#: change required, and so their absence is reported as a SCHEMA fault, not a blank.
+#: Where a per-run component's evidence lives on the row. INFO needs both the
+#: comparison's nonzero denominator and its verdict; the other components carry
+#: their verdict directly. `stack`/`heap` have no column in the core schema today;
+#: named here so their absence is reported as a SCHEMA fault, not a blank value.
 ROW_EVIDENCE = {
     "stdout": "stdout_parity",
     "info_log": "compared_log_messages",
@@ -112,13 +114,25 @@ ROW_EVIDENCE = {
     "heap": "heap_parity",
 }
 
+#: A nonempty count says INFO was compared, not that it matched. The typed
+#: comparator verdict is therefore an independent conjunct. This is the binding
+#: that makes a planted `bitwise_parity=0` reach the scorecard cell.
+ROW_VERDICTS = {
+    "info_log": "bitwise_parity",
+}
+
 #: A recorded comparison of zero records is not evidence that a comparison happened.
 _EMPTY_COUNTS = {"0|0", "0/0", "0"}
 _BLANKS = {"", "-", "n/a", "none", "null"}
+_PASSING = {"1", "true", "pass", "passed", "match", "matched"}
 
 
 def _blank(value) -> bool:
     return (value or "").strip().lower() in _BLANKS
+
+
+def _passing(value) -> bool:
+    return (value or "").strip().lower() in _PASSING
 
 
 def is_dirty_sha(sha: str) -> bool:
@@ -127,11 +141,19 @@ def is_dirty_sha(sha: str) -> bool:
     return not s or s.lower().endswith("-dirty") or "dirty" in s.lower()
 
 
-def row_component_evidenced(row: dict, header: list[str], component: str) -> tuple[bool, str]:
+def row_component_evidenced(row: dict, header: list[str], component: str,
+                             *, observable: str = "stdout") -> tuple[bool, str]:
     """(ok, reason). Distinguishes a missing COLUMN from a blank VALUE, deliberately:
     the first is a schema that cannot express the claim, the second is a producer
     that did not make the measurement. Collapsing them hides which one to fix."""
     column = ROW_EVIDENCE[component]
+    # Historical stdout scorecards spell the selected observable `parity`.
+    # A tool-count scorecard uses that same legacy spelling for a DIFFERENT
+    # quantity, so only the renderer's explicit stdout selection may resolve it
+    # as stdout evidence.
+    if component == "stdout" and column not in header and observable == "stdout" \
+            and "parity" in header:
+        column = "parity"
     if column not in header:
         return False, f"schema-cannot-express:{component} (no {column!r} column)"
     value = (row.get(column) or "").strip()
@@ -139,6 +161,16 @@ def row_component_evidenced(row: dict, header: list[str], component: str) -> tup
         return False, f"missing:{component} ({column} is blank)"
     if component == "info_log" and value in _EMPTY_COUNTS:
         return False, f"empty-comparison:{component} ({column}={value!r} compared nothing)"
+    verdict_column = ROW_VERDICTS.get(component, column)
+    if verdict_column not in header:
+        return False, (f"schema-cannot-express:{component}-verdict "
+                       f"(no {verdict_column!r} column)")
+    verdict = (row.get(verdict_column) or "").strip()
+    if _blank(verdict):
+        return False, f"missing:{component}-verdict ({verdict_column} is blank)"
+    if not _passing(verdict):
+        return False, (f"diverged:{component} "
+                       f"({verdict_column}={verdict!r} is not a passing verdict)")
     return True, ""
 
 
@@ -154,6 +186,16 @@ class Violation:
     def render(self) -> str:
         return (f"{self.file}:{self.line}: {self.backend}/{self.test_id} "
                 f"claims {self.tier} but {'; '.join(self.reasons)}")
+
+    def as_dict(self) -> dict:
+        return {
+            "file": self.file,
+            "line": self.line,
+            "test_id": self.test_id,
+            "backend": self.backend,
+            "tier": self.tier,
+            "reasons": self.reasons,
+        }
 
 
 @dataclass
@@ -176,6 +218,23 @@ class Report:
         out.append(f"  NOT evidenced          : {len(self.violations)} of {self.claims}")
         return "\n".join(out)
 
+    def as_dict(self) -> dict:
+        """Machine authority consumed by the scorecard renderer.
+
+        Source line numbers deliberately travel with the verdict. The renderer
+        can then withhold only the unsupported cell instead of either trusting a
+        cached tier label or reddening the entire scorecard.
+        """
+        return {
+            "schema": 1,
+            "root": self.root,
+            "files": self.files,
+            "rows": self.rows,
+            "claims": self.claims,
+            "upheld": self.upheld,
+            "violations": [violation.as_dict() for violation in self.violations],
+        }
+
 
 def check_ledger_receipt(key, ledger: dict, now: _dt.datetime,
                          cadence_days: int) -> tuple[bool, str]:
@@ -197,7 +256,8 @@ def check_ledger_receipt(key, ledger: dict, now: _dt.datetime,
     return True, ""
 
 
-def check_row(row: dict, header: list[str], key, ledger, now, cadence_days):
+def check_row(row: dict, header: list[str], key, ledger, now, cadence_days,
+              *, observable: str = "stdout"):
     """Reasons this row's tier claim is not fully evidenced; empty list == upheld."""
     tier = (row.get(_tier.REQUIRED) or "").strip()
     claims = TIER_CLAIMS.get(tier)
@@ -207,7 +267,8 @@ def check_row(row: dict, header: list[str], key, ledger, now, cadence_days):
     for component in _strict.STRICT_COMPONENTS:
         cadence_class = claims.get(component)
         if cadence_class == EVERY_RUN:
-            ok, why = row_component_evidenced(row, header, component)
+            ok, why = row_component_evidenced(row, header, component,
+                                               observable=observable)
             if not ok:
                 reasons.append(why)
         elif cadence_class == CADENCED:
@@ -217,10 +278,14 @@ def check_row(row: dict, header: list[str], key, ledger, now, cadence_days):
     return reasons
 
 
-def check(root: Path, *, now: _dt.datetime, cadence_days: int, ledger_path: Path) -> Report:
-    found = _tier.scorecards(root)
+def check(root: Path, *, now: _dt.datetime, cadence_days: int, ledger_path: Path,
+          paths: list[Path] | None = None, observable: str = "stdout") -> Report:
+    found = paths if paths is not None else _tier.scorecards(root)
     if not found:
         raise PopulationError(f"no *scorecard*.csv under {root}")
+    missing = [path for path in found if not path.is_file()]
+    if missing:
+        raise PopulationError("scorecard does not exist: " + ", ".join(map(str, missing)))
     ledger = _cadence.load_ledger(ledger_path) if ledger_path.exists() else {}
     report = Report(root=str(root), files=[p.name for p in found])
     for path in found:
@@ -234,7 +299,8 @@ def check(root: Path, *, now: _dt.datetime, cadence_days: int, ledger_path: Path
                     continue
                 report.claims += 1
                 key = (row.get("test_id", ""), row.get("test_mode", ""), row.get("backend", ""))
-                reasons = check_row(row, header, key, ledger, now, cadence_days)
+                reasons = check_row(row, header, key, ledger, now, cadence_days,
+                                    observable=observable)
                 if reasons:
                     report.violations.append(Violation(
                         path.name, line, row.get("test_id", "?"),
@@ -247,6 +313,12 @@ def check(root: Path, *, now: _dt.datetime, cadence_days: int, ledger_path: Path
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", type=Path, default=HERE)
+    ap.add_argument("--csv", type=Path, default=None,
+                    help="audit exactly one scorecard (the renderer call path)")
+    ap.add_argument("--json", action="store_true",
+                    help="emit the per-row machine verdict consumed by the renderer")
+    ap.add_argument("--observable", choices=("stdout", "tool-count"), default="stdout",
+                    help="meaning of the legacy `parity` column")
     ap.add_argument("--ledger", type=Path, default=None)
     ap.add_argument("--cadence-days", type=int, default=_cadence.CADENCE_DAYS)
     ap.add_argument("--now", default=None, help="ISO instant; defaults to real now")
@@ -255,22 +327,29 @@ def main(argv: list[str] | None = None) -> int:
     now = _cadence._parse(a.now) or _dt.datetime.now(_dt.timezone.utc)
     ledger = a.ledger if a.ledger is not None else _cadence.LEDGER
     try:
-        report = check(a.root, now=now, cadence_days=a.cadence_days, ledger_path=ledger)
+        paths = [a.csv] if a.csv is not None else None
+        root = a.csv.parent if a.csv is not None else a.root
+        report = check(root, now=now, cadence_days=a.cadence_days,
+                       ledger_path=ledger, paths=paths, observable=a.observable)
     except PopulationError as error:
         print(f"tier-evidence: REFUSED: {error}", file=sys.stderr)
         return 2
 
-    print(report.render())
+    if a.json:
+        print(json.dumps(report.as_dict(), sort_keys=True))
+    else:
+        print(report.render())
     if report.violations:
-        print(f"\nREFUSED: {len(report.violations)} tier claim(s) not supported by "
-              f"their own evidence:", file=sys.stderr)
-        for violation in report.violations[:20]:
-            print(f"  {violation.render()}", file=sys.stderr)
-        if len(report.violations) > 20:
-            print(f"  ... {len(report.violations) - 20} more", file=sys.stderr)
-        print("A tier names the components it compared. A row claiming one must carry "
-              "evidence for every one of them, or drop to a lower tier or NO-RESULT.",
-              file=sys.stderr)
+        if not a.json:
+            print(f"\nREFUSED: {len(report.violations)} tier claim(s) not supported by "
+                  f"their own evidence:", file=sys.stderr)
+            for violation in report.violations[:20]:
+                print(f"  {violation.render()}", file=sys.stderr)
+            if len(report.violations) > 20:
+                print(f"  ... {len(report.violations) - 20} more", file=sys.stderr)
+            print("A tier names the components it compared. A row claiming one must carry "
+                  "passing evidence for every one of them, or drop to a lower tier or NO-RESULT.",
+                  file=sys.stderr)
         return 1
     return 0
 

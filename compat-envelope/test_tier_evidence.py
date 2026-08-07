@@ -31,8 +31,8 @@ _spec.loader.exec_module(te)
 
 NOW = _dt.datetime(2026, 8, 7, tzinfo=_dt.timezone.utc)
 
-HEADER = ("test_id,test_mode,backend,outcome,stdout_parity,compared_log_messages,"
-          "stack_parity,heap_parity,duration_ms,comparison_tier")
+HEADER = ("test_id,test_mode,backend,outcome,stdout_parity,bitwise_parity,"
+          "compared_log_messages,stack_parity,heap_parity,duration_ms,comparison_tier")
 FULL = te.FULL
 SPOT = te.SPOT_CHECK
 
@@ -49,12 +49,14 @@ def run(rows, ledger_rows=(), *, header=HEADER, now=NOW, cadence_days=14):
     return te.check(root, now=now, cadence_days=cadence_days, ledger_path=ledger)
 
 
-def full_row(name, stdout="1", info="348|348", stack="1", heap="1"):
-    return f"{name},verify,ptrace,pass,{stdout},{info},{stack},{heap},120,{FULL}"
+def full_row(name, stdout="1", info_verdict="1", info="348|348",
+             stack="1", heap="1"):
+    return (f"{name},verify,ptrace,pass,{stdout},{info_verdict},{info},"
+            f"{stack},{heap},120,{FULL}")
 
 
 def spot_row(name):
-    return f"{name},verify,ptrace,pass,1,348|348,,,9000,{SPOT}"
+    return f"{name},verify,ptrace,pass,1,1,348|348,,,9000,{SPOT}"
 
 
 def receipt(name, when="2026-08-05T00:00:00Z", sha="abc1234def"):
@@ -78,6 +80,19 @@ class FullTier(unittest.TestCase):
         r = run([full_row("no-info", info="")])
         self.assertIn("missing:info_log", "; ".join(r.violations[0].reasons))
 
+    def test_NEGATIVE_stdout_divergence_is_evidence_but_not_green(self):
+        r = run([full_row("stdout-diverged", stdout="0")])
+        self.assertIn("diverged:stdout", "; ".join(r.violations[0].reasons))
+
+    def test_NEGATIVE_info_divergence_reaches_the_tier(self):
+        """The task's planted `bitwise_parity=0` must make this cell non-green."""
+        r = run([full_row("info-diverged", info_verdict="0", info="169|186")])
+        self.assertIn("diverged:info_log", "; ".join(r.violations[0].reasons))
+
+    def test_NEGATIVE_heap_divergence_is_not_merely_nonblank_evidence(self):
+        r = run([full_row("heap-diverged", heap="fail")])
+        self.assertIn("diverged:heap", "; ".join(r.violations[0].reasons))
+
     def test_NEGATIVE_an_info_comparison_of_zero_records_is_not_evidence(self):
         """`0|0` is a comparison that compared nothing; non-blank must not mean measured."""
         r = run([full_row("zero-info", info="0|0")])
@@ -92,9 +107,9 @@ class FullTier(unittest.TestCase):
 
     def test_NEGATIVE_a_missing_COLUMN_is_distinguished_from_a_blank_VALUE(self):
         """Schema-cannot-express and producer-did-not-measure need different fixes."""
-        narrow = ("test_id,test_mode,backend,outcome,stdout_parity,"
+        narrow = ("test_id,test_mode,backend,outcome,stdout_parity,bitwise_parity,"
                   "compared_log_messages,duration_ms,comparison_tier")
-        r = run([f"no-cols,verify,ptrace,pass,1,348|348,120,{FULL}"], header=narrow)
+        r = run([f"no-cols,verify,ptrace,pass,1,1,348|348,120,{FULL}"], header=narrow)
         joined = "; ".join(r.violations[0].reasons)
         self.assertIn("schema-cannot-express:stack", joined)
         self.assertIn("schema-cannot-express:heap", joined)
@@ -136,7 +151,7 @@ class SpotCheckTier(unittest.TestCase):
 
     def test_spot_check_still_requires_stdout_and_info_EVERY_run(self):
         """The cheaper tier relaxes stack/heap to a cadence -- not stdout and INFO."""
-        row = f"x,verify,ptrace,pass,,348|348,,,9000,{SPOT}"
+        row = f"x,verify,ptrace,pass,,1,348|348,,,9000,{SPOT}"
         r = run([row], [receipt("x")])
         self.assertIn("missing:stdout", "; ".join(r.violations[0].reasons))
 
@@ -144,7 +159,7 @@ class SpotCheckTier(unittest.TestCase):
 class ScopeAndCounting(unittest.TestCase):
     def test_a_non_qualifying_tier_is_not_a_claim(self):
         """legacy-unqualified asserts nothing, so it is neither upheld nor violated."""
-        r = run([f"leg,verify,ptrace,pass,,,,,120,legacy-unqualified"])
+        r = run([f"leg,verify,ptrace,pass,,,,,,120,legacy-unqualified"])
         self.assertEqual((r.rows, r.claims, len(r.violations)), (1, 0, 0))
 
     def test_counts_carry_their_denominator(self):

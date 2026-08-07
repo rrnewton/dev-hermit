@@ -24,14 +24,14 @@ TOOL_POP=sha256:$(population_id \
   $'reverie\tportable\tb\tt\tcounter\tptrace\tenabled')
 POP=$STDOUT_POP # malformed-schema fixtures below are refused before population use
 STRICT_TIER=full-stdout-info-stack-heap
-COMMON_SUFFIX=output_hash,duration_ms,max_rss_kb,reason,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier
+COMMON_SUFFIX=output_hash,duration_ms,max_rss_kb,reason,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,bitwise_parity,compared_log_messages,stack_parity,heap_parity,comparison_tier
 
 write_stdout_csv() {
     local path=$1 column=$2
     cat >"$path" <<EOF
 $COMMON_PREFIX,$column,$COMMON_SUFFIX
-r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,$OUT_SHA,1,,reference,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$STDOUT_POP,2,2,2,$STRICT_TIER
-r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,dbi,enabled,pass,1,1,$OUT_SHA,1,,match,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$STDOUT_POP,2,2,2,$STRICT_TIER
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,$OUT_SHA,1,,reference,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$STDOUT_POP,2,2,2,1,9|9,1,1,$STRICT_TIER
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,dbi,enabled,pass,1,1,$OUT_SHA,1,,match,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$STDOUT_POP,2,2,2,1,9|9,1,1,$STRICT_TIER
 EOF
 }
 
@@ -39,8 +39,8 @@ write_tool_csv() {
     local path=$1 column=$2
     cat >"$path" <<EOF
 $COMMON_PREFIX,$column,$COMMON_SUFFIX
-r,@0,$HERM_SHA,$REV_SHA,false,reverie,portable,b,t,counter,ptrace,enabled,pass,1,1,$OUT_SHA,1,,reference,$OUT_SHA,tool-count-sha256-exact-v1,tool-count-exact,"{""comparison"" : [""counter""],""collector"" : [""--reps"",""2""]}",$TOOL_POP,2,2,2,$STRICT_TIER
-r,@0,$HERM_SHA,$REV_SHA,false,reverie,portable,b,t,counter,kvm,enabled,pass,1,1,$OUT_SHA,1,,match,$OUT_SHA,tool-count-sha256-exact-v1,tool-count-exact,"{""comparison"" : [""counter""],""collector"" : [""--reps"",""2""]}",$TOOL_POP,2,2,2,$STRICT_TIER
+r,@0,$HERM_SHA,$REV_SHA,false,reverie,portable,b,t,counter,ptrace,enabled,pass,1,1,$OUT_SHA,1,,reference,$OUT_SHA,tool-count-sha256-exact-v1,tool-count-exact,"{""comparison"" : [""counter""],""collector"" : [""--reps"",""2""]}",$TOOL_POP,2,2,2,1,9|9,1,1,$STRICT_TIER
+r,@0,$HERM_SHA,$REV_SHA,false,reverie,portable,b,t,counter,kvm,enabled,pass,1,1,$OUT_SHA,1,,match,$OUT_SHA,tool-count-sha256-exact-v1,tool-count-exact,"{""comparison"" : [""counter""],""collector"" : [""--reps"",""2""]}",$TOOL_POP,2,2,2,1,9|9,1,1,$STRICT_TIER
 EOF
 }
 
@@ -59,14 +59,20 @@ jq -e '.comparison_tier_distribution["full-stdout-info-stack-heap"] == 2
        and .qualified_green_count == 2 and .raw_pass_count == 2' \
     "$TMP/stdout-current.json" >/dev/null
 
+# Tool-count equality is not the owner's strict stdout+INFO+stack+heap tier.
+# Both modern and legacy spellings pass their provenance check, then honestly
+# produce no strict-green denominator because neither schema carries stdout.
+set +e
 "$RENDER" --csv "$TMP/tool-current.csv" --all --denominator counter \
-    --backends kvm --observable tool-count --json >"$TMP/tool-current.json"
+    --backends kvm --observable tool-count >"$TMP/tool-current.out" 2>&1
+tool_current_rc=$?
 "$RENDER" --csv "$TMP/tool-legacy.csv" --all --denominator counter \
-    --backends kvm --observable tool-count --json >"$TMP/tool-legacy.json"
-jq -S 'del(.source_csv)' "$TMP/tool-current.json" >"$TMP/tool-current.normalized.json"
-jq -S 'del(.source_csv)' "$TMP/tool-legacy.json" >"$TMP/tool-legacy.normalized.json"
-cmp "$TMP/tool-current.normalized.json" "$TMP/tool-legacy.normalized.json"
-jq -e '.rows[-1].backends.kvm.tool_count_parity_count == 1' "$TMP/tool-current.json" >/dev/null
+    --backends kvm --observable tool-count >"$TMP/tool-legacy.out" 2>&1
+tool_legacy_rc=$?
+set -e
+[ "$tool_current_rc" -eq 3 ] && [ "$tool_legacy_rc" -eq 3 ]
+grep -F 'new-definition evidence-qualified green=0/2 raw passes' "$TMP/tool-current.out" >/dev/null
+grep -F 'new-definition evidence-qualified green=0/2 raw passes' "$TMP/tool-legacy.out" >/dev/null
 
 expect_refused() {
     local name=$1 needle=$2
@@ -102,7 +108,7 @@ expect_refused tool-as-stdout 'found `tool_count_parity`, expected `stdout_parit
 # prefer whichever column happens to appear first.
 cat >"$TMP/ambiguous.csv" <<EOF
 $COMMON_PREFIX,stdout_parity,parity,$COMMON_SUFFIX
-r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,0,$OUT_SHA,1,,conflict,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$POP,1,1,1,$STRICT_TIER
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,0,$OUT_SHA,1,,conflict,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$POP,1,1,1,1,9|9,1,1,$STRICT_TIER
 EOF
 # Backticks are literal renderer diagnostics.
 # shellcheck disable=SC2016
@@ -111,7 +117,7 @@ expect_refused ambiguous 'expected exactly one parity observable column' \
 
 cat >"$TMP/missing.csv" <<EOF
 $COMMON_PREFIX,comparison,$COMMON_SUFFIX
-r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,$OUT_SHA,1,,missing,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$POP,1,1,1,$STRICT_TIER
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,$OUT_SHA,1,,missing,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$POP,1,1,1,1,9|9,1,1,$STRICT_TIER
 EOF
 # Backticks are literal renderer diagnostics.
 # shellcheck disable=SC2016
@@ -137,7 +143,7 @@ set -e
     cat "$TMP/legacy-unqualified.out" >&2
     exit 1
 }
-grep -F 'qualified green=0/2 raw passes' "$TMP/legacy-unqualified.out" >/dev/null
+grep -F 'evidence-qualified: 0' "$TMP/legacy-unqualified.out" >/dev/null
 grep -F '0 ptrace/verify qualifying passing cells' "$TMP/legacy-unqualified.out" >/dev/null
 
-echo "observable schema: 4 positive current/legacy reads; 5 schema/tier violations refused; explicit legacy tier credited 0/2 raw passes"
+echo "observable schema: stdout current/legacy stay strict-green; tool-count current/legacy stay unqualified; 5 schema/tier violations refused; explicit legacy tier credited 0/2 raw passes"

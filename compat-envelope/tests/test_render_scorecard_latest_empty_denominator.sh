@@ -38,6 +38,8 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 HEADER=$(head -1 "$SCHEMA_CSV")
+case ",$HEADER," in *,stack_parity,*) ;; *) HEADER="$HEADER,stack_parity";; esac
+case ",$HEADER," in *,heap_parity,*) ;; *) HEADER="$HEADER,heap_parity";; esac
 
 # Emit one CSV row into $1, setting only the named columns; every other column is
 # blank (blank = "unknown", the not-measured state the renderer must preserve).
@@ -47,6 +49,11 @@ row() {
     BEGIN {
         n = split(hdr, cols, ",")
         v["comparison_tier"] = "full-stdout-info-stack-heap"
+        v["stdout_parity"] = "pass"
+        v["bitwise_parity"] = "pass"
+        v["compared_log_messages"] = "9|9"
+        v["stack_parity"] = "pass"
+        v["heap_parity"] = "pass"
         m = split(spec, kvs, " ")
         for (i = 1; i <= m; i++) { p = index(kvs[i], "="); v[substr(kvs[i],1,p-1)] = substr(kvs[i],p+1) }
         out = ""

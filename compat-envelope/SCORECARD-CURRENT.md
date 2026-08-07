@@ -26,17 +26,36 @@
 > which all still apply. Replace it when the collectors are re-run into those
 > CSVs.
 
-> ## Strict comparison-tier gate added 2026-08-06
+> ## Tier-evidence gate wired into the consumer 2026-08-07
 >
-> The four live CSVs now carry `comparison_tier` on every one of **2,284/2,284
-> rows**. Their distribution is **2,284 `legacy-unqualified`**, **0
-> `full-stdout-info-stack-heap`**, and **0
-> `stdout-info-stack-heap-spot-check`**. The 1,837 historical raw
-> `outcome=pass` rows therefore yield **0/1,837 qualified greens**. The tables
-> below remain the historical stdout/stripped rendering; the current renderer
-> refuses to emit them as strict green until a clean re-baseline records one of
-> the two qualifying tiers. Reproduce the distribution with
-> `compat-envelope/check-scorecard-tier.py`.
+> **OLD DEFINITION: 6/1,843 green raw passes** — `outcome=pass` plus a qualifying
+> `comparison_tier` string. **NEW DEFINITION: 0/1,843 green raw passes** — the
+> same conditions plus passing evidence for every component named by the tier.
+> This is an intentional one-time definition drop, not a product regression.
+> Do not recover the six points by loosening the definition: the planted
+> comparator divergence proved that the old label-only rule stayed green.
+>
+> The committed population is 2,290 rows: 2,284 `legacy-unqualified` and six
+> declaring `full-stdout-info-stack-heap`; no row declares the large-test
+> `stdout-info-stack-heap-spot-check` tier. `tier_evidence.py` finds **0/6**
+> declared claims fully evidenced. All six have a canonical INFO verdict and
+> nonzero compared-message count, but `stdout_parity` is blank and the schema
+> has no `stack_parity` or `heap_parity` column. `render-scorecard.rs` now
+> consumes those per-row verdicts, so a declaration without its evidence is
+> retained as history but cannot enter the green denominator.
+>
+> | cell | declared per-cell tier | evidence-qualified status |
+> | --- | --- | --- |
+> | `ptrace-short-full-tier/heapy` | short: stdout+INFO+stack+heap | non-green — stdout missing; stack/heap verdict columns absent |
+> | `ptrace-short-full-tier/name_to_handle_at_eopnotsupp` | short: stdout+INFO+stack+heap | non-green — stdout missing; stack/heap verdict columns absent |
+> | `ptrace-short-full-tier/name_to_handle_directory_eopnotsupp` | short: stdout+INFO+stack+heap | non-green — stdout missing; stack/heap verdict columns absent |
+> | `ptrace-short-full-tier/name_to_handle_empty_path_eopnotsupp` | short: stdout+INFO+stack+heap | non-green — stdout missing; stack/heap verdict columns absent |
+> | `ptrace-short-full-tier/name_to_handle_regular_eopnotsupp` | short: stdout+INFO+stack+heap | non-green — stdout missing; stack/heap verdict columns absent |
+> | `ptrace-short-full-tier/print_memaddrs` | short: stdout+INFO+stack+heap | non-green — stdout missing; stack/heap verdict columns absent |
+>
+> Reproduce the old count with `check-scorecard-tier.py`; reproduce the new
+> count with `tier_evidence.py`. The renderer reports both side by side as
+> `declared_tier_green_count` and `qualified_green_count`.
 
 **This file is the clear, human-readable rendering of the four scorecard CSVs
 that sit beside it.** It is the entry point: `README.md` documents the *system*,

@@ -123,6 +123,11 @@ struct Cell {
     /// Cross-backend standard actually met. This is separate from `tier`,
     /// which describes the run1/run2 self-determinism comparator.
     comparison_tier: String,
+    /// Verdict from `tier_evidence.py` for this exact source row. A qualifying
+    /// tier name is only a claim; this bit says the named components carry
+    /// passing evidence. Keeping it separate records old-definition vs
+    /// new-definition accounting without rewriting the historical row.
+    tier_evidenced: bool,
     /// Whether the row carries EVIDENCE that a determinism comparison actually
     /// happened: a non-blank `parity_comparator` or a non-blank
     /// `compared_log_messages`. Hermit refuses a determinism positive whose
@@ -214,6 +219,73 @@ fn split_csv_line(line: &str) -> Vec<String> {
     out
 }
 
+struct TierEvidence {
+    rows: usize,
+    claims: usize,
+    upheld: usize,
+    rejected_lines: BTreeSet<usize>,
+}
+
+/// Ask the one tier-evidence authority which source rows earned their declared
+/// tier. Exit 1 is a valid negative measurement (one or more cells did not);
+/// exit 2 or malformed output is an unavailable authority and fails closed.
+fn load_tier_evidence(csv_path: &PathBuf, observable: &str) -> TierEvidence {
+    let checker = script_dir().join("tier_evidence.py");
+    let output = Command::new("python3")
+        .arg(&checker)
+        .arg("--csv")
+        .arg(csv_path)
+        .arg("--json")
+        .arg("--observable")
+        .arg(observable)
+        .output()
+        .unwrap_or_else(|error| {
+            die(&format!("cannot execute tier-evidence verifier {}: {error}", checker.display()))
+        });
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        die(&format!(
+            "tier-evidence verifier was unavailable (status={}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        die(&format!(
+            "tier-evidence verifier returned malformed JSON: {error}: {}",
+            String::from_utf8_lossy(&output.stdout).trim()
+        ))
+    });
+    let count = |name: &str| -> usize {
+        report
+            .get(name)
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or_else(|| die(&format!("tier-evidence report lacks integer `{name}`")))
+    };
+    if report.get("schema").and_then(Value::as_u64) != Some(1) {
+        die("tier-evidence report has an unknown schema");
+    }
+    let rejected_lines = report
+        .get("violations")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| die("tier-evidence report lacks `violations`"))
+        .iter()
+        .map(|violation| {
+            violation
+                .get("line")
+                .and_then(Value::as_u64)
+                .and_then(|line| usize::try_from(line).ok())
+                .unwrap_or_else(|| die("tier-evidence violation lacks an integer source line"))
+        })
+        .collect();
+    TierEvidence {
+        rows: count("rows"),
+        claims: count("claims"),
+        upheld: count("upheld"),
+        rejected_lines,
+    }
+}
+
 fn main() {
     let mut csv: Option<PathBuf> = None;
     let mut run_id: Option<String> = None;
@@ -269,6 +341,10 @@ fn main() {
     if !status.success() {
         die("parity provenance verifier refused this scorecard/scope");
     }
+    // `comparison_tier` is a declaration, not evidence. Consume the semantic
+    // verifier before reading that cached label so a planted comparator failure
+    // reaches the cell that would otherwise remain green.
+    let tier_evidence = load_tier_evidence(&csv_path, &observable);
     let (parity_label, parity_key, parity_meaning, full_parity_not_measured) =
         match observable.as_str() {
             "stdout" => (
@@ -386,6 +462,8 @@ fn main() {
                 comparison_tier
             ));
         }
+        let tier_evidenced = qualifies_as_green(&comparison_tier)
+            && !tier_evidence.rejected_lines.contains(&(n + 2));
         cells.push(Cell {
             seq: n,
             run_id: get(i_run),
@@ -397,6 +475,7 @@ fn main() {
             deterministic: parse_bool(&get(i_det)),
             observable_parity: parse_bool(&get(i_par)),
             comparison_tier,
+            tier_evidenced,
             // Absent columns (pre-schema-5 rows) read as blank, i.e. NOT
             // evidenced -- an older row cannot retroactively acquire evidence it
             // never recorded.
@@ -406,6 +485,22 @@ fn main() {
     }
     if cells.is_empty() {
         die("CSV has a header but no data rows");
+    }
+    let declared_claims = cells.iter().filter(|cell| qualifies_as_green(&cell.comparison_tier)).count();
+    let evidenced_claims = cells.iter().filter(|cell| cell.tier_evidenced).count();
+    if tier_evidence.rows != cells.len()
+        || tier_evidence.claims != declared_claims
+        || tier_evidence.upheld != evidenced_claims
+    {
+        die(&format!(
+            "tier-evidence verifier population disagrees with renderer: rows={}/{}, claims={}/{}, upheld={}/{}",
+            tier_evidence.rows,
+            cells.len(),
+            tier_evidence.claims,
+            declared_claims,
+            tier_evidence.upheld,
+            evidenced_claims,
+        ));
     }
 
     // Select the run scope.
@@ -445,20 +540,34 @@ fn main() {
     // not scorecard green until the row names one qualifying comparison tier.
     let mut tier_distribution: BTreeMap<String, usize> = BTreeMap::new();
     let mut raw_passes = 0usize;
+    let mut declared_tier_passes = 0usize;
     let mut qualified_passes = 0usize;
+    let mut selected_tier_claims = 0usize;
+    let mut selected_tier_upheld = 0usize;
     for cell in &cells {
         *tier_distribution.entry(cell.comparison_tier.clone()).or_default() += 1;
+        if qualifies_as_green(&cell.comparison_tier) {
+            selected_tier_claims += 1;
+            if cell.tier_evidenced {
+                selected_tier_upheld += 1;
+            }
+        }
         if cell.outcome == "pass" {
             raw_passes += 1;
             if qualifies_as_green(&cell.comparison_tier) {
-                qualified_passes += 1;
+                declared_tier_passes += 1;
+                if cell.tier_evidenced {
+                    qualified_passes += 1;
+                }
             }
         }
     }
     eprintln!(
-        "comparison-tier distribution: {:?} ({} rows); qualified green={}/{} raw passes",
+        "comparison-tier distribution: {:?} ({} rows); old-definition declared-tier green={}/{} raw passes; new-definition evidence-qualified green={}/{} raw passes",
         tier_distribution,
         cells.len(),
+        declared_tier_passes,
+        raw_passes,
         qualified_passes,
         raw_passes,
     );
@@ -489,6 +598,7 @@ fn main() {
         if c.backend == "ptrace"
             && c.outcome == "pass"
             && qualifies_as_green(&c.comparison_tier)
+            && c.tier_evidenced
         {
             ptrace_pass.entry(c.bucket.clone()).or_default().insert(c.test_id.clone());
         }
@@ -521,7 +631,9 @@ fn main() {
         if c.backend == "ptrace" || c.backend == "native" {
             continue;
         }
-        let pass = c.outcome == "pass" && qualifies_as_green(&c.comparison_tier);
+        let pass = c.outcome == "pass"
+            && qualifies_as_green(&c.comparison_tier)
+            && c.tier_evidenced;
         let ran = c.outcome != "unavailable" && c.outcome != "skip";
         // Determinism (run1 == run2) is independent of parity: a backend can be
         // self-deterministic yet diverge from ptrace. The CSV `deterministic`
@@ -629,6 +741,7 @@ fn main() {
                 c.backend == "ptrace"
                     && c.outcome == "pass"
                     && qualifies_as_green(&c.comparison_tier)
+                    && c.tier_evidenced
             })
             .map(|c| c.test_mode.as_str())
             .collect();
@@ -657,7 +770,7 @@ fn main() {
             "NO DATA: run {run} has 0 ptrace/{mode} qualifying passing cells, so the denominator is empty \
              and no percentage is defined (this is NOT a measured zero).\n\
              \x20 rows considered:  {n}\n\
-             \x20 raw passes:       {raw_passes} (qualified: {qualified_passes})\n\
+             \x20 raw passes:       {raw_passes} (declared-tier: {declared_tier_passes}; evidence-qualified: {qualified_passes})\n\
              \x20 tier distribution:{tier_distribution:?}\n\
              \x20 ptrace rows:      {ptrace_rows} (passing in modes: {usable})\n\
              \x20 modes present:    {modes}\n\
@@ -668,6 +781,7 @@ fn main() {
             mode = denom_mode,
             n = cells.len(),
             raw_passes = raw_passes,
+            declared_tier_passes = declared_tier_passes,
             qualified_passes = qualified_passes,
             tier_distribution = tier_distribution,
             ptrace_rows = ptrace_rows,
@@ -695,6 +809,20 @@ fn main() {
     match fmt {
         "json" => {
             let mut out_rows = Vec::new();
+            let tier_cells: Vec<Value> = cells
+                .iter()
+                .filter(|cell| qualifies_as_green(&cell.comparison_tier))
+                .map(|cell| {
+                    json!({
+                        "bucket": cell.bucket,
+                        "test_id": cell.test_id,
+                        "test_mode": cell.test_mode,
+                        "backend": cell.backend,
+                        "tier": cell.comparison_tier,
+                        "evidenced": cell.tier_evidenced,
+                    })
+                })
+                .collect();
             let mut emit = |name: &str, row: &Row| {
                 let mut backs = serde_json::Map::new();
                 for b in &backend_cols {
@@ -734,7 +862,16 @@ fn main() {
                 "denominator_meaning": denominator_meaning,
                 "comparison_tier_distribution": tier_distribution,
                 "raw_pass_count": raw_passes,
+                "declared_tier_green_count": declared_tier_passes,
                 "qualified_green_count": qualified_passes,
+                "tier_evidence": {
+                    "claims": selected_tier_claims,
+                    "upheld": selected_tier_upheld,
+                    "rejected": selected_tier_claims - selected_tier_upheld,
+                    "short_test_tier": FULL_COMPARISON_TIER,
+                    "large_test_tier": SPOT_CHECK_COMPARISON_TIER,
+                    "cells": tier_cells,
+                },
                 "parity_metric": {
                     "label": parity_label,
                     "observable": observable,
@@ -784,8 +921,9 @@ fn main() {
                 denominator_meaning,
             );
             println!("Input CSV: {}", csv_path.display());
-            println!("Comparison-tier distribution: {:?} ({} rows); qualified green={}/{} raw passes.", tier_distribution, cells.len(), qualified_passes, raw_passes);
-            println!("Qualifying tiers: `{FULL_COMPARISON_TIER}` or `{SPOT_CHECK_COMPARISON_TIER}`. Explicit unqualified tiers remain non-green history.");
+            println!("Comparison-tier distribution: {:?} ({} rows).", tier_distribution, cells.len());
+            println!("Old definition (pass + declared tier): {declared_tier_passes}/{raw_passes} raw passes; new definition (+ passing tier evidence): {qualified_passes}/{raw_passes}.");
+            println!("Tier evidence: {selected_tier_upheld}/{selected_tier_claims} declared claims upheld. Short=`{FULL_COMPARISON_TIER}`; large=`{SPOT_CHECK_COMPARISON_TIER}`. Explicit unqualified or unevidenced tiers remain non-green history.");
             println!("Each backend cell is `{parity_label}%, determinism%` of the ptrace count. The two measurements are independent.");
             if observable == "stdout" {
                 println!("CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.");

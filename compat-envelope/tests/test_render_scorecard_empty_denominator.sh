@@ -39,6 +39,12 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 HEADER=$(head -1 "$SCHEMA_CSV")
+# These denominator fixtures exercise scorecard selection, not a producer
+# schema. Add the two FULL-tier verdict columns that the committed scorecard
+# cannot yet express, so the positive controls are genuine evidence-qualified
+# cells instead of cached tier labels.
+case ",$HEADER," in *,stack_parity,*) ;; *) HEADER="$HEADER,stack_parity";; esac
+case ",$HEADER," in *,heap_parity,*) ;; *) HEADER="$HEADER,heap_parity";; esac
 
 # Emit one CSV row into $1, setting only the named columns; every other column is
 # blank. Blank is meaningful here: a blank `deterministic`/parity is "unknown", which
@@ -49,6 +55,13 @@ row() {
     BEGIN {
         n = split(hdr, cols, ",")
         v["comparison_tier"] = "full-stdout-info-stack-heap"
+        # `pass` is a typed fixture verdict. It is deliberately not 0/1, so the
+        # independent stdout-provenance checker sees no fabricated hash claim.
+        v["stdout_parity"] = "pass"
+        v["bitwise_parity"] = "pass"
+        v["compared_log_messages"] = "9|9"
+        v["stack_parity"] = "pass"
+        v["heap_parity"] = "pass"
         m = split(spec, kvs, " ")
         for (i = 1; i <= m; i++) { p = index(kvs[i], "="); v[substr(kvs[i],1,p-1)] = substr(kvs[i],p+1) }
         out = ""

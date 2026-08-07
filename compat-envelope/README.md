@@ -182,8 +182,13 @@ executed_count,evidence_count,comparison_tier
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
 - `comparison_tier` — the cross-backend certification standard carried on
   every row. `full-stdout-info-stack-heap` and
-  `stdout-info-stack-heap-spot-check` are the only values that qualify a raw
-  pass as green. `legacy-unqualified`, `unqualified-stdout-only`, and
+  `stdout-info-stack-heap-spot-check` are the only declarations that can qualify
+  a raw pass as green, but the label is not authority: `tier_evidence.py` must
+  also uphold that exact row. FULL requires passing stdout, INFO, stack, and heap
+  verdicts on the run; SPOT-CHECK requires passing stdout+INFO on the run and a
+  clean current stack/heap cadence receipt. A false, blank, zero-record, stale,
+  or schema-inexpressible component keeps the cell non-green.
+  `legacy-unqualified`, `unqualified-stdout-only`, and
   `unqualified-tool-count-only` preserve weaker evidence explicitly and never
   count green. This is deliberately separate from `tier`, which records the
   self-determinism comparator used within one backend.
@@ -326,6 +331,13 @@ disk (defaults resolve to the `worktrees/e9patch` checkout).
 corpus. `--observable` defaults to `stdout`; the Reverie counter scorecard must
 select `tool-count`. The input path and observable are repeated in machine and
 human output.
+
+The renderer calls `tier_evidence.py --csv ... --json` before constructing its
+denominator. Exit 1 is a valid per-cell negative and removes only the unsupported
+claim; an unavailable/malformed verifier fails closed. JSON records both
+`declared_tier_green_count` (the old label-only definition) and
+`qualified_green_count` (the evidence-bound definition), plus each qualifying
+cell's stated tier and evidence verdict under `tier_evidence.cells`.
 
 ## Table markers (never let a `0` be ambiguous)
 
