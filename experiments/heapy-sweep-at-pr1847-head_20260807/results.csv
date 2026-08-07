@@ -1,0 +1,17 @@
+build,hermit,backend,dimension,match_denom,verdict
+main-side,86842f741,ptrace,stdout,0/0,NOT-COMPARABLE vacuous
+main-side,86842f741,ptrace,detlog,40/40,SELF-DETERMINISTIC
+main-side,86842f741,ptrace,stack,9/9,SELF-DETERMINISTIC
+main-side,86842f741,ptrace,heap,8/8,SELF-DETERMINISTIC
+main-side,86842f741,liteinst,stdout,0/0,NOT-COMPARABLE vacuous
+main-side,86842f741,liteinst,detlog,4/4,SELF-DETERMINISTIC
+main-side,86842f741,liteinst,stack,0/0,NOT-COMPARABLE vacuous
+main-side,86842f741,liteinst,heap,0/0,NOT-COMPARABLE vacuous
+pr1847-head,077833ad,ptrace,stdout,0/0,NOT-COMPARABLE vacuous
+pr1847-head,077833ad,ptrace,detlog,40/40,SELF-DETERMINISTIC
+pr1847-head,077833ad,ptrace,stack,9/9,SELF-DETERMINISTIC
+pr1847-head,077833ad,ptrace,heap,8/8,SELF-DETERMINISTIC
+pr1847-head,077833ad,liteinst,stdout,0/0,NOT-COMPARABLE vacuous
+pr1847-head,077833ad,liteinst,detlog,4/4,SELF-DETERMINISTIC
+pr1847-head,077833ad,liteinst,stack,0/0,NOT-COMPARABLE vacuous
+pr1847-head,077833ad,liteinst,heap,0/0,NOT-COMPARABLE vacuous
