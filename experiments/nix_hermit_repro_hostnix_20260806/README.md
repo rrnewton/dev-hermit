@@ -19,11 +19,14 @@ need it?
    16 → **1**.
 3. **One real nondeterministic nixpkgs package found: `lensfun-0.3.4`**
    (`date +%s` baked into `$out`). K=17 attempted, 13 measurable, M=1, **N=0
-   reproduced** — because **cmake configure hangs under Hermit** (R3b), a
-   compatibility bug with a 90-second reproducer, not a determinization failure.
-4. **Two new Hermit bugs, both blocking real nixpkgs work:** the fake uid 0 that
-   breaks `tar` in `unpackPhase` for every tarball-sourced package (R3a), and the
-   cmake `epoll_wait` hang (R3b).
+   reproduced** — blocked by a Hermit hang (R3b) with a 90-second reproducer,
+   not by a determinization failure. Furthest a real package got under the wrap:
+   `figlet-2.2.5`, through install and into `fixupPhase`.
+4. **Two new Hermit bug classes, both blocking real nixpkgs work:** the fake
+   uid 0 that breaks `tar` in `unpackPhase` for every tarball-sourced package
+   (R3a), and **pipe readiness/EOF never delivered to a guest reader after the
+   writer exits** (R3b) — observed twice, as a `cmake` `epoll_wait` hang and as a
+   `fixupPhase` bash `read` hang, each with zero accumulated CPU.
 5. **CA store: crisp negative.** `nix --check` does **not** detect nondeterminism
    in a `__contentAddressed` derivation on nix 2.30.2 (nix#5336 reproduces), so
    CA cannot be the oracle. Hermit *does* collapse a CA derivation onto one
@@ -324,7 +327,36 @@ uid range in the user namespace; (b) virtualize `chown`/`fchown` to a
 no-op-success when the guest believes it is root; (c) do not virtualize uid to
 0 when sharing the host filesystem.
 
-#### R3b. `cmake` configure HANGS under `hermit run` — lost pipe-EOF in epoll
+#### R3b. Real builds HANG under `hermit run` — pipe readiness/EOF is not delivered
+
+**Two independent hangs, both in pipe wakeup, both with zero accumulated CPU.**
+This — not performance — is what stops real nixpkgs packages.
+
+**Hang 2, first, because it is the simpler shape.** `figlet-2.2.5` (autotools,
+with the `TAR_OPTIONS` workaround) unpacked, patched, configured, compiled and
+installed under the wrap, then stalled in `fixupPhase`. Live state after 29
+minutes:
+
+```
+guest bash 1416984   State: S   TIME: 00:00:00   (no children at all)
+  wchan   -> anon_pipe_read
+  syscall -> 0 0x0 …  0x1        == read(fd 0, buf, 1 byte)   <- bash `while read`
+  fd 0    -> pipe:[329546543]
+  fd 63   -> pipe:[329546543]    <- same pipe, bash's saved duplicate
+hermit supervisor    TIME: 00:00:04 over 1729 s wall
+```
+
+Nothing in the guest is runnable, nothing can write to that pipe, and the reader
+never sees EOF.
+
+**Hang 1: `cmake` configure.** Minimal reproducer,
+[`harness/cmake-hang-repro.sh`](harness/cmake-hang-repro.sh) — a three-line
+`CMakeLists.txt` and one `main.c`:
+
+```
+native: rc=0   wall=1s
+hermit: rc=124 wall=90s     (124 == timed out; hermit produced NO output)
+```
 
 This is the blocker that stopped the real-package arm, and it is a hang, not
 slowness. Minimal reproducer: [`harness/cmake-hang-repro.sh`](harness/cmake-hang-repro.sh),
@@ -355,9 +387,19 @@ exits. Zero accumulated CPU confirms a lost wakeup rather than a slow one.
 Reproduces under **both** `--tmp=/tmp` and `--no-namespace`, so it is
 independent of the mode correction.
 
-Impact: every cmake-based nixpkgs package is out of reach of this seam until it
-is fixed — including the one real nondeterministic package we found. Autotools
-packages are unaffected (see R4: `figlet` reached `fixupPhase` under the wrap).
+**What is and is not established.** Both hangs are *measured*: the blocked
+syscall, the pipe fds, the absence of live writers, and the zero CPU all come
+from `/proc` on the live processes, not from inference. That they share **one**
+root cause is a **hypothesis** — one blocks in `epoll_wait`, the other in a
+blocking `read`, and a bash `while read` holding the pipe on a saved fd (63) has
+its own idioms. The defensible statement is: *Hermit does not deliver pipe
+readiness/EOF to a guest reader after the writer exits, observed through two
+different waiting primitives.*
+
+Impact: every cmake-based nixpkgs package is out of reach of this seam until
+Hang 1 is fixed — including `lensfun`, the one real nondeterministic package we
+found. Hang 2 additionally blocks stdenv's `fixupPhase`, which nearly every
+package runs. Together they are the reason N=0.
 
 ### R4. Cost, and what does get through
 
