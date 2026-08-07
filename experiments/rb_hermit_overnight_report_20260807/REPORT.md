@@ -139,18 +139,48 @@ build four times from one prepared tree in four different root paths, `native N1
 per-package control, `hermit A vs B` as the arm. Each package is its own control, so it is
 meaningful at small M.
 
-> **5 of 13 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — `dos2unix`, `ed`,
-> `hostname`, `tree`, `units`. **[C]**
-> All 13 were root-sensitive natively (the control fired every time). 3 diverged under Hermit too
-> (`figlet`, `nano`, `time`), reported undiagnosed rather than dropped; 5 incomplete (`bzip2`,
-> `grep`, `indent`, `wdiff`, `zip`).
+> **13 of 13 packages: native two-root DIVERGES, hermit two-root IDENTICAL.** **[C]**
+> `bzip2 1.0.6-4`, `dos2unix 6.0-1`, `ed 1.6-2`, `figlet 2.2.5-2`, `grep 2.12-2`, `hostname 3.11`,
+> `indent 2.2.11-2`, `nano 2.2.6-1`, `time 1.7-24`, `tree 1.6.0-1`, `units 1.88-1`,
+> `wdiff 1.1.2-1`, `zip 3.0-6`.
+> The control fired on **all 13** — every package was root-sensitive natively — so no
+> "hermit identical" cell is vacuous. Wrap: `hermit run --strict --no-rcb-time`.
+
+**The 13/13 replaced an earlier 7/13, and the correction is the more interesting result.**
+Both arms are retained in `results.csv` so the comparison is auditable:
+
+| arm | result |
+|---|---|
+| `hermit run --strict` | 7 / 13 |
+| `hermit run --strict --no-rcb-time` | **13 / 13** |
+
+All six apparent failures (`figlet`, `grep`, `indent`, `nano`, `time`, `wdiff`) flip to IDENTICAL,
+and **none of the seven already passing changes**. That asymmetry is the signature of a
+*measurement artifact*, not of six unrelated product gaps being fixed by one flag: this host's PMU
+fails validation (`AmdSpecLockMapShouldBeDisabled`) and Hermit derives virtual time from RCB
+counts, so without `--no-rcb-time` **Hermit's own clock was the nondeterminism being measured.**
+
+Two claims withdrawn at source as a result:
+- *"Hermit's determinization is incomplete for those six"* — **withdrawn.** It was the harness, not
+  Hermit.
+- *"`figlet`'s `fixupPhase` hang is a second witness for #1850"* — **withdrawn, and it does not
+  hold.** `figlet` builds successfully and byte-identically under Hermit once virtual time is off
+  the broken PMU; there is no hang in this harness. The Debian and Nix tracks therefore do **not**
+  converge on #1850. The Nix cmake case may still be #1850; this is simply not a second witness.
+  (The coordinator proposed that convergence; the measurement refused it.)
+
+> **Confounder attribution is inferred, not proven** **[I]** — from the flip pattern, not from a
+> direct experiment. Confirming it requires re-running the default arm on a working-PMU host.
 
 Separately, the earlier pilot: two independent fresh-root builds of `hello_2.8-2` produced a
 bitwise-identical 68,896-byte `.deb` (`55306cc9…`, `cmp` = 0) at L1. Unblocked by Reverie #287 —
 the minimized regression went from a 120 s timeout after 432,359 repeated interceptions to passing
 in 0.01 s. **[C]**
 
-**Denominator discipline: 5/13 controlled wins, and 1/8,688 against the paper's target set.** This
+**Denominator discipline: 13/13 controlled wins, and 13/8,688 against the paper's target set.**
+The harness records **no** per-package durations, deliberately: any duration printed by a build
+under Hermit is virtual time, so **no overhead or slowdown factor may be derived from this
+experiment.** This
 is a reconstruction at Debian Snapshot `20190301T000000Z`, not a replay of the paper's
 (unavailable) mirror.
 
@@ -275,8 +305,11 @@ longer exists.
 
 1. **Fix the two nixpkgs compatibility bugs** — the cmake configure hang and fake-uid-0 breaking
    `tar` in `unpackPhase`. These, not determinization, are why real nixpkgs is N=0.
-2. **Move Debian off 5/13** — finish the 5 incomplete packages and diagnose the 3 that diverged
-   under Hermit. The design and controls are done; this is throughput.
+2. **Extend Debian beyond 13.** The design, controls and harness are done and the set is now
+   13/13, so this is pure throughput on a convenience-biased selection — a larger, less biased
+   sample is the obvious next increment. Also re-run the default (`--strict`, no `--no-rcb-time`)
+   arm on a **working-PMU host** to confirm directly that the 7/13 was a PMU confounder rather
+   than inferring it from the flip pattern.
 3. **Bisect the GHC `-C0` non-replication.** The harness now exists, so it is cheap.
 4. **Retry the buck2 flagged arm serially** — one isolation dir for the whole session, killed
    between phases, one target at a time. The failure was daemon memory pressure from
