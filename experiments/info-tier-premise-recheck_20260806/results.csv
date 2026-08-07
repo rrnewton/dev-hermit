@@ -1,0 +1,7 @@
+guest,rc,secs,verified,bitwise_parity,verdict,left,right,log_scope,typed_predicate,expected,agrees
+clean_ctrl,0,1,True,True,matched,56,56,info,certified,certify,True
+mut_stdout,1,0,False,False,diverged,66,66,info,rejected,catch,True
+mut_exit,1,0,False,False,diverged,66,66,info,rejected,catch,True
+mut_detlog_only,1,?,False,False,diverged,74,74,info,rejected,catch,True
+mut_addr,1,0,False,False,diverged,69,69,info,rejected,catch,True
+mut_path,1,0,False,False,diverged,72,72,info,rejected,catch,True

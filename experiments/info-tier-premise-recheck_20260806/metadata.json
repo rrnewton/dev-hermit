@@ -1,0 +1,20 @@
+{
+  "question": "Does hermit's shipped --verify-strict on current main already provide the INFO-tier exact comparator that task add_an_info_tier asks to be built?",
+  "date": "2026-08-06",
+  "agent": "hermit-w2",
+  "host": "devbig014.atn7.facebook.com",
+  "slot": "worktrees/w2/hermit",
+  "hermit_sha": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+  "hermit_base": "origin/main a8951eff4c259f363a71836e8e93271a6231230a",
+  "hermit_branch": "feat/info-tier-exact-comparator",
+  "hermit_source_change": "none - measured stock origin/main, no local edits",
+  "reverie_pin": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+  "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+  "backend": "ptrace",
+  "command": "hermit run --strict --verify --verify-strict --verify-allow both --base-env=minimal --max-timeslice=disabled --tmp=/tmp --verify-json <out> -- <guest>",
+  "prior_experiment": "experiments/strict-certification-mutation-sweep_20260806 (hermit f89c69766371806d3c9b2c3003531df2d59d6118)",
+  "intervening_commit": "38cf53737268fc276c859218df77e5e8059b4120 (PR #1661) verify: keep BitwiseInfoV1 within the INFO envelope",
+  "guests": 6,
+  "results": "results.csv"
+}
