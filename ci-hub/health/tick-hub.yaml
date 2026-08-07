@@ -147,6 +147,23 @@ reminders:
         component: active-work-reconciliation
       title: "task/owner/agent reality diverged: {summary}"
 
+  # BACKLOG is intentionally absent from the routine mission/claim views.  A
+  # complete no-LIMIT census is therefore required to keep unowned P0/P1 work
+  # from becoming invisible.  Counts carry the live population denominator;
+  # missing durable drain classifications alert instead of being inferred.
+  - name: unowned_high_priority_backlog
+    cadence_secs: 300
+    gate:
+      cmd: ./ci-hub/taskgraph/unowned_backlog.py --gate
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: unowned-high-priority-backlog
+      title: "unowned P0/P1 BACKLOG census is {state}: {summary}"
+
   # Refusals and agent recycling can be locally correct while leaving work
   # ownerless.  This combines three authorities: TaskGraph owner vs live ORC
   # fleet, exact refusal-note markers, and slot owner absence AND no process cwd
