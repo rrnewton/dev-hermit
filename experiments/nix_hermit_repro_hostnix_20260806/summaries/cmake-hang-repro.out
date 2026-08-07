@@ -1,0 +1,7 @@
+cmake  = /nix/store/a3w3ka2d796ghlhf31il839c0658m5ih-cmake-3.31.7/bin/cmake
+hermit = /home/newton/work/dev-hermit/worktrees/nix-repro176/hermit/target/release/hermit
+dose   = run --tmp=/tmp --no-rcb-time --max-timeslice disabled
+native: rc=0 wall=1s
+hermit: rc=124 wall=90s   (rc=124 == TIMED OUT == the hang)
+--- last lines hermit saw ---
+--- artifacts in /tmp/cmake-hang-repro.pdbTUa ---

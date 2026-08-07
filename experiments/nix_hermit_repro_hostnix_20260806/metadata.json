@@ -1,0 +1,245 @@
+{
+  "experiment": "nix_hermit_repro_hostnix_20260806",
+  "date_utc": "2026-08-07",
+  "question": "Can `hermit run` around a Nix derivation's builder make a non-reproducible build byte-identical; what is the minimum hermit flag-set that does it on this host; does it work on real nixpkgs packages; and how does a nixpkgs consumer opt in only the packages that need it?",
+  "supersedes": {
+    "experiments/nix-hermit-execbuilder-prototype_20260729": "the `--no-namespace` mode requirement and the `setarch -R` requirement are both refuted; see README 'Corrections'",
+    "experiments/rb_nix_minimum_hermit_dose_20260730": "the plain `--no-namespace` minimum dose does not hold on a PMU-degraded host; `--no-rcb-time` is required here"
+  },
+  "depends_on_evidence": {
+    "experiments/rb_no_namespace_random_leaks_20260806": "parent commit 76117cd954a88df48d94de8cde8bb9c7859a63c8; source of the `--tmp=/tmp` correction"
+  },
+  "host": {
+    "hostname_short": "devbig176",
+    "kernel": "6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba",
+    "cpu": "AMD EPYC 9D64 88-Core Processor",
+    "nproc": 176,
+    "arch": "x86_64",
+    "filesystem": "btrfs",
+    "load_average_during_run": "35-50 (shared box, other agent fleets active)",
+    "pmu_status": "UNUSABLE by hermit: `PMU validation failed; RCB timers may be unreliable error=AmdSpecLockMapShouldBeDisabled` on every run",
+    "cpuid_faulting": "absent: ARCH_SET_CPUID returns ENODEV; hermit continues without CPUID interception"
+  },
+  "ephemerality_warning": {
+    "statement": "/nix on this host is NOT persistent. Chef reverts it on Meta devservers. Every measurement here was taken against a host nix install that will be deleted.",
+    "mitigation": "bootstrap.sh recreates an equivalent install pinned to the versions below; bootstrap.sh podman assesses the rootless-podman fallback."
+  },
+  "toolchain": {
+    "nix": "2.30.2",
+    "nix_install": "single-user, no daemon, /nix owned by the invoking user",
+    "nix_conf": {
+      "experimental-features": "nix-command flakes",
+      "sandbox": false,
+      "max-jobs": "auto",
+      "cores": 0
+    },
+    "nix_options_used_for_all_measurements": [
+      "--option max-jobs 1",
+      "--option cores 1",
+      "--option substitute false  (target only; inputs were substituted)",
+      "--option substituters ''   (target only)"
+    ],
+    "nixpkgs_channel": "nixpkgs-unstable",
+    "nixpkgs_revision": "cab778239e705082fe97bb4990e0d24c50924c04",
+    "nixpkgs_version": "25.11pre839900.cab778239e70",
+    "nixpkgs_store_path": "/nix/store/gp8yc3qdcgzrw3b0p3gzlhiy57smq25k-nixpkgs/nixpkgs",
+    "podman": "5.8.3",
+    "podman_nix_image": "docker.io/nixos/nix:2.3.16 (cached locally; cannot fetch through fwdproxy, curl error 56)"
+  },
+  "hermit": {
+    "repository": "rrnewton/hermit",
+    "hermit_sha": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+    "dirty": false,
+    "version_string": "hermit 0.2.0 (2026-08-07, g1fadc03779f2)",
+    "binary": "worktrees/nix-repro176/hermit/target/release/hermit",
+    "build_command": "CARGO_BUILD_JOBS=16 cargo build --release --bin hermit",
+    "backend": "ptrace (default)"
+  },
+  "reverie_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6 (pinned build dep of the hermit SHA above; unchanged by this experiment)",
+  "parent_repository": "rrnewton/dev-hermit",
+  "parent_sha_at_run_start": "e13db2700ef42eccf273cd7cdd685081ac17731a",
+  "seam": {
+    "mechanism": "stdenv.mkDerivation `realBuilder` override (the exec'd binary; the `builder` attribute is the phase script)",
+    "override": "drv.overrideAttrs (_: { realBuilder = <store wrapper>; })",
+    "wrapper_cmd": "exec <hermit> run --tmp=/tmp --no-rcb-time --max-timeslice disabled -- <drv.drvAttrs.builder> \"$@\"",
+    "original_builder_source": "drv.drvAttrs.builder read off the already-evaluated derivation, NOT hard-coded to stdenv.shell",
+    "nix_patch_required": false,
+    "nixpkgs_patch_required": false
+  },
+  "dose": {
+    "minimum_measured_on_this_host": "run --tmp=/tmp --no-rcb-time",
+    "recommended": "run --tmp=/tmp --no-rcb-time --max-timeslice disabled",
+    "rationale_no_rcb_time": "hermit's default logical clock advances with retired-conditional-branch counts read from the PMU; this host's PMU is unusable, so the virtual clock jitters at nanosecond resolution",
+    "rationale_max_timeslice_disabled": "removes PMU-backed preemption; ~3x faster here (1s vs 3s per build) and removes a 59s outlier; not required for correctness",
+    "strict_is_free": true,
+    "host_conditional": true,
+    "determinism_label": "reproducible-output-under-shared-/tmp"
+  },
+  "namespace_mode_ab": {
+    "tmp_slash_tmp": {
+      "uid_map": "0 <caller-uid> 1",
+      "chown_0_0": "OK",
+      "chown_1000_1000": "EINVAL",
+      "writes_outside_tmp_persist": true,
+      "aslr_pinned_by_hermit": true,
+      "setarch_R_needed": false,
+      "nondet_time_distinct_of_20": 1,
+      "virtualizes_getpid": true,
+      "virtualizes_bash_RANDOM": true,
+      "virtualizes_procfs_random_uuid": true,
+      "nondet_demo_fast_distinct_of_10": 2
+    },
+    "no_namespace": {
+      "uid_map": null,
+      "chown_0_0": "EPERM",
+      "chown_1000_1000": "EPERM",
+      "writes_outside_tmp_persist": true,
+      "aslr_pinned_by_hermit": false,
+      "setarch_R_needed": true,
+      "nondet_time_distinct_of_10_best_dose": 2,
+      "status": "SUPERSEDED - leaks, and breaks unpackPhase for every tarball-sourced package",
+      "virtualizes_getpid": false,
+      "virtualizes_bash_RANDOM": false,
+      "virtualizes_procfs_random_uuid": false,
+      "nondet_demo_fast_distinct_of_10": 10,
+      "note": "10/10 on the four-source probe is EXACTLY the native control: --no-namespace provides no determinization for the AT_RANDOM and procfs-RNG classes"
+    }
+  },
+  "counts": {
+    "real_nixpkgs_packages_attempted_K": 17,
+    "real_nixpkgs_packages_measurable": 13,
+    "real_nixpkgs_packages_nondeterministic_on_machine_M": 1,
+    "real_nixpkgs_packages_reproduced_under_hermit_N": 0,
+    "note": "M=1 is lensfun-0.3.4 (date +%s baked into $out/share/lensfun/version_1/timestamp.txt). N=0 because lensfun is a cmake package and cmake configure HANGS under hermit (see hermit_findings_for_product/cmake-epoll-hang) - a compatibility bug, not a determinization failure. The lensfun CLASS is witnessed by nondet-seconds: native 16 distinct/20 -> hermit 1 distinct/20.",
+    "lila_eval26_outputs_scanned": 3359,
+    "lila_eval26_multi_hash_outputs": 113,
+    "lila_multi_hash_haskell_packages_rechecked_on_machine": 6,
+    "lila_multi_hash_haskell_packages_reproducible_on_machine": 6,
+    "real_nixpkgs_package_built_end_to_end_under_wrap": "figlet-2.2.5 (autotools, with the TAR_OPTIONS workaround) unpacked, patched, configured, compiled and installed under the wrap, then hung in fixupPhase (see pipe-readiness-eof-not-delivered). Furthest a real nixpkgs package has been driven through this seam."
+  },
+  "workload_parameters": {
+    "oracle": "canonical rebuild (build -> NAR hash -> nix-store --delete -> rebuild into the SAME $out), NOT nix --check",
+    "why_not_check": "with sandbox=false nix's check-mode rebuild uses a redirected output path, so self-referential outputs differ by exactly that store-path hash (the nftables-1.1.6 false positive)",
+    "witness": "nix-hash --type sha256 --base32 over EVERY output of the derivation, joined with '+'",
+    "repetitions": [
+      3,
+      5,
+      10,
+      20
+    ],
+    "build_timeout_s": 3600,
+    "min_free_gib_guard": 60,
+    "execution_order": "doses in the fixed order listed in harness/dose-sweep.sh; no randomization",
+    "warmups": "none; phase A realises all inputs before the first timed build so no build includes a download"
+  },
+  "measurements": {
+    "spawn_cost_native_ms_per_proc": [
+      0.76,
+      0.795,
+      0.775
+    ],
+    "spawn_cost_hermit_ms_per_proc": [
+      5.995,
+      6.65,
+      6.72
+    ],
+    "spawn_cost_ratio": 8.4,
+    "spawn_cost_workload": "200 sequential /bin/true execs from bash",
+    "observed_real_phase_slowdowns": {
+      "which updateAutotoolsGnuConfigScriptsPhase": "2 min 49 s under the wrap (sub-second natively)",
+      "lensfun cmake configure": ">25 min under the wrap, did not complete; whole native build is 7 s"
+    },
+    "clock_quantum_ms": 250,
+    "clock_quantum_evidence": "nondet-demo-fast, 6 wrapped builds: urandom/bashrandom/uuid identical 6/6; date=1767228154.422875000 (1/6) vs 1767228154.672875000 (5/6)",
+    "n20_summary": {
+      "nondet-time": {
+        "native_distinct_of_20": 20,
+        "hermit_distinct_of_20": 1,
+        "verdict": "reproducible"
+      },
+      "nondet-seconds": {
+        "native_distinct_of_20": 16,
+        "hermit_distinct_of_20": 1,
+        "verdict": "reproducible"
+      },
+      "nondet-demo-fast": {
+        "native_distinct_of_20": 20,
+        "hermit_distinct_of_20": 2,
+        "verdict": "NONDETERMINISTIC (clock quantum only)"
+      }
+    },
+    "nondet_demo_fast_n10_by_dose": {
+      "native": 10,
+      "run --no-namespace +setarch-R": 10,
+      "run --no-namespace --no-rcb-time --max-timeslice disabled +setarch-R": 10,
+      "run --tmp=/tmp": 4,
+      "run --tmp=/tmp --no-rcb-time": 2,
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled": 2,
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --strict": 2,
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --sequentialize-threads": 2,
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --target-timeslice 1000000000": 2
+    }
+  },
+  "ca_derivations": {
+    "nix_version": "2.30.2",
+    "enabled_via": "--extra-experimental-features 'ca-derivations nix-command' (shared nix.conf NOT modified)",
+    "input_addressed_check_exit": 104,
+    "content_addressed_check_exit": 0,
+    "conclusion": "NixOS/nix#5336 reproduces on 2.30.2: --check does not detect nondeterminism in a CA derivation. CA cannot be the oracle.",
+    "hermit_plus_ca": "3 canonical rebuilds -> one store path /nix/store/2xg2m2hc2snsrqx1ifz4s3258c4q6gnd-ca-nondet; native control gives a different path per genuine rebuild, so this is not caching"
+  },
+  "script_sha256": {
+    "harness/canonical-nrep.sh": "7385d5ac75d04d185eab4410429fb6d572b59591d94605f86aaa9d29f751242e",
+    "harness/ca-probe.sh": "e482639c8b5326012939be7f5e96c3d7fbf686f4ea5fa16e97969292f9e71ae1",
+    "harness/dose-sweep.sh": "bff1de08b7c8704a30b50e4f3ee9e70c4b02b56432c161f29bdadf120a4df58f",
+    "harness/env.sh": "22c25af7f1cf54429977a10f80907745660125f18a2c170b49d802d3dcf0e186",
+    "harness/ergonomics-check.sh": "3b663838862f4057c1f7de8ad6635eb6a7cbb70a00d2078aa6982f008bf1af78",
+    "harness/screen-batch.sh": "a98dae78f6545ff023a837494edac17a8eae006d310d708079b79e9317c1fc5a",
+    "harness/spawn-cost.sh": "e22e2a133d9d31d40d8896f95b9dcd7517abdd8ee6ba0529b46b1eb492d87a3f",
+    "harness/collect-results.py": "cdd3db0bc5f234f6b83ccd7013be0fbbf3f487786f82d93df8b364d249da5053",
+    "harness/lila-multihash.py": "5190d3c6ff785f341d03fc17bea43daea9f9e19ee3533dde4ef9ae7d35f27a37",
+    "note": "hashes of the producers as of publication; bootstrap.sh and run.sh are entry points, not producers of the numbers",
+    "harness/cmake-hang-repro.sh": "see git; added after the initial hash snapshot"
+  },
+  "hermit_findings_for_product": [
+    {
+      "id": "virtual-root-uid-without-privilege",
+      "summary": "detcore answers getuid/geteuid/getgid/getegid with a constant 0 in both namespace modes, but the process cannot back it. GNU tar then attempts ownership restoration and fails: EPERM under --no-namespace (no user namespace at all), EINVAL under --tmp=/tmp (user namespace maps exactly one uid).",
+      "measured_impact": "4/4 tarball-sourced nixpkgs packages (hello, which, bc, figlet) fail in unpackPhase under the wrap",
+      "suggested_fixes": [
+        "map a wider uid range in the user namespace",
+        "virtualize chown/fchown to no-op-success when the guest believes it is root",
+        "do not virtualize uid to 0 when sharing the host filesystem"
+      ]
+    },
+    {
+      "id": "pipe-readiness-eof-not-delivered",
+      "summary": "Two measured hangs in guest pipe wakeup, each with ZERO accumulated CPU. (1) cmake configure blocks in epoll_wait(epfd=3, maxevents=1024, timeout=-1) on pipes to a compiler-probe child that has exited; /proc/<pid>/wchan = do_epoll_wait. (2) figlet's stdenv fixupPhase: the guest builder bash blocks in read(fd 0, buf, 1) on pipe:[329546543] (also held on saved fd 63) with NO children alive; wchan = anon_pipe_read, TIME 00:00:00 after 29 minutes.",
+      "reproducer": "harness/cmake-hang-repro.sh (3-line CMakeLists.txt): native rc=0 wall=1s; hermit rc=124 wall=90s with no output",
+      "modes_affected": [
+        "--tmp=/tmp",
+        "--no-namespace"
+      ],
+      "measured_impact": "Hang 1 puts every cmake-based nixpkgs package out of reach, including lensfun -- the one real on-machine-nondeterministic package found. Hang 2 blocks stdenv fixupPhase, which nearly every package runs. Together they are why N=0.",
+      "suggested_fix": "audit detcore's pipe readiness/EOF delivery for both epoll registration and blocking read when the writer exits",
+      "claim_strength": "The two hangs are measured from /proc on live processes. A SHARED root cause is a HYPOTHESIS, not established: one waits in epoll_wait and the other in a blocking read, and a bash `while read` holding the pipe on a saved fd has its own idioms. Defensible statement: hermit does not deliver pipe readiness/EOF to a guest reader after the writer exits, observed through two different waiting primitives."
+    },
+    {
+      "id": "rcb-clock-jitter-on-degraded-pmu",
+      "summary": "the default logical clock advances with PMU-read RCB counts; on a host where PMU validation fails the guest-visible clock jitters at nanosecond resolution and breaks output reproducibility for any build that reads a high-resolution clock",
+      "workaround": "--no-rcb-time",
+      "suggested_fix": "fall back to check-in-counted logical time automatically when PMU validation fails, instead of logging an error and continuing with an unreliable counter"
+    },
+    {
+      "id": "sequentialization-cost-gates-real-packages",
+      "summary": "~8.4x on a trivial exec, but >200x on real configure phases; this is the actual gate on whole-package determinization, not the nix integration",
+      "measured": "see measurements.observed_real_phase_slowdowns"
+    },
+    {
+      "id": "virtual-clock-check-in-quantum",
+      "summary": "with --no-rcb-time the logical clock advances a fixed increment per scheduler check-in, so a build whose syscall path varies by one check-in lands one quantum apart. Measured quantum here: 250 ms. Not fixed by --strict, --sequentialize-threads, --target-timeslice, or --max-timeslice disabled.",
+      "measured_impact": "a build baking NANOSECONDS can still differ (nondet-demo-fast: 2 distinct/20); a build baking WHOLE SECONDS cannot (nondet-seconds: 1 distinct/20)",
+      "suggested_fix": "make the guest-visible clock a function of committed deterministic events only, not of the raw check-in count"
+    }
+  ]
+}

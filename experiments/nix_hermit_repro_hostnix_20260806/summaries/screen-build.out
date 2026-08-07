@@ -1,0 +1,14 @@
+NATIVE  tree,"(import <nixpkgs> {}).tree",native,/nix/store/nja7kb2kklj7h24bckdxncfwzxbpzika-tree-2.2.1.drv,2,1,reproducible,10mw75s89r8d22ailspjl7mcczcv50znkgw52x2a2s1gq3qaqfnc 10mw75s89r8d22ailspjl7mcczcv50znkgw52x2a2s1gq3qaqfnc,2 2,
+NATIVE  which,"(import <nixpkgs> {}).which",native,/nix/store/8j1ppvc6n2i1cwmchmzk8sxyxp8f163p-which-2.23.drv,2,1,reproducible,10akgdnskylvddfbn6v7y908r7nqp4h1ap0jbfm1pydhhqzjppb9 10akgdnskylvddfbn6v7y908r7nqp4h1ap0jbfm1pydhhqzjppb9,4 4,
+HERMIT  which,"(import <nixpkgs> {}).which",hermit,/nix/store/l3cclhfivpjqa6zmp19z3ssz8q9ll8n3-which-2.23.drv,0,,build-fail,,,build1-failed
+NATIVE  figlet,"(import <nixpkgs> {}).figlet",native,/nix/store/qf5szhhdgbhaga91d9m10c0n0i98ccb3-figlet-2.2.5.drv,2,1,reproducible,0xjjizc42fhmrv92bd24xcwha8n6j89hk4kibgwxy5pagl3a570i 0xjjizc42fhmrv92bd24xcwha8n6j89hk4kibgwxy5pagl3a570i,2 2,
+HERMIT  figlet,"(import <nixpkgs> {}).figlet",hermit,/nix/store/8fvm71mdwacbahd6ls0gwhx0kqpc57cn-figlet-2.2.5.drv,0,,build-fail,,,build1-failed
+NATIVE  patchelf,"(import <nixpkgs> {}).patchelf",native,/nix/store/qmzgv48kxa1malfnj9kjbz764wv1as3c-patchelf-0.15.0.drv,0,,error,,,delete-failed:/nix/store/g6vgg72a5m5gm6fjm1jn9c39yxgpqkw2-stdenv-linux;/nix/store/nbrif411qgsj1h5r7rlgxxm140aj58dz-stdenv-linux;
+NATIVE  bc,"(import <nixpkgs> {}).bc",native,/nix/store/hv077sb3v305vrmhh9kp8kv4pzmsh4i8-bc-1.08.2.drv,2,1,reproducible,1wnriq90x07313nf6jixyhyy2p0ra7mmxd8xn93srmd6y7g86sh2 1wnriq90x07313nf6jixyhyy2p0ra7mmxd8xn93srmd6y7g86sh2,9 9,
+HERMIT  patchelf,"(import <nixpkgs> {}).patchelf",hermit,/nix/store/qfpqwic10jzy54ch981awqb2r925qir6-patchelf-0.15.0.drv,0,,build-fail,,,build1-failed
+NATIVE  xz,"(import <nixpkgs> {}).xz",native,INSTANTIATE_FAIL,0,,error,,,instantiate-failed
+HERMIT  xz,"(import <nixpkgs> {}).xz",hermit,INSTANTIATE_FAIL,0,,error,,,instantiate-failed
+HERMIT  bc,"(import <nixpkgs> {}).bc",hermit,/nix/store/sp2aybfzqjka77zrsh0ch5160njhci56-bc-1.08.2.drv,0,,build-fail,,,build1-failed
+NATIVE  libarchive,"(import <nixpkgs> {}).libarchive",native,/nix/store/a0yl8jdzmh4892ndyqxf8kg059q8asmq-libarchive-3.8.1.drv,0,,error,,,delete-failed:/nix/store/a3w3ka2d796ghlhf31il839c0658m5ih-cmake-3.31.7;/nix/store/s56j2jrcmgmdirva0yrpqjl6icb05bjw-elfutils-0.193-bin;
+NATIVE  hello,"(import <nixpkgs> {}).hello",native,/nix/store/5g60vyp4cbgwl12pav5apyi571smp62s-hello-2.12.2.drv,2,1,reproducible,1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii 1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii,17 18,
+HERMIT  hello,"(import <nixpkgs> {}).hello",hermit,/nix/store/jwfhzd13syz65ihimwyw8c2dqw8xmih9-hello-2.12.2.drv,0,,build-fail,,,build1-failed
