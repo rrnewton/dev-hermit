@@ -96,3 +96,84 @@ goes red. Currently caught, measured against the landed code — drain-before-
 ancestry, no-retry-on-rejection, re-appending an already-published event,
 skipping validation before publish, accepting a truncated remote shard, and
 disabling the newline check.
+
+## The GitHub per-SHA index (`github_index.py`)
+
+The shards are the durable history, but they answer questions only for machines
+that have them. `github_index.py` publishes each validation event as a **commit
+comment** so any consumer — including a fresh clone with no ledger at all — can
+ask "what happened at this exact SHA?" and get an answer.
+
+**It is a cache. The receipt is the authority.** `verify_receipt` refuses any
+entry it cannot bind to a receipt it dereferenced and hashed, so a forged,
+stale, or relocated comment is inert rather than believed. Nothing here may be
+added to branch protection or read as merge authority.
+
+### Why comments, and not statuses or checks
+
+Decided by measurement in
+`ai_docs/2026-08-07-github-validation-index-mechanism-decision.md`, not by taste:
+
+| | statuses | comments | checks |
+|---|---|---|---|
+| multi-run history | ❌ combined collapses 3 runs to 1 | ✅ all preserved | ✅ |
+| rollback | ❌ no delete endpoint, permanent | ✅ deletes cleanly | ➖ |
+| offline cache | ❌ pointers only (140-char cap) | ✅ self-describing (65,535) | ✅ |
+| feasible on a classic PAT | ✅ | ✅ | ❌ 403, needs a GitHub App |
+| least-privilege scope | ✅ `repo:status` | ➖ `repo` | ❌ App + `Checks:write` |
+
+Publish cost was measured and then **struck from the decision**: at the highest
+of three defensible receipt rates the dearer mechanism spends 3.46% of one
+hour's core budget across a whole day. The honest cost of the choice is the
+scope: comments need `repo` where statuses need `repo:status`.
+
+### Two properties that are easy to get subtly wrong
+
+**The receipt sits beside the event, never inside it.** The published payload is
+`{index_format, receipt, event}` with the ledger event embedded verbatim. Fold
+the receipt into the event and the GitHub copy of an event no longer matches the
+shard copy, so `union_events` — which compares bodies for a repeated `event_id`
+and raises rather than picking a winner — explodes on every event the machine
+published itself. This was a real defect, caught by
+`test_an_event_present_on_both_sides_collapses_to_one`.
+
+**Privacy is enforced at the writer, fail-closed.** The prototype learned this
+expensively: a read-side check correctly refused to *index* an FQDN that had
+already been published. A reader cannot unpublish. `publish()` runs
+`ledger.validate_event` — the same verifier that gates shard writes — and raises
+before any network call.
+
+### Usage
+
+```python
+read = github_index.fetch(sha, repo="rrnewton/dev-hermit", opener=open_receipt)
+read.counts        # {'comments_seen': 3, 'accepted': 1, 'rejected': 2}
+read.runs()        # folded run facts, same shape as the local ledger
+
+# merge what GitHub knows with what this machine's own shard knows
+local = github_index.events_for_commit(shard_paths, sha)
+github_index.merge_with_local(read, local)
+```
+
+Publishing is **opt-in** (`enabled=True`, wired to `--index-publish`), so
+importing the module cannot write. It is idempotent by `event_id`, retries
+retryable statuses with bounded exponential backoff, and `unpublish()` withdraws
+entries — the rollback statuses cannot do.
+
+`read.counts` always travels with the result: an accepted list alone cannot
+distinguish "this commit has one validation" from "one validation and nine
+entries I discarded".
+
+### Mutation sweep
+
+11 planted defects, each confirmed to turn a test red: reverting the receipt
+split, dropping the write-side privacy gate, dropping target-SHA binding,
+treating an unverifiable receipt as a pass, dropping the receipt hash
+comparison, dropping `event_id` dedup on read, dropping the idempotency skip on
+write, making 404 retryable, dropping the opt-in guard, ignoring local events in
+the merge, and ignoring the commit filter in `events_for_commit`.
+
+Every test runs offline against an injected transport. That is not only hygiene:
+the prototype's three probe *statuses* are permanently attached to an inert SHA
+and cannot be deleted, which is exactly what a network-touching suite reproduces
+at CI frequency.
