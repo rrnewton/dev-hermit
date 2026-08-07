@@ -1,0 +1,23 @@
+[Unit]
+Description=External staleness alarm for the dev-hermit operational health tick
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/hermit-health-staleness.sh
+
+# Deliberately NO dependency on hermit-health-tick.*. This alarm must be able to
+# run precisely when that tick is broken; binding them would recreate the
+# shared-fate defect it exists to break.
+
+[Service]
+Type=oneshot
+# %h, not a literal home and not $HOME: systemd does not expand shell variables
+# in ExecStart/WorkingDirectory, and a hardcoded owner path fails the parent's
+# portability gate.
+Environment=PATH=%h/.cargo/bin:%h/orc-bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/work/dev-hermit
+# Runs the VERSION-CONTROLLED copy directly. It previously ran an untracked
+# script under ~/.local/bin, so the thing executing was not the thing reviewed
+# and could drift from the repository silently.
+ExecStart=%h/work/dev-hermit/scripts/hermit-health-staleness.sh
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

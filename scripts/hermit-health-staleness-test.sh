@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Fixture tests for the external health-timer staleness alarm.
+#
+# THE DEFECT THESE PIN. On 2026-08-07T02:54:14Z the alarm paged
+# "TIMER DEAD -- no tick observed in 16min" while the durable invocation log
+# showed a successful tick 206s earlier. The alarm was neither delayed nor
+# mis-delivered; it read a signal that LAGS. hermit-health-tick.sh stamps its
+# log line at tick START but appends it at tick END, so the invocation log's
+# MTIME marks when a tick last COMPLETED. Measured live on this box: a tick
+# started 03:25:58Z and completed 03:27:23Z -- an 85s append lag with the
+# service running throughout. While a tick is in flight the mtime necessarily
+# ages, so mtime alone cannot tell a DEAD timer from a SLOW tick.
+#
+# Every case below runs the REAL script against hermetic fixtures via its
+# env-override hooks; nothing touches live state, and no alert is ever pushed.
+#
+# Run: scripts/hermit-health-staleness-test.sh
+set -uo pipefail
+
+SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/hermit-health-staleness.sh"
+PASS=0
+declare -a FAILURES=()
+
+fail() { FAILURES+=("$1${2:+  -- $2}"); }
+ok()   { PASS=$(( PASS + 1 )); }
+check() { if [ "$1" = "yes" ]; then ok; else fail "$2" "${3:-}"; fi; }
+
+# A fake `systemctl` whose answers are scripted per case. It handles exactly the
+# two queries the alarm makes, and fails loudly on anything else so a future
+# query cannot silently read as "absent".
+make_systemctl() { # <dir> <last-trigger-date-or-empty> <is-active-state>
+    local dir=$1 trigger=$2 state=$3
+    cat > "$dir/systemctl" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    LastTriggerUSec) printf '%s\n' '$trigger'; exit 0 ;;
+    is-active)       printf '%s\n' '$state';   exit 0 ;;
+  esac
+done
+echo "fake systemctl: unhandled query: \$*" >&2
+exit 64
+EOF
+    chmod +x "$dir/systemctl"
+}
+
+# Run the alarm against a fixture. Echoes the alarm log it produced.
+#   run_case <heartbeat-age-s|missing> <productive-age-s> <trigger-date|""> <state> [heartbeat-last-line] [stat-shim]
+run_case() {
+    local hb_age=$1 pr_age=$2 trigger=$3 state=$4 hb_line=${5:-} stat_shim=${6:-}
+    local d; d="$(mktemp -d)"
+    mkdir -p "$d/bin"
+    make_systemctl "$d/bin" "$trigger" "$state"
+    : > "$d/orc-msg"; chmod +x "$d/orc-msg"   # stub: never pushes anywhere
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/orc-msg"; chmod +x "$d/orc-msg"
+
+    local now; now="$(date +%s)"
+    if [ "$hb_age" != "missing" ]; then
+        printf '%s\n' "${hb_line:-$(date -u -d "@$(( now - hb_age ))" +%Y-%m-%dT%H:%M:%SZ) rc=0 advanced=yes}" > "$d/heartbeat"
+        touch -d "@$(( now - hb_age ))" "$d/heartbeat"
+    fi
+    printf 'x\n' > "$d/fired"; touch -d "@$(( now - pr_age ))" "$d/fired"
+
+    [ -n "$stat_shim" ] && { cp "$stat_shim" "$d/bin/stat"; chmod +x "$d/bin/stat"; }
+
+    PATH="$d/bin:$PATH" \
+    HERMIT_HEALTH_HEARTBEAT="$d/heartbeat" \
+    HERMIT_HEALTH_FIRED_STATE="$d/fired" \
+    HERMIT_HEALTH_LOG="$d/alarm.log" \
+    HERMIT_HEALTH_COOLDOWN_STAMP="$d/cool" \
+    HERMIT_HEALTH_GATED_STAMP="$d/gated" \
+    HERMIT_HEALTH_ORC_MSG="$d/orc-msg" \
+    HERMIT_HEALTH_SYSTEMCTL=systemctl \
+    HB_STAT_COUNTER="$d/hbstat" \
+        bash "$SCRIPT" >/dev/null 2>&1
+    cat "$d/alarm.log" 2>/dev/null
+    rm -rf "$d"
+}
+
+echo "== health-timer staleness alarm: fixture tests =="
+
+# --- 1. Healthy steady state stays quiet -------------------------------------
+out="$(run_case 60 60 "$(date -d @$(( $(date +%s) - 60 )))" inactive)"
+check "$([[ $out == *"OK heartbeat_age="* ]] && echo yes || echo no)" \
+      "healthy: logs OK" "got: $out"
+check "$([[ $out != *ALARM* ]] && echo yes || echo no)" "healthy: no ALARM"
+
+# --- 2. GENUINE dead timer still fires (the >3x cadence gap must survive) ----
+# Heartbeat 16 min stale, nothing running, timer itself last fired 16 min ago.
+old="$(date -d @$(( $(date +%s) - 960 )))"
+out="$(run_case 960 960 "$old" inactive)"
+check "$([[ $out == *"ALARM: TIMER DEAD"* ]] && echo yes || echo no)" \
+      "genuine gap: still pages TIMER DEAD" "got: $out"
+check "$([[ $out == *"last fired 9"*"s ago"* || $out == *"last fired"* ]] && echo yes || echo no)" \
+      "genuine gap: names the timer's own last fire"
+
+# --- 3. THE REGRESSION: a tick is RUNNING; this must NOT read as TIMER DEAD ---
+# The exact 02:54:14Z shape: heartbeat 960s stale (last COMPLETION), but the
+# timer fired 206s ago and a tick is executing right now.
+recent="$(date -d @$(( $(date +%s) - 206 )))"
+out="$(run_case 960 960 "$recent" activating)"
+check "$([[ $out == *"TICK-RUNNING-LONG"* ]] && echo yes || echo no)" \
+      "running tick: typed as TICK-RUNNING-LONG" "got: $out"
+check "$([[ $out != *"TIMER DEAD"* ]] && echo yes || echo no)" \
+      "running tick: MUST NOT say TIMER DEAD (this is the false alarm)"
+check "$([[ $out == *"schedule is ALIVE"* ]] && echo yes || echo no)" \
+      "running tick: states the schedule is alive"
+# `activating` is the state a Type=oneshot sits in for its whole run; missing it
+# would miss the entire long-tick case.
+out2="$(run_case 960 960 "$recent" active)"
+check "$([[ $out2 == *"TICK-RUNNING-LONG"* ]] && echo yes || echo no)" \
+      "running tick: 'active' also counts as running"
+
+# --- 4. Timer firing but ticks not completing is its OWN class ---------------
+out="$(run_case 960 960 "$recent" inactive)"
+check "$([[ $out == *"TICKS NOT COMPLETING"* ]] && echo yes || echo no)" \
+      "firing-but-failing: typed separately" "got: $out"
+check "$([[ $out != *"TIMER DEAD"* ]] && echo yes || echo no)" \
+      "firing-but-failing: not conflated with a dead timer"
+check "$([[ $out == *"timer is ALIVE"* ]] && echo yes || echo no)" \
+      "firing-but-failing: says the timer is alive"
+
+# --- 5. Never-fired timer is still a dead timer ------------------------------
+out="$(run_case 960 960 "" inactive)"
+check "$([[ $out == *"TIMER DEAD"* ]] && echo yes || echo no)" \
+      "never-fired timer: pages TIMER DEAD" "got: $out"
+check "$([[ $out == *"NEVER"* ]] && echo yes || echo no)" \
+      "never-fired timer: says NEVER rather than a bogus age"
+
+# --- 6. Missing heartbeat log is unchanged -----------------------------------
+out="$(run_case missing 960 "$old" inactive)"
+check "$([[ $out == *"heartbeat log MISSING"* ]] && echo yes || echo no)" \
+      "missing heartbeat: preserved behaviour" "got: $out"
+
+# --- 7. SELF-CORRECTION: premise withdrawn between observation and decision --
+# A `stat` shim that reports the heartbeat STALE on its first call and FRESH
+# afterwards -- i.e. a tick completed while the alarm was deciding. This is the
+# "delayed alarm whose premise is stale" case; it must be suppressed.
+SHIM="$(mktemp)"
+cat > "$SHIM" <<'SHIMEOF'
+#!/usr/bin/env bash
+# Only intercepts `stat -c %Y <heartbeat>`; everything else defers to real stat.
+real=/usr/bin/stat
+target="${!#}"
+# Counter path comes from the environment, NOT from $PPID: each `stat` runs
+# inside its own command-substitution subshell, so $PPID differs between calls
+# and the counter would reset every time (it did -- this test failed silently
+# until that was found).
+if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%Y" ] && [[ "$target" == *heartbeat ]]; then
+  n="${HB_STAT_COUNTER:?stat shim requires HB_STAT_COUNTER}"; c=0; [ -f "$n" ] && c="$(cat "$n")"
+  echo $(( c + 1 )) > "$n"
+  if [ "$c" -eq 0 ]; then echo $(( $(date +%s) - 960 )); else echo $(( $(date +%s) - 30 )); fi
+  exit 0
+fi
+exec "$real" "$@"
+SHIMEOF
+chmod +x "$SHIM"
+out="$(run_case 960 60 "$recent" inactive "" "$SHIM")"
+rm -f "$SHIM"
+check "$([[ $out == *"SELF-CORRECTED"* ]] && echo yes || echo no)" \
+      "stale premise: withdrawn on re-read" "got: $out"
+check "$([[ $out != *ALARM* ]] && echo yes || echo no)" \
+      "stale premise: no ALARM emitted"
+
+# --- 8. Every alarm carries the full observation tuple -----------------------
+out="$(run_case 960 960 "$old" inactive)"
+for field in observed_at= cadence_s= threshold_s= last_completion= last_invocation_start= timer_last_trigger= service=; do
+  check "$([[ $out == *"$field"* ]] && echo yes || echo no)" "observation tuple carries $field"
+done
+
+# --- 9. The known WORK-GATED path is untouched -------------------------------
+gated_line="$(date -u +%Y-%m-%dT%H:%M:%SZ) rc=1 advanced=no summary=agent-tool: agent-utils is dirty at pinned commit"
+out="$(run_case 60 99999 "$(date -d @$(( $(date +%s) - 60 )))" inactive "$gated_line")"
+check "$([[ $out == *"WORK-GATED"* ]] && echo yes || echo no)" \
+      "work-gated classification preserved" "got: $out"
+check "$([[ $out != *"TIMER DEAD"* ]] && echo yes || echo no)" \
+      "work-gated: not escalated to TIMER DEAD"
+
+# --- report -------------------------------------------------------------------
+total=$(( PASS + ${#FAILURES[@]} ))
+if [ ${#FAILURES[@]} -gt 0 ]; then
+    echo "FAIL  ${#FAILURES[@]} of $total checks failed:"
+    for f in "${FAILURES[@]}"; do echo "  - $f"; done
+    exit 1
+fi
+echo "ok  $PASS/$total checks passed"
