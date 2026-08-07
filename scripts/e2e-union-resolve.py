@@ -11,10 +11,23 @@ the current-main side, keyed deterministically:
   tests/backend-parity/matrix.tsv       -> data rows keyed by first column
   ci/expected-e2e-plan.json             -> NOT resolved here (regenerated later)
 
-SAFETY: the union is purely additive. A key present on both sides with DIFFERING
-content is a real semantic conflict -> exit 3 (human). Any file type not listed
-above -> exit 4 (human). Ordering is deterministic (sort by key) so repeated
-runs are byte-stable.
+SAFETY: a key present on both sides with DIFFERING content is a real semantic
+conflict -> exit 3 (human). Any file type not listed above -> exit 4 (human).
+Ordering is deterministic (sort by key) so repeated runs are byte-stable.
+
+A PR row is classified against the merge base, and every class is decided
+explicitly -- a row the PR touched is NEVER silently discarded:
+
+  * present only in theirs                  -> the PR ADDED it; union it in.
+  * equal to base in theirs                 -> the PR did not touch it; keep ours.
+  * differs from base, ours still == base   -> the PR MODIFIED it and main did
+                                               not; take the PR's version.
+  * differs from base and ours also moved   -> both sides changed the same row
+                                               -> exit 3 (human).
+  * theirs modified it but ours deleted it  -> exit 3 (human).
+
+Rows present in base and ours but absent from theirs (a PR DELETION) are kept:
+the union never drops a row on its own authority.
 
 Usage: e2e-union-resolve.py <relpath> <base> <ours> <theirs> <out>
   <base>/<ours>/<theirs> are the three conflict stages (missing => empty).
@@ -71,6 +84,40 @@ def norm(s):
     return s.strip()
 
 
+def merge_keyed(base, ours, theirs, same, what):
+    """3-way merge three key->row maps, returning the merged map.
+
+    `same(x, y)` compares two rows; `what` names the key for error messages.
+    Every key the PR (`theirs`) touched is decided explicitly -- see the module
+    docstring. Exits 3 on any genuinely non-additive conflict.
+    """
+
+    def conflict(key, why):
+        print(f"resolve: {what} {key!r} {why} (non-additive)", file=sys.stderr)
+        sys.exit(3)
+
+    result = dict(ours)
+    for k, theirs_row in theirs.items():
+        if k not in base:
+            # The PR ADDED this row.
+            if k in result and not same(result[k], theirs_row):
+                conflict(k, "differs between sides")
+            result.setdefault(k, theirs_row)
+            continue
+        if same(theirs_row, base[k]):
+            continue  # the PR did not touch this row
+        # The PR MODIFIED a row that already existed at the merge base.
+        if k not in result:
+            conflict(k, "was modified by the PR but deleted on the target")
+        if same(result[k], theirs_row):
+            continue  # both sides converged on the same content
+        if same(result[k], base[k]):
+            result[k] = theirs_row  # target untouched: the PR's edit stands
+        else:
+            conflict(k, "was modified by both the PR and the target")
+    return result
+
+
 def union_toml(base, ours, theirs):
     pre_b, b = split_toml_blocks(base)
     pre_o, o = split_toml_blocks(ours)
@@ -79,15 +126,7 @@ def union_toml(base, ours, theirs):
     if pre_o and pre_t and norm(pre_o) != norm(pre_t):
         print("resolve: TOML preamble diverged (non-additive)", file=sys.stderr)
         sys.exit(3)
-    result = dict(o)
-    added = {k: v for k, v in t.items() if k not in b}  # rows the PR introduced
-    for k, v in added.items():
-        if k in result:
-            if norm(result[k]) != norm(v):
-                print(f"resolve: id {k!r} differs between sides (non-additive)", file=sys.stderr)
-                sys.exit(3)
-        else:
-            result[k] = v
+    result = merge_keyed(b, o, t, lambda x, y: norm(x) == norm(y), "id")
     body = "".join(result[k] for k in sorted(result))
     out = preamble
     if out and not out.endswith("\n"):
@@ -115,16 +154,11 @@ def union_json_by_key(base, ours, theirs, array_field, key_field):
         return out
 
     ib, io, it = index(jb), index(jo), index(jt)
-    result = dict(io)
-    for k, v in it.items():
-        if k in ib:
-            continue  # already existed at base; not an addition
-        if k in result:
-            if json.dumps(result[k], sort_keys=True) != json.dumps(v, sort_keys=True):
-                print(f"resolve: {key_field}={k!r} differs (non-additive)", file=sys.stderr)
-                sys.exit(3)
-        else:
-            result[k] = v
+
+    def same(x, y):
+        return json.dumps(x, sort_keys=True) == json.dumps(y, sort_keys=True)
+
+    result = merge_keyed(ib, io, it, same, key_field)
     merged = dict(ref)
     merged[array_field] = [result[k] for k in sorted(result)]
     return json.dumps(merged, indent=2, sort_keys=True) + "\n"
@@ -152,16 +186,7 @@ def union_tsv(base, ours, theirs):
     if ho and ht and ho != ht:
         print("resolve: TSV header diverged (non-additive)", file=sys.stderr)
         sys.exit(3)
-    result = dict(o)
-    for k, v in t.items():
-        if k in b:
-            continue
-        if k in result:
-            if result[k] != v:
-                print(f"resolve: matrix row {k!r} differs (non-additive)", file=sys.stderr)
-                sys.exit(3)
-        else:
-            result[k] = v
+    result = merge_keyed(b, o, t, lambda x, y: x == y, "matrix row")
     return header + "\n" + "".join(rk + "\n" for rk in [result[k] for k in sorted(result)])
 
 
