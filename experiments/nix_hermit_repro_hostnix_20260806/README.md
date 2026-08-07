@@ -535,10 +535,35 @@ still block, and says so in the code.
 past cmake configure. With the fix it completed configure, build **and install**
 and reached `fixupPhase`.
 
-**Still open:** whether the Debian lane's `figlet` `fixupPhase` hang shares this
-cause. It presents as a blocking `read`, not `epoll_wait`, so it may be a second
-instance of the same "blocking syscall holds the turn" class rather than the same
-syscall. Do not assume #1864 fixes it without re-testing.
+**Still open — measured, not assumed.** I re-tested the `fixupPhase` case with
+#1864 applied. `lensfun` now clears configure, build **and install**, then hangs
+in `fixupPhase`:
+
+```
+nix-store            do_sys_poll
+ └─ hermit (super)   anon_pipe_read
+     └─ hermit       epoll_wait          TIME=00:00:13
+         └─ bash     anon_pipe_read  sysc=0 (read)      <- fixupPhase `while read`
+             └─ find state=t  ptrace_stop  sysc=257 (openat)   <- FROZEN child
+```
+
+`find … -print0`, the pipe's writer, is alive and ptrace-stopped at `openat`,
+never resumed; zero CPU across the guest tree, re-sampled 20 s apart. Same
+*class* (a task waits on one that never gets a turn), different entry point:
+`handle_read` already routes `FdType::Pipe` through
+`execute_nonblockable_fd_syscall`, so the #1864 explanation does not
+straightforwardly apply. The anomaly to chase is the frozen `openat` in the
+child — which is also where the cmake case's frozen grandchild sat.
+
+Two untested hypotheses, recorded as next steps rather than findings: (a) the
+pipe's `DetFd` is misclassified so the read takes the blocking
+`record_or_replay` path; (b) a resume/registration gap for a freshly `exec`ed
+grandchild stopped at its first `openat`. `hermit --log=debug` settles it the
+same way it settled the cmake case — check whether the scheduler ever commits a
+turn to the `find` dettid.
+
+**So N is still 0 real packages reproduced**, but the remaining distance is one
+bug, not a category.
 
 ### R4. Cost, and what does get through
 

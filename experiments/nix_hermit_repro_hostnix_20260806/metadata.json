@@ -117,7 +117,7 @@
     "real_nixpkgs_packages_measurable": 13,
     "real_nixpkgs_packages_nondeterministic_on_machine_M": 1,
     "real_nixpkgs_packages_reproduced_under_hermit_N": 0,
-    "note": "M=1 is lensfun-0.3.4 (date +%s baked into $out/share/lensfun/version_1/timestamp.txt). N=0 because lensfun is a cmake package and cmake configure HANGS under hermit (see hermit_findings_for_product/cmake-epoll-hang) - a compatibility bug, not a determinization failure. The lensfun CLASS is witnessed by nondet-seconds: native 16 distinct/20 -> hermit 1 distinct/20.",
+    "note": "M=1 is lensfun-0.3.4. N=0 still. Two blockers were found and fixed tonight (#1851 uid/chown, #1864 epoll_pwait scheduler deadlock); with both applied lensfun now clears configure, build and install and reaches fixupPhase, where a THIRD, distinct hang remains (frozen-openat-grandchild-second-instance). The remaining distance to N>=1 is one bug, not a category.",
     "lila_eval26_outputs_scanned": 3359,
     "lila_eval26_multi_hash_outputs": 113,
     "lila_multi_hash_haskell_packages_rechecked_on_machine": 6,
@@ -342,6 +342,18 @@
       "summary": "with --no-rcb-time the logical clock advances a fixed increment per scheduler check-in, so a build whose syscall path varies by one check-in lands one quantum apart. Measured quantum here: 250 ms. Not fixed by --strict, --sequentialize-threads, --target-timeslice, or --max-timeslice disabled.",
       "measured_impact": "a build baking NANOSECONDS can still differ (nondet-demo-fast: 2 distinct/20); a build baking WHOLE SECONDS cannot (nondet-seconds: 1 distinct/20)",
       "suggested_fix": "make the guest-visible clock a function of committed deterministic events only, not of the raw check-in count"
+    },
+    {
+      "id": "frozen-openat-grandchild-second-instance",
+      "status": "OPEN - survives the #1864 fix; this is what still keeps N=0",
+      "issue": "https://github.com/rrnewton/hermit/issues/1850",
+      "summary": "With #1864 applied, nixpkgs.lensfun clears configure, build and install under the seam and then hangs in fixupPhase. Tree: bash blocked in read() on a pipe (anon_pipe_read) whose writer, `find ... -print0`, is ALIVE and ptrace-stopped at openat (sysc 257, state t) and never resumed. Zero CPU across the guest tree, re-sampled 20s apart.",
+      "why_not_the_same_bug": "handle_read already routes FdType::Pipe through execute_nonblockable_fd_syscall, the turn-yielding path, so 'blocking read holds the turn' does not obviously apply. Same class, different entry point. The anomaly is the frozen openat in the child, which is also where the cmake case's frozen grandchild sat.",
+      "untested_hypotheses": [
+        "the pipe's DetFd is misclassified so the read takes the blocking record_or_replay path",
+        "a resume/registration gap for a freshly exec'ed grandchild stopped at its first openat"
+      ],
+      "how_to_settle": "run the lensfun fixupPhase case under `hermit --log=debug` and check whether the scheduler ever commits a turn to the find dettid"
     }
   ]
 }
