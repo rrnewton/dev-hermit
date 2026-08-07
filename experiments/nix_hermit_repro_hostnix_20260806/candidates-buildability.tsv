@@ -1,0 +1,13 @@
+# label<TAB>nix-expr
+# Small, ordinary C/autotools nixpkgs packages. Purpose: measure whether a REAL
+# package builds AT ALL under the exec-builder wrap (seam buildability), and
+# whether the wrap perturbs an already-reproducible package. Run with
+# ALWAYS_HERMIT=1 so the wrapped arm runs even when native is reproducible.
+hello	(import <nixpkgs> {}).hello
+which	(import <nixpkgs> {}).which
+bc	(import <nixpkgs> {}).bc
+tree	(import <nixpkgs> {}).tree
+figlet	(import <nixpkgs> {}).figlet
+patchelf	(import <nixpkgs> {}).patchelf
+xz	(import <nixpkgs> {}).xz
+libarchive	(import <nixpkgs> {}).libarchive
