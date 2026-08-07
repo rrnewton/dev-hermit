@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import content_presence  # noqa: E402  (sibling module in ci-hub/closure)
+
 ROOT = Path(__file__).resolve().parents[2]
 PARENT_REPO = "rrnewton/dev-hermit"
 Run = Callable[..., subprocess.CompletedProcess[str]]
@@ -121,6 +124,34 @@ def verify_code(
     resolved = str(payload.get("resolved_sha") or "") or None
     reason = str(payload.get("reason") or state)
     if result.returncode == CLOSED and state == "landed" and resolved:
+        # ANCESTRY SAID LANDED. NOW ASK WHETHER THE CONTENT ACTUALLY SURVIVED.
+        #
+        # `merge-base --is-ancestor` proves REACHABILITY, not that the commit's changes
+        # are present. A merge resolved toward the wrong side, or a reconcile that drops
+        # a hunk, leaves the SHA a perfectly good ancestor while its effect is gone --
+        # demonstrated on a scratch clone, where a `checkout --ours` resolution gave
+        # commit-reachability lost=0 while the other side's edit was absent from the file.
+        # Closing such a task records a landing that did not happen.
+        presence = content_presence.check(source, resolved, target)
+        if presence.verdict == content_presence.CONTENT_LOST:
+            return Evidence(
+                "refused",
+                "code",
+                reference,
+                resolved=f"{repo}@{resolved}",
+                reason=(
+                    "CONTENT-LOST: the commit is an ancestor of "
+                    f"{target} but only {presence.hunks_present} of "
+                    f"{presence.hunks_total} hunk(s) are present there. Ancestry passes "
+                    "this; the content did not survive intact. Adjudicate before closing "
+                    "-- either a reconcile dropped it, or a later commit superseded that "
+                    f"region. Missing: {'; '.join(presence.missing[:3])}"
+                ),
+            )
+        # INDETERMINATE is NOT converted into a refusal. A merge commit has zero hunks, and
+        # a 0/0 content check is a NO-RESULT -- neither pass nor fail. Refusing on it would
+        # reproduce the no-result-into-fail defect this check exists to expose, and would
+        # block every legitimate merge-commit closure. It is recorded, not actioned.
         # Carry the repository WITH the SHA. `resolved=<sha>` alone was
         # unfalsifiable on inspection: a parent-repo task closed against
         # hermit's PR #56 recorded `CLOSURE-VERIFIED ... resolved=299e5b90`,
