@@ -49,7 +49,10 @@
   "variants": {
     "scorecard.csv": {
       "emitter": "collect-envelope.rs",
-      "extra_columns": [],
+      "extra_columns": [
+        "stack_hash",
+        "heap_hash"
+      ],
       "omits_core": [],
       "columns": [
         "run_id",
@@ -84,7 +87,9 @@
         "selected_count",
         "executed_count",
         "evidence_count",
-        "comparison_tier"
+        "comparison_tier",
+        "stack_hash",
+        "heap_hash"
       ],
       "core_prefix_safe": true
     },
@@ -228,5 +233,33 @@
   "_known_violation": {
     "reverie-scorecard.csv": "TWO violations of the core-prefix rule, both measured at origin/main 2026-08-07: (1) omits the core column 'stdout_parity'; (2) inserts its extra 'tool_count_parity' at index 14, MID-CORE, rather than after the core. Either alone breaks core-position indexing for this variant. This is also why collect-reverie-compat.rs misaligns when it appends into the 33-column canonical scorecard (its DEFAULT --csv target): the columns disagree in content AND order, not merely in count. Recorded, not blessed. Fixing needs the emitter, currently owned by hermit-w7."
   },
-  "_core_prefix_rule": "A variant SHOULD be its core columns in core order, then its extras. That is what lets a reader who knows only the core index every core column correctly in any variant. `core_prefix_safe` records whether each variant actually obeys it; the checker reports a violation rather than silently accepting it."
+  "_core_prefix_rule": "A variant SHOULD be its core columns in core order, then its extras. That is what lets a reader who knows only the core index every core column correctly in any variant. `core_prefix_safe` records whether each variant actually obeys it; the checker reports a violation rather than silently accepting it.",
+  "unimplemented_comparisons": {
+    "_what": "Comparisons the strict standard names that NOTHING CURRENTLY PERFORMS. Declared here so a cell cannot appear to satisfy one, and so the gap is a fact in the schema rather than folklore.",
+    "_why": [
+      "Measured at origin/main 2026-08-07 across all 4 scorecards, 2290 rows.",
+      "The strict standard is stdout + INFO log + stack + heap. Mapping each to the",
+      "column that would carry it: stdout -> stdout_parity (0 of 2278 non-blank),",
+      "INFO log -> compared_log_messages (6 of 2290), stack -> stack_hash (6 of 624),",
+      "heap -> heap_hash (6 of 624). Before those 6 rows landed, ALL FOUR were zero.",
+      "A cell claiming strict was claiming four comparisons of which none were",
+      "recorded -- a green against an empty check, not a weak green.",
+      "",
+      "A column blank on every row also cannot be mutation-tested: there is nothing",
+      "to plant a wrong value in. And check_cell_comparison.py, which exists to catch",
+      "a verdict carrying no reference, reports 0 of 0 verdicts and exits 0 -- it is",
+      "vacuous for exactly this reason. A passing guard there means nothing today."
+    ],
+    "columns_with_no_producer": {
+      "stdout_parity": "0 of 2278 rows non-blank. This is the STDOUT leg of the strict standard, and it is the one component the 6 full-tier rows did not populate.",
+      "ref_output_hash": "0 of 2290 rows non-blank. Without it a recorded stdout verdict has no reference to re-check.",
+      "parity_comparator": "0 of 2290 rows non-blank. No row states which comparator produced its parity verdict.",
+      "parity_tier": "0 of 2290 rows non-blank. No row states the tier its parity verdict was earned at."
+    },
+    "comparisons_with_no_column": {
+      "exit_code": "NOT REPRESENTABLE. The 33-column core has no exit-code column, so a producer would have nowhere to write. Worse than an absent producer: absent capacity.",
+      "detlog": "NOT REPRESENTABLE. No detlog column exists. The nearest recorded signal is compared_log_messages, which counts INFO-log messages, not detlog commits."
+    },
+    "_rule": "A column listed in columns_with_no_producer MUST be blank on every row. The moment a real producer exists, remove it from this list IN THE SAME CHANGE that adds the producer -- check_unimplemented_comparisons.py refuses a non-blank value in a declared-unimplemented column, so the declaration cannot rot into a lie in either direction."
+  }
 }
