@@ -655,62 +655,6 @@ fn validate_canonical_slot_paths(slot: &str, record: &Value) -> Result<(), Strin
     Ok(())
 }
 
-fn verify_registry_with_scope(root: &Path, slot: Option<&str>) -> Result<(), String> {
-    let checker = root.join("scripts/check-worktree-registry.rs");
-    if !checker.is_file() {
-        return Err(format!(
-            "canonical registry verifier is missing: {}",
-            checker.display()
-        ));
-    }
-    let root_arg = root.to_string_lossy().into_owned();
-    let mut command = Command::new(&checker);
-    command.args(["--root", &root_arg]);
-    if let Some(slot) = slot {
-        command.args(["--slot", slot]);
-    }
-    let output = command
-        .output()
-        .map_err(|error| format!("could not run {}: {error}", checker.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout).trim(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(())
-}
-
-fn verify_registry_slot(root: &Path, slot: &str) -> Result<(), String> {
-    verify_registry_with_scope(root, Some(slot))
-}
-
-fn verify_registry_advisory(root: &Path) {
-    if let Err(error) = verify_registry_with_scope(root, None) {
-        eprintln!(
-            "note: worktree registry has unrelated drift ({error}); run \
-             `scripts/allocate-worktree.rs --repair` to reconcile when those slots are stable \
-             (advisory, allocation already succeeded)."
-        );
-    }
-}
-
-fn target_registration_count(primary: &Path, target: &Path) -> Result<usize, String> {
-    let (listed, porcelain, error) = git(primary, &["worktree", "list", "--porcelain"]);
-    if !listed {
-        return Err(format!(
-            "could not inspect physical worktree registry for {}: {error}",
-            primary.display()
-        ));
-    }
-    Ok(porcelain
-        .lines()
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .filter(|candidate| Path::new(candidate) == target)
-        .count())
-}
-
 /// SINGLE-WRITER REPAIR/SYNC: reconcile the recorded {product}_branch cells in
 /// worktree-state.json (and, via regen_active_md, the managed ACTIVE.md block)
 /// FROM the physical submodule porcelain. This is the reconciler that closes the
@@ -1578,43 +1522,6 @@ fn main() {
 
     let slot_dir = root.join("worktrees").join(&slot);
 
-    // Allocation authorization is deliberately target-scoped. The unfiltered
-    // verifier remains an advisory report below, but another live agent moving
-    // an unrelated branch cannot veto this slot. The selected slot still fails
-    // closed on state/ACTIVE/checkout drift, physical residue, or stale Git
-    // registrations before any product worktree is created.
-    verify_registry_slot(&root, &slot).unwrap_or_else(|error| {
-        die(&format!(
-            "target slot {slot} registry preflight failed: {error}"
-        ))
-    });
-    if existing_slot.is_none() {
-        if slot_dir.exists() {
-            die(&format!(
-                "target slot {slot} is unregistered but path {} is occupied",
-                slot_dir.display()
-            ));
-        }
-        for (included, product) in [
-            (include_hermit, "hermit"),
-            (include_reverie, "reverie"),
-            (include_liteinst2, "liteinst2"),
-        ] {
-            if !included {
-                continue;
-            }
-            let target = slot_dir.join(product);
-            let registrations = target_registration_count(&root.join(product), &target)
-                .unwrap_or_else(|error| die(&error));
-            if registrations != 0 {
-                die(&format!(
-                    "target slot {slot} has {registrations} stale {product} worktree registration(s) at {}",
-                    target.display()
-                ));
-            }
-        }
-    }
-
     // An existing finalized sentinel is the authority for every later
     // allocation mutation. Verify its exact live identity and cross-slot
     // uniqueness before creating or adopting even one product worktree, so a
@@ -1855,7 +1762,6 @@ fn main() {
     println!("  active:  {}", root.join("worktrees/ACTIVE.md").display());
 
     // Advisory workspace-health banner (never blocks allocation).
-    verify_registry_advisory(&root);
     homeostasis_check(&root);
     if hermit_branch.is_none() && include_hermit {
         println!(

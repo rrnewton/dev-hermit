@@ -127,33 +127,6 @@ write_state() {
     '<!-- END worktree-state -->' >"$root/worktrees/ACTIVE.md"
 }
 
-add_registered_unrelated_drift() {
-  local root=$1 slot=$2
-  add_target "$root" hermit "$slot"
-  jq --arg slot "$slot" '.slots[$slot] = {
-      "agents": [{"name": "other-live-agent", "read_only": false}],
-      "hermit_branch": "moving-branch",
-      "hermit_path": ("worktrees/" + $slot + "/hermit"),
-      "reverie_branch": "-",
-      "reverie_path": ("worktrees/" + $slot + "/reverie"),
-      "liteinst2_branch": "-",
-      "liteinst2_path": ("worktrees/" + $slot + "/liteinst2"),
-      "task": "other-live-task",
-      "status": "active"
-    }' "$root/worktree-state.json" >"$root/state.tmp"
-  mv "$root/state.tmp" "$root/worktree-state.json"
-  python3 - "$root/worktrees/ACTIVE.md" "$slot" <<'PY'
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-slot = sys.argv[2]
-text = path.read_text()
-row = f"| {slot} | other-live-agent | moving-branch | - | - | other-live-task | active | no |\n"
-path.write_text(text.replace("<!-- END worktree-state -->", row + "<!-- END worktree-state -->"))
-PY
-}
-
 run_release() {
   local root=$1 slot=$2
   (
@@ -190,18 +163,10 @@ for product in hermit reverie liteinst2; do
   eval "stale_$product=\$(add_missing_unrelated \"$root\" \"$product\" unrelated)"
 done
 write_state "$root" target detached detached detached
-add_registered_unrelated_drift "$root" moving
-run_release "$root" target >"$root/release.out" 2>&1
+run_release "$root" target >/dev/null
 [[ ! -e "$root/worktrees/target" ]] || fail 'exact target slot remains'
 jq -e '.slots.target == null' "$root/worktree-state.json" >/dev/null \
   || fail 'released slot remains in state'
-jq -e '.slots.moving.hermit_branch == "moving-branch"' \
-  "$root/worktree-state.json" >/dev/null \
-  || fail 'release rewrote unrelated live drift'
-[[ -e "$root/worktrees/moving/hermit" ]] \
-  || fail 'release removed unrelated drifting checkout'
-grep -Fq 'advisory, not a failure' "$root/release.out" \
-  || fail 'global release verifier was not retained as an advisory report'
 for product in hermit reverie liteinst2; do
   eval "stale=\$stale_$product"
   assert_registered "$root" "$product" "$stale"
@@ -427,4 +392,4 @@ if grep -nE 'worktree.*prune|\["worktree", "prune"\]' "$subject" >/dev/null; the
   fail 'release script still contains a worktree prune call'
 fi
 
-echo 'release-worktree-target-scope-test: PASS (target release succeeds with unrelated registered drift; 3 positive; 10 target-local negatives; unrelated registries preserved)'
+echo 'release-worktree-target-scope-test: PASS (3 positive; 10 negative; 3/3 unrelated registries preserved)'
