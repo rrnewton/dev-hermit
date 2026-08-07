@@ -315,7 +315,10 @@ fn dstate_census(root: &Path) -> BTreeMap<String, usize> {
         };
         // State is the field after the parenthesised comm, which may itself
         // contain spaces and parentheses -- so split on the LAST ')'.
-        let state = match stat.rfind(')').and_then(|i| stat[i + 2..].split(' ').next()) {
+        let state = match stat
+            .rfind(')')
+            .and_then(|i| stat[i + 2..].split(' ').next())
+        {
             Some(state) => state.to_string(),
             None => continue,
         };
@@ -347,7 +350,12 @@ fn btrfs_dstate_count(census: &BTreeMap<String, usize>) -> usize {
 /// alone is enough to want evidence, and evidence capture is cheap and
 /// side-effect free. (Killing on this would need a far stronger predicate --
 /// which is exactly why this guard does not kill.)
-fn threshold_tripped(psi_full: Option<f64>, btrfs_dstate: usize, psi_limit: f64, dstate_limit: usize) -> bool {
+fn threshold_tripped(
+    psi_full: Option<f64>,
+    btrfs_dstate: usize,
+    psi_limit: f64,
+    dstate_limit: usize,
+) -> bool {
     psi_full.map(|p| p >= psi_limit).unwrap_or(false) || btrfs_dstate >= dstate_limit
 }
 
@@ -501,7 +509,11 @@ fn run() -> Result<i32, String> {
         Admission::Admit { jobs, overridden } => {
             println!(
                 "ADMITTED: effective -j {jobs}{}",
-                if *overridden { " (OVERRIDDEN by an explicit flag)" } else { "" }
+                if *overridden {
+                    " (OVERRIDDEN by an explicit flag)"
+                } else {
+                    ""
+                }
             );
             *jobs
         }
@@ -559,7 +571,9 @@ fn inject_jobs(command: &[String], jobs: u32) -> Vec<String> {
             continue;
         }
         if token.starts_with("--num-threads=")
-            || (token.starts_with("-j") && token.len() > 2 && token[2..].chars().all(|c| c.is_ascii_digit()))
+            || (token.starts_with("-j")
+                && token.len() > 2
+                && token[2..].chars().all(|c| c.is_ascii_digit()))
         {
             index += 1;
             continue;
@@ -721,26 +735,43 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| "--max-jobs must be a positive integer".to_string())?
             }
             "--allow-unbounded" => args.allow_unbounded = true,
-            "--tasks-max" => args.tasks_max = next("--tasks-max")?.parse().map_err(|_| "bad --tasks-max")?,
+            "--tasks-max" => {
+                args.tasks_max = next("--tasks-max")?
+                    .parse()
+                    .map_err(|_| "bad --tasks-max")?
+            }
             "--memory-high" => {
-                args.memory_high = next("--memory-high")?.parse().map_err(|_| "bad --memory-high")?
+                args.memory_high = next("--memory-high")?
+                    .parse()
+                    .map_err(|_| "bad --memory-high")?
             }
             "--memory-max" => {
-                args.memory_max = next("--memory-max")?.parse().map_err(|_| "bad --memory-max")?
+                args.memory_max = next("--memory-max")?
+                    .parse()
+                    .map_err(|_| "bad --memory-max")?
             }
-            "--cpu-quota" => args.cpu_quota = next("--cpu-quota")?.parse().map_err(|_| "bad --cpu-quota")?,
+            "--cpu-quota" => {
+                args.cpu_quota = next("--cpu-quota")?
+                    .parse()
+                    .map_err(|_| "bad --cpu-quota")?
+            }
             "--lock" => args.lock = PathBuf::from(next("--lock")?),
             "--wait" => args.wait_seconds = next("--wait")?.parse().map_err(|_| "bad --wait")?,
             "--evidence-dir" => args.evidence_dir = PathBuf::from(next("--evidence-dir")?),
             "--psi-threshold" => {
-                args.psi_threshold = next("--psi-threshold")?.parse().map_err(|_| "bad --psi-threshold")?
+                args.psi_threshold = next("--psi-threshold")?
+                    .parse()
+                    .map_err(|_| "bad --psi-threshold")?
             }
             "--dstate-threshold" => {
-                args.dstate_threshold =
-                    next("--dstate-threshold")?.parse().map_err(|_| "bad --dstate-threshold")?
+                args.dstate_threshold = next("--dstate-threshold")?
+                    .parse()
+                    .map_err(|_| "bad --dstate-threshold")?
             }
             "--poll-seconds" => {
-                args.poll_seconds = next("--poll-seconds")?.parse().map_err(|_| "bad --poll-seconds")?
+                args.poll_seconds = next("--poll-seconds")?
+                    .parse()
+                    .map_err(|_| "bad --poll-seconds")?
             }
             "--dry-run" | "--check-only" => args.dry_run = true,
             "-h" | "--help" => {
@@ -792,7 +823,10 @@ mod tests {
             "test",
             "fbcode//hermetic_infra/hermit/...",
         ]));
-        assert!(plan.recursive, "the incident pattern must read as recursive");
+        assert!(
+            plan.recursive,
+            "the incident pattern must read as recursive"
+        );
         assert_eq!(plan.explicit_jobs, None, "the incident command had no -j");
         let decision = decide(&plan, DEFAULT_MAX_JOBS, false);
         assert!(
@@ -802,7 +836,10 @@ mod tests {
         match decision {
             Admission::Refuse { reason } => {
                 // The refusal has to teach, or the next agent just adds --allow-unbounded.
-                assert!(reason.contains("-j"), "refusal must name the missing flag: {reason}");
+                assert!(
+                    reason.contains("-j"),
+                    "refusal must name the missing flag: {reason}"
+                );
                 assert!(
                     reason.contains("core count"),
                     "refusal must explain WHY the default is unsafe: {reason}"
@@ -826,18 +863,28 @@ mod tests {
         assert_eq!(plan.explicit_jobs, Some(16));
         assert_eq!(
             decide(&plan, DEFAULT_MAX_JOBS, false),
-            Admission::Admit { jobs: 16, overridden: false },
+            Admission::Admit {
+                jobs: 16,
+                overridden: false
+            },
             "a bounded recursive run is the SUPPORTED path and must not be blocked"
         );
     }
 
     #[test]
     fn narrow_target_without_jobs_is_admitted_but_still_capped() {
-        let plan = parse_buck_command(&argv(&["buck2", "test", "fbcode//hermetic_infra/hermit:lib"]));
+        let plan = parse_buck_command(&argv(&[
+            "buck2",
+            "test",
+            "fbcode//hermetic_infra/hermit:lib",
+        ]));
         assert!(!plan.recursive);
         assert_eq!(
             decide(&plan, DEFAULT_MAX_JOBS, false),
-            Admission::Admit { jobs: DEFAULT_MAX_JOBS, overridden: false },
+            Admission::Admit {
+                jobs: DEFAULT_MAX_JOBS,
+                overridden: false
+            },
             "a named target is not the incident shape, but still runs under the cap"
         );
     }
@@ -848,10 +895,16 @@ mod tests {
     fn over_cap_job_count_is_refused_and_the_override_is_explicit() {
         let plan = parse_buck_command(&argv(&["buck2", "test", "-j", "316", "fbcode//x/..."]));
         assert_eq!(plan.explicit_jobs, Some(316));
-        assert!(!decide(&plan, 16, false).admitted(), "316 is the host core count that caused this");
+        assert!(
+            !decide(&plan, 16, false).admitted(),
+            "316 is the host core count that caused this"
+        );
         assert_eq!(
             decide(&plan, 16, true),
-            Admission::Admit { jobs: 316, overridden: true },
+            Admission::Admit {
+                jobs: 316,
+                overridden: true
+            },
             "an override must be possible, and must mark itself as one"
         );
     }
@@ -861,7 +914,10 @@ mod tests {
         let plan = parse_buck_command(&argv(&["buck2", "test", "fbcode//x/..."]));
         assert_eq!(
             decide(&plan, 16, true),
-            Admission::Admit { jobs: 16, overridden: true },
+            Admission::Admit {
+                jobs: 16,
+                overridden: true
+            },
             "overriding the unbounded refusal must still apply the cap, not remove it"
         );
     }
@@ -894,10 +950,16 @@ mod tests {
     #[test]
     fn recursive_pattern_detection_covers_the_real_spellings() {
         for token in ["fbcode//hermetic_infra/hermit/...", "//x/...", "..."] {
-            assert!(is_recursive_pattern(token), "{token} must read as recursive");
+            assert!(
+                is_recursive_pattern(token),
+                "{token} must read as recursive"
+            );
         }
         for token in ["fbcode//x:target", "//x:y", "-j", "--num-threads=4", "test"] {
-            assert!(!is_recursive_pattern(token), "{token} must NOT read as recursive");
+            assert!(
+                !is_recursive_pattern(token),
+                "{token} must NOT read as recursive"
+            );
         }
     }
 
@@ -939,7 +1001,10 @@ mod tests {
         );
         drop(first);
         let third = try_acquire(&lock, 0).unwrap();
-        assert!(third.is_some(), "the lock must be released when the holder exits");
+        assert!(
+            third.is_some(),
+            "the lock must be released when the holder exits"
+        );
     }
 
     // ---- threshold: fires on the incident's numbers, silent when healthy ----
@@ -984,7 +1049,13 @@ mod tests {
             captured_at: format_utc(1_786_069_814),
             task: "release-0.3-audit-fbsource-baseline".to_string(),
             agent: "hermit-w9".to_string(),
-            command: argv(&["buck2", "test", "-j", "16", "fbcode//hermetic_infra/hermit/..."]),
+            command: argv(&[
+                "buck2",
+                "test",
+                "-j",
+                "16",
+                "fbcode//hermetic_infra/hermit/...",
+            ]),
             effective_jobs: 16,
             cgroup: "/user.slice/.../heavywork-x.scope".to_string(),
             scope_unit: "heavywork-x".to_string(),
@@ -1005,7 +1076,10 @@ mod tests {
             "btrfs_tree_lock_nested",
             "io_psi_full_avg10",
         ] {
-            assert!(text.contains(required), "evidence is missing {required}: {text}");
+            assert!(
+                text.contains(required),
+                "evidence is missing {required}: {text}"
+            );
         }
         // Round-trips, so a later reader can parse rather than grep it.
         let parsed: Evidence = serde_json::from_str(&text).unwrap();
@@ -1035,7 +1109,10 @@ mod tests {
                 .filter(|line| !line.trim_start().starts_with("//"))
                 .filter(|line| !line.contains("format!"))
                 .collect();
-            assert!(hits.is_empty(), "broad-kill surface {needle:?} present: {hits:?}");
+            assert!(
+                hits.is_empty(),
+                "broad-kill surface {needle:?} present: {hits:?}"
+            );
         }
         // And no signalling of the child at all: the guard samples and exits.
         // These needles are assembled at runtime for the same reason as the
@@ -1055,7 +1132,10 @@ mod tests {
                 .filter(|l| !l.trim_start().starts_with("//"))
                 .filter(|l| !l.contains("format!"))
                 .collect();
-            assert!(hits.is_empty(), "guard must not signal processes; found {api}: {hits:?}");
+            assert!(
+                hits.is_empty(),
+                "guard must not signal processes; found {api}: {hits:?}"
+            );
         }
     }
 
@@ -1083,7 +1163,11 @@ mod tests {
              full avg10=77.52 avg60=38.00 avg300=9.00 total=878707754\n",
         )
         .unwrap();
-        assert_eq!(read_io_pressure(&dir), Some(77.52), "must read FULL, not SOME");
+        assert_eq!(
+            read_io_pressure(&dir),
+            Some(77.52),
+            "must read FULL, not SOME"
+        );
     }
 
     #[test]
@@ -1116,7 +1200,11 @@ mod tests {
         assert_eq!(census.get("btrfs_tree_lock_nested"), Some(&1));
         assert_eq!(census.get("btrfs_read_lock_root_node"), Some(&1));
         assert_eq!(census.get("path_openat"), Some(&1));
-        assert_eq!(census.get("do_wait"), None, "S-state tasks must not be counted");
+        assert_eq!(
+            census.get("do_wait"),
+            None,
+            "S-state tasks must not be counted"
+        );
         assert_eq!(btrfs_dstate_count(&census), 2);
     }
 }

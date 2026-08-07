@@ -723,7 +723,9 @@ mod tests {
         fs::write(directory.join("cmdline"), bytes).unwrap();
         // 52 fields; comm deliberately contains a space and parentheses to prove
         // the field-22 parser does not naively split on whitespace.
-        let mut stat = format!("{pid} (weird (comm) name) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 {starttime}");
+        let mut stat = format!(
+            "{pid} (weird (comm) name) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 {starttime}"
+        );
         for _ in 0..30 {
             stat.push_str(" 0");
         }
@@ -761,14 +763,22 @@ mod tests {
     #[test]
     fn live_orc_process_is_not_flagged() {
         let root = temp_root("live");
-        plant_process(&root, 2_592_813, &["/home/example/orc-bin/orc", "--db", "hermit"], 11_097_326);
+        plant_process(
+            &root,
+            2_592_813,
+            &["/home/example/orc-bin/orc", "--db", "hermit"],
+            11_097_326,
+        );
         let (state, observations) = classify_with(vec![session(Some(2_592_813))], &root);
         assert_eq!(state, State::Live);
         assert!(state.is_healthy());
         assert_eq!(state.exit_code(), EXIT_LIVE);
         assert_eq!(observations[0].verdict, "live");
         assert!(observations[0].proc.pid_alive);
-        assert_eq!(observations[0].proc.cmdline_basename.as_deref(), Some("orc"));
+        assert_eq!(
+            observations[0].proc.cmdline_basename.as_deref(),
+            Some("orc")
+        );
         // The record must carry the observed PID state, not merely a boolean.
         assert_eq!(observations[0].proc.starttime_ticks, Some(11_097_326));
         fs::remove_dir_all(&root).unwrap();
@@ -793,7 +803,12 @@ mod tests {
     fn recycled_pid_is_not_mistaken_for_a_live_orc() {
         let root = temp_root("recycled");
         // The exact defect a `kill -0` liveness check would call healthy.
-        plant_process(&root, 2_592_813, &["/usr/bin/python3", "-m", "http.server"], 99_999);
+        plant_process(
+            &root,
+            2_592_813,
+            &["/usr/bin/python3", "-m", "http.server"],
+            99_999,
+        );
         let (state, observations) = classify_with(vec![session(Some(2_592_813))], &root);
         assert_eq!(state, State::DeadPidRecycled);
         assert_eq!(state.exit_code(), EXIT_DEAD);
@@ -994,7 +1009,8 @@ mod tests {
             let start = from + at;
             let end = start + needle.len();
             let before_ok = start == 0 || !haystack[..start].chars().next_back().is_some_and(ident);
-            let after_ok = end >= haystack.len() || !haystack[end..].chars().next().is_some_and(ident);
+            let after_ok =
+                end >= haystack.len() || !haystack[end..].chars().next().is_some_and(ident);
             if before_ok && after_ok {
                 return true;
             }
@@ -1035,8 +1051,10 @@ mod tests {
                 let mut rest = lower.as_str();
                 while let Some(at) = rest.find(prefix) {
                     let tail = &rest[at + prefix.len()..];
-                    let name: String =
-                        tail.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect();
+                    let name: String = tail
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                        .collect();
                     if !name.is_empty() && !exempt.contains(&name.as_str()) {
                         bad = true;
                     }
@@ -1060,7 +1078,11 @@ mod tests {
             format!("{}{}", "dev", "big"),
         );
         let hits = owner_specific_lines(&planted);
-        assert_eq!(hits.len(), 3, "scanner missed a planted violation: {hits:?}");
+        assert_eq!(
+            hits.len(),
+            3,
+            "scanner missed a planted violation: {hits:?}"
+        );
 
         // ...and must NOT fire on the placeholder homes the real lint exempts,
         // or it would reject this file's own portable fixtures.
@@ -1089,7 +1111,10 @@ mod tests {
         let source = fs::read_to_string(source_path)
             .unwrap_or_else(|e| panic!("read own source {}: {e}", source_path.display()));
         let hits = owner_specific_lines(&source);
-        assert!(hits.is_empty(), "owner-specific path(s) in the watchdog: {hits:?}");
+        assert!(
+            hits.is_empty(),
+            "owner-specific path(s) in the watchdog: {hits:?}"
+        );
 
         // The unit template is where the main-red actually came from, so guard
         // it here too instead of trusting that someone re-runs the shell gate.
@@ -1100,7 +1125,10 @@ mod tests {
         let unit_text = fs::read_to_string(&unit)
             .unwrap_or_else(|e| panic!("read unit {}: {e}", unit.display()));
         let unit_hits = owner_specific_lines(&unit_text);
-        assert!(unit_hits.is_empty(), "owner-specific path(s) in the unit: {unit_hits:?}");
+        assert!(
+            unit_hits.is_empty(),
+            "owner-specific path(s) in the unit: {unit_hits:?}"
+        );
 
         // And it must use the systemd specifier rather than a shell variable,
         // which systemd would take literally in ExecStart/WorkingDirectory.

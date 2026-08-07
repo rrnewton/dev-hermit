@@ -129,11 +129,7 @@ fn blob_at(root: &Path, reference: &str, rel: &str) -> Option<String> {
 /// makes "the link reaches the exact landed blob" an observation rather than an
 /// inference from a path.
 fn hash_file(root: &Path, path: &Path) -> Option<String> {
-    git(
-        root,
-        &["hash-object", "--", path.to_str()?],
-    )
-    .ok()
+    git(root, &["hash-object", "--", path.to_str()?]).ok()
 }
 
 // ---------------------------------------------------------------- store -----
@@ -157,7 +153,9 @@ fn materialise(root: &Path, store: &Path, sha: &str) -> Result<PathBuf, String> 
     fs::create_dir_all(store.join("trees"))
         .map_err(|e| format!("create {}: {e}", store.join("trees").display()))?;
     if !final_dir.is_dir() {
-        let staging = store.join("trees").join(format!(".staging-{sha}-{}", std::process::id()));
+        let staging = store
+            .join("trees")
+            .join(format!(".staging-{sha}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging).map_err(|e| format!("create {}: {e}", staging.display()))?;
         let status = Command::new("sh")
@@ -194,8 +192,7 @@ fn publish_current(store: &Path, sha: &str) -> Result<(), String> {
     let tmp = store.join(format!(".current-{}", std::process::id()));
     let _ = fs::remove_file(&tmp);
     symlink(&target, &tmp).map_err(|e| format!("symlink {}: {e}", tmp.display()))?;
-    fs::rename(&tmp, current_link(store))
-        .map_err(|e| format!("publish current: {e}"))
+    fs::rename(&tmp, current_link(store)).map_err(|e| format!("publish current: {e}"))
 }
 
 fn shell_quote(path: &Path) -> String {
@@ -279,7 +276,11 @@ fn report_for(root: &Path, store: &Path, reference: &str, rel: &str) -> PathRepo
     let d = disposition(root, store, reference, rel, ignored);
     let upstream = blob_at(root, reference, rel);
     let live = root.join(rel);
-    let resolved = if live.exists() { hash_file(root, &live) } else { None };
+    let resolved = if live.exists() {
+        hash_file(root, &live)
+    } else {
+        None
+    };
     let matches = match (&upstream, &resolved) {
         (Some(a), Some(b)) => a == b,
         _ => false,
@@ -331,7 +332,8 @@ fn run() -> Result<i32, String> {
     let mut raw = env::args().skip(1);
     while let Some(flag) = raw.next() {
         let mut next = |n: &str| -> Result<String, String> {
-            raw.next().ok_or_else(|| format!("{n} requires a value\n\n{USAGE}"))
+            raw.next()
+                .ok_or_else(|| format!("{n} requires a value\n\n{USAGE}"))
         };
         match flag.as_str() {
             "refresh" | "link" | "verify" | "status" => command = flag,
@@ -378,7 +380,10 @@ fn run() -> Result<i32, String> {
     match command.as_str() {
         "refresh" => {
             if dry_run {
-                println!("would materialise {reference} = {sha} into {}", store.display());
+                println!(
+                    "would materialise {reference} = {sha} into {}",
+                    store.display()
+                );
                 return Ok(EXIT_OK);
             }
             let dir = materialise(&root, &store, &sha)?;
@@ -427,7 +432,10 @@ fn run() -> Result<i32, String> {
                 reports.push(report_for(&root, &store, &reference, rel));
             }
             if json {
-                println!("{}", serde_json::to_string_pretty(&reports).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&reports).unwrap_or_default()
+                );
             }
             println!("created {created} link(s); pinned {reference} = {sha}");
             Ok(EXIT_OK)
@@ -438,7 +446,10 @@ fn run() -> Result<i32, String> {
                 .map(|rel| report_for(&root, &store, &reference, rel))
                 .collect();
             if json {
-                println!("{}", serde_json::to_string_pretty(&reports).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&reports).unwrap_or_default()
+                );
             } else {
                 println!("pinned {reference} = {sha}");
                 for r in &reports {
@@ -490,7 +501,12 @@ mod tests {
             let root = base.join("repo");
             fs::create_dir_all(root.join(".orc/plugins/hermit-dev")).unwrap();
             let run = |args: &[&str]| {
-                Command::new("git").arg("-C").arg(&root).args(args).output().unwrap();
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&root)
+                    .args(args)
+                    .output()
+                    .unwrap();
             };
             run(&["init", "-q", "-b", "main"]);
             run(&["config", "user.email", "t@example.com"]);
@@ -500,7 +516,10 @@ mod tests {
             fs::write(root.join(".gitignore"), "/.orc/\n").unwrap();
             fs::write(root.join(".gitmodules"), "").unwrap();
             fs::write(root.join("AGENTS.md"), "policy\n").unwrap();
-            Repo { root, store: base.join("store") }
+            Repo {
+                root,
+                store: base.join("store"),
+            }
         }
 
         fn write_tooling(&self, name: &str, body: &str) {
@@ -513,11 +532,18 @@ mod tests {
 
         fn commit_all(&self, message: &str) -> String {
             let run = |args: &[&str]| {
-                Command::new("git").arg("-C").arg(&self.root).args(args).output().unwrap()
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&self.root)
+                    .args(args)
+                    .output()
+                    .unwrap()
             };
             run(&["add", "-A", "-f"]);
             run(&["commit", "-q", "-m", message]);
-            String::from_utf8_lossy(&run(&["rev-parse", "HEAD"]).stdout).trim().to_string()
+            String::from_utf8_lossy(&run(&["rev-parse", "HEAD"]).stdout)
+                .trim()
+                .to_string()
         }
     }
 
@@ -542,10 +568,17 @@ mod tests {
         materialise(&repo.root, &repo.store, &sha).unwrap();
         publish_current(&repo.store, &sha).unwrap();
         let d = disposition(&repo.root, &repo.store, &sha, &rel("gh-issue-create"), true);
-        assert_eq!(d, Disposition::PrimaryOwned, "a file that exists is the primary's");
+        assert_eq!(
+            d,
+            Disposition::PrimaryOwned,
+            "a file that exists is the primary's"
+        );
 
         let after = fs::read(repo.root.join(rel("gh-issue-create"))).unwrap();
-        assert_eq!(before, after, "the dirty bytes changed -- this is the failure that matters");
+        assert_eq!(
+            before, after,
+            "the dirty bytes changed -- this is the failure that matters"
+        );
         assert!(
             !fs::symlink_metadata(repo.root.join(rel("gh-issue-create")))
                 .unwrap()
@@ -563,9 +596,19 @@ mod tests {
         repo.write_tooling("gh-coord-comment", "#!/bin/sh\n");
         let sha = repo.commit_all("land");
         fs::remove_file(repo.root.join(rel("gh-coord-comment"))).unwrap();
-        symlink("/nonexistent/target", repo.root.join(rel("gh-coord-comment"))).unwrap();
+        symlink(
+            "/nonexistent/target",
+            repo.root.join(rel("gh-coord-comment")),
+        )
+        .unwrap();
         assert_eq!(
-            disposition(&repo.root, &repo.store, &sha, &rel("gh-coord-comment"), true),
+            disposition(
+                &repo.root,
+                &repo.store,
+                &sha,
+                &rel("gh-coord-comment"),
+                true
+            ),
             Disposition::PrimaryOwned,
             "a dangling link exists; symlink_metadata must be used, not metadata"
         );
@@ -591,7 +634,13 @@ mod tests {
         materialise(&repo.root, &repo.store, &sha).unwrap();
         publish_current(&repo.store, &sha).unwrap();
         assert_eq!(
-            disposition(&repo.root, &repo.store, &sha, &rel("gh-coord-comment"), true),
+            disposition(
+                &repo.root,
+                &repo.store,
+                &sha,
+                &rel("gh-coord-comment"),
+                true
+            ),
             Disposition::Linkable
         );
         let target = current_link(&repo.store).join(rel("gh-coord-comment"));
@@ -599,7 +648,10 @@ mod tests {
 
         // Reaches the EXACT landed blob, established by hash, not by path.
         let resolved = hash_file(&repo.root, &repo.root.join(rel("gh-coord-comment"))).unwrap();
-        assert_eq!(resolved, upstream, "the link must resolve to the landed blob");
+        assert_eq!(
+            resolved, upstream,
+            "the link must resolve to the landed blob"
+        );
         assert_eq!(
             fs::read_to_string(repo.root.join(rel("gh-coord-comment"))).unwrap(),
             body
@@ -609,7 +661,10 @@ mod tests {
             .unwrap()
             .permissions()
             .mode();
-        assert!(mode & 0o111 != 0, "the linked wrapper must be executable, mode {mode:o}");
+        assert!(
+            mode & 0o111 != 0,
+            "the linked wrapper must be executable, mode {mode:o}"
+        );
     }
 
     // ---- refuse to pollute a shared checkout ----
@@ -673,7 +728,10 @@ mod tests {
             "current must follow the new commit"
         );
         // Both versions remain addressable, so "which tooling ran" is answerable.
-        assert!(tree_dir(&repo.store, &sha1).is_dir(), "the old tree must remain addressable");
+        assert!(
+            tree_dir(&repo.store, &sha1).is_dir(),
+            "the old tree must remain addressable"
+        );
         assert!(tree_dir(&repo.store, &sha2).is_dir());
         // No staging directory survives a successful publish.
         let leftovers: Vec<_> = fs::read_dir(repo.store.join("trees"))
@@ -718,11 +776,24 @@ mod tests {
 
         // Control: at the pinned commit it matches.
         let ok = report_for(&repo.root, &repo.store, &sha1, &rel("gh-coord-comment"));
-        assert!(ok.matches, "control: a fresh link must match its own commit");
+        assert!(
+            ok.matches,
+            "control: a fresh link must match its own commit"
+        );
 
         // Now main moves. The link still serves the OLD blob, and verify must say so.
-        fs::write(repo.root.join(rel("gh-coord-comment")).with_extension("tmpsrc"), "").unwrap();
-        let _ = fs::remove_file(repo.root.join(rel("gh-coord-comment")).with_extension("tmpsrc"));
+        fs::write(
+            repo.root
+                .join(rel("gh-coord-comment"))
+                .with_extension("tmpsrc"),
+            "",
+        )
+        .unwrap();
+        let _ = fs::remove_file(
+            repo.root
+                .join(rel("gh-coord-comment"))
+                .with_extension("tmpsrc"),
+        );
         let staged = repo.store.join("newsrc");
         fs::create_dir_all(&staged).unwrap();
         // Commit a new version by writing through the store tree, not the link.
@@ -778,7 +849,10 @@ mod tests {
                 .filter(|l| !l.trim_start().starts_with("//"))
                 .filter(|l| !l.contains("format!"))
                 .collect();
-            assert!(hits.is_empty(), "destructive SCM surface {needle:?}: {hits:?}");
+            assert!(
+                hits.is_empty(),
+                "destructive SCM surface {needle:?}: {hits:?}"
+            );
         }
     }
 

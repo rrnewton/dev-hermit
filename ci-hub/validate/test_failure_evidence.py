@@ -46,6 +46,38 @@ def test_measured_flake_is_bound_to_failed_cell() -> None:
     )
     assert evidence == {
         "failed_substeps": ["test.command_strict_verify"],
+        "failed_substep_classes": [
+            {
+                "node": "test.command_strict_verify",
+                "group": "test",
+                "sub_step_class": "lane-run",
+                "fault_class": "code",
+                "infra_signature": None,
+                "host_env_signature": None,
+                "first_error_line": "✗ FAIL   command strict verification",
+                "known_flaky": True,
+                "timing": {
+                    "wall_seconds": None,
+                    "cpu_seconds": None,
+                    "cpu_user_seconds": None,
+                    "cpu_sys_seconds": None,
+                    "cpu_usage_usec": None,
+                    "cpu_source": "unavailable:no-run-bound-cgroup-usage",
+                    "cpu_per_wall": None,
+                    "timed_out": None,
+                    "cpu_timed_out": None,
+                    "throttled_seconds": None,
+                    "quota_utilization_pct": None,
+                    "co_tenants_end": None,
+                    "timing_verdict": None,
+                    "timing_source": "unavailable:no-observable-run-identity",
+                    "profile_rows_matched": 0,
+                    "profile_candidate_rows": 0,
+                    "profile_row_timestamp": None,
+                },
+            }
+        ],
+        "first_error_line": "✗ FAIL   command strict verification",
         "flaky_failed_substeps": ["test.command_strict_verify"],
         "known_flaky_failure": True,
         "solo_rerun_confirmation": False,

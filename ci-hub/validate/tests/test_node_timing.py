@@ -1,15 +1,9 @@
-"""Per-node wall+CPU must make a timed-out node's CAUSE readable from the row.
+"""Per-node timing fails closed until profiles carry observable run identity.
 
-A timeout that burned a full core for its whole allowance is a LIVELOCK; one
-that spent the allowance waiting is CONTENTION. They demand opposite fixes, and
-before these fields the ledger recorded only WHOLE-RUN user/sys time, so the two
-were indistinguishable — measured 2026-08-07, 76 of 316 ledger fail rows were
-timeouts that had to stay red because nothing in the row could separate them.
-
-The bar these tests hold the fields to is the one that matters: a planted
-livelock and a planted contention case must produce DIFFERENT rows. Identical
-rows would mean the fields are present but not discriminating, which is the
-same defect wearing a new name.
+The profile store is append-only, so ``step`` plus ``git_sha`` can name rows
+from several executions of the same commit. File order is not a causal binding
+to the validation log. These tests require unavailable evidence rather than a
+borrowed wall/CPU verdict until one run identity reaches both artifacts.
 """
 
 from __future__ import annotations
@@ -102,28 +96,24 @@ CONTENTION_ROW = {
 }
 
 
-def test_planted_livelock_and_contention_produce_different_rows(tmp_path):
-    """THE load-bearing test: both timed out, and the rows must not match."""
+def test_planted_cpu_shapes_refuse_without_observable_run_identity(tmp_path):
+    """Even discriminating measurements are not evidence for this log yet."""
     root = _checkout(tmp_path, [LIVELOCK_ROW, CONTENTION_ROW])
     log = _log(root, ["test.spins", "test.waits"])
 
     records = classify_failed_substeps(log, commit=COMMIT)
     timing = {r["node"]: r["timing"] for r in records}
 
-    spins = timing["test.spins"]
-    waits = timing["test.waits"]
-
-    assert spins["timing_verdict"] == "livelock"
-    assert waits["timing_verdict"] == "contention"
-    # Not merely different verdicts — the underlying evidence must differ too,
-    # otherwise the verdict is an unfalsifiable label.
-    assert spins != waits
-    assert spins["cpu_per_wall"] >= 0.9
-    assert waits["cpu_per_wall"] <= 0.5
-    # Both really did time out, so the split is not just "one timed out".
-    assert spins["timed_out"] is True and waits["timed_out"] is True
-    # Wall alone cannot separate them: that is exactly why CPU had to be added.
-    assert abs(spins["wall_seconds"] - waits["wall_seconds"]) < 1.0
+    for record in timing.values():
+        assert record["timing_source"] == "unavailable:no-observable-run-identity"
+        assert record["cpu_source"] == "unavailable:no-run-bound-cgroup-usage"
+        assert record["profile_candidate_rows"] == 1
+        assert record["profile_rows_matched"] == 0
+        assert record["wall_seconds"] is None
+        assert record["cpu_seconds"] is None
+        assert record["cpu_usage_usec"] is None
+        assert record["cpu_per_wall"] is None
+        assert record["timing_verdict"] is None
 
 
 def test_throttled_step_reads_as_contention_even_when_busy():
@@ -160,11 +150,12 @@ def test_ambiguous_ratio_is_inconclusive_rather_than_forced():
 
 
 def test_missing_profile_row_fails_closed_as_typed_unavailable(tmp_path):
-    """Absent evidence must be distinguishable from evidence measured as zero."""
+    """Missing identity refuses even when the profile store is empty."""
     root = _checkout(tmp_path, [])
     log = _log(root, ["test.spins"])
     record = classify_failed_substeps(log, commit=COMMIT)[0]["timing"]
-    assert record["timing_source"] == "unavailable:no-profile-row"
+    assert record["timing_source"] == "unavailable:no-observable-run-identity"
+    assert record["profile_candidate_rows"] == 0
     assert record["profile_rows_matched"] == 0
     assert record["wall_seconds"] is None
     assert record["cpu_seconds"] is None
@@ -178,20 +169,24 @@ def test_row_for_a_different_commit_is_not_borrowed(tmp_path):
     root = _checkout(tmp_path, [stale])
     log = _log(root, ["test.spins"])
     record = classify_failed_substeps(log, commit=COMMIT)[0]["timing"]
-    assert record["timing_source"] == "unavailable:no-profile-row"
+    assert record["timing_source"] == "unavailable:no-observable-run-identity"
+    assert record["profile_candidate_rows"] == 0
     assert record["wall_seconds"] is None
 
 
-def test_repeat_runs_take_the_latest_and_report_the_count(tmp_path):
-    """An earlier run of the same commit in the same slot must not win, and the
-    ambiguity must be visible rather than silently resolved."""
+def test_repeat_same_sha_runs_are_refused_not_resolved_by_latest(tmp_path):
+    """Two same-SHA candidates cannot lend either run's timing to this log."""
     older = dict(LIVELOCK_ROW, elapsed_s="10.0", user_s="1.0", sys_s="0.0")
     rows = [older, LIVELOCK_ROW]
     root = _checkout(tmp_path, rows)
     log = _log(root, ["test.spins"])
     record = classify_failed_substeps(log, commit=COMMIT)[0]["timing"]
-    assert record["wall_seconds"] == 600.013
-    assert record["profile_rows_matched"] == 2
+    assert record["timing_source"] == "unavailable:no-observable-run-identity"
+    assert record["profile_candidate_rows"] == 2
+    assert record["profile_rows_matched"] == 0
+    assert record["wall_seconds"] is None
+    assert record["cpu_seconds"] is None
+    assert record["timing_verdict"] is None
 
 
 def test_older_caller_without_commit_still_works(tmp_path):
@@ -199,14 +194,15 @@ def test_older_caller_without_commit_still_works(tmp_path):
     root = _checkout(tmp_path, [LIVELOCK_ROW])
     log = _log(root, ["test.spins"])
     record = classify_failed_substeps(log)[0]["timing"]
-    assert record["timing_source"] == "unavailable:no-profile-row"
+    assert record["timing_source"] == "unavailable:no-observable-run-identity"
 
 
-def test_node_timing_reports_contention_side_evidence(tmp_path):
-    """Throttling, quota and co-tenancy travel with the verdict as raw inputs."""
+def test_node_timing_does_not_claim_cgroup_side_evidence_without_identity(tmp_path):
+    """A row's cgroup-derived fields are not attributed without identity."""
     timing = node_timing([CONTENTION_ROW], "test.waits", COMMIT)
-    assert timing["co_tenants_end"] == 11
-    assert timing["quota_utilization_pct"] == 2.1
-    assert timing["throttled_seconds"] == 0.0
-    assert timing["profile_row_timestamp"] == "2026-08-07T18:00:00"
-    assert timing["timing_source"] == "safe-ci-dag-runner-step-profile"
+    assert timing["co_tenants_end"] is None
+    assert timing["quota_utilization_pct"] is None
+    assert timing["throttled_seconds"] is None
+    assert timing["profile_row_timestamp"] is None
+    assert timing["profile_candidate_rows"] == 1
+    assert timing["timing_source"] == "unavailable:no-observable-run-identity"

@@ -26,14 +26,14 @@ from nonzero_result import per_node_counts  # noqa: E402
 DEFAULT_REGISTRY = Path(__file__).with_name("flaky-cells.json")
 
 # A timed-out node burning a full core for its whole allowance is a LIVELOCK; one
-# that spent the allowance waiting is CONTENTION. They demand opposite fixes and
-# before this they shared one `FAILED` label, so a timeout could not be triaged
-# from the row at all (measured 2026-08-07: 76 of 316 ledger fails were timeouts
-# that had to stay red because the row carried only WHOLE-RUN user/sys time).
-#
-# The discriminator is `cpu_per_wall` = (user_s + sys_s) / elapsed_s for THAT
-# node. Thresholds are deliberately wide and the raw inputs are always recorded
-# beside the verdict, so a reader can re-derive it and disagree.
+# that spent the allowance waiting is CONTENTION. They demand opposite fixes.
+# These thresholds remain the pure classification policy, but node_timing does
+# NOT apply them until the profile producer carries an observable run identity
+# end to end. A checkout-local row selected only by {step, git_sha} can belong to
+# an earlier run of the same commit, so using its elapsed/user/sys values would
+# manufacture a verdict for the current run. The eventual producer must also
+# carry the raw cgroup-v2 cpu.stat usage_usec counter; user_s + sys_s is not
+# presented here as though it were that raw counter.
 _LIVELOCK_CPU_PER_WALL = 0.9  # >= this: at least one core continuously busy
 _CONTENTION_CPU_PER_WALL = 0.5  # <= this: mostly off-CPU, i.e. waiting
 # cgroup throttling is DIRECT evidence of contention and outranks the ratio: a
@@ -550,21 +550,28 @@ def timing_verdict(
 
 
 def node_timing(rows: list[dict[str, str]], node: str, commit: str) -> dict[str, object]:
-    """Per-node wall and CPU for one failing node, or a typed unavailable record.
+    """Return typed-unavailable timing until profiles carry a run identity.
 
-    Fails CLOSED: when no profile row can be bound to this node at this commit
-    the numeric fields are ``None`` and ``timing_source`` says so, so a consumer
-    can tell "not measured" from "measured as zero" — the ambiguous-zero trap
-    this field exists to close.
-
-    ``profile_rows_matched`` travels with the value so a reader can see the
-    lookup was unambiguous rather than trusting that it was.
+    ``step`` plus ``git_sha`` is not a causal binding to the validation whose
+    log is being classified: the same checkout can append many runs of one
+    commit. Therefore even one apparent candidate is refused, and multiple
+    candidates are never resolved by file order. ``profile_candidate_rows`` is
+    diagnostic evidence of that ambiguity; ``profile_rows_matched`` stays zero
+    because no row matched an observable end-to-end run identity.
     """
-    empty: dict[str, object] = {
+    candidates = [
+        row
+        for row in rows
+        if (row.get("step") or "").strip() == node
+        and (row.get("git_sha") or "").strip() == commit
+    ]
+    return {
         "wall_seconds": None,
         "cpu_seconds": None,
         "cpu_user_seconds": None,
         "cpu_sys_seconds": None,
+        "cpu_usage_usec": None,
+        "cpu_source": "unavailable:no-run-bound-cgroup-usage",
         "cpu_per_wall": None,
         "timed_out": None,
         "cpu_timed_out": None,
@@ -572,46 +579,10 @@ def node_timing(rows: list[dict[str, str]], node: str, commit: str) -> dict[str,
         "quota_utilization_pct": None,
         "co_tenants_end": None,
         "timing_verdict": None,
-        "timing_source": "unavailable:no-profile-row",
+        "timing_source": "unavailable:no-observable-run-identity",
         "profile_rows_matched": 0,
+        "profile_candidate_rows": len(candidates),
         "profile_row_timestamp": None,
-    }
-    matches = [
-        r
-        for r in rows
-        if (r.get("step") or "").strip() == node
-        and (r.get("git_sha") or "").strip() == commit
-    ]
-    if not matches:
-        return empty
-    # Rows are appended in step order, so the LAST match at this commit in this
-    # checkout's own store is the current run's. Earlier matches are earlier runs
-    # of the same commit in the same slot; the count is reported either way.
-    row = matches[-1]
-    wall = _number(row.get("elapsed_s"))
-    user = _number(row.get("user_s"))
-    sys_s = _number(row.get("sys_s"))
-    cpu = None if user is None and sys_s is None else (user or 0.0) + (sys_s or 0.0)
-    ratio = (cpu / wall) if (cpu is not None and wall) else None
-    timed = _flag(row.get("timed_out"))
-    throttled = _number(row.get("throttled_s"))
-    return {
-        "wall_seconds": wall,
-        "cpu_seconds": None if cpu is None else round(cpu, 3),
-        "cpu_user_seconds": user,
-        "cpu_sys_seconds": sys_s,
-        "cpu_per_wall": None if ratio is None else round(ratio, 4),
-        "timed_out": timed,
-        "cpu_timed_out": _flag(row.get("cpu_timed_out")),
-        "throttled_seconds": throttled,
-        "quota_utilization_pct": _number(row.get("quota_utilization_pct")),
-        "co_tenants_end": _number(row.get("co_tenants_end")),
-        "timing_verdict": timing_verdict(
-            timed_out=timed, cpu_per_wall=ratio, throttled_s=throttled
-        ),
-        "timing_source": "safe-ci-dag-runner-step-profile",
-        "profile_rows_matched": len(matches),
-        "profile_row_timestamp": (row.get("timestamp") or "").strip() or None,
     }
 
 
@@ -661,10 +632,9 @@ def classify_failed_substeps(
     the headline ``fault_class`` is forced to pick one.
     """
     registry = flaky_registry or set()
-    # Per-node wall+CPU, read from the run's OWN checkout profile store. Looked
-    # up once per run rather than per node. When the commit is unknown (an older
-    # caller) or the store is absent, every node records the typed unavailable
-    # shape instead of a fabricated number.
+    # Profile rows are read only to expose how many {step, git_sha} candidates
+    # existed. They are never selected: the producer does not yet carry an
+    # observable run identity, so every node records typed-unavailable timing.
     profile_rows: list[dict[str, str]] = []
     if commit:
         root = checkout_root(log_text)

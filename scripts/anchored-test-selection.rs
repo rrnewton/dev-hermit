@@ -163,7 +163,15 @@ impl Dag {
                     })
                     .unwrap_or_default();
                 let est_s = s["hint"]["est_duration_s"].as_u64().unwrap_or(0);
-                nodes.insert(id.clone(), Node { id, lane: lane.to_string(), deps, est_s });
+                nodes.insert(
+                    id.clone(),
+                    Node {
+                        id,
+                        lane: lane.to_string(),
+                        deps,
+                        est_s,
+                    },
+                );
             }
         }
         if nodes.is_empty() {
@@ -194,7 +202,10 @@ impl Dag {
     }
 
     fn est_of(&self, ids: &BTreeSet<String>) -> u64 {
-        ids.iter().filter_map(|i| self.nodes.get(i)).map(|n| n.est_s).sum()
+        ids.iter()
+            .filter_map(|i| self.nodes.get(i))
+            .map(|n| n.est_s)
+            .sum()
     }
 
     /// The "manifest gate": the guest build + every e2e manifest execution node,
@@ -322,11 +333,31 @@ fn rules() -> Vec<Rule> {
         },
         // (3) BACKEND-SPECIFIC crates/dirs => that one backend. These MUST come
         //     before the general `reverie/**` rule below: this is the asymmetry.
-        Rule { globs: vec!["reverie/reverie-kvm/**"], action: Action::Steps(kvm_steps()), why: "reverie-kvm backend crate -> KVM (privileged) steps only" },
-        Rule { globs: vec!["reverie/reverie-dbi/**", "detcore-dbi/**"], action: Action::Steps(dbi_steps()), why: "DBI backend crate/dir -> DBI steps only" },
-        Rule { globs: vec!["reverie/reverie-liteinst/**"], action: Action::Steps(liteinst_steps()), why: "reverie-liteinst backend crate -> LiteInst steps only" },
-        Rule { globs: vec!["reverie/reverie-e9patch/**"], action: Action::Steps(e9patch_steps()), why: "reverie-e9patch preprocessing -> backend-parity steps only" },
-        Rule { globs: vec!["detcore-sabre/**"], action: Action::Steps(sabre_steps()), why: "detcore-sabre backend dir -> SaBRe steps only" },
+        Rule {
+            globs: vec!["reverie/reverie-kvm/**"],
+            action: Action::Steps(kvm_steps()),
+            why: "reverie-kvm backend crate -> KVM (privileged) steps only",
+        },
+        Rule {
+            globs: vec!["reverie/reverie-dbi/**", "detcore-dbi/**"],
+            action: Action::Steps(dbi_steps()),
+            why: "DBI backend crate/dir -> DBI steps only",
+        },
+        Rule {
+            globs: vec!["reverie/reverie-liteinst/**"],
+            action: Action::Steps(liteinst_steps()),
+            why: "reverie-liteinst backend crate -> LiteInst steps only",
+        },
+        Rule {
+            globs: vec!["reverie/reverie-e9patch/**"],
+            action: Action::Steps(e9patch_steps()),
+            why: "reverie-e9patch preprocessing -> backend-parity steps only",
+        },
+        Rule {
+            globs: vec!["detcore-sabre/**"],
+            action: Action::Steps(sabre_steps()),
+            why: "detcore-sabre backend dir -> SaBRe steps only",
+        },
         // (4) REVERIE CORE (everything else under reverie/) => FULL. Core Reverie
         //     is a dependency of all of Hermit; a change here touches everything.
         Rule {
@@ -419,16 +450,28 @@ fn select(dag: &Dag, files: &[String]) -> Selection {
             reasons.push(r);
         }
         reasons.push("at least one path forces the whole suite".into());
-        return Selection { decision: Decision::Full, selected: dag.all_ids(), reasons };
+        return Selection {
+            decision: Decision::Full,
+            selected: dag.all_ids(),
+            reasons,
+        };
     }
     if !any_narrowing && all_inert {
         reasons.push("every changed path is CI-irrelevant -> nothing to run".into());
-        return Selection { decision: Decision::Skip, selected: BTreeSet::new(), reasons };
+        return Selection {
+            decision: Decision::Skip,
+            selected: BTreeSet::new(),
+            reasons,
+        };
     }
     if steps.is_empty() {
         // Defensive: not full, not all-inert, yet no steps. Fail safe to full.
         reasons.push("no steps mapped but paths not proven inert -> full suite".into());
-        return Selection { decision: Decision::Full, selected: dag.all_ids(), reasons };
+        return Selection {
+            decision: Decision::Full,
+            selected: dag.all_ids(),
+            reasons,
+        };
     }
 
     // Selective: add always-on preflight, verify every step exists, close deps.
@@ -437,15 +480,22 @@ fn select(dag: &Dag, files: &[String]) -> Selection {
             steps.insert((*pf).to_string());
         }
     }
-    let missing: Vec<String> =
-        steps.iter().filter(|s| !dag.nodes.contains_key(*s)).cloned().collect();
+    let missing: Vec<String> = steps
+        .iter()
+        .filter(|s| !dag.nodes.contains_key(*s))
+        .cloned()
+        .collect();
     if !missing.is_empty() {
         reasons.push(format!(
             "map referenced {} node(s) absent from the live DAG ({}) -> full suite (stale map)",
             missing.len(),
             missing.join(", ")
         ));
-        return Selection { decision: Decision::Full, selected: dag.all_ids(), reasons };
+        return Selection {
+            decision: Decision::Full,
+            selected: dag.all_ids(),
+            reasons,
+        };
     }
     let closed = dag.close_over_deps(&steps);
     reasons.push(format!(
@@ -454,7 +504,11 @@ fn select(dag: &Dag, files: &[String]) -> Selection {
         closed.len(),
         dag.nodes.len()
     ));
-    Selection { decision: Decision::Selective, selected: closed, reasons }
+    Selection {
+        decision: Decision::Selective,
+        selected: closed,
+        reasons,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -501,7 +555,10 @@ fn resolve_anchor(ci_hub: &Path, branch: &str, no_fetch: bool) -> Option<Anchor>
     if mode != "full" || coverage != "full" || result != "pass" {
         return None;
     }
-    Some(Anchor { sha, source: format!("ci-hub newest-green --branch {branch}") })
+    Some(Anchor {
+        sha,
+        source: format!("ci-hub newest-green --branch {branch}"),
+    })
 }
 
 /// Pure interpretation of `ci-hub validate-status --sha <sha> --json` output —
@@ -526,7 +583,11 @@ fn interpret_validate_status(sha: &str, json: &str) -> Result<String, String> {
     // JSON; validate-status currently does not, but be robust to either).
     let body = match (json.find('{'), json.rfind('}')) {
         (Some(a), Some(b)) if b >= a => &json[a..=b],
-        _ => return Err(format!("no JSON object in validate-status output for {sha}")),
+        _ => {
+            return Err(format!(
+                "no JSON object in validate-status output for {sha}"
+            ))
+        }
     };
     let v: Value = serde_json::from_str(body)
         .map_err(|e| format!("unparseable validate-status JSON for {sha}: {e}"))?;
@@ -665,7 +726,10 @@ fn read_stdin_lines() -> Vec<String> {
     use std::io::Read;
     let mut s = String::new();
     std::io::stdin().read_to_string(&mut s).ok();
-    s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()
+    s.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 /// The reverie git rev PINNED by a hermit commit, read from that commit's
@@ -770,12 +834,7 @@ fn by_lane(ids: &BTreeSet<String>) -> BTreeMap<String, Vec<String>> {
     m
 }
 
-fn emit_human(
-    dag: &Dag,
-    anchor: &Option<Anchor>,
-    files: &[String],
-    sel: &Selection,
-) {
+fn emit_human(dag: &Dag, anchor: &Option<Anchor>, files: &[String], sel: &Selection) {
     println!("=== anchored, one-hop test selection ===");
     match anchor {
         Some(a) => println!("anchor (FULL green): {}  [{}]", a.sha, a.source),
@@ -831,7 +890,11 @@ fn emit_human(
     println!("est-model work (sum of est_duration_s hints; NOT a measured wall):");
     println!(
         "  all steps:      {total_est}s   selected: {sel_est}s   ({:.0}% of full)",
-        if total_est > 0 { 100.0 * sel_est as f64 / total_est as f64 } else { 0.0 }
+        if total_est > 0 {
+            100.0 * sel_est as f64 / total_est as f64
+        } else {
+            0.0
+        }
     );
     println!(
         "  manifest gate:  {gate_all_est}s over {} nodes  ->  selected {gate_sel_est}s over {} nodes",
@@ -955,19 +1018,58 @@ fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--hermit" => { hermit = PathBuf::from(need(&args, i)); i += 2; }
-            "--ci-hub" => { ci_hub = PathBuf::from(need(&args, i)); i += 2; }
-            "--branch" => { branch = need(&args, i); i += 2; }
-            "--anchor" => { anchor_override = Some(need(&args, i)); i += 2; }
-            "--no-fetch" => { no_fetch = true; i += 1; }
-            "--format" => { format = need(&args, i); i += 2; }
-            "--emit-dag" => { emit_dag_lane = Some(need(&args, i)); i += 2; }
-            "--out" => { out_path = Some(PathBuf::from(need(&args, i))); i += 2; }
-            "--reverie" => { reverie = PathBuf::from(need(&args, i)); i += 2; }
-            "--run" => { run = true; i += 1; }
-            "--verb" => { verb = need(&args, i); i += 2; }
-            "--run-dag" => { run_dag = Some(PathBuf::from(need(&args, i))); i += 2; }
-            "--" => { passthrough = args[i + 1..].to_vec(); break; }
+            "--hermit" => {
+                hermit = PathBuf::from(need(&args, i));
+                i += 2;
+            }
+            "--ci-hub" => {
+                ci_hub = PathBuf::from(need(&args, i));
+                i += 2;
+            }
+            "--branch" => {
+                branch = need(&args, i);
+                i += 2;
+            }
+            "--anchor" => {
+                anchor_override = Some(need(&args, i));
+                i += 2;
+            }
+            "--no-fetch" => {
+                no_fetch = true;
+                i += 1;
+            }
+            "--format" => {
+                format = need(&args, i);
+                i += 2;
+            }
+            "--emit-dag" => {
+                emit_dag_lane = Some(need(&args, i));
+                i += 2;
+            }
+            "--out" => {
+                out_path = Some(PathBuf::from(need(&args, i)));
+                i += 2;
+            }
+            "--reverie" => {
+                reverie = PathBuf::from(need(&args, i));
+                i += 2;
+            }
+            "--run" => {
+                run = true;
+                i += 1;
+            }
+            "--verb" => {
+                verb = need(&args, i);
+                i += 2;
+            }
+            "--run-dag" => {
+                run_dag = Some(PathBuf::from(need(&args, i)));
+                i += 2;
+            }
+            "--" => {
+                passthrough = args[i + 1..].to_vec();
+                break;
+            }
             "--files" => {
                 if args.get(i + 1).map(|s| s.as_str()) == Some("-") {
                     explicit_files = Some(read_stdin_lines());
@@ -1020,7 +1122,8 @@ fn main() {
                 selected: dag.all_ids(),
                 reasons: vec![
                     "no full-green anchor available and no --files given -> full suite \
-                     (one hop cannot be established)".into(),
+                     (one hop cannot be established)"
+                        .into(),
                 ],
             };
             (Vec::new(), s)
@@ -1043,7 +1146,16 @@ fn main() {
         eprintln!("anchored-test-selection: {n}");
     }
 
-    finish(&dag, &hermit, &anchor, &files, &sel, &format, &emit_dag_lane, &out_path);
+    finish(
+        &dag,
+        &hermit,
+        &anchor,
+        &files,
+        &sel,
+        &format,
+        &emit_dag_lane,
+        &out_path,
+    );
 
     // --run: actually EXECUTE the selection through run-dag.sh so CI consumes the
     // subset. This closes the loop anchor -> diff -> subset DAG -> run-dag runs
@@ -1051,7 +1163,10 @@ fn main() {
     if run {
         let run_dag = run_dag.unwrap_or_else(|| hermit.join("ci/run-dag.sh"));
         if !run_dag.is_file() {
-            fail(&format!("--run: run-dag.sh not found at {}", run_dag.display()));
+            fail(&format!(
+                "--run: run-dag.sh not found at {}",
+                run_dag.display()
+            ));
         }
         let rc = run_selection(&hermit, &run_dag, &verb, &sel, &passthrough);
         std::process::exit(rc);
@@ -1102,7 +1217,11 @@ fn run_selection(
         Decision::Selective => {
             for lane in LANES {
                 let prefix = format!("{lane}:");
-                let n = sel.selected.iter().filter(|id| id.starts_with(&prefix)).count();
+                let n = sel
+                    .selected
+                    .iter()
+                    .filter(|id| id.starts_with(&prefix))
+                    .count();
                 if n == 0 {
                     eprintln!(
                         "anchored-test-selection: [SELECTIVE] lane '{lane}': 0 selected nodes -> \
@@ -1196,7 +1315,9 @@ fn finish(
 }
 
 fn need(args: &[String], i: usize) -> String {
-    args.get(i + 1).cloned().unwrap_or_else(|| fail(&format!("{} needs a value", args[i])))
+    args.get(i + 1)
+        .cloned()
+        .unwrap_or_else(|| fail(&format!("{} needs a value", args[i])))
 }
 
 fn print_help() {
@@ -1263,20 +1384,38 @@ fn self_test() {
     };
 
     // --- glob matcher ---
-    check("glob exact root Cargo.toml", glob_match("Cargo.toml", "Cargo.toml"));
+    check(
+        "glob exact root Cargo.toml",
+        glob_match("Cargo.toml", "Cargo.toml"),
+    );
     check(
         "glob root Cargo.toml is not backend Cargo.toml",
         !glob_match("Cargo.toml", "reverie/reverie-kvm/Cargo.toml"),
     );
-    check("glob prefix dir", glob_match("reverie/reverie-kvm/**", "reverie/reverie-kvm/src/lib.rs"));
-    check("glob **/*.md", glob_match("**/*.md", "reverie/reverie-kvm/README.md"));
+    check(
+        "glob prefix dir",
+        glob_match("reverie/reverie-kvm/**", "reverie/reverie-kvm/src/lib.rs"),
+    );
+    check(
+        "glob **/*.md",
+        glob_match("**/*.md", "reverie/reverie-kvm/README.md"),
+    );
 
     // --- classify: THE ASYMMETRY (owner's load-bearing case) ---
     let (a, _) = classify("reverie/reverie-kvm/src/lib.rs");
-    check("reverie-kvm -> Steps (not Full)", matches!(a, Action::Steps(_)));
+    check(
+        "reverie-kvm -> Steps (not Full)",
+        matches!(a, Action::Steps(_)),
+    );
     if let (Action::Steps(s), _) = classify("reverie/reverie-kvm/src/lib.rs") {
-        check("reverie-kvm -> privileged parity step", s.contains(&"privileged:e2e.manifest_backend_parity_c".to_string()));
-        check("reverie-kvm -> NO portable dbi step", !s.contains(&"portable:test.dbi_parity".to_string()));
+        check(
+            "reverie-kvm -> privileged parity step",
+            s.contains(&"privileged:e2e.manifest_backend_parity_c".to_string()),
+        );
+        check(
+            "reverie-kvm -> NO portable dbi step",
+            !s.contains(&"portable:test.dbi_parity".to_string()),
+        );
     }
     check(
         "reverie CORE -> Full",
@@ -1284,85 +1423,210 @@ fn self_test() {
     );
     check(
         "reverie-ptrace (core default backend) -> Full",
-        matches!(classify("reverie/reverie-ptrace/src/lib.rs").0, Action::Full),
+        matches!(
+            classify("reverie/reverie-ptrace/src/lib.rs").0,
+            Action::Full
+        ),
     );
     check(
         "reverie-syscalls (core) -> Full",
-        matches!(classify("reverie/reverie-syscalls/src/lib.rs").0, Action::Full),
+        matches!(
+            classify("reverie/reverie-syscalls/src/lib.rs").0,
+            Action::Full
+        ),
     );
 
     // --- classify: backends narrow to their own backend ---
-    check("detcore-dbi -> Steps", matches!(classify("detcore-dbi/src/lib.rs").0, Action::Steps(_)));
-    check("detcore-sabre -> Steps", matches!(classify("detcore-sabre/src/lib.rs").0, Action::Steps(_)));
-    check("reverie-liteinst -> Steps", matches!(classify("reverie/reverie-liteinst/src/x.rs").0, Action::Steps(_)));
-    check("reverie-e9patch -> Steps", matches!(classify("reverie/reverie-e9patch/src/x.rs").0, Action::Steps(_)));
+    check(
+        "detcore-dbi -> Steps",
+        matches!(classify("detcore-dbi/src/lib.rs").0, Action::Steps(_)),
+    );
+    check(
+        "detcore-sabre -> Steps",
+        matches!(classify("detcore-sabre/src/lib.rs").0, Action::Steps(_)),
+    );
+    check(
+        "reverie-liteinst -> Steps",
+        matches!(
+            classify("reverie/reverie-liteinst/src/x.rs").0,
+            Action::Steps(_)
+        ),
+    );
+    check(
+        "reverie-e9patch -> Steps",
+        matches!(
+            classify("reverie/reverie-e9patch/src/x.rs").0,
+            Action::Steps(_)
+        ),
+    );
 
     // --- classify: conservative + inert ---
-    check("root Cargo.lock -> Full", matches!(classify("Cargo.lock").0, Action::Full));
-    check("ci/** -> Full", matches!(classify("ci/dag/portable.json").0, Action::Full));
-    check("validate.sh -> Full", matches!(classify("validate.sh").0, Action::Full));
-    check("core hermit detcore/ -> Full (unmapped)", matches!(classify("detcore/src/scheduler.rs").0, Action::Full));
-    check("hermit-cli/ -> Full (unmapped)", matches!(classify("hermit-cli/src/x.rs").0, Action::Full));
-    check("brand new area -> Full (unmapped)", matches!(classify("some/new/area/x.py").0, Action::Full));
-    check("docs -> Irrelevant", matches!(classify("docs/Users.md").0, Action::Irrelevant));
-    check("top-level md -> Irrelevant", matches!(classify("README.md").0, Action::Irrelevant));
+    check(
+        "root Cargo.lock -> Full",
+        matches!(classify("Cargo.lock").0, Action::Full),
+    );
+    check(
+        "ci/** -> Full",
+        matches!(classify("ci/dag/portable.json").0, Action::Full),
+    );
+    check(
+        "validate.sh -> Full",
+        matches!(classify("validate.sh").0, Action::Full),
+    );
+    check(
+        "core hermit detcore/ -> Full (unmapped)",
+        matches!(classify("detcore/src/scheduler.rs").0, Action::Full),
+    );
+    check(
+        "hermit-cli/ -> Full (unmapped)",
+        matches!(classify("hermit-cli/src/x.rs").0, Action::Full),
+    );
+    check(
+        "brand new area -> Full (unmapped)",
+        matches!(classify("some/new/area/x.py").0, Action::Full),
+    );
+    check(
+        "docs -> Irrelevant",
+        matches!(classify("docs/Users.md").0, Action::Irrelevant),
+    );
+    check(
+        "top-level md -> Irrelevant",
+        matches!(classify("README.md").0, Action::Irrelevant),
+    );
 
     // --- selection over the LIVE DAG ---
     let dag = Dag::load(Path::new("hermit"));
     let n_all = dag.all_ids().len();
-    check("DAG has both lanes' nodes", dag.nodes.keys().any(|k| k.starts_with("portable:")) && dag.nodes.keys().any(|k| k.starts_with("privileged:")));
+    check(
+        "DAG has both lanes' nodes",
+        dag.nodes.keys().any(|k| k.starts_with("portable:"))
+            && dag.nodes.keys().any(|k| k.starts_with("privileged:")),
+    );
 
     // Every step named in the map exists in the live DAG (stale-map guard).
     let mut mapped: BTreeSet<String> = BTreeSet::new();
     for r in rules() {
         if let Action::Steps(s) = r.action {
-            for id in s { mapped.insert(id); }
+            for id in s {
+                mapped.insert(id);
+            }
         }
     }
-    for pf in PREFLIGHT { mapped.insert((*pf).to_string()); }
-    let stale: Vec<String> = mapped.iter().filter(|s| !dag.nodes.contains_key(*s)).cloned().collect();
-    check(&format!("all mapped steps exist in live DAG (stale: {stale:?})"), stale.is_empty());
+    for pf in PREFLIGHT {
+        mapped.insert((*pf).to_string());
+    }
+    let stale: Vec<String> = mapped
+        .iter()
+        .filter(|s| !dag.nodes.contains_key(*s))
+        .cloned()
+        .collect();
+    check(
+        &format!("all mapped steps exist in live DAG (stale: {stale:?})"),
+        stale.is_empty(),
+    );
 
     // reverie-kvm-only diff => selective, includes privileged parity + deps,
     // excludes portable backend/core work.
     let kvm = select(&dag, &vec!["reverie/reverie-kvm/src/lib.rs".into()]);
-    check("reverie-kvm diff => selective", kvm.decision == Decision::Selective);
-    check("reverie-kvm selects privileged parity", kvm.selected.contains("privileged:e2e.manifest_backend_parity_c"));
-    check("reverie-kvm pulls privileged build dep", kvm.selected.contains("privileged:build.privileged_tests"));
-    check("reverie-kvm pulls privileged manifest_guests dep", kvm.selected.contains("privileged:build.manifest_guests"));
-    check("reverie-kvm does NOT run portable strict_compat", !kvm.selected.contains("portable:test.strict_compat"));
-    check("reverie-kvm does NOT run portable dbi_parity", !kvm.selected.contains("portable:test.dbi_parity"));
+    check(
+        "reverie-kvm diff => selective",
+        kvm.decision == Decision::Selective,
+    );
+    check(
+        "reverie-kvm selects privileged parity",
+        kvm.selected
+            .contains("privileged:e2e.manifest_backend_parity_c"),
+    );
+    check(
+        "reverie-kvm pulls privileged build dep",
+        kvm.selected.contains("privileged:build.privileged_tests"),
+    );
+    check(
+        "reverie-kvm pulls privileged manifest_guests dep",
+        kvm.selected.contains("privileged:build.manifest_guests"),
+    );
+    check(
+        "reverie-kvm does NOT run portable strict_compat",
+        !kvm.selected.contains("portable:test.strict_compat"),
+    );
+    check(
+        "reverie-kvm does NOT run portable dbi_parity",
+        !kvm.selected.contains("portable:test.dbi_parity"),
+    );
     check("reverie-kvm is a strict subset", kvm.selected.len() < n_all);
-    check("reverie-kvm prunes the manifest gate", dag.manifest_gate(&kvm.selected).len() < dag.manifest_gate(&dag.all_ids()).len());
+    check(
+        "reverie-kvm prunes the manifest gate",
+        dag.manifest_gate(&kvm.selected).len() < dag.manifest_gate(&dag.all_ids()).len(),
+    );
 
     // reverie CORE diff => FULL (honest: no narrowing).
     let core = select(&dag, &vec!["reverie/reverie/src/lib.rs".into()]);
     check("reverie core diff => full", core.decision == Decision::Full);
-    check("reverie core selects everything", core.selected.len() == n_all);
+    check(
+        "reverie core selects everything",
+        core.selected.len() == n_all,
+    );
 
     // dbi-only => selective, dbi steps, not sabre/kvm.
     let dbi = select(&dag, &vec!["detcore-dbi/src/lib.rs".into()]);
     check("dbi diff => selective", dbi.decision == Decision::Selective);
-    check("dbi selects portable dbi_parity", dbi.selected.contains("portable:test.dbi_parity"));
-    check("dbi does NOT select privileged kvm parity", !dbi.selected.contains("privileged:e2e.manifest_backend_parity_c"));
-    check("dbi does NOT select sabre_examples", !dbi.selected.contains("portable:test.sabre_examples"));
+    check(
+        "dbi selects portable dbi_parity",
+        dbi.selected.contains("portable:test.dbi_parity"),
+    );
+    check(
+        "dbi does NOT select privileged kvm parity",
+        !dbi.selected
+            .contains("privileged:e2e.manifest_backend_parity_c"),
+    );
+    check(
+        "dbi does NOT select sabre_examples",
+        !dbi.selected.contains("portable:test.sabre_examples"),
+    );
 
     // mixed backend + docs => selective (docs inert); backend + core => full.
-    let mixed = select(&dag, &vec!["reverie/reverie-kvm/src/x.rs".into(), "README.md".into()]);
-    check("kvm + docs => selective", mixed.decision == Decision::Selective);
-    let mixed2 = select(&dag, &vec!["reverie/reverie-kvm/src/x.rs".into(), "Cargo.lock".into()]);
-    check("kvm + Cargo.lock => full (force wins)", mixed2.decision == Decision::Full);
-    let mixed3 = select(&dag, &vec!["reverie/reverie-kvm/src/x.rs".into(), "detcore/src/scheduler.rs".into()]);
-    check("kvm + core hermit => full (unmapped core wins)", mixed3.decision == Decision::Full);
+    let mixed = select(
+        &dag,
+        &vec!["reverie/reverie-kvm/src/x.rs".into(), "README.md".into()],
+    );
+    check(
+        "kvm + docs => selective",
+        mixed.decision == Decision::Selective,
+    );
+    let mixed2 = select(
+        &dag,
+        &vec!["reverie/reverie-kvm/src/x.rs".into(), "Cargo.lock".into()],
+    );
+    check(
+        "kvm + Cargo.lock => full (force wins)",
+        mixed2.decision == Decision::Full,
+    );
+    let mixed3 = select(
+        &dag,
+        &vec![
+            "reverie/reverie-kvm/src/x.rs".into(),
+            "detcore/src/scheduler.rs".into(),
+        ],
+    );
+    check(
+        "kvm + core hermit => full (unmapped core wins)",
+        mixed3.decision == Decision::Full,
+    );
 
     // pure docs => skip; empty => full.
     let docs = select(&dag, &vec!["docs/a.md".into(), "README.md".into()]);
-    check("pure docs => skip", docs.decision == Decision::Skip && docs.selected.is_empty());
+    check(
+        "pure docs => skip",
+        docs.decision == Decision::Skip && docs.selected.is_empty(),
+    );
     let empty = select(&dag, &vec![]);
     check("empty change => full", empty.decision == Decision::Full);
 
     // dependency closure is transitive (parity -> build.manifest_guests -> e2e.metadata).
-    check("closure pulls e2e.metadata for kvm", kvm.selected.contains("privileged:e2e.metadata"));
+    check(
+        "closure pulls e2e.metadata for kvm",
+        kvm.selected.contains("privileged:e2e.metadata"),
+    );
 
     // --- reverie pin parser (cross-repo baseline derivation) ---
     let lock = "\
@@ -1393,7 +1657,8 @@ source = \"git+https://github.com/rrnewton/reverie.git?rev=79517704abc1234def567
         "sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef","verdict":"NOT-VALIDATED"}"#;
     check(
         "override case1 (no record) => REFUSE",
-        interpret_validate_status("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", case1_no_record).is_err(),
+        interpret_validate_status("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", case1_no_record)
+            .is_err(),
     );
 
     // case2 COMPAT-ONLY: only a 2-check portable-strict-compat-only record
@@ -1403,7 +1668,11 @@ source = \"git+https://github.com/rrnewton/reverie.git?rev=79517704abc1234def567
         "sha":"d8e95058b1fc7db5bb6b9cd41d0a5a0a4170148f","verdict":"NOT-VALIDATED"}"#;
     check(
         "override case2 (compat-only disqualified) => REFUSE",
-        interpret_validate_status("d8e95058b1fc7db5bb6b9cd41d0a5a0a4170148f", case2_compat_only).is_err(),
+        interpret_validate_status(
+            "d8e95058b1fc7db5bb6b9cd41d0a5a0a4170148f",
+            case2_compat_only,
+        )
+        .is_err(),
     );
 
     // case3 REAL FULL GREEN: THE POSITIVE CONTROL. A guard that refuses

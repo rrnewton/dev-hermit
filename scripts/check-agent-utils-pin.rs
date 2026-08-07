@@ -225,10 +225,8 @@ fn check(root: &Path, fetch: bool) -> Result<bool, CheckError> {
         )?;
         branch_commits.push((name.clone(), commits));
     }
-    let worktree_branches = parse_worktree_branches(&git(
-        &checkout,
-        ["worktree", "list", "--porcelain"],
-    )?);
+    let worktree_branches =
+        parse_worktree_branches(&git(&checkout, ["worktree", "list", "--porcelain"])?);
     let split = classify_unpushed(&unpushed, &branch_commits, &worktree_branches);
 
     let dirty = !git(
@@ -249,12 +247,12 @@ fn check(root: &Path, fetch: bool) -> Result<bool, CheckError> {
     println!("  local_unpushed_commits={}", unpushed.len());
     println!("  unpushed_in_flight_commits={}", split.in_flight_commits());
     println!("  unpushed_stranded_commits={}", split.stranded_commits());
-    println!("  unpushed_unattributed_commits={}", split.unattributed.len());
+    println!(
+        "  unpushed_unattributed_commits={}",
+        split.unattributed.len()
+    );
     if !split.in_flight.is_empty() {
-        println!(
-            "  in_flight_branches={}",
-            render_branches(&split.in_flight)
-        );
+        println!("  in_flight_branches={}", render_branches(&split.in_flight));
     }
     if !split.stranded.is_empty() {
         println!("  stranded_branches={}", render_branches(&split.stranded));
@@ -460,7 +458,11 @@ fn render_branches(branches: &[UnpushedBranch]) -> String {
     branches
         .iter()
         .map(|branch| match &branch.worktree {
-            Some(path) => format!("{} ({} commit(s), {path})", branch.name, branch.commits.len()),
+            Some(path) => format!(
+                "{} ({} commit(s), {path})",
+                branch.name,
+                branch.commits.len()
+            ),
             None => format!("{} ({} commit(s))", branch.name, branch.commits.len()),
         })
         .collect::<Vec<_>>()

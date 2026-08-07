@@ -255,7 +255,10 @@ impl Claim {
 }
 
 fn non_empty(field: &Option<String>) -> bool {
-    field.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+    field
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
 }
 
 const STATE_PENDING: &str = "pending";
@@ -520,7 +523,11 @@ fn read_claim(state_dir: &Path, hour: &str) -> ClaimRead {
     match serde_json::from_str::<Claim>(&text) {
         Ok(claim) => ClaimRead::Valid(claim),
         Err(e) => ClaimRead::Corrupt {
-            reason: format!("unparseable at line {} column {}: {e}", e.line(), e.column()),
+            reason: format!(
+                "unparseable at line {} column {}: {e}",
+                e.line(),
+                e.column()
+            ),
         },
     }
 }
@@ -1133,10 +1140,7 @@ fn run() -> Result<i32, String> {
         println!("{line}");
     } else {
         append_line(&args.state_dir.join("invocations.log"), &line)?;
-        write_atomic(
-            &args.state_dir.join("latest.status"),
-            &format!("{line}\n"),
-        )?;
+        write_atomic(&args.state_dir.join("latest.status"), &format!("{line}\n"))?;
     }
     println!(
         "hour={} outcome={} {}",
@@ -1272,9 +1276,17 @@ fn parse_args() -> Result<Args, String> {
         ("--ack-thread", ack_thread.is_some()),
         ("--ack-text-file", ack_text_file.is_some()),
     ];
-    let supplied: Vec<&str> = ack_flags.iter().filter(|(_, p)| *p).map(|(n, _)| *n).collect();
+    let supplied: Vec<&str> = ack_flags
+        .iter()
+        .filter(|(_, p)| *p)
+        .map(|(n, _)| *n)
+        .collect();
     if !supplied.is_empty() {
-        let missing: Vec<&str> = ack_flags.iter().filter(|(_, p)| !*p).map(|(n, _)| *n).collect();
+        let missing: Vec<&str> = ack_flags
+            .iter()
+            .filter(|(_, p)| !*p)
+            .map(|(n, _)| *n)
+            .collect();
         if !missing.is_empty() {
             return Err(format!(
                 "incomplete acknowledgement: got {} but missing {}. All of \
@@ -1346,7 +1358,11 @@ mod tests {
         /// `exit` would swallow it and the witness would record blank lines that
         /// still satisfy a naive call-count assertion.
         fn relay_command(&self, succeeds: bool) -> String {
-            let name = if succeeds { "relay-ok.sh" } else { "relay-fail.sh" };
+            let name = if succeeds {
+                "relay-ok.sh"
+            } else {
+                "relay-fail.sh"
+            };
             let script = self.root.join(name);
             if !script.exists() {
                 fs::write(
@@ -1447,13 +1463,20 @@ mod tests {
 
         // Exactly one delivery, and it was handed the real message file.
         let deliveries = fixture.deliveries();
-        assert_eq!(deliveries.len(), 1, "expected one relay call, got {deliveries:?}");
+        assert_eq!(
+            deliveries.len(),
+            1,
+            "expected one relay call, got {deliveries:?}"
+        );
         let body = fs::read_to_string(&deliveries[0]).unwrap();
         assert!(
             body.contains("SCHEDULED HOUR: `2026-08-07T01`"),
             "the wake must bind itself to its hour, else the coordinator cannot dedupe: {body}"
         );
-        assert!(body.contains("SEND THE STATUS"), "prompt body must be included");
+        assert!(
+            body.contains("SEND THE STATUS"),
+            "prompt body must be included"
+        );
         assert!(body.contains(GCHAT_SPACE), "the owner space must be named");
         assert!(
             body.contains("status-log.rs"),
@@ -1465,7 +1488,10 @@ mod tests {
         assert_eq!(claim.state, STATE_WAKE_ACCEPTED);
         // THE POINT OF THIS TASK: a pane that accepted a wake has delivered
         // NOTHING. No delivery timestamp, and no GChat record to dereference.
-        assert!(claim.delivered_at.is_none(), "wake acceptance is not a delivery");
+        assert!(
+            claim.delivered_at.is_none(),
+            "wake acceptance is not a delivery"
+        );
         assert!(claim.wake_accepted_at.is_some());
         assert_eq!(claim.wake_attempts, 1);
         assert!(!claim.has_gchat_ack());
@@ -1485,7 +1511,11 @@ mod tests {
 
         // A catch-up run, a manual `systemctl start`, a duplicate timer fire.
         let second = execute(&fixture.args("2026-08-07T01", 1_786_064_436 + 464, true)).unwrap();
-        assert_eq!(second.outcome, "awaiting-gchat-ack", "detail: {}", second.detail);
+        assert_eq!(
+            second.outcome, "awaiting-gchat-ack",
+            "detail: {}",
+            second.detail
+        );
 
         assert_eq!(
             fixture.deliveries().len(),
@@ -1523,7 +1553,13 @@ mod tests {
         // Guards against a future "did I run recently" rewrite.
         let claim = delivered_claim("2026-08-07T01", 1_786_064_436);
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), 1_786_064_436 + 86_400, DEFAULT_STALE_PENDING_SECS, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
+            decide(
+                &ClaimRead::Valid(claim.clone()),
+                1_786_064_436 + 86_400,
+                DEFAULT_STALE_PENDING_SECS,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS
+            ),
             Decision::DuplicateHour
         );
     }
@@ -1588,23 +1624,47 @@ mod tests {
         let claim = pending(hour, claimed_at);
 
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 60, 900, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
+            decide(
+                &ClaimRead::Valid(claim.clone()),
+                claimed_at + 60,
+                900,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS
+            ),
             Decision::InFlight { age_secs: 60 },
             "a young pending claim may still be a live run; do not steal it"
         );
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 900, 900, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
+            decide(
+                &ClaimRead::Valid(claim.clone()),
+                claimed_at + 900,
+                900,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS
+            ),
             Decision::ReclaimStale { age_secs: 900 },
             "past the window the owner is gone and the hour must be reclaimable"
         );
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 86_400, 0, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
+            decide(
+                &ClaimRead::Valid(claim.clone()),
+                claimed_at + 86_400,
+                0,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS
+            ),
             Decision::InFlight { age_secs: 86_400 },
             "--stale-pending-secs 0 must disable reclaim entirely"
         );
         // A clock step backwards must not manufacture a reclaim.
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at - 5_000, 900, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
+            decide(
+                &ClaimRead::Valid(claim.clone()),
+                claimed_at - 5_000,
+                900,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS
+            ),
             Decision::InFlight { age_secs: 0 }
         );
     }
@@ -1622,7 +1682,10 @@ mod tests {
 
         let result = execute(&fixture.args(hour, 1_786_064_436 + 1_200, true)).unwrap();
         assert_eq!(result.outcome, "wake-accepted", "detail: {}", result.detail);
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_WAKE_ACCEPTED
+        );
         assert_eq!(fixture.deliveries().len(), 1);
     }
 
@@ -1702,7 +1765,11 @@ mod tests {
         let claim = expect_valid(&fixture.state, "2026-08-07T01");
         assert_eq!(claim.state, STATE_PENDING);
         assert!(
-            claim.detail.as_deref().unwrap_or_default().contains("wake failed rc=1"),
+            claim
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("wake failed rc=1"),
             "the claim must carry WHY it failed, not just that it did: {claim:?}"
         );
         // Still pending, so an immediate retry is refused as in-flight...
@@ -1832,7 +1899,10 @@ mod tests {
         let result = execute(&fixture.args(hour, 1_786_064_436, true)).unwrap();
         assert_eq!(result.outcome, "wake-accepted");
         assert_eq!(fixture.deliveries().len(), 1);
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_WAKE_ACCEPTED
+        );
     }
 
     /// The documented safe workaround: write the outcome into `detail` by atomic
@@ -1853,7 +1923,10 @@ mod tests {
         write_claim(&fixture.state, &updated).unwrap();
 
         let after = expect_valid(&fixture.state, hour);
-        assert_eq!(after.detail.as_deref(), Some("status delivered by hand at 01:04Z"));
+        assert_eq!(
+            after.detail.as_deref(),
+            Some("status delivered by hand at 01:04Z")
+        );
         assert_eq!(after.hour, original.hour);
         assert_eq!(after.state, original.state);
         assert_eq!(after.claimed_at, original.claimed_at);
@@ -1861,7 +1934,13 @@ mod tests {
         assert_eq!(after.delivered_at, original.delivered_at);
         // Still dedupes afterwards -- the whole point of using `detail`.
         assert_eq!(
-            decide(&read_claim(&fixture.state, hour), at + 86_400, DEFAULT_STALE_PENDING_SECS, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
+            decide(
+                &read_claim(&fixture.state, hour),
+                at + 86_400,
+                DEFAULT_STALE_PENDING_SECS,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS
+            ),
             Decision::DuplicateHour
         );
     }
@@ -1891,7 +1970,10 @@ mod tests {
         args.dry_run = true;
         let result = execute(&args).unwrap();
         assert_eq!(result.outcome, "dry-run");
-        assert_eq!(read_claim(&fixture.state, "2026-08-07T01"), ClaimRead::Absent);
+        assert_eq!(
+            read_claim(&fixture.state, "2026-08-07T01"),
+            ClaimRead::Absent
+        );
         assert!(fixture.deliveries().is_empty());
         assert!(!fixture.state.join("invocations.log").exists());
     }
@@ -1904,7 +1986,10 @@ mod tests {
         let result = execute(&args).unwrap();
         assert_eq!(result.outcome, "skipped");
         assert!(result.detail.contains("prompt-unreadable"));
-        assert_eq!(read_claim(&fixture.state, "2026-08-07T01"), ClaimRead::Absent);
+        assert_eq!(
+            read_claim(&fixture.state, "2026-08-07T01"),
+            ClaimRead::Absent
+        );
     }
     // ================= wake_accepted vs gchat_delivered =================
     // The whole point: relay rc=0 is stage ONE. Only a dereferenceable GChat
@@ -2012,7 +2097,11 @@ mod tests {
         // Inside the ack window: no second wake.
         let quiet = execute(&fixture.args(hour, base + 60, true)).unwrap();
         assert_eq!(quiet.outcome, "awaiting-gchat-ack");
-        assert_eq!(fixture.deliveries().len(), 1, "must not re-wake inside the window");
+        assert_eq!(
+            fixture.deliveries().len(),
+            1,
+            "must not re-wake inside the window"
+        );
 
         // Past the window: re-wake, up to the bound.
         let second = execute(&fixture.args(hour, base + DEFAULT_ACK_WAIT_SECS + 1, true)).unwrap();
@@ -2070,14 +2159,23 @@ mod tests {
         // written; the SENT message did not have it, so the recorded digest is
         // of the canonical form -- that identity is this change's whole point.
         let canonical = "## Hourly status\nowner-visible body";
-        assert_eq!(claim.gchat_text_sha256.as_deref(), Some(sha256_hex(canonical.as_bytes()).as_str()));
+        assert_eq!(
+            claim.gchat_text_sha256.as_deref(),
+            Some(sha256_hex(canonical.as_bytes()).as_str())
+        );
         assert_eq!(claim.gchat_text_bytes, Some(canonical.len() as u64));
         assert_eq!(claim.gchat_text_bytes, Some(text.len() as u64 - 1));
         assert_eq!(claim.gchat_acked_at, Some(base + 470));
         // The two stages are separately visible in the durable log.
         let log = fs::read_to_string(fixture.state.join("invocations.log")).unwrap();
-        assert!(log.contains("tick start hour=2026-08-07T02"), "stage 1 heartbeat: {log}");
-        assert!(log.contains("ack hour=2026-08-07T02"), "stage 2 must be visible: {log}");
+        assert!(
+            log.contains("tick start hour=2026-08-07T02"),
+            "stage 1 heartbeat: {log}"
+        );
+        assert!(
+            log.contains("ack hour=2026-08-07T02"),
+            "stage 2 must be visible: {log}"
+        );
         assert!(log.contains(&format!("text-sha256={}", sha256_hex(canonical.as_bytes()))));
         assert!(log.contains("message-name=spaces/AAQAA6Irlwg/messages/"));
     }
@@ -2105,26 +2203,74 @@ mod tests {
         let good = ack_args(&fixture, hour, "body");
 
         let cases: Vec<(&str, AckArgs)> = vec![
-            ("empty message name", AckArgs { message_name: String::new(), ..good.clone() }),
-            ("empty space", AckArgs { space: String::new(), ..good.clone() }),
-            ("empty thread", AckArgs { thread: String::new(), ..good.clone() }),
-            ("blank message name", AckArgs { message_name: "   ".into(), ..good.clone() }),
+            (
+                "empty message name",
+                AckArgs {
+                    message_name: String::new(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "empty space",
+                AckArgs {
+                    space: String::new(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "empty thread",
+                AckArgs {
+                    thread: String::new(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "blank message name",
+                AckArgs {
+                    message_name: "   ".into(),
+                    ..good.clone()
+                },
+            ),
             // Three well-shaped strings that do NOT name one conversation: the
             // exact case a naive non-empty check would wave through.
-            ("message name in a different space", AckArgs {
-                message_name: "spaces/OTHER/messages/x".into(), ..good.clone() }),
-            ("thread in a different space", AckArgs {
-                thread: "spaces/OTHER/threads/x".into(), ..good.clone() }),
-            ("space is not spaces/<id>", AckArgs { space: "AAQAA6Irlwg".into(), ..good.clone() }),
-            ("message name has no id", AckArgs {
-                message_name: format!("{SPACE}/messages/"), ..good.clone() }),
+            (
+                "message name in a different space",
+                AckArgs {
+                    message_name: "spaces/OTHER/messages/x".into(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "thread in a different space",
+                AckArgs {
+                    thread: "spaces/OTHER/threads/x".into(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "space is not spaces/<id>",
+                AckArgs {
+                    space: "AAQAA6Irlwg".into(),
+                    ..good.clone()
+                },
+            ),
+            (
+                "message name has no id",
+                AckArgs {
+                    message_name: format!("{SPACE}/messages/"),
+                    ..good.clone()
+                },
+            ),
         ];
         for (label, ack) in cases {
             let err = apply_ack(&fixture.state, &ack, base + 10)
                 .expect_err(&format!("{label} must be refused"));
             assert!(!err.is_empty(), "{label}");
             let claim = expect_valid(&fixture.state, hour);
-            assert_eq!(claim.state, STATE_WAKE_ACCEPTED, "{label} must not mutate the claim");
+            assert_eq!(
+                claim.state, STATE_WAKE_ACCEPTED,
+                "{label} must not mutate the claim"
+            );
             assert!(!claim.has_gchat_ack(), "{label}");
         }
     }
@@ -2140,12 +2286,18 @@ mod tests {
         ack.expect_sha256 = Some(sha256_hex(b"a different body"));
         let err = apply_ack(&fixture.state, &ack, base + 10).unwrap_err();
         assert!(err.contains("does not match"), "{err}");
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_WAKE_ACCEPTED
+        );
 
         // Positive control: the matching digest is accepted, so the check is not inert.
         ack.expect_sha256 = Some(sha256_hex(b"the real body"));
         apply_ack(&fixture.state, &ack, base + 11).unwrap();
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_GCHAT_DELIVERED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_GCHAT_DELIVERED
+        );
     }
 
     #[test]
@@ -2156,12 +2308,18 @@ mod tests {
 
         // Never woken: there is no claim to acknowledge.
         let err = apply_ack(&fixture.state, &ack_args(&fixture, hour, "body"), base).unwrap_err();
-        assert!(err.contains("never woken") || err.contains("no claim"), "{err}");
+        assert!(
+            err.contains("never woken") || err.contains("no claim"),
+            "{err}"
+        );
 
         execute(&fixture.args(hour, base, true)).unwrap();
         let err = apply_ack(&fixture.state, &ack_args(&fixture, hour, ""), base + 5).unwrap_err();
         assert!(err.contains("empty"), "{err}");
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_WAKE_ACCEPTED
+        );
     }
 
     #[test]
@@ -2176,7 +2334,10 @@ mod tests {
         // Same message replayed: a no-op, not an error and not a rewrite.
         let again = ack_ok(&fixture, hour, base + 20, "body");
         assert!(again.contains("ack-noop"), "{again}");
-        assert_eq!(fs::read_to_string(claim_path(&fixture.state, hour)).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(claim_path(&fixture.state, hour)).unwrap(),
+            before
+        );
 
         // A DIFFERENT message name for the same hour is a double-delivery
         // report. Refuse it rather than silently keeping the newer one.
@@ -2184,7 +2345,10 @@ mod tests {
         other.message_name = format!("{SPACE}/messages/SECOND-SEND");
         let err = apply_ack(&fixture.state, &other, base + 30).unwrap_err();
         assert!(err.contains("already acknowledged"), "{err}");
-        assert_eq!(fs::read_to_string(claim_path(&fixture.state, hour)).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(claim_path(&fixture.state, hour)).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -2203,7 +2367,10 @@ mod tests {
             DEFAULT_ACK_WAIT_SECS,
             DEFAULT_MAX_WAKE_ATTEMPTS,
         );
-        assert!(matches!(decision, Decision::CorruptClaim { .. }), "{decision:?}");
+        assert!(
+            matches!(decision, Decision::CorruptClaim { .. }),
+            "{decision:?}"
+        );
         assert!(!decision.proceeds());
     }
 
@@ -2235,7 +2402,11 @@ mod tests {
 
         // Same logical status, written the two ways a caller actually writes it.
         for (label, hour, on_disk) in [
-            ("file with a trailing newline", "2026-08-07T02", format!("{sent}\n")),
+            (
+                "file with a trailing newline",
+                "2026-08-07T02",
+                format!("{sent}\n"),
+            ),
             ("file without one", "2026-08-07T03", sent.to_string()),
         ] {
             execute(&fixture.args(hour, base, true)).unwrap();
@@ -2284,7 +2455,10 @@ mod tests {
         execute(&fixture.args(hour, base, true)).unwrap();
         let err = apply_ack(&fixture.state, &ack_args(&fixture, hour, "\n"), base + 5).unwrap_err();
         assert!(err.contains("empty"), "{err}");
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_WAKE_ACCEPTED
+        );
     }
 
     #[test]
@@ -2299,7 +2473,10 @@ mod tests {
         let mut ack = ack_args(&fixture, hour, &format!("{sent}\n"));
         ack.expect_sha256 = Some(sha256_hex(sent.as_bytes()));
         apply_ack(&fixture.state, &ack, base + 10).unwrap();
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_GCHAT_DELIVERED);
+        assert_eq!(
+            expect_valid(&fixture.state, hour).state,
+            STATE_GCHAT_DELIVERED
+        );
 
         // NEGATIVE control: the pre-canonicalization digest -- the one the old
         // code would have produced -- is now correctly REFUSED.
@@ -2310,5 +2487,4 @@ mod tests {
         let err = apply_ack(&fixture.state, &stale, base + 10).unwrap_err();
         assert!(err.contains("does not match"), "{err}");
     }
-
 }
