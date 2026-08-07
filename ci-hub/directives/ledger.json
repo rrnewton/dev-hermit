@@ -199,6 +199,22 @@
       "owner": "hermit-220",
       "source_row": "10",
       "parent_id": null,
+      "implementation": {
+        "kind": "commit",
+        "identity": "e0427b8ede2ab94fd0ca12177d8ce4c70a083955"
+      }
+    },
+    {
+      "id": "core-allocator-irq-awareness",
+      "summary": "Make the stateful K-core allocator IRQ-aware (gate cores on interrupt confounds)",
+      "requested_at": "2026-08-03",
+      "repository": "rrnewton/agent-utils",
+      "checkout": "agent-utils",
+      "target": "main",
+      "task": "dag-runner-core-allocator-with-irq-awareness",
+      "owner": "hermit-220",
+      "source_row": "10",
+      "parent_id": "irq-aware-core-allocator",
       "implementation": null
     },
     {
@@ -212,7 +228,8 @@
       "owner": "hermit-251",
       "source_row": "11",
       "parent_id": null,
-      "implementation": null
+      "implementation": null,
+      "gate": "owner decision: flipping a default guest-visible behavior. On hermit main panic_on_unsupported_syscalls is a bare `#[clap(long)]` bool (default false) and its doc states 'Explicit strict mode enables this policy', so making it the default changes behavior for every existing caller and plausibly trips the post-facto-human-review triggers for determinization/scheduling policy. Deferred pending the owner's call."
     },
     {
       "id": "agent-utils-direct-main-policy",

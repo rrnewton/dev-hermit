@@ -1,22 +1,61 @@
 #!/usr/bin/env rust-script
-//! Reverie compat-envelope collector: ptrace-vs-kvm parity for the shared
+//! Reverie compat-envelope collector: cross-backend parity for the shared
 //! Reverie counter tools (the B1.5 `Guest`/`Tool` boundary), written into the
 //! SAME scorecard CSV schema that `collect-envelope.rs` / `render-scorecard.rs`
 //! use (bucket = `reverie-examples`).
 //!
 //! This is owner directive #1 ("reverie-compat first"): before the hermit-side
-//! Detcore envelope, measure that the shared Reverie tools run through both the
-//! ptrace and KVM `Guest` contracts and report, per (tool, guest, backend):
+//! Detcore envelope, measure that the shared Reverie tools run through each
+//! backend's `Guest` contract and report, per (tool, guest, backend):
 //!   * determinism  — run1 == run2 within the backend, and
 //!   * tool-count parity — backend syscall total == the ptrace reference total.
 //!
-//! Only tools that have BOTH a ptrace launcher and a kvm launcher can produce a
-//! cross-backend parity cell. Today that is `counter1` and `counter2`. Any
-//! ptrace-only example (strace, chaos, …) has no kvm launcher, so its kvm cell
-//! is honestly recorded as not-runnable (0/0), never faked.
+//! # This dataset is DISJOINT from the hermit Detcore envelope
+//!
+//! These rows are NOT a subset, slice, or re-render of the e2e manifest corpus
+//! that `collect-envelope.rs` measures. Different boundary (Reverie
+//! `Guest`/`Tool` callbacks, not Detcore program compat), different corpus
+//! (synthetic busybox applets, not `hermit/tests/e2e/manifests/*.toml`),
+//! different denominator. The intersection is empty on both the bucket axis and
+//! the test_id axis. **Never sum the two totals or express one as a percentage
+//! of the other.**
+//!
+//! # Every known backend gets a row — silence is not evidence
+//!
+//! Previously this collector hardcoded `ptrace,kvm` and emitted NOTHING for any
+//! other backend. A reader could not distinguish "DBT was never asked to run"
+//! from "DBT ran and failed", so the blank cells read as backend failures. They
+//! were not.
+//!
+//! Now every (tool, guest, backend) cell in `KNOWN_BACKENDS` produces exactly one
+//! row on every run, and a cell that did not produce a measurement carries a
+//! typed `absence_reason`:
+//!
+//!   * `not_collected` — backend is known and this tool supports it, but it was
+//!     not in the requested `--backends` set. NOT a failure; nobody asked.
+//!   * `unsupported`   — this tool has no launcher for that backend (structural),
+//!     or the backend name is unknown to the collector.
+//!   * `unavailable`   — host/artifact gate unmet: no `/dev/kvm`, or the launcher
+//!     binary is not built in this checkout.
+//!   * `no_result`     — the launcher RAN but emitted no parseable syscall count.
+//!
+//! An EMPTY `absence_reason` means the cell was genuinely measured. There are no
+//! blank-and-ambiguous cells. Nothing is ever faked.
+//!
+//! # Terminology
+//!
+//! The canonical backend name emitted is **`dbt`** (dynamic binary translation).
+//! The legacy name `dbi` is accepted on input for compatibility (`--backends dbi`
+//! normalizes to `dbt`) and is reported as an alias, never re-emitted.
 //!
 //! KVM launchers require a STATICALLY-LINKED guest ELF (install_static_elf +
 //! /dev/kvm). The default guest corpus therefore uses static busybox applets.
+//!
+//! # Idempotent regeneration
+//!
+//! Re-running replaces this bucket's rows rather than appending to them, so the
+//! CSV converges instead of growing duplicates. With `--run-id` and `--run-utc`
+//! pinned, two runs over the same inputs produce a BYTE-IDENTICAL file.
 //!
 //! ```cargo
 //! [dependencies]
@@ -29,24 +68,67 @@ use std::process::{exit, Command};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // Shared contract with collect-envelope.rs / render-scorecard.rs. Keep in sync.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,tool_count_parity,output_hash,duration_ms,max_rss_kb,reason";
+// `absence_reason` is APPENDED at the end: readers resolve columns by header
+// name, so trailing additions are backward compatible with the 19-column form.
+// MERGE NOTE: the observable keeps origin/main's CURRENT name `tool_count_parity`
+// (20b4a7d). The local side predated that rename and still said `parity`, which
+// render-scorecard treats as the LEGACY spelling -- taking it would have silently
+// reverted the rename under 6 consumers incl. tests/test_render_scorecard_observable_schema.sh.
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,tool_count_parity,output_hash,duration_ms,max_rss_kb,reason,absence_reason";
 const BUCKET: &str = "reverie-examples";
 // Single reverie mode: "run the shared counter Tool". The specific tool
 // (counter1/counter2) is preserved in test_id so it slots into the
 // single-denominator renderer as one bucket.
 const MODE: &str = "counter";
 
+/// Canonical backend vocabulary for this collector, in reference-first order.
+/// `ptrace` MUST stay first: it establishes the parity reference.
+const KNOWN_BACKENDS: &[&str] = &["ptrace", "kvm", "dbt", "sabre", "liteinst"];
+
+/// Typed reasons a cell produced no measurement. Empty string == measured.
+const ABSENCE_NOT_COLLECTED: &str = "not_collected";
+const ABSENCE_UNSUPPORTED: &str = "unsupported";
+const ABSENCE_UNAVAILABLE: &str = "unavailable";
+const ABSENCE_NO_RESULT: &str = "no_result";
+
+/// Map a user-supplied backend name onto the canonical vocabulary.
+/// Legacy `dbi` reads as `dbt`; everything else passes through unchanged so an
+/// unknown name still reaches the `unsupported` path instead of being silently
+/// dropped.
+fn canonical_backend(name: &str) -> String {
+    match name {
+        "dbi" => "dbt".to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// One Reverie tool measurable across backends.
 struct Tool {
     /// tool name, used as `test_mode` and as the ptrace launcher bin name.
     name: &'static str,
-    /// kvm launcher bin name, if any (None => ptrace-only, kvm cell = 0/0).
-    kvm_bin: Option<&'static str>,
+    /// Per-backend launcher binaries: `(canonical_backend, bin_name)`.
+    /// A backend absent from this list is structurally `unsupported` for this
+    /// tool. This replaces the old single `kvm_bin` field, which made every
+    /// non-KVM backend literally unnameable.
+    launchers: &'static [(&'static str, &'static str)],
 }
 
 const TOOLS: &[Tool] = &[
-    Tool { name: "counter1", kvm_bin: Some("reverie-kvm-counter1") },
-    Tool { name: "counter2", kvm_bin: Some("reverie-kvm-counter2") },
+    Tool {
+        name: "counter1",
+        launchers: &[
+            ("ptrace", "counter1"),
+            ("kvm", "reverie-kvm-counter1"),
+            // DBT / SaBRe / LiteInst launchers are not built by the reverie
+            // examples today. Listing them here (once they exist) is the ONLY
+            // change needed to start measuring them; until then these cells
+            // report `unsupported`, which is a launcher gap, NOT a backend fault.
+        ],
+    },
+    Tool {
+        name: "counter2",
+        launchers: &[("ptrace", "counter2"), ("kvm", "reverie-kvm-counter2")],
+    },
 ];
 
 fn die(msg: &str) -> ! {
@@ -102,17 +184,52 @@ fn run_once(bin: &Path, guest_argv: &[String], tool: &str) -> (bool, Option<u64>
     }
 }
 
+/// Why this (tool, backend) cell cannot be measured right now, if it cannot.
+/// Returns `(launcher_bin, absence_reason, human_detail)`; an empty
+/// `absence_reason` means the cell is runnable.
+fn resolve_cell(
+    tool: &Tool,
+    backend: &str,
+    requested: &[String],
+    kvm_present: bool,
+) -> (String, &'static str, String) {
+    if !KNOWN_BACKENDS.contains(&backend) {
+        return ("".into(), ABSENCE_UNSUPPORTED, format!("unknown backend {backend}"));
+    }
+    let bin = tool.launchers.iter().find(|(b, _)| *b == backend).map(|(_, n)| *n);
+    let Some(bin) = bin else {
+        return (
+            "".into(),
+            ABSENCE_UNSUPPORTED,
+            format!("no {backend} launcher for tool {}", tool.name),
+        );
+    };
+    if !requested.iter().any(|r| r == backend) {
+        return (
+            bin.to_string(),
+            ABSENCE_NOT_COLLECTED,
+            format!("{backend} not in requested --backends set"),
+        );
+    }
+    if backend == "kvm" && !kvm_present {
+        return (bin.to_string(), ABSENCE_UNAVAILABLE, "no /dev/kvm".to_string());
+    }
+    (bin.to_string(), "", String::new())
+}
+
 fn main() {
     let mut lane = "portable".to_string();
     let mut csv: Option<PathBuf> = None;
     let mut repo: Option<PathBuf> = None;
     let mut run_id_arg: Option<String> = None;
+    let mut run_utc_arg: Option<String> = None;
     let mut guest_path: Option<String> = None;
     let mut applets_arg: Option<String> = None;
     let mut backends_arg: Option<String> = None;
     let mut reps: u32 = 2;
     let mut dry_run = false;
     let mut assert_green = false;
+    let mut append = false;
 
     let mut it = env::args().skip(1);
     while let Some(a) = it.next() {
@@ -121,16 +238,27 @@ fn main() {
             "--csv" => csv = Some(PathBuf::from(it.next().unwrap_or_else(|| die("--csv needs a path")))),
             "--repo" => repo = Some(PathBuf::from(it.next().unwrap_or_else(|| die("--repo needs a path")))),
             "--run-id" => run_id_arg = Some(it.next().unwrap_or_else(|| die("--run-id needs a value"))),
+            "--run-utc" => run_utc_arg = Some(it.next().unwrap_or_else(|| die("--run-utc needs a value"))),
             "--guest" => guest_path = Some(it.next().unwrap_or_else(|| die("--guest needs a path"))),
             "--applets" => applets_arg = Some(it.next().unwrap_or_else(|| die("--applets needs a list"))),
             "--backends" => backends_arg = Some(it.next().unwrap_or_else(|| die("--backends needs a list"))),
             "--reps" => reps = it.next().and_then(|s| s.parse().ok()).unwrap_or_else(|| die("--reps needs an int")),
             "--dry-run" => dry_run = true,
             "--assert-green" => assert_green = true,
+            "--append" => append = true,
             "-h" | "--help" => {
                 eprintln!("collect-reverie-compat.rs [--lane L] [--csv F] [--repo hermit] [--run-id ID]");
-                eprintln!("    [--guest STATIC_ELF] [--applets a,b,c] [--backends ptrace,kvm] [--reps N]");
-                eprintln!("    [--dry-run] [--assert-green]");
+                eprintln!("    [--run-utc @EPOCH] [--guest STATIC_ELF] [--applets 'a;b;c']");
+                eprintln!("    [--backends ptrace,kvm,dbt,sabre,liteinst] [--reps N]");
+                eprintln!("    [--dry-run] [--assert-green] [--append]");
+                eprintln!();
+                eprintln!("Emits ONE row per (tool, guest, backend) for every backend in:");
+                eprintln!("    {}", KNOWN_BACKENDS.join(", "));
+                eprintln!("Cells that produced no measurement carry a typed absence_reason:");
+                eprintln!("    not_collected | unsupported | unavailable | no_result");
+                eprintln!("Legacy `dbi` is accepted on input and normalized to `dbt`.");
+                eprintln!("Default REPLACES this bucket's rows (idempotent); --append restores");
+                eprintln!("the old accumulating behaviour.");
                 exit(0);
             }
             other => die(&format!("unknown argument {other}")),
@@ -172,87 +300,95 @@ fn main() {
         .map(|s| s.split_whitespace().map(|w| w.to_string()).collect())
         .collect();
 
-    let backends: Vec<String> = backends_arg
-        .unwrap_or_else(|| "ptrace,kvm".to_string())
+    // Requested set. Default: every known backend — asking for everything is
+    // what makes an absence meaningful. Legacy `dbi` normalizes to `dbt`.
+    let requested_raw = backends_arg.unwrap_or_else(|| KNOWN_BACKENDS.join(","));
+    let mut aliased: Vec<String> = Vec::new();
+    let requested: Vec<String> = requested_raw
         .split(',')
-        .map(|s| s.trim().to_string())
+        .map(|s| s.trim())
         .filter(|s| !s.is_empty())
+        .map(|s| {
+            let c = canonical_backend(s);
+            if c != s {
+                aliased.push(format!("{s}->{c}"));
+            }
+            c
+        })
         .collect();
+    for a in &aliased {
+        eprintln!("collect-reverie-compat: legacy backend name {a} (canonical vocabulary is `dbt`)");
+    }
+    for r in &requested {
+        if !KNOWN_BACKENDS.contains(&r.as_str()) {
+            eprintln!(
+                "collect-reverie-compat: requested backend `{r}` is not in the known vocabulary \
+                 ({}); its cells will be recorded as {ABSENCE_UNSUPPORTED}",
+                KNOWN_BACKENDS.join(",")
+            );
+        }
+    }
 
     let kvm_present = Path::new("/dev/kvm").exists();
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let run_id = run_id_arg.unwrap_or_else(|| now.to_string());
-    let run_utc = format!("@{now}");
+    let run_utc = run_utc_arg.unwrap_or_else(|| format!("@{now}"));
     let hermit_sha = git(&repo, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     let reverie_sha = git(&reverie, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     let dirty = git(&reverie, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false);
 
     eprintln!(
-        "collect-reverie-compat: reverie={} kvm_present={} guest={} applets={} backends={:?} reps={}",
+        "collect-reverie-compat: reverie={} kvm_present={} guest={} applets={} known={:?} requested={:?} reps={}",
         &reverie_sha[..reverie_sha.len().min(12)],
         kvm_present,
         guest,
         applets.len(),
-        backends,
+        KNOWN_BACKENDS,
+        requested,
         reps
     );
 
     if dry_run {
-        let cells = TOOLS.len() * applets.len() * backends.len();
-        eprintln!("(dry-run) would measure {cells} cells; CSV untouched");
+        let cells = TOOLS.len() * applets.len() * KNOWN_BACKENDS.len();
+        eprintln!("(dry-run) would emit {cells} rows (every tool x guest x KNOWN backend); CSV untouched");
         for t in TOOLS {
-            for b in &backends {
-                let runnable = match b.as_str() {
-                    "ptrace" => true,
-                    "kvm" => kvm_present && t.kvm_bin.is_some(),
-                    _ => false,
-                };
-                eprintln!("  {}/{b}: runnable={runnable}", t.name);
+            for b in KNOWN_BACKENDS {
+                let (_, absence, detail) = resolve_cell(t, b, &requested, kvm_present);
+                if absence.is_empty() {
+                    eprintln!("  {}/{b}: runnable", t.name);
+                } else {
+                    eprintln!("  {}/{b}: {absence} ({detail})", t.name);
+                }
             }
         }
         return;
     }
 
-    if !csv_path.exists() {
-        fs::write(&csv_path, format!("{HEADER}\n")).unwrap_or_else(|e| die(&format!("cannot create CSV: {e}")));
-    }
     let mut rows: Vec<String> = Vec::new();
     let mut regressions: Vec<String> = Vec::new();
 
     // ptrace reference counts, keyed by (tool, guest-slug).
     let mut ref_counts: BTreeMap<(String, String), u64> = BTreeMap::new();
 
-    // Measure ptrace first (establishes the reference), then other backends.
-    let ordered: Vec<String> = {
-        let mut v = backends.clone();
-        v.sort_by_key(|b| if b == "ptrace" { 0 } else { 1 });
-        v
-    };
-
-    for backend in &ordered {
+    // Iterate the KNOWN vocabulary, not the requested set: a backend nobody
+    // asked for still gets a `not_collected` row, so its absence is visible.
+    // ptrace is first in KNOWN_BACKENDS, which establishes the reference before
+    // any comparison runs.
+    for backend in KNOWN_BACKENDS {
         for tool in TOOLS {
             for argv in &applets {
                 let slug = argv.join("-").replace('/', "_");
                 let slug = if slug.is_empty() { "noargs".to_string() } else { slug };
                 let test_id = format!("{}-{}", tool.name, slug);
 
-                // Resolve launcher + runnability for this backend.
-                let (bin_name, runnable, why_unrunnable) = match backend.as_str() {
-                    "ptrace" => (tool.name.to_string(), true, String::new()),
-                    "kvm" => match tool.kvm_bin {
-                        Some(b) if kvm_present => (b.to_string(), true, String::new()),
-                        Some(_) => ("".into(), false, "no /dev/kvm".to_string()),
-                        None => ("".into(), false, "no kvm launcher for tool".to_string()),
-                    },
-                    other => ("".into(), false, format!("unsupported backend {other}")),
-                };
+                let (bin_name, absence, detail) = resolve_cell(tool, backend, &requested, kvm_present);
 
-                if !runnable {
-                    // Honest not-runnable cell: 0/0, never faked.
+                if !absence.is_empty() {
+                    // Typed non-measurement. Never faked, never blank.
                     rows.push(row(
                         &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
-                        MODE, backend, "enabled", "skip", None, None, "", 0, &why_unrunnable,
+                        MODE, backend, "enabled", "skip", None, None, "", 0, &detail, absence,
                     ));
                     continue;
                 }
@@ -263,6 +399,7 @@ fn main() {
                         &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
                         MODE, backend, "enabled", "skip", None, None, "", 0,
                         &format!("launcher not built: {}", bin.display()),
+                        ABSENCE_UNAVAILABLE,
                     ));
                     continue;
                 }
@@ -282,13 +419,11 @@ fn main() {
                 }
 
                 let first = counts.first().cloned().flatten();
-                let deterministic = all_ok
-                    && first.is_some()
-                    && counts.iter().all(|c| *c == first);
+                let deterministic = all_ok && first.is_some() && counts.iter().all(|c| *c == first);
                 let count = first;
 
                 // Parity: compare against the ptrace reference for this (tool,guest).
-                let (parity, reason) = if backend == "ptrace" {
+                let (parity, reason) = if *backend == "ptrace" {
                     if let Some(c) = count {
                         ref_counts.insert((tool.name.to_string(), slug.clone()), c);
                     }
@@ -304,10 +439,14 @@ fn main() {
                     }
                 };
 
+                // A launcher that ran but yielded no parseable count is a
+                // no_result, not a pass and not a failure of the backend.
+                let absence_after_run = if count.is_none() { ABSENCE_NO_RESULT } else { "" };
+
                 // Cell outcome (for the scorecard): pass = ran deterministically
                 // AND (is the reference OR parity holds). Parity-diverge cells
                 // render honestly as 0% parity / N% determinism.
-                let pass = deterministic && (backend == "ptrace" || parity == Some(true));
+                let pass = deterministic && (*backend == "ptrace" || parity == Some(true));
                 let outcome = if pass { "pass" } else if all_ok { "diverge" } else { "fail" };
 
                 // Regression gate (--assert-green) tracks the DETERMINISM
@@ -327,17 +466,43 @@ fn main() {
                 rows.push(row(
                     &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
                     MODE, backend, "enabled", outcome, Some(deterministic), parity,
-                    &output_hash, total_ms, &reason,
+                    &output_hash, total_ms, &reason, absence_after_run,
                 ));
             }
         }
     }
 
-    // Append all rows.
+    // Idempotent write: drop this bucket's previous rows, then write ours. A
+    // re-run therefore CONVERGES instead of accumulating duplicates. `--append`
+    // restores the old behaviour for callers that deliberately want history.
     let existing = fs::read_to_string(&csv_path).unwrap_or_default();
-    let mut buf = existing;
-    if !buf.ends_with('\n') && !buf.is_empty() {
+    let mut buf = String::new();
+    let mut kept = 0usize;
+    let mut dropped = 0usize;
+    if existing.trim().is_empty() {
+        buf.push_str(HEADER);
         buf.push('\n');
+    } else {
+        for (i, line) in existing.lines().enumerate() {
+            if i == 0 {
+                // Preserve a wider existing header; only widen a narrower one.
+                let hdr = if line.split(',').count() >= HEADER.split(',').count() { line } else { HEADER };
+                buf.push_str(hdr);
+                buf.push('\n');
+                continue;
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            let is_ours = line.split(',').nth(7).map(|b| b == BUCKET).unwrap_or(false);
+            if is_ours && !append {
+                dropped += 1;
+                continue;
+            }
+            kept += 1;
+            buf.push_str(line);
+            buf.push('\n');
+        }
     }
     for r in &rows {
         buf.push_str(r);
@@ -345,10 +510,13 @@ fn main() {
     }
     fs::write(&csv_path, buf).unwrap_or_else(|e| die(&format!("cannot write CSV: {e}")));
 
+    let measured = rows.iter().filter(|r| r.rsplit(',').next() == Some("")).count();
     eprintln!(
-        "collect-reverie-compat: wrote {} rows to {} (run_id={run_id})",
+        "collect-reverie-compat: wrote {} rows to {} (run_id={run_id}); {measured} measured, {} typed-absent; \
+         kept {kept} foreign row(s), replaced {dropped} prior `{BUCKET}` row(s)",
         rows.len(),
-        csv_path.display()
+        csv_path.display(),
+        rows.len() - measured,
     );
 
     if assert_green && !regressions.is_empty() {
@@ -384,6 +552,7 @@ fn row(
     output_hash: &str,
     duration_ms: i64,
     reason: &str,
+    absence_reason: &str,
 ) -> String {
     let det = deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("");
     let par = parity.map(|b| if b { "1" } else { "0" }).unwrap_or("");
@@ -409,6 +578,7 @@ fn row(
         duration_ms.to_string(),
         String::new(), // max_rss_kb
         reason_q,
+        absence_reason.to_string(),
     ]
     .join(",")
 }

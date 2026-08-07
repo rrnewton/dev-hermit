@@ -93,7 +93,7 @@ add_missing_unrelated() {
 assert_registered() {
   local root=$1 product=$2 path=$3
   git -C "$root/$product" worktree list --porcelain \
-    | rg -Fxq "worktree $path" \
+    | grep -Fxq "worktree $path" \
     || fail "$product registry lost unrelated entry $path"
 }
 
@@ -199,7 +199,7 @@ active_before="$(sha256sum "$root/worktrees/ACTIVE.md")"
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'allocated missing target was accepted'
 fi
-rg -q 'clean preflight failed: canonical registry verifier refused cleanup: DRIFT slot=target reverie recorded=detached actual=-' "$root/release.out" \
+grep -Eq 'clean preflight failed: canonical registry verifier refused cleanup: DRIFT slot=target reverie recorded=detached actual=-' "$root/release.out" \
   || {
     cat "$root/release.out" >&2
     fail 'missing-target refusal was not explicit'
@@ -220,7 +220,7 @@ write_state "$root" target detached - - worktrees/sibling/hermit
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'mismatched recorded path was accepted'
 fi
-rg -Fq 'canonical registry verifier refused cleanup: DRIFT slot=target hermit path recorded=Some("worktrees/sibling/hermit") expected=worktrees/target/hermit' "$root/release.out" \
+grep -Fq 'canonical registry verifier refused cleanup: DRIFT slot=target hermit path recorded=Some("worktrees/sibling/hermit") expected=worktrees/target/hermit' "$root/release.out" \
   || {
     cat "$root/release.out" >&2
     fail 'mismatched-path refusal was not explicit'
@@ -237,7 +237,7 @@ write_state "$root" target wrong-branch - -
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'checkout identity mismatch was accepted'
 fi
-rg -Fq 'canonical registry verifier refused cleanup: DRIFT slot=target hermit recorded=wrong-branch actual=detached:' "$root/release.out" \
+grep -Fq 'canonical registry verifier refused cleanup: DRIFT slot=target hermit recorded=wrong-branch actual=detached:' "$root/release.out" \
   || fail 'checkout identity refusal was not explicit'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'identity refusal removed target'
 
@@ -252,7 +252,7 @@ mv "$root/state.tmp" "$root/worktree-state.json"
 if run_release "$root" "$root/escape" >"$root/release.out" 2>&1; then
   fail 'absolute slot name was accepted'
 fi
-rg -q 'invalid slot name' "$root/release.out" \
+grep -Eq 'invalid slot name' "$root/release.out" \
   || fail 'absolute-slot refusal was not explicit'
 [[ -d "$root/escape" ]] || fail 'absolute-slot refusal removed external directory'
 
@@ -267,7 +267,7 @@ mv "$root/state.tmp" "$root/worktree-state.json"
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'missing branch field was accepted'
 fi
-rg -Fq 'DRIFT slot=target hermit recorded=- actual=detached:' "$root/release.out" \
+grep -Fq 'DRIFT slot=target hermit recorded=- actual=detached:' "$root/release.out" \
   || {
     cat "$root/release.out" >&2
     fail 'missing-branch refusal was not explicit'
@@ -286,7 +286,7 @@ write_state "$root" target detached - -
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'symlink alias was accepted'
 fi
-rg -q 'refusing symlink/path alias' "$root/release.out" \
+grep -Eq 'refusing symlink/path alias' "$root/release.out" \
   || {
     cat "$root/release.out" >&2
     fail 'symlink refusal was not explicit'
@@ -310,7 +310,7 @@ write_state "$root" target detached - -
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'replacement repository at stale registered path was accepted'
 fi
-rg -q 'child common-dir .* does not match primary' "$root/release.out" \
+grep -Eq 'child common-dir .* does not match primary' "$root/release.out" \
   || {
     cat "$root/release.out" >&2
     fail 'replacement-repo refusal was not explicit'
@@ -328,7 +328,7 @@ write_state "$root" target detached - -
 if run_release "$root" target >"$root/release.out" 2>&1; then
   fail 'unexpected slot residue was accepted'
 fi
-rg -q 'contains unexpected entry' "$root/release.out" \
+grep -Eq 'contains unexpected entry' "$root/release.out" \
   || fail 'slot residue refusal was not explicit'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'residue refusal removed target'
 
@@ -348,14 +348,14 @@ jq -e '.slots.target.status == "releasing" and
        .slots.target.release_journal.phase == "armed"' \
   "$root/worktree-state.json" >/dev/null \
   || fail 'locked-target refusal did not retain its exact durable journal'
-rg -Fq '| target | fixture-owner | detached | - | - | fixture | releasing | no |' \
+grep -Fq '| target | fixture-owner | detached | - | - | fixture | releasing | no |' \
   "$root/worktrees/ACTIVE.md" \
   || fail 'locked-target journal was not projected into ACTIVE'
 [[ -e "$root/worktrees/target/hermit" ]] || fail 'locked-target refusal removed target'
 if run_release "$root" target >"$root/retry.out" 2>&1; then
   fail 'ordinary retry bypassed the unfinished locked-target journal'
 fi
-rg -q 'unfinished release journal' "$root/retry.out" \
+grep -Eq 'unfinished release journal' "$root/retry.out" \
   || fail 'ordinary locked-target retry refusal was not explicit'
 git -C "$root/hermit" worktree unlock "$root/worktrees/target/hermit"
 run_recovery "$root" target >/dev/null
@@ -388,7 +388,7 @@ jq -e '.slots.target == null' "$root/worktree-state.json" >/dev/null \
   || fail 'retry did not complete slot release'
 [[ ! -e "$root/worktrees/target" ]] || fail 'retry left target slot directory'
 
-if rg -n 'worktree[^\n]*prune|\["worktree", "prune"\]' "$subject" >/dev/null; then
+if grep -nE 'worktree.*prune|\["worktree", "prune"\]' "$subject" >/dev/null; then
   fail 'release script still contains a worktree prune call'
 fi
 

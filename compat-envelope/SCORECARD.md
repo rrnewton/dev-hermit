@@ -90,22 +90,90 @@ KVM output bitwise-identical to ptrace in that sweep.
 
 ## Table 2 — Reverie: Tool callback-count parity (B1.5+ backends)
 
-The shared Reverie `counter` Tool (counter1 + counter2), run through the ptrace
-launchers vs the KVM launchers over a static-busybox guest corpus.
+> ### This table is a SEPARATE dataset — it is NOT a subset of Table 1
+>
+> Table 2 is **disjoint** from Table 1: the intersection is empty on both the
+> bucket axis and the program axis (0 rows with `bucket=reverie-examples` and 0
+> rows with a `counter1-`/`counter2-` `test_id` appear in `scorecard.csv`,
+> `fullcorpus-scorecard.csv`, or `corpus-manifest.csv`). It measures a
+> **different boundary** — the Reverie B1.5 `Guest`/`Tool` callback surface, not
+> Detcore program compat — over a **different corpus** (synthetic static-busybox
+> applets, not `hermit/tests/e2e/manifests/*.toml`).
+>
+> **Table 1's 200 and Table 2's 6 are not commensurable. Never sum them, and
+> never express one as a percentage of the other.**
 
-The first percentage compares callback totals only; it is not stdout or
+**Provenance.** Hermit `2f3689bd8830ab6b59dacea6cb72951f4d0d899e`; Reverie
+`a4f33d69a56ed4233a53b218c39d93807ffc8cd0`; `run_id=reverie-20260801`, run
+2026-08-01; `lane=portable`, `reps=2`, guest `/usr/sbin/busybox`. Source:
+`reverie-scorecard.csv`. (Table 1's numbers come from different runs at different
+hermit SHAs — see its own citations. This is why each table stamps its own.)
+
+The shared Reverie `counter` Tool (counter1 + counter2) over three busybox
+applets = **six programs**, run through each backend's launcher. The parity
+figure compares **callback totals only**; it is not stdout parity and not
 four-signal cross-backend parity.
 
-| bucket            | ptrace | kvm        |
-|-------------------|-------:|:-----------|
-| reverie-examples  |      6 | 0%, 100%   |
-| **TOTAL**         |  **6** | **0%, 100%** |
+### 2a — the six programs, one row each
 
-- **KVM** is fully self-deterministic (`100%` determinism, 6/6 identical reruns)
-  but surfaces a **constant 4 fewer syscalls** to the shared Tool callback than
-  ptrace (true 12→8, echo 15→11, pwd 16→12) → `0%` tool-count parity. A real **B1.5
-  Guest-contract interception-surface gap**, measured and confirmed 0 (no `?`),
-  not a determinism defect.
+| # | program (`test_id`) | tool | guest argv | ptrace syscalls | kvm syscalls | Δ | kvm outcome | kvm det | kvm parity |
+|---|---------------------|------|-----------|----------------:|-------------:|--:|-------------|--------:|-----------:|
+| 1 | `counter1-true`    | counter1 | `true`    | 12 | 8  | −4 | diverge | 1 | 0 |
+| 2 | `counter1-echo-hi` | counter1 | `echo hi` | 15 | 11 | −4 | diverge | 1 | 0 |
+| 3 | `counter1-pwd`     | counter1 | `pwd`     | 16 | 12 | −4 | diverge | 1 | 0 |
+| 4 | `counter2-true`    | counter2 | `true`    | 12 | 8  | −4 | diverge | 1 | 0 |
+| 5 | `counter2-echo-hi` | counter2 | `echo hi` | 15 | 11 | −4 | diverge | 1 | 0 |
+| 6 | `counter2-pwd`     | counter2 | `pwd`     | 16 | 12 | −4 | diverge | 1 | 0 |
+| | **TOTAL** | | | **6/6 pass** | **0/6 parity, 6/6 det** | **−4 const** | | | |
+
+All six ptrace rows are `outcome=pass`, `deterministic=1`, `parity=` (empty
+because **ptrace is the reference** and has no parity value to carry — this is
+the one legitimately empty cell in the table, and it is empty by definition, not
+by omission).
+
+- **KVM** is fully self-deterministic (`100%`, 6/6 identical reruns) but surfaces
+  a **constant 4 fewer syscalls** to the shared Tool callback than ptrace →
+  `0%` tool-count parity. The delta is −4 on every one of the six, which is what
+  makes this a structural **B1.5 Guest-contract interception-surface gap**,
+  measured and confirmed 0 (no `?`), not a determinism defect and not noise.
+
+### 2b — backend × program coverage, with typed absence reasons
+
+Every known backend gets a row for every program. A backend with no data is
+**not** a backend that failed — the reason is stated explicitly. Terminology is
+**DBT**; the legacy name `dbi` is accepted on input and normalized.
+
+| backend | counter1-true | counter1-echo-hi | counter1-pwd | counter2-true | counter2-echo-hi | counter2-pwd |
+|---|---|---|---|---|---|---|
+| ptrace   | measured (ref) | measured (ref) | measured (ref) | measured (ref) | measured (ref) | measured (ref) |
+| kvm      | measured | measured | measured | measured | measured | measured |
+| **DBT**  | `unsupported` | `unsupported` | `unsupported` | `unsupported` | `unsupported` | `unsupported` |
+| **SaBRe**| `unsupported` | `unsupported` | `unsupported` | `unsupported` | `unsupported` | `unsupported` |
+| **LiteInst** | `unsupported` | `unsupported` | `unsupported` | `unsupported` | `unsupported` | `unsupported` |
+
+Absence vocabulary (emitted in the CSV's `absence_reason` column; an **empty**
+value means the cell was genuinely measured):
+
+| token | meaning |
+|---|---|
+| `not_collected` | backend is known and the tool supports it, but it was not in the requested `--backends` set. Nobody asked. |
+| `unsupported` | the tool has no launcher for that backend, or the backend name is unknown to the collector. |
+| `unavailable` | host/artifact gate unmet — no `/dev/kvm`, or the launcher binary is not built. |
+| `no_result` | the launcher ran but emitted no parseable syscall count. |
+
+- **DBT / SaBRe / LiteInst are `unsupported`, which is a LAUNCHER GAP, not a
+  backend fault.** The reverie examples ship no `reverie-{dbt,sabre,liteinst}-counter*`
+  binaries, so there is nothing to invoke. Adding an entry to that tool's
+  `launchers` map in `collect-reverie-compat.rs` is the only change needed to
+  start measuring them.
+- **Do not read these cells as failures.** All three backends produce 200 real
+  rows each in `fullcorpus-scorecard.csv` from this same checkout, so host
+  capability is demonstrated. Their absence here is specific to the Reverie
+  example launchers.
+- **KVM has data** because both of its gates were satisfied: a `kvm` launcher
+  exists for both tools (`reverie-kvm-counter1/2`) **and** `/dev/kvm` is present
+  on the measuring host. Either gate failing would have produced `unavailable`,
+  not silence.
 
 ---
 
@@ -138,9 +206,16 @@ Fresh triage of every `lane=privileged` test (task
   `--ci-only ∩ portable` slice, not the corpus).
 - **Sweep corroboration** — ptrace **166/183** L1, KVM **105/183** L1 (quiet host).
 - **Portable/privileged** — **200 / 2** (was 199 / 3; cpuid-probe reclassified).
-- **Reverie** — ptrace **6**; KVM **0% tool-count parity, 100% determinism**.
+- **Reverie** (Table 2, a **disjoint** dataset — never add it to the 200) —
+  **6 programs** (counter1/counter2 × true/echo-hi/pwd). ptrace **6/6 pass**
+  (reference); KVM **0/6 tool-count parity, 6/6 determinism**, constant −4
+  syscalls. DBT / SaBRe / LiteInst: **`unsupported` — no example launcher
+  exists**, which is a launcher gap, NOT a backend failure. At hermit
+  `2f3689bd`, reverie `a4f33d69`, run 2026-08-01.
 
 ## Regenerate
+
+**Table 1** (Hermit Detcore envelope):
 
 ```bash
 # Full-corpus enumeration (static, no test execution):
@@ -151,3 +226,31 @@ compat-envelope/collect-envelope.rs --mode regression --lane portable \
   --csv compat-envelope/scorecard.csv
 compat-envelope/render-scorecard.rs --csv compat-envelope/scorecard.csv --all
 ```
+
+**Table 2** (Reverie Guest/Tool boundary — a *separate* producer and a *separate*
+CSV; the two tables are assembled into this document independently):
+
+```bash
+# Emits one row per (tool x guest x KNOWN backend) = 6 programs x 5 backends = 30
+# rows, every unmeasured cell carrying a typed absence_reason. Requires the
+# reverie counter launchers to be built in reverie/target/debug.
+compat-envelope/collect-reverie-compat.rs \
+  --repo <hermit-checkout> --csv compat-envelope/reverie-scorecard.csv
+```
+
+- **Regeneration is idempotent.** The collector REPLACES this bucket's rows
+  instead of appending, so re-running converges rather than accumulating
+  duplicates; rows from other buckets in the same CSV are preserved untouched.
+  Pinning `--run-id` and `--run-utc` makes two runs **byte-identical**, which is
+  what `tests/test_collect_reverie_backends.sh` check 8 asserts (3 consecutive
+  runs, same sha256, 30 rows each). `--append` restores the old accumulating
+  behaviour and is check 9's control.
+- **Coverage/absence tests:** `compat-envelope/tests/test_collect_reverie_backends.sh`
+  — 10 checks covering all five backends, all four absence tokens, both
+  bracketing directions, DBT/legacy-`dbi` naming, unknown-backend refusal,
+  idempotence, and foreign-bucket preservation.
+- **Launcher provenance caveat (open).** The collector stamps `reverie_sha` from
+  the reverie *checkout* HEAD, but measures whatever binaries are in
+  `target/debug`. If those binaries are stale relative to HEAD, the row's SHA
+  overstates what was measured. Rebuild the launchers before regenerating, or
+  treat the stamped SHA as the checkout, not the binary.
