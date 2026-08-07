@@ -214,3 +214,37 @@ so "genuine divergence" here means the stripped comparator — which misses thre
 of five planted defects — nonetheless reported a difference. That makes each of
 the 16 a *lower bound* on divergence, not an upper one: a stricter probe can
 only find more.
+
+---
+
+# No-results are now CARRIED, not described
+
+An earlier revision of this file *described* the 30 missing fixtures in prose
+while the data carried **1025 rows, not 1175**. Prose is not preservation: a
+consumer reading the CSV saw 1025 rows and nothing telling it that 150 more were
+owed, which is indistinguishable from cells nobody thought to run. That is an
+ambiguous missing row.
+
+`nominal-matrix-typed.csv` is the complete nominal matrix — **1175 rows = 235
+cells x 5 backends, every cell present and typed**:
+
+| absence_class | rows | meaning |
+| --- | ---: | --- |
+| `measured` | 933 | the cell produced a verdict |
+| `reference-unusable-verify` | 88 | 22 cells x 4 candidate backends: ptrace's `--verify` leg failed, so no parity reference exists |
+| `reference-unusable-runleg` | 4 | 1 cell x 4: ptrace's `--verify` leg PASSED but its plain `--strict` reference run failed (`c-programs/dbi-pid-virtualization`, `ptrace-run-fail-exit124`) |
+| `fixture-source-missing` | 150 | 30 fixtures x 5: guest source absent at the measured SHA; the collector emitted no row |
+| **total** | **1175** | 235 x 5, zero unaccounted |
+
+A no-result is never a zero and never a failure: on every unmeasured row
+`deterministic` and `stdout_parity` are left **empty**, never filled with `0`.
+Verified: 150/150 fixture-missing rows carry blank verdict fields, and 0 rows of
+any no-result class carry a fabricated verdict.
+
+The generator refuses (exit 3) if the matrix it builds is not exactly
+`nominal x backends`, so this file cannot silently go back to being incomplete:
+
+```bash
+./materialize-no-results.py --out nominal-matrix-typed.csv --check
+# => REPRODUCIBLE: nominal-matrix-typed.csv byte-identical (1175 rows, complete nominal matrix)
+```
