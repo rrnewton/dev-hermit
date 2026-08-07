@@ -348,3 +348,77 @@ build the same target from two different absolute paths, or as two different use
 clock — and see which axis makes the flagged action diverge. That directly identifies the nondeterminism
 source, and *then* Hermit has a defined job: determinize the axis that turns out to matter. That is a much
 better use of the next session than more same-host rounds.
+
+---
+
+# The path-axis discriminator — reconciling two results that appeared to conflict
+
+Two findings sat in direct tension:
+
+* **This experiment concluded** Hermit determinizes *within* a run but does **not** normalize absolute
+  build paths across machines, so path-sourced nondeterminism is out of its reach.
+* **The Debian track finished 13 of 13** — every package diverges natively across two build roots and is
+  byte-identical under `hermit run --strict --no-rcb-time`. That design varies **exactly one axis: the
+  absolute build root path.**
+
+If Hermit cannot normalize the path axis, how did varying only the path get fixed 13 out of 13 times?
+
+## The experiment
+
+Two build roots differing **only** in absolute path (`/tmp/pathaxis/rootA/deep` vs
+`/tmp/pathaxis/rootB-longer-name/deep` — different length as well as content, so padding effects show).
+One payload, four cases, run from each root, native and under
+`hermit run --tmp=/tmp --no-rcb-time`. Output hashed and compared. `harness/path-axis-probe.sh`.
+
+| case | what the output depends on | native | under Hermit |
+| --- | --- | --- | --- |
+| `path` | the cwd, printed literally into the output | DIFFERS | **DIFFERS** |
+| `time` | `date +%s%N` | DIFFERS | **IDENTICAL** |
+| `rand` | 8 bytes of `/dev/urandom` | DIFFERS | **IDENTICAL** |
+| `tarmt` | tar of a file with a changing mtime | DIFFERS | **IDENTICAL** |
+
+The `path` row is the sharp one: under Hermit it produced the **same two hashes as the native run**
+(`5e6f6e41…` and `6a0bf70a…`). Hermit passed the real working directory through untouched — it did not
+merely fail to help, it is transparent on this axis.
+
+## Both results are true. They are different mechanisms.
+
+Varying the build root path can make a build nondeterministic in two distinct ways, and only one of them
+is Hermit's problem:
+
+1. **Path-embedded.** The path itself ends up in the output bytes — a `__link_dwo_paths.txt`, a debug
+   `DW_AT_comp_dir`, an `__FILE__` string, an rpath. **Hermit does not fix this**, because nothing is
+   nondeterministic from the guest's point of view: the guest asked where it was and got a truthful,
+   reproducible answer that simply differs between roots.
+2. **Path-triggered.** Changing the root perturbs something *else* — allocation addresses, `readdir`
+   order, timing, hash seeds — which then leaks into the output through time, entropy, or iteration
+   order. **Hermit fixes this**, because those are exactly the sources it virtualizes.
+
+So the Debian 13/13 is mechanism 2, and this track's conclusion was about mechanism 1. The earlier wording
+here was too broad: "Hermit does not normalize absolute build paths" is correct, but it does **not** imply
+"Hermit cannot fix nondeterminism revealed by varying the path", which is what it appeared to claim.
+Corrected above.
+
+**This also retro-classifies my own earlier false positive.** The two-isolation-dir divergence
+(`__derive_more_impl-link_dwo_paths.txt`, outputs differing only by `det-probe-A` vs `det-probe-B`) is a
+textbook mechanism-1 case. It was a false positive for measuring *intrinsic* determinism, but it is a
+genuine example of path-embedded build nondeterminism — and one Hermit would not fix.
+
+## A falsifiable prediction for the Debian track
+
+If this classification is right, then **none of those 13 packages embeds its build root path in the
+compared output** — otherwise Hermit could not have made them byte-identical. That is checkable: grep the
+native (un-Hermit'd) artifacts from the two roots for the root path string. If any package embeds it and
+is still 13/13 green under Hermit, this two-mechanism model is wrong and I would want to know.
+
+## What this means for the buck2 ask
+
+The owner's framing was "find nondeterministic buck2 builds and see if Hermit determinizes them". The
+discriminator says that question has to be asked per mechanism:
+
+* buck2 actions whose outputs embed buck-out paths → **not** a Hermit target; wants a hermetic-root or
+  path-normalization change.
+* buck2 actions nondeterministic through time, entropy, or iteration order → **Hermit's job**, and Sarah
+  Clark's 2022 `determinism_test.sh` (still passing, see above) is the existence proof.
+
+Triaging candidates by mechanism *before* reaching for Hermit is the cheap step that was missing.

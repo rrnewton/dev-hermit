@@ -93,6 +93,9 @@ ok "0 blank absence_reason cells"
 bad=$(named_col absence_reason | grep -vcE '^(not_collected|unsupported|unavailable|no_result)$' || true)
 [ "$bad" -eq 0 ] || fail "$bad row(s) carry an absence_reason outside the taxonomy"
 ok "all 30 absence_reason values are in the taxonomy"
+tiered=$(named_col comparison_tier | grep -cx 'unqualified-tool-count-only' || true)
+[ "$tiered" -eq 30 ] || fail "expected 30 explicit tool-count-only tiers, got $tiered"
+ok "30/30 rows state comparison_tier=unqualified-tool-count-only (never strict green)"
 
 echo "== 4. absence taxonomy is assigned to the right cause =="
 # unsupported: dbt/sabre/liteinst have no launcher entry for either tool.

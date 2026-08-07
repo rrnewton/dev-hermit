@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,relaxation_set,population_id,selected_count,executed_count,evidence_count";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,relaxation_set,population_id,selected_count,executed_count,evidence_count,comparison_tier";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -323,8 +323,8 @@ fn main() {
     for required in [
         "run_id", "run_utc", "hermit_sha", "reverie_sha", "test_id", "backend",
         "outcome", "deterministic", "ref_output_hash", "parity_comparator",
-        "parity_tier", "profile_flags", "relaxation_set", "population_id", "selected_count",
-        "executed_count", "evidence_count",
+        "parity_tier", "profile_flags", "relaxation_set", "population_id",
+        "selected_count", "executed_count", "evidence_count", "comparison_tier",
     ] {
         if !target_header.iter().any(|c| c == required) {
             die(&format!(
@@ -559,6 +559,10 @@ fn main() {
                 String::new(), // selected_count: filled after every row is known
                 String::new(), // executed_count
                 String::new(), // evidence_count
+                // This collector compares stdout only.  It must state that
+                // limitation on every row and can never mint either strict
+                // green tier merely because the execution itself passed.
+                "unqualified-stdout-only".to_string(),
             ];
             pending_rows.push((row, executed, has_parity_evidence));
         }
@@ -619,7 +623,10 @@ fn main() {
         exit(1);
     }
     if assert_green {
-        eprintln!("collect-envelope: envelope GREEN — all enabled cells passed.");
+        eprintln!(
+            "collect-envelope: RAW EXECUTION PASS — all enabled cells passed, but every new row is comparison_tier=unqualified-stdout-only; emitted strict greens: 0/{}",
+            planned_count
+        );
     }
 }
 

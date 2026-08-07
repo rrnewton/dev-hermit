@@ -32,7 +32,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The columns the migration adds; see compat-envelope/migrate-scorecard-schema.py
-TIER_COLUMNS = ("bitwise_parity", "compared_log_messages", "tier")
+TIER_COLUMNS = ("bitwise_parity", "compared_log_messages", "tier", "comparison_tier")
+KNOWN_COMPARISON_TIERS = {
+    "full-stdout-info-stack-heap",
+    "stdout-info-stack-heap-spot-check",
+    "legacy-unqualified",
+    "unqualified-stdout-only",
+    "unqualified-tool-count-only",
+}
 
 # A retained baseline is frozen ON PURPOSE. Matched by directory shape, not by a
 # hand-maintained filename list, so a future baseline is covered automatically.
@@ -81,6 +88,20 @@ def test_every_published_scorecard_carries_the_tier_columns() -> None:
         "  python3 compat-envelope/migrate-scorecard-schema.py <path> --apply\n"
         "It adds the tier columns without inventing evidence: rows whose tier "
         "was never recorded are labelled legacy-unqualified rather than green."
+    )
+
+
+def test_every_published_row_states_a_known_comparison_tier() -> None:
+    violations = []
+    for path in _published_scorecards():
+        with (REPO_ROOT / path).open(newline="", encoding="utf-8") as fh:
+            for line, row in enumerate(csv.DictReader(fh), start=2):
+                value = (row.get("comparison_tier") or "").strip()
+                if value not in KNOWN_COMPARISON_TIERS:
+                    violations.append(f"{path}:{line}: {value or '<blank>'}")
+    assert not violations, (
+        "REFUSED comparison-tier rows (blank/unknown values are never defaulted):\n  "
+        + "\n  ".join(violations[:20])
     )
 
 

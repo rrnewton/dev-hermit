@@ -6,6 +6,8 @@ exact Reverie SHA, profile and run coverage have been discarded.  The migration
 therefore moves them byte-for-byte into ``legacy_parity_unqualified`` and clears
 the qualified observable.  This preserves the historical observation while
 making it impossible for a consumer to count it as a current parity claim.
+The independent ``comparison_tier`` is backfilled as ``legacy-unqualified``;
+historical rows are never guessed to have met either strict comparison tier.
 
 Idempotent, fail-closed on partial schemas, and serialized with ``flock``.
 """
@@ -21,6 +23,10 @@ import sys
 from pathlib import Path
 
 TIER_COLUMNS = ("bitwise_parity", "compared_log_messages", "tier")
+COMPARISON_TIER_COLUMN = "comparison_tier"
+LEGACY_COMPARISON_TIER = "legacy-unqualified"
+E9PATCH_REACH_COLUMNS = ("candidate_sites", "mapped_sites", "reach_state")
+REVERIE_COLUMNS = ("absence_reason",)
 PROVENANCE_COLUMNS = (
     "legacy_parity_unqualified",
     "ref_output_hash",
@@ -115,9 +121,31 @@ def migrate(path: Path, *, apply: bool) -> int:
             if RELAXATION_COLUMN not in new_header:
                 at = new_header.index("profile_flags") + 1
                 new_header.insert(at, RELAXATION_COLUMN)
+            if COMPARISON_TIER_COLUMN not in new_header:
+                new_header.append(COMPARISON_TIER_COLUMN)
+            if path.name == "e9patch-scorecard.csv":
+                for column in E9PATCH_REACH_COLUMNS:
+                    if column not in new_header:
+                        new_header.append(column)
+            if path.name == "reverie-scorecard.csv":
+                for column in REVERIE_COLUMNS:
+                    if column not in new_header:
+                        new_header.append(column)
+            comparison_labelled = 0
             for row in rows:
                 for column in TIER_COLUMNS + PROVENANCE_COLUMNS + (RELAXATION_COLUMN,):
                     row.setdefault(column, "")
+                for column in E9PATCH_REACH_COLUMNS:
+                    if column in new_header:
+                        row.setdefault(column, "")
+                for column in REVERIE_COLUMNS:
+                    if column in new_header:
+                        row.setdefault(column, "")
+                # The old rows do not carry INFO/stack/heap evidence.  Record
+                # that absence explicitly; never guess either strict tier.
+                if not (row.get(COMPARISON_TIER_COLUMN) or "").strip():
+                    row[COMPARISON_TIER_COLUMN] = LEGACY_COMPARISON_TIER
+                    comparison_labelled += 1
 
             labelled = 0
             unqualified = 0
@@ -189,10 +217,12 @@ def migrate(path: Path, *, apply: bool) -> int:
             changed = (
                 new_header != header or labelled > 0 or unqualified > 0
                 or relaxation_filled > 0 or dequalified > 0
+                or comparison_labelled > 0
             )
             print(
                 f"rows={len(rows)} header={len(header)}->{len(new_header)} "
-                f"tier_labels={labelled} parity_moved_unqualified={unqualified} "
+                f"tier_labels={labelled} comparison_labels={comparison_labelled} "
+                f"parity_moved_unqualified={unqualified} "
                 f"non_strict_or_unknown={ineligible} "
                 f"deterministic_dequalified={dequalified}"
             )

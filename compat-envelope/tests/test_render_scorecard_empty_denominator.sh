@@ -48,6 +48,7 @@ row() {
     awk -v hdr="$HEADER" -v spec="$*" '
     BEGIN {
         n = split(hdr, cols, ",")
+        v["comparison_tier"] = "full-stdout-info-stack-heap"
         m = split(spec, kvs, " ")
         for (i = 1; i <= m; i++) { p = index(kvs[i], "="); v[substr(kvs[i],1,p-1)] = substr(kvs[i],p+1) }
         out = ""

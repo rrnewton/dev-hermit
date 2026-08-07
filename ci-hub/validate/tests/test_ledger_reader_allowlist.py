@@ -62,6 +62,7 @@ DECLARED_READERS: dict[str, str] = {
     "history/query.py": "select_latest_workflow_attempts is timestamp-aware, not positional",
     "validate/attribute_reds.py": "RED taxonomy consumer (not a green population); keys on gates",
     "validate/anchor_select.py": "anchor selection; routes through the shared qualification",
+    "validate/totality.py": "scope census needs ALL rows (a fail can also be partial), so it cannot use the pass-only accessor; orders by finished_at for chain depth and counts only result==pass runs in it, reporting the composition alongside",
     # --- producers / plumbing (write or pass the path, never bucket) ------
     "validate/scan-finalize.sh": "finalizer PRODUCER; appends rows, does not derive a view",
     "landing/rebase_wrapper.py": "prose reference in a docstring only",
