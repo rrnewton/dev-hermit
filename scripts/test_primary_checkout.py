@@ -16,12 +16,28 @@ from unittest.mock import patch
 from scripts import primary_checkout
 
 
+# A fixture must supply its own commit identity rather than borrowing the
+# host's. Without this, `git commit` falls back to auto-detecting
+# `user@hostname`, which succeeds on a developer box and FAILS on a CI runner
+# whose hostname has no domain -- git refuses the derived address and exits 128
+# ("unable to auto-detect email address (got 'runner@fv-az....(none)')"). These
+# are throwaway repos under a temp dir, so a fixed identity is also the only
+# reproducible choice.
+_GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "dev-hermit tests",
+    "GIT_AUTHOR_EMAIL": "tests@dev-hermit.invalid",
+    "GIT_COMMITTER_NAME": "dev-hermit tests",
+    "GIT_COMMITTER_EMAIL": "tests@dev-hermit.invalid",
+}
+
+
 def git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ("git", "-C", str(repo), *args),
         text=True,
         capture_output=True,
         check=True,
+        env={**os.environ, **_GIT_IDENTITY},
     )
     return result.stdout.strip()
 
