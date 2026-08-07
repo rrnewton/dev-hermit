@@ -1,0 +1,54 @@
+{
+  "task": "prefix-parity-depth-round3-report-current-YZ-per-pair",
+  "artifact_type": "consolidation_of_existing_measurements",
+  "consolidated_at_utc": "2026-08-07T05:40:32Z",
+  "repository": "rrnewton/dev-hermit",
+  "dev_hermit_base_sha": "a30b8f00d1be13ee1aae189b0ef0efae3e50e798",
+  "live_hermit_main_at_consolidation": "590fcc9eeb0339c5cf23f72b84394a63333e88ff",
+  "no_new_guest_execution": true,
+  "metric": {
+    "record": "INFO-log line beginning at COMMIT turn",
+    "y": "longest raw byte-identical candidate/golden COMMIT prefix",
+    "z": "ptrace golden COMMIT record count",
+    "normalization": "extract from COMMIT turn onward; no path, value, address, or virtual-time normalization",
+    "assurance": "prefix metric only; not strict/verify L1 or L2"
+  },
+  "scope": {
+    "guests": 4,
+    "backend_labels": 6,
+    "matrix_cells": 24,
+    "measured_cells": 10,
+    "setup_refused_cells": 8,
+    "not_run_cells": 6
+  },
+  "sources": [
+    {
+      "task": "prefix-parity-depth-harness-trivial-guests",
+      "hermit_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+      "measured_at_utc": "2026-08-07T05:02:00Z/2026-08-07T05:10:00Z",
+      "host": "not recorded",
+      "ptrace_trials_per_guest": 1,
+      "ptrace_control": "self-comparison, not an independent replicate",
+      "candidate_trials_per_measured_cell": 1
+    },
+    {
+      "task": "prefix-parity-depth-round2-coreutils-and-fork-exec",
+      "artifact": "experiments/prefix-parity-depth-round2_20260807",
+      "artifact_content_commit": "454409ac8e53b298666c5a72d14b45571b36fb88",
+      "hermit_sha": "75506005d873a76f62be00b1d82696188651047a",
+      "reverie_pin": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+      "measured_at_utc": "2026-08-07T05:05:50Z",
+      "host": "devbig014-class AMD EPYC 9D85",
+      "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+      "ptrace_trials_per_guest": 2,
+      "candidate_trials_per_measured_cell": 1
+    }
+  ],
+  "limitations": [
+    "live Hermit main is five commits after the latest measured Hermit SHA",
+    "round 1 did not record host identity or an independent ptrace replicate",
+    "each measured non-ptrace cell has one candidate trace",
+    "setup refusals have zero qualifying trials and are not negative parity results",
+    "raw logs were not committed"
+  ]
+}
