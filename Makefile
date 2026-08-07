@@ -5,7 +5,7 @@ PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
-.PHONY: build build-full build-hermit check-agent-utils-pin check-claude-md-size check-codex-setup check-deps check-harness-help check-portability check-primary-freshness check-rust-error-string-proxies clean \
+.PHONY: build build-full build-hermit check-agent-utils-pin check-claude-md-size check-codex-setup check-compat-envelope-tests check-deps check-harness-help check-portability check-primary-freshness check-rust-error-string-proxies clean \
 	restore-primary-freshness \
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
@@ -192,6 +192,10 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@$(MAKE) --no-print-directory check-claude-md-size
 	@$(MAKE) --no-print-directory check-portability
 	@$(MAKE) --no-print-directory check-harness-help
+	@$(MAKE) --no-print-directory check-compat-envelope-tests
+
+check-compat-envelope-tests: ## Run the compat-envelope renderer unit tests (fixture-only; no hermit build)
+	@compat-envelope/tests/run-all.sh
 
 # compat-envelope: the cross-backend compatibility REGRESSION gate. Builds the
 # RELEASE hermit binary with the in-process DBI backend and asserts every
