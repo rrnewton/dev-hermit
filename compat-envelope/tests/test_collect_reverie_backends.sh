@@ -36,6 +36,20 @@ PROGRAMS=(counter1-true counter1-echo-hi counter1-pwd
           counter2-true counter2-echo-hi counter2-pwd)
 
 col() { awk -F, -v n="$1" 'NR>1{print $n}' "$CSV"; }   # 1-indexed CSV column
+named_col() { python3 - "$CSV" "$1" <<'PY'
+import csv, sys
+for row in csv.DictReader(open(sys.argv[1], newline="")):
+    print(row[sys.argv[2]])
+PY
+}
+count_backend_absence() { python3 - "$CSV" "$1" "$2" "$3" <<'PY'
+import csv, sys
+path, backend, absence, equal = sys.argv[1:]
+rows = csv.DictReader(open(path, newline=""))
+print(sum(row["backend"] == backend and
+          ((row["absence_reason"] == absence) == (equal == "eq")) for row in rows))
+PY
+}
 
 echo "== 1. every known backend x every program gets exactly one row =="
 "${RUN[@]}" >/dev/null 2>&1
@@ -58,33 +72,38 @@ ok "each of the 6 programs has 5 rows (one per backend)"
 echo "== 2. header carries absence_reason, appended last =="
 head -1 "$CSV" | grep -q ',absence_reason$' || fail "absence_reason must be the LAST column"
 ncol=$(head -1 "$CSV" | awk -F, '{print NF}')
-[ "$ncol" -eq 20 ] || fail "expected 20 columns, got $ncol"
-ok "header is the 19-column contract + absence_reason"
+[ "$ncol" -eq 33 ] || fail "expected 33 columns, got $ncol"
+ok "header is the full provenance contract + absence_reason"
+HEADER=$(head -1 "$CSV")
 
 echo "== 3. no blank ambiguous cells: unmeasured => typed token =="
 # Every row here is unmeasured (nothing is built), so every absence_reason must
 # be one of the four tokens. Positive: count > 0. Negative: zero empties.
-blank=$(col 20 | grep -c '^$' || true)
+blank=$(named_col absence_reason | grep -c '^$' || true)
 [ "$blank" -eq 0 ] || fail "$blank row(s) have a BLANK absence_reason but were not measured"
 ok "0 blank absence_reason cells"
-bad=$(col 20 | grep -vcE '^(not_collected|unsupported|unavailable|no_result)$' || true)
+bad=$(named_col absence_reason | grep -vcE '^(not_collected|unsupported|unavailable|no_result)$' || true)
 [ "$bad" -eq 0 ] || fail "$bad row(s) carry an absence_reason outside the taxonomy"
 ok "all 30 absence_reason values are in the taxonomy"
 
 echo "== 4. absence taxonomy is assigned to the right cause =="
 # unsupported: dbt/sabre/liteinst have no launcher entry for either tool.
 for b in dbt sabre liteinst; do
-  n=$(awk -F, -v b="$b" 'NR>1 && $11==b && $20=="unsupported"' "$CSV" | wc -l)
+  n=$(count_backend_absence "$b" unsupported eq)
   [ "$n" -eq 6 ] || fail "$b: expected 6 'unsupported' rows, got $n"
 done
 ok "dbt/sabre/liteinst => unsupported (no launcher), 18 rows"
 # NEGATIVE: they must NOT be mislabelled as a failure-ish or not-asked token.
-n=$(awk -F, 'NR>1 && ($11=="dbt"||$11=="sabre"||$11=="liteinst") && $20!="unsupported"' "$CSV" | wc -l)
+n=0
+for b in dbt sabre liteinst; do
+  wrong=$(count_backend_absence "$b" unsupported ne)
+  n=$((n + wrong))
+done
 [ "$n" -eq 0 ] || fail "$n dbt/sabre/liteinst row(s) carry the wrong token"
 ok "negative: 0 dbt/sabre/liteinst rows carry any other token"
 
 # unavailable: ptrace IS supported+requested, but the launcher is not built.
-n=$(awk -F, 'NR>1 && $11=="ptrace" && $20=="unavailable"' "$CSV" | wc -l)
+n=$(count_backend_absence ptrace unavailable eq)
 [ "$n" -eq 6 ] || fail "ptrace: expected 6 'unavailable' rows, got $n"
 ok "ptrace => unavailable (launcher not built), 6 rows"
 grep -q 'launcher not built' "$CSV" || fail "unavailable rows must say WHY in the reason column"
@@ -93,12 +112,12 @@ ok "unavailable rows carry a human reason"
 echo "== 5. not_collected appears iff a supported backend is left out =="
 # Ask for ptrace only: kvm is supported by both tools but unrequested.
 "${RUN[@]}" --backends ptrace >/dev/null 2>&1
-n=$(awk -F, 'NR>1 && $11=="kvm" && $20=="not_collected"' "$CSV" | wc -l)
+n=$(count_backend_absence kvm not_collected eq)
 [ "$n" -eq 6 ] || fail "expected 6 kvm 'not_collected' rows when only ptrace requested, got $n"
 ok "kvm => not_collected when unrequested (6 rows)"
 # NEGATIVE: with kvm requested it must NOT be not_collected.
 "${RUN[@]}" --backends ptrace,kvm >/dev/null 2>&1
-n=$(awk -F, 'NR>1 && $11=="kvm" && $20=="not_collected"' "$CSV" | wc -l)
+n=$(count_backend_absence kvm not_collected eq)
 [ "$n" -eq 0 ] || fail "kvm still 'not_collected' after being requested ($n rows)"
 ok "negative: 0 kvm not_collected rows once requested"
 # Row count is invariant to the requested set — absence is visible, not silent.
@@ -140,10 +159,22 @@ ok "--append grows the file, proving #8 measured replacement not a no-op"
 echo "== 10. foreign buckets are preserved, never clobbered =="
 : >"$CSV"
 head -1 <<<"$(env RUST_SCRIPT_BASE_PATH="$ROOT" "$COLLECT" --help 2>&1)" >/dev/null || true
-{
-  echo "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,absence_reason"
-  echo "r,@1,h,rv,false,regression,portable,c-programs,someone-elses-test,strict,ptrace,enabled,pass,1,,abc,10,,\"foreign\","
-} >"$CSV"
+python3 - "$CSV" "$HEADER" <<'PY'
+import csv, sys
+path, header = sys.argv[1], sys.argv[2].split(",")
+row = {column: "" for column in header}
+row.update(
+    run_id="r", run_utc="@1", hermit_sha="h", reverie_sha="rv",
+    dirty="false", run_mode="regression", lane="portable", bucket="c-programs",
+    test_id="someone-elses-test", test_mode="strict", backend="ptrace",
+    cell_state="enabled", outcome="pass", deterministic="1", output_hash="abc",
+    duration_ms="10", reason="foreign",
+)
+with open(path, "w", newline="") as handle:
+    writer = csv.DictWriter(handle, fieldnames=header)
+    writer.writeheader()
+    writer.writerow(row)
+PY
 "${RUN[@]}" >/dev/null 2>&1
 grep -q 'someone-elses-test' "$CSV" || fail "a foreign bucket's row was destroyed by the rewrite"
 ok "foreign c-programs row survived the reverie-examples rewrite"

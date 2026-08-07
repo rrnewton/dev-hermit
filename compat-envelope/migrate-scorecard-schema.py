@@ -1,29 +1,13 @@
 #!/usr/bin/env python3
-"""Migrate the canonical scorecard to carry tier evidence, without inventing any.
+"""Migrate scorecards to the tier + full provenance schema without inventing evidence.
 
-WHY THIS EXISTS. `deterministic=1` is ambiguous on its own: it cannot say which
-comparison earned it. The producers now emit `verify_compare`, `bitwise_parity`,
-`compared_log_messages` and `tier` -- but the canonical
-`compat-envelope/scorecard.csv` is 20 columns wide and carries only
-`verify_compare`, so the writer (correctly refusing to short-write rows) drops
-the other three and the evidence never reaches the consumer. Widening the file is
-what makes the new columns load-bearing rather than decorative.
+Historical parity booleans cannot be made qualified after the reference operand,
+exact Reverie SHA, profile and run coverage have been discarded.  The migration
+therefore moves them byte-for-byte into ``legacy_parity_unqualified`` and clears
+the qualified observable.  This preserves the historical observation while
+making it impossible for a consumer to count it as a current parity claim.
 
-WHAT IT DOES NOT INVENT. `bitwise_parity` and `compared_log_messages` are left
-EMPTY on every historical row, and `deterministic`, `parity`, `outcome` and every
-other existing value are untouched. Those are measurements, and no run made them.
-
-THE ONE THING IT DOES NAME. A historical row already recording `deterministic=1`
-under `verify_compare=stripped` in a two-run mode is given
-`tier=stripped-uncounted`. That is naming a comparator the row already records,
-not deriving a measurement, and the name itself admits the count is absent. The
-alternative was to leave `tier` blank -- which forces the consumer to keep an
-implicit "blank tier means pass" bypass, and that bypass is precisely the
-fail-open hole this work exists to close. An explicit weak tier is auditable; a
-blank one is not.
-
-Idempotent, and fail-closed on a file it does not recognise. Takes the same
-`flock` the producers take, so a concurrent append cannot interleave.
+Idempotent, fail-closed on partial schemas, and serialized with ``flock``.
 """
 
 from __future__ import annotations
@@ -35,112 +19,142 @@ import shutil
 import sys
 from pathlib import Path
 
-NEW_COLUMNS = ("bitwise_parity", "compared_log_messages", "tier")
-ANCHOR = "verify_compare"  # the new columns are appended directly after this
-
-# Columns whose values must be byte-identical before and after. This is the
-# safety property the migration asserts rather than merely intends.
+TIER_COLUMNS = ("bitwise_parity", "compared_log_messages", "tier")
+PROVENANCE_COLUMNS = (
+    "legacy_parity_unqualified",
+    "ref_output_hash",
+    "parity_comparator",
+    "parity_tier",
+    "profile_flags",
+    "population_id",
+    "selected_count",
+    "executed_count",
+    "evidence_count",
+)
+ANCHOR = "verify_compare"
+PARITY_NAMES = ("stdout_parity", "tool_count_parity", "parity")
 PRESERVED = (
     "run_id", "run_utc", "hermit_sha", "reverie_sha", "dirty", "run_mode", "lane",
     "bucket", "test_id", "test_mode", "backend", "cell_state", "outcome",
     "deterministic", "output_hash", "duration_ms", "max_rss_kb", "reason",
-    "verify_compare",
 )
 
 
+def present_or_none(header: list[str], columns: tuple[str, ...], label: str) -> bool:
+    present = [column for column in columns if column in header]
+    if present and len(present) != len(columns):
+        raise ValueError(
+            f"partial {label} schema ({', '.join(present)}); refusing partial migration"
+        )
+    return bool(present)
+
+
 def migrate(path: Path, *, apply: bool) -> int:
+    backup = path.with_suffix(path.suffix + ".pre-provenance-migration")
     with path.open("r+", newline="", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
             original = handle.read()
-            rows = list(csv.DictReader(original.splitlines()))
-            header = list(csv.reader([original.splitlines()[0]]))[0]
-
-            if ANCHOR not in header:
-                # A scorecard predating the evidence schema entirely (the Reverie one
-                # is 19 columns with no comparator at all). Insert the anchor too,
-                # after `reason`, rather than refusing -- otherwise the wired consumer
-                # is permanently red against a file no migration will touch.
-                if "reason" not in header:
-                    print(f"REFUSED: {path} has neither {ANCHOR!r} nor 'reason'; its "
-                          f"header is {len(header)} wide: {','.join(header)}",
-                          file=sys.stderr)
-                    return 2
-                at = header.index("reason") + 1
-                header = header[:at] + [ANCHOR] + header[at:]
-                for r in rows:
-                    r[ANCHOR] = ""
-                print(f"NOTE: {path} had no {ANCHOR!r}; inserting it after 'reason'")
-            present = [c for c in NEW_COLUMNS if c in header]
-            if len(present) == len(NEW_COLUMNS):
-                # Already widened. It may still predate the labelling rule, so relabel
-                # in place; this is idempotent and touches only blank tiers.
-                todo = [r for r in rows
-                        if r.get("deterministic") == "1"
-                        and not (r.get("tier") or "").strip()
-                        and (r.get("verify_compare") or "").strip() == "stripped"
-                        and (r.get("test_mode") or "").strip() in ("verify", "counter")]
-                if not todo:
-                    print(f"ALREADY MIGRATED: {path} carries all {len(header)} columns "
-                          f"and every deterministic=1 row is labelled")
-                    return 0
-                print(f"RELABEL: {len(todo)} deterministic=1 row(s) carry a recorded "
-                      f"stripped comparator but a blank tier")
-                if not apply:
-                    print("DRY RUN — pass --apply to write")
-                    return 0
-                for r in todo:
-                    r["tier"] = "stripped-uncounted"
-                handle.seek(0); handle.truncate()
-                w = csv.DictWriter(handle, fieldnames=header, lineterminator="\n")
-                w.writeheader(); w.writerows(rows); handle.flush()
-                print(f"OK: relabelled {len(todo)} row(s) as tier=stripped-uncounted; "
-                      f"no other column touched")
-                return 0
-            if present:
+            if not original.strip():
+                print(f"REFUSED: {path} is empty", file=sys.stderr)
+                return 2
+            lines = original.splitlines()
+            header = next(csv.reader([lines[0]]))
+            rows = list(csv.DictReader(lines))
+            if any(None in row for row in rows):
+                print(f"REFUSED: {path} has over-wide rows", file=sys.stderr)
+                return 2
+            parity_columns = [name for name in PARITY_NAMES if name in header]
+            if len(parity_columns) != 1:
                 print(
-                    f"REFUSED: {path} carries only part of the evidence schema "
-                    f"({', '.join(present)}); refusing a partial migration",
+                    f"REFUSED: {path} must have exactly one parity observable; found {parity_columns}",
                     file=sys.stderr,
                 )
                 return 2
+            parity_column = parity_columns[0]
 
-            at = header.index(ANCHOR) + 1
-            new_header = header[:at] + list(NEW_COLUMNS) + header[at:]
-            labelled = 0
+            if ANCHOR not in header:
+                if "reason" not in header:
+                    print(
+                        f"REFUSED: {path} has neither {ANCHOR!r} nor 'reason'",
+                        file=sys.stderr,
+                    )
+                    return 2
+                at = header.index("reason") + 1
+                header.insert(at, ANCHOR)
+                for row in rows:
+                    row[ANCHOR] = ""
+
+            try:
+                has_tier = present_or_none(header, TIER_COLUMNS, "tier")
+                has_provenance = present_or_none(
+                    header, PROVENANCE_COLUMNS, "provenance"
+                )
+            except ValueError as error:
+                print(f"REFUSED: {path} {error}", file=sys.stderr)
+                return 2
+
+            new_header = list(header)
+            if not has_tier:
+                at = new_header.index(ANCHOR) + 1
+                new_header[at:at] = list(TIER_COLUMNS)
+            if not has_provenance:
+                new_header.extend(PROVENANCE_COLUMNS)
             for row in rows:
-                for column in NEW_COLUMNS:
-                    row[column] = ""  # unmeasured, never derived
-                # ONE exception, and it is naming rather than deriving. A row that
-                # already records deterministic=1 under verify_compare=stripped in a
-                # two-run mode HAS a recorded comparator; calling that tier
-                # `stripped-uncounted` states the comparison it ran and admits, in the
-                # name, that the message count was never recorded. Leaving it blank
-                # instead would force the consumer to keep an implicit
-                # blank-tier-means-pass bypass, which is exactly the fail-open hole.
-                # No count, parity or outcome is invented.
-                mode = (row.get("test_mode") or "").strip()
-                if row.get("deterministic") == "1" and mode == "counter":
-                    # collect-reverie-compat compares a syscall counter across >=2 reps.
-                    # Naming that is not deriving a measurement; the mode IS the method.
-                    row["verify_compare"] = "syscall-count-across-reps"
-                    row["tier"] = "counter"
-                    labelled += 1
-                elif (row.get("deterministic") == "1"
-                        and (row.get("verify_compare") or "").strip() == "stripped"
-                        and mode == "verify"):
-                    row["tier"] = "stripped-uncounted"
-                    labelled += 1
-            print(f"labelled {labelled} historical deterministic=1 row(s) with an "
-                  f"explicit tier (comparator named; absent counts stay absent)")
+                for column in TIER_COLUMNS + PROVENANCE_COLUMNS:
+                    row.setdefault(column, "")
 
-            print(f"rows={len(rows)}  header {len(header)} -> {len(new_header)} columns")
-            print(f"adding (all blank): {', '.join(NEW_COLUMNS)}")
+            labelled = 0
+            unqualified = 0
+            for row in rows:
+                mode = (row.get("test_mode") or "").strip()
+                if (
+                    row.get("deterministic") == "1"
+                    and not (row.get("tier") or "").strip()
+                ):
+                    if mode == "counter":
+                        row["verify_compare"] = row.get("verify_compare") or "syscall-count-across-reps"
+                        row["tier"] = "counter"
+                        labelled += 1
+                    elif (row.get("verify_compare") or "").strip() == "stripped" and mode == "verify":
+                        row["tier"] = "stripped-uncounted"
+                        labelled += 1
+
+                verdict = (row.get(parity_column) or "").strip()
+                if verdict in ("0", "1"):
+                    # No historical file had the complete provenance columns.  Do not
+                    # infer any missing value from a neighbouring row or checkout.
+                    qualified = all((row.get(column) or "").strip() for column in (
+                        "ref_output_hash", "parity_comparator", "parity_tier",
+                        "profile_flags", "population_id", "selected_count",
+                        "executed_count", "evidence_count",
+                    ))
+                    if not qualified:
+                        prior = (row.get("legacy_parity_unqualified") or "").strip()
+                        carried = f"{parity_column}:{verdict}"
+                        if prior and prior != carried:
+                            print(
+                                f"REFUSED: conflicting legacy parity {prior!r} vs {carried!r}",
+                                file=sys.stderr,
+                            )
+                            return 2
+                        row["legacy_parity_unqualified"] = carried
+                        row[parity_column] = ""
+                        unqualified += 1
+
+            changed = new_header != header or labelled > 0 or unqualified > 0
+            print(
+                f"rows={len(rows)} header={len(header)}->{len(new_header)} "
+                f"tier_labels={labelled} parity_moved_unqualified={unqualified}"
+            )
+            if not changed:
+                print(f"ALREADY MIGRATED: {path}")
+                return 0
             if not apply:
                 print("DRY RUN — pass --apply to write")
                 return 0
 
-            shutil.copyfile(path, path.with_suffix(path.suffix + ".pre-tier-migration"))
+            shutil.copyfile(path, backup)
             handle.seek(0)
             handle.truncate()
             writer = csv.DictWriter(handle, fieldnames=new_header, lineterminator="\n")
@@ -150,23 +164,15 @@ def migrate(path: Path, *, apply: bool) -> int:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    # Verify AFTER releasing, by re-reading what is actually on disk.
+    before = list(csv.DictReader(backup.open(encoding="utf-8")))
     after = list(csv.DictReader(path.open(encoding="utf-8")))
-    before = list(csv.DictReader(
-        path.with_suffix(path.suffix + ".pre-tier-migration").open(encoding="utf-8")))
-    if len(after) != len(before):
+    if len(before) != len(after):
         print(f"FAILED: row count {len(before)} -> {len(after)}", file=sys.stderr)
         return 1
+    parity_column = next(name for name in PARITY_NAMES if name in after[0])
+    moved = 0
     for index, (old, new) in enumerate(zip(before, after), start=2):
         for column in PRESERVED:
-            if column == "verify_compare":
-                # May go blank -> "syscall-count-across-reps" for counter rows (naming
-                # the method the mode already is). It may never be OVERWRITTEN.
-                if (old.get(column) or "") and old[column] != new.get(column):
-                    print(f"FAILED: line {index} verify_compare overwritten "
-                          f"{old[column]!r} -> {new.get(column)!r}", file=sys.stderr)
-                    return 1
-                continue
             if column in old and old[column] != new.get(column):
                 print(
                     f"FAILED: line {index} column {column} changed "
@@ -174,25 +180,28 @@ def migrate(path: Path, *, apply: bool) -> int:
                     file=sys.stderr,
                 )
                 return 1
-        nonblank = {c: new.get(c) for c in NEW_COLUMNS if new.get(c)}
-        if nonblank and set(nonblank) != {"tier"}:
-            print(f"FAILED: line {index} has unexpected derived values {nonblank}",
-                  file=sys.stderr)
-            return 1
-        if nonblank.get("tier") not in (None, "stripped-uncounted", "counter"):
-            print(f"FAILED: line {index} tier={nonblank['tier']!r} not permitted here",
-                  file=sys.stderr)
-            return 1
-    print(f"OK: {len(after)} rows migrated; every preserved column byte-identical; "
-          f"bitwise_parity and compared_log_messages blank on every row")
+        old_parity = (old.get(parity_column) or "").strip()
+        if old_parity in ("0", "1") and not (new.get(parity_column) or "").strip():
+            if new.get("legacy_parity_unqualified") != f"{parity_column}:{old_parity}":
+                print(f"FAILED: line {index} lost legacy parity", file=sys.stderr)
+                return 1
+            moved += 1
+    print(
+        f"OK: {len(after)} rows migrated; {moved} unbound parity values preserved "
+        "as legacy-unqualified; no provenance invented"
+    )
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("csv_path", type=Path, nargs="?",
-                        default=Path(__file__).resolve().parent / "scorecard.csv")
-    parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
+    parser.add_argument(
+        "csv_path",
+        type=Path,
+        nargs="?",
+        default=Path(__file__).resolve().parent / "scorecard.csv",
+    )
+    parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     if not args.csv_path.exists():
         print(f"REFUSED: {args.csv_path} does not exist", file=sys.stderr)

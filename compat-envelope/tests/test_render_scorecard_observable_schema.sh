@@ -7,14 +7,30 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 COMMON_PREFIX=run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic
-COMMON_SUFFIX=output_hash,duration_ms,max_rss_kb,reason
+HERM_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+REV_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+OUT_SHA=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+population_id() {
+  {
+    printf 'scorecard-population-v2\n'
+    printf '%s\n' "$@" | sort
+  } | sha256sum | cut -d' ' -f1
+}
+STDOUT_POP=sha256:$(population_id \
+  $'regression\tportable\tb\tt\tverify\tdbi\tenabled' \
+  $'regression\tportable\tb\tt\tverify\tptrace\tenabled')
+TOOL_POP=sha256:$(population_id \
+  $'reverie\tportable\tb\tt\tcounter\tkvm\tenabled' \
+  $'reverie\tportable\tb\tt\tcounter\tptrace\tenabled')
+POP=$STDOUT_POP # malformed-schema fixtures below are refused before population use
+COMMON_SUFFIX=output_hash,duration_ms,max_rss_kb,reason,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count
 
 write_stdout_csv() {
     local path=$1 column=$2
     cat >"$path" <<EOF
 $COMMON_PREFIX,$column,$COMMON_SUFFIX
-r,@0,h,r,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,hash,1,,reference
-r,@0,h,r,false,regression,portable,b,t,verify,dbi,enabled,pass,1,1,hash,1,,match
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,$OUT_SHA,1,,reference,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$STDOUT_POP,2,2,2
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,dbi,enabled,pass,1,1,$OUT_SHA,1,,match,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$STDOUT_POP,2,2,2
 EOF
 }
 
@@ -22,8 +38,8 @@ write_tool_csv() {
     local path=$1 column=$2
     cat >"$path" <<EOF
 $COMMON_PREFIX,$column,$COMMON_SUFFIX
-r,@0,h,r,false,reverie,portable,b,t,counter,ptrace,enabled,pass,1,1,12,1,,reference
-r,@0,h,r,false,reverie,portable,b,t,counter,kvm,enabled,pass,1,1,12,1,,match
+r,@0,$HERM_SHA,$REV_SHA,false,reverie,portable,b,t,counter,ptrace,enabled,pass,1,1,$OUT_SHA,1,,reference,$OUT_SHA,tool-count-sha256-exact-v1,tool-count-exact,"{""comparison"" : [""counter""],""collector"" : [""--reps"",""2""]}",$TOOL_POP,2,2,2
+r,@0,$HERM_SHA,$REV_SHA,false,reverie,portable,b,t,counter,kvm,enabled,pass,1,1,$OUT_SHA,1,,match,$OUT_SHA,tool-count-sha256-exact-v1,tool-count-exact,"{""comparison"" : [""counter""],""collector"" : [""--reps"",""2""]}",$TOOL_POP,2,2,2
 EOF
 }
 
@@ -82,19 +98,19 @@ expect_refused tool-as-stdout 'found `tool_count_parity`, expected `stdout_parit
 # prefer whichever column happens to appear first.
 cat >"$TMP/ambiguous.csv" <<EOF
 $COMMON_PREFIX,stdout_parity,parity,$COMMON_SUFFIX
-r,@0,h,r,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,0,hash,1,,conflict
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,0,$OUT_SHA,1,,conflict,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$POP,1,1,1
 EOF
 # Backticks are literal renderer diagnostics.
 # shellcheck disable=SC2016
-expect_refused ambiguous 'ambiguous observable columns `stdout_parity` and legacy `parity`' \
+expect_refused ambiguous 'expected exactly one parity observable column' \
     --csv "$TMP/ambiguous.csv"
 
 cat >"$TMP/missing.csv" <<EOF
 $COMMON_PREFIX,comparison,$COMMON_SUFFIX
-r,@0,h,r,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,hash,1,,missing
+r,@0,$HERM_SHA,$REV_SHA,false,regression,portable,b,t,verify,ptrace,enabled,pass,1,1,$OUT_SHA,1,,missing,$OUT_SHA,stdout-sha256-exact-v1,stdout-exact,"{""comparison"" : [""run"",""--strict""]}",$POP,1,1,1
 EOF
 # Backticks are literal renderer diagnostics.
 # shellcheck disable=SC2016
-expect_refused missing 'missing observable column `stdout_parity`' --csv "$TMP/missing.csv"
+expect_refused missing 'expected exactly one parity observable column' --csv "$TMP/missing.csv"
 
 echo "observable schema: 4 positive current/legacy reads; 4 mismatched/ambiguous/missing schemas refused"

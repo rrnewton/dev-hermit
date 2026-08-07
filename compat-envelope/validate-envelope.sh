@@ -68,6 +68,23 @@ if ! "${here}/check-determinism-earned.sh" "${here}/scorecard.csv"; then
   echo "validate-envelope: UNEARNED or OVER-TIERED determinism claims in scorecard.csv" >&2
   fail=1
 fi
+
+# A parity boolean is accepted only when the row carries both hashed operands,
+# exact code state, comparison/profile identity, and counted run coverage.  This
+# is the same semantic verifier the renderer calls; labels and cached booleans
+# are not a second authority.
+echo "== compat-envelope: parity claims must carry full provenance =="
+if ! "${here}/check-scorecard-provenance.py" "${here}/scorecard.csv"; then
+  echo "validate-envelope: UNBOUND parity claims in scorecard.csv" >&2
+  fail=1
+fi
+if [ "${do_reverie}" -eq 1 ] && [ -f "${here}/reverie-scorecard.csv" ]; then
+  if ! "${here}/check-scorecard-provenance.py" "${here}/reverie-scorecard.csv" \
+        --observable tool-count; then
+    echo "validate-envelope: UNBOUND parity claims in reverie-scorecard.csv" >&2
+    fail=1
+  fi
+fi
 if [ "${do_reverie}" -eq 1 ] && [ -f "${here}/reverie-scorecard.csv" ]; then
   if ! "${here}/check-determinism-earned.sh" "${here}/reverie-scorecard.csv"; then
     echo "validate-envelope: UNEARNED or OVER-TIERED determinism claims in reverie-scorecard.csv" >&2
@@ -83,4 +100,4 @@ fi
 echo "== compat-envelope: ALL enabled cells green; CSVs refreshed =="
 echo "   ${here}/scorecard.csv"
 [ "${do_reverie}" -eq 1 ] && echo "   ${here}/reverie-scorecard.csv"
-"${here}/render-scorecard.rs" --csv "${here}/scorecard.csv" --all || true
+"${here}/render-scorecard.rs" --csv "${here}/scorecard.csv" --latest || true

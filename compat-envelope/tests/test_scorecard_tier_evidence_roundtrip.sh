@@ -76,8 +76,10 @@ sys.exit(0 if d=={'verify_compare':'canonical','bitwise_parity':'1',
                   'compared_log_messages':'348|348','tier':'bitwise'} else 1)"
 check "live canonical header round-trips all four fields" $?
 
-echo "case SCHEMA — the canonical scorecard carries the evidence columns"
-for col in verify_compare bitwise_parity compared_log_messages tier; do
+echo "case SCHEMA — the canonical scorecard carries tier and provenance columns"
+for col in verify_compare bitwise_parity compared_log_messages tier \
+           ref_output_hash parity_comparator parity_tier profile_flags \
+           population_id selected_count executed_count evidence_count; do
   printf '%s' "$CANONICAL" | tr ',' '\n' | grep -qx "$col"
   check "canonical header has $col" $?
 done
@@ -124,6 +126,9 @@ check "an over-wide append IS detectable as 5 overflow fields (fixture is live)"
 echo "case REVERIE-PATH — the reverie scorecard must satisfy the same wired checker"
 "$envelope/check-determinism-earned.sh" "$envelope/reverie-scorecard.csv" >/dev/null 2>&1
 check "reverie-scorecard.csv passes the production checker" $?
+"$envelope/check-scorecard-provenance.py" "$envelope/reverie-scorecard.csv" \
+  --observable tool-count >/dev/null 2>&1
+check "reverie-scorecard.csv passes the parity provenance verifier" $?
 head -1 "$envelope/reverie-scorecard.csv" | tr ',' '\n' | grep -qx tier
 check "reverie-scorecard.csv carries the tier column" $?
 

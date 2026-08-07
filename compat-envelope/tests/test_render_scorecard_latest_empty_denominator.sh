@@ -18,8 +18,8 @@
 #
 # Every fixture below therefore states its numerator and denominator explicitly, and
 # the suite brackets in BOTH directions: the same CSV that must refuse under
-# `--latest` must still render under `--run-id <older>` and under `--all`. A guard
-# that refuses everything is not a fix, it is a different ambiguous answer.
+# `--latest` must still render under `--run-id <older>`. `--all` must now refuse
+# the two run identities instead of silently pooling their code/population state.
 #
 # Usage: test_render_scorecard_latest_empty_denominator.sh [renderer.rs] [schema-source.csv]
 # Both default to the in-repo copies. The fixture header is COPIED from the schema
@@ -134,15 +134,15 @@ check "  names backends present (dbi)"              "$(has 'backends present: db
 check "  says --denominator cannot help (case A)"   "$(has 'changing --denominator will not help')"
 check "  prints no TOTAL"                           "$(hasnt 'TOTAL')"
 
-echo "== the SAME csv still renders for the older run and for --all =="
+echo "== the SAME csv renders for the older run; --all refuses mixed runs =="
 # Isolates the refusal to run selection: the data is renderable, the newest run is not.
 render "$TMP/mixed.csv" --run-id "$OLD"
 check "--run-id <older> renders (exit 0)"           "$(rc_is 0)"
 check "  numerator/denominator: TOTAL ptrace = 3"   "$(has 'TOTAL                        3')"
 
 render "$TMP/mixed.csv" --all
-check "--all unchanged: still renders (exit 0)"     "$(rc_is 0)"
-check "  --all denominator = 3 across both runs"    "$(has 'TOTAL                        3')"
+check "--all refuses mixed run identities (exit 2)" "$(rc_is 2)"
+check "  refusal names mixed-run aggregation"       "$(has 'MIXED_RUN_AGGREGATE')"
 
 echo "== denominator OMITTED, newest run passes another mode (Reverie shape) =="
 render "$TMP/othermode.csv" --latest

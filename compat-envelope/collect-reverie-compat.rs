@@ -59,7 +59,10 @@
 //!
 //! ```cargo
 //! [dependencies]
+//! serde_json = "1"
+//! sha2 = "0.10"
 //! ```
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
@@ -70,7 +73,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 // Shared contract with collect-envelope.rs / render-scorecard.rs. Keep in sync.
 // `absence_reason` is APPENDED at the end: readers resolve columns by header
 // name, so trailing additions are backward compatible with the 19-column form.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,absence_reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,tool_count_parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,absence_reason";
 const BUCKET: &str = "reverie-examples";
 // Single reverie mode: "run the shared counter Tool". The specific tool
 // (counter1/counter2) is preserved in test_id so it slots into the
@@ -86,6 +89,59 @@ const ABSENCE_NOT_COLLECTED: &str = "not_collected";
 const ABSENCE_UNSUPPORTED: &str = "unsupported";
 const ABSENCE_UNAVAILABLE: &str = "unavailable";
 const ABSENCE_NO_RESULT: &str = "no_result";
+
+fn csv_field(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn sha256_text(value: &str) -> String {
+    let mut hash = Sha256::new();
+    hash.update(value.as_bytes());
+    format!("{:x}", hash.finalize())
+}
+
+fn population_id(applets: &[Vec<String>], lane: &str) -> String {
+    let mut keys = Vec::new();
+    for backend in KNOWN_BACKENDS {
+        for tool in TOOLS {
+            for argv in applets {
+                let slug = argv.join("-").replace('/', "_");
+                let slug = if slug.is_empty() { "noargs".to_string() } else { slug };
+                let test_id = format!("{}-{slug}", tool.name);
+                keys.push(format!(
+                    "reverie\t{}\t{}\t{}\t{}\t{}\tenabled",
+                    lane, BUCKET, test_id, MODE, backend
+                ));
+            }
+        }
+    }
+    keys.sort();
+    let mut hash = Sha256::new();
+    hash.update(b"scorecard-population-v2\n");
+    for key in keys {
+        hash.update(key.as_bytes());
+        hash.update(b"\n");
+    }
+    format!("sha256:{:x}", hash.finalize())
+}
+
+fn profile_flags(bin: Option<&Path>, guest_argv: &[String], tool: &str, reps: u32) -> String {
+    let mut comparison = Vec::new();
+    if let Some(bin) = bin {
+        comparison.push(bin.to_string_lossy().into_owned());
+        comparison.extend(guest_argv.iter().cloned());
+    }
+    serde_json::json!({
+        "tool": tool,
+        "comparison": comparison,
+        "collector": ["--reps", reps.to_string()],
+    })
+    .to_string()
+}
 
 /// Map a user-supplied backend name onto the canonical vocabulary.
 /// Legacy `dbi` reads as `dbt`; everything else passes through unchanged so an
@@ -145,6 +201,10 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn exact_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Extract the syscall total from a counter tool's stderr/stdout.
@@ -332,7 +392,19 @@ fn main() {
     let run_utc = run_utc_arg.unwrap_or_else(|| format!("@{now}"));
     let hermit_sha = git(&repo, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     let reverie_sha = git(&reverie, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let dirty = git(&reverie, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false);
+    let dirty = git(&reverie, &["status", "--porcelain"])
+        .map(|s| !s.is_empty())
+        .unwrap_or(true)
+        || git(&repo, &["status", "--porcelain"])
+            .map(|s| !s.is_empty())
+            .unwrap_or(true);
+    if !dry_run && (!exact_sha(&hermit_sha) || !exact_sha(&reverie_sha) || dirty) {
+        die(&format!(
+            "parity requires clean exact code provenance; hermit_sha={hermit_sha:?} reverie_sha={reverie_sha:?} dirty={dirty}"
+        ));
+    }
+    let population_id = population_id(&applets, &lane);
+    let selected_count = TOOLS.len() * applets.len() * KNOWN_BACKENDS.len();
 
     eprintln!(
         "collect-reverie-compat: reverie={} kvm_present={} guest={} applets={} known={:?} requested={:?} reps={}",
@@ -361,8 +433,10 @@ fn main() {
         return;
     }
 
-    let mut rows: Vec<String> = Vec::new();
+    let mut rows: Vec<Vec<String>> = Vec::new();
     let mut regressions: Vec<String> = Vec::new();
+    let mut executed_count = 0usize;
+    let mut evidence_count = 0usize;
 
     // ptrace reference counts, keyed by (tool, guest-slug).
     let mut ref_counts: BTreeMap<(String, String), u64> = BTreeMap::new();
@@ -384,7 +458,9 @@ fn main() {
                     // Typed non-measurement. Never faked, never blank.
                     rows.push(row(
                         &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
-                        MODE, backend, "enabled", "skip", None, None, "", 0, &detail, absence, reps,
+                        MODE, backend, "enabled", "skip", None, None, "", "",
+                        &profile_flags(None, &[], tool.name, reps), &population_id,
+                        0, &detail, absence, reps,
                     ));
                     continue;
                 }
@@ -393,7 +469,8 @@ fn main() {
                 if !bin.exists() {
                     rows.push(row(
                         &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
-                        MODE, backend, "enabled", "skip", None, None, "", 0,
+                        MODE, backend, "enabled", "skip", None, None, "", "",
+                        &profile_flags(None, &[], tool.name, reps), &population_id, 0,
                         &format!("launcher not built: {}", bin.display()),
                         ABSENCE_UNAVAILABLE, reps,
                     ));
@@ -402,6 +479,7 @@ fn main() {
 
                 let mut guest_argv = vec![guest.clone()];
                 guest_argv.extend(argv.iter().cloned());
+                executed_count += 1;
 
                 // Run `reps` times: collect counts, exit-ok, total duration.
                 let mut counts: Vec<Option<u64>> = Vec::new();
@@ -457,12 +535,25 @@ fn main() {
                     let why = if !all_ok { "run failed" } else { "non-deterministic" };
                     regressions.push(format!("{test_id} [{backend}] -> {why} ({reason})"));
                 }
-                let output_hash = count.map(|c| c.to_string()).unwrap_or_default();
+                let output_hash = count.map(|c| sha256_text(&c.to_string())).unwrap_or_default();
+                let ref_output_hash = if *backend == "ptrace" {
+                    output_hash.clone()
+                } else {
+                    ref_counts
+                        .get(&(tool.name.to_string(), slug.clone()))
+                        .map(|count| sha256_text(&count.to_string()))
+                        .unwrap_or_default()
+                };
+                if parity.is_some() {
+                    evidence_count += 1;
+                }
+                let profile = profile_flags(Some(&bin), &guest_argv, tool.name, reps);
 
                 rows.push(row(
                     &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
                     MODE, backend, "enabled", outcome, Some(deterministic), parity,
-                    &output_hash, total_ms, &reason, absence_after_run, reps,
+                    &output_hash, &ref_output_hash, &profile, &population_id,
+                    total_ms, &reason, absence_after_run, reps,
                 ));
             }
         }
@@ -475,15 +566,26 @@ fn main() {
     let mut buf = String::new();
     let mut kept = 0usize;
     let mut dropped = 0usize;
+    let target_header: Vec<String> = if existing.trim().is_empty() {
+        HEADER.split(',').map(String::from).collect()
+    } else {
+        existing.lines().next().unwrap_or("").split(',').map(String::from).collect()
+    };
+    for required in HEADER.split(',') {
+        if !target_header.iter().any(|column| column == required) {
+            die(&format!(
+                "scorecard {} is missing required provenance column {required:?}; run migrate-scorecard-schema.py --apply first",
+                csv_path.display()
+            ));
+        }
+    }
     if existing.trim().is_empty() {
-        buf.push_str(HEADER);
+        buf.push_str(&target_header.join(","));
         buf.push('\n');
     } else {
         for (i, line) in existing.lines().enumerate() {
             if i == 0 {
-                // Preserve a wider existing header; only widen a narrower one.
-                let hdr = if line.split(',').count() >= HEADER.split(',').count() { line } else { HEADER };
-                buf.push_str(hdr);
+                buf.push_str(&target_header.join(","));
                 buf.push('\n');
                 continue;
             }
@@ -500,13 +602,30 @@ fn main() {
             buf.push('\n');
         }
     }
-    for r in &rows {
-        buf.push_str(r);
+    let names: Vec<&str> = HEADER.split(',').collect();
+    for row in &mut rows {
+        for (name, value) in [
+            ("selected_count", selected_count.to_string()),
+            ("executed_count", executed_count.to_string()),
+            ("evidence_count", evidence_count.to_string()),
+        ] {
+            let index = names.iter().position(|candidate| *candidate == name).unwrap();
+            row[index] = value;
+        }
+        let projected = target_header
+            .iter()
+            .map(|column| {
+                let index = names.iter().position(|name| *name == column).unwrap();
+                csv_field(&row[index])
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        buf.push_str(&projected);
         buf.push('\n');
     }
     fs::write(&csv_path, buf).unwrap_or_else(|e| die(&format!("cannot write CSV: {e}")));
 
-    let measured = rows.iter().filter(|r| r.rsplit(',').next() == Some("")).count();
+    let measured = executed_count;
     eprintln!(
         "collect-reverie-compat: wrote {} rows to {} (run_id={run_id}); {measured} measured, {} typed-absent; \
          kept {kept} foreign row(s), replaced {dropped} prior `{BUCKET}` row(s)",
@@ -546,11 +665,14 @@ fn row(
     deterministic: Option<bool>,
     parity: Option<bool>,
     output_hash: &str,
+    ref_output_hash: &str,
+    profile_flags: &str,
+    population_id: &str,
     duration_ms: i64,
     reason: &str,
     absence_reason: &str,
     reps: u32,
-) -> String {
+) -> Vec<String> {
     let det = deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("");
     // WHAT THIS COLLECTOR ACTUALLY COMPARED, carried with the verdict.
     //
@@ -566,9 +688,12 @@ fn row(
     };
     let bitwise_parity = if deterministic.is_some() { "0" } else { "" };
     let par = parity.map(|b| if b { "1" } else { "0" }).unwrap_or("");
-    // reason may contain commas; wrap in quotes.
-    let reason_q = format!("\"{}\"", reason.replace('"', "'"));
-    [
+    let (parity_comparator, parity_tier) = if parity.is_some() {
+        ("tool-count-sha256-exact-v1", "tool-count-exact")
+    } else {
+        ("", "")
+    };
+    vec![
         run_id.to_string(),
         run_utc.to_string(),
         hermit_sha.to_string(),
@@ -587,12 +712,20 @@ fn row(
         output_hash.to_string(),
         duration_ms.to_string(),
         String::new(), // max_rss_kb
-        reason_q,
+        reason.to_string(),
         verify_compare.to_string(),
         bitwise_parity.to_string(),
         compared,
         tier.to_string(),
+        String::new(), // legacy_parity_unqualified: producers never write legacy claims
+        ref_output_hash.to_string(),
+        parity_comparator.to_string(),
+        parity_tier.to_string(),
+        profile_flags.to_string(),
+        population_id.to_string(),
+        String::new(), // selected_count: filled once the run completes
+        String::new(), // executed_count
+        String::new(), // evidence_count
         absence_reason.to_string(),
     ]
-    .join(",")
 }

@@ -224,7 +224,7 @@ Fresh triage of every `lane=privileged` test (task
 compat-envelope/collect-envelope.rs --mode regression --lane portable \
   --repo <hermit-checkout> --backends ptrace,dbi,sabre --with-parity \
   --csv compat-envelope/scorecard.csv
-compat-envelope/render-scorecard.rs --csv compat-envelope/scorecard.csv --all
+compat-envelope/render-scorecard.rs --csv compat-envelope/scorecard.csv --latest
 ```
 
 **Table 2** (Reverie Guest/Tool boundary — a *separate* producer and a *separate*

@@ -47,8 +47,8 @@
 //!   --run-id ID       Render only rows from this run_id.
 //!   --latest          Render only the most recent run_id (default when neither
 //!                     --run-id nor --all is given).
-//!   --all             Aggregate across every run in the CSV (last-writer-wins
-//!                     per (run_mode,lane,bucket,test_id,test_mode,backend)).
+//!   --all             Render only when the CSV contains one run identity.
+//!                     Multiple runs are refused; select one with --run-id.
 //!   --denominator M   Which passing ptrace test_mode defines the denominator
 //!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
@@ -68,7 +68,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::{exit, Command, Stdio};
 
 const USAGE: &str = r#"Usage: compat-envelope/render-scorecard.rs --csv PATH [OPTIONS]
 
@@ -78,7 +78,7 @@ Options:
   --csv PATH        Scorecard CSV (required; population must be explicit).
   --run-id ID       Render only rows from this run_id.
   --latest          Render only the most recent run_id (default).
-  --all             Aggregate across every run (last-writer-wins per cell).
+  --all             Require one run identity; refuse mixed-run aggregation.
   --denominator M   Passing ptrace test_mode defining the count (def: verify).
   --backends LIST   Comma-separated backend columns (def: dbi,kvm,sabre,liteinst).
   --observable O    stdout (default) or tool-count; labels parity honestly.
@@ -89,6 +89,16 @@ Options:
 fn die(msg: &str) -> ! {
     eprintln!("render-scorecard: {msg}\n\n{USAGE}");
     exit(2);
+}
+
+fn script_dir() -> PathBuf {
+    if let Ok(path) = env::var("RUST_SCRIPT_BASE_PATH") {
+        return PathBuf::from(path);
+    }
+    PathBuf::from(file!())
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("compat-envelope"))
 }
 
 /// One CSV row, only the fields the scorecard needs.
@@ -208,6 +218,28 @@ fn main() {
     let csv_path = csv.unwrap_or_else(|| {
         die("--csv is required: choose `compat-envelope/fullcorpus-scorecard.csv` for the full corpus or `compat-envelope/scorecard.csv` for the CI/regression subset")
     });
+    // One semantic verifier owns parity provenance.  The renderer consumes its
+    // verdict before it consumes any cached parity boolean.  --all is explicit
+    // aggregate authority and therefore additionally refuses more than one run.
+    let checker = script_dir().join("check-scorecard-provenance.py");
+    let mut check = Command::new(&checker);
+    check
+        .arg(&csv_path)
+        .arg("--observable")
+        .arg(&observable)
+        .stdout(Stdio::null());
+    if all {
+        check.arg("--aggregate");
+    }
+    if let Some(ref selected_run) = run_id {
+        check.arg("--run-id").arg(selected_run);
+    }
+    let status = check.status().unwrap_or_else(|error| {
+        die(&format!("cannot execute provenance verifier {}: {error}", checker.display()))
+    });
+    if !status.success() {
+        die("parity provenance verifier refused this scorecard/scope");
+    }
     let (parity_label, parity_key, parity_meaning, full_parity_not_measured) =
         match observable.as_str() {
             "stdout" => (
@@ -334,7 +366,8 @@ fn main() {
     if let Some(r) = &scope_run {
         cells.retain(|c| &c.run_id == r);
     } else {
-        // --all: last-writer-wins per logical cell key across runs.
+        // --all has already been proven single-run by the provenance verifier;
+        // collapse only duplicate writes within that one run identity.
         let mut newest: BTreeMap<(String, String, String, String), Cell> = BTreeMap::new();
         for c in cells.drain(..) {
             let key = (c.bucket.clone(), c.test_id.clone(), c.test_mode.clone(), c.backend.clone());
@@ -498,7 +531,9 @@ fn main() {
             .filter(|c| c.backend == "ptrace" && c.outcome == "pass")
             .map(|c| c.test_mode.as_str())
             .collect();
-        let run_label = scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into());
+        let run_label = scope_run
+            .clone()
+            .unwrap_or_else(|| "ALL (single run required)".into());
         let remedy = if !usable.is_empty() {
             format!(
                 "Retry with --denominator <{}> -- those are the modes this run has passing \
@@ -629,7 +664,9 @@ fn main() {
             // Human table in the owner's exact shape.
             println!(
                 "Compat-envelope scorecard  (run: {}, denominator: {} = {})",
-                scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into()),
+                scope_run
+                    .clone()
+                    .unwrap_or_else(|| "ALL (single run required)".into()),
                 denom_mode,
                 denominator_meaning,
             );

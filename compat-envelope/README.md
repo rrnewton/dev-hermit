@@ -89,7 +89,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
           ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → stdout parity
           └─ appends 19-col rows → compat-envelope/scorecard.csv
       └─ collect-reverie-compat.rs → reverie-scorecard.csv
-      └─ render-scorecard.rs --csv scorecard.csv --all               → rendered table
+      └─ render-scorecard.rs --csv scorecard.csv --latest            → rendered table
 ```
 
 **Local definition-of-done** (`make validate`, this repo, a box with `/dev/kvm`):
@@ -149,7 +149,10 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
 ```
 run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,
 test_id,test_mode,backend,cell_state,outcome,deterministic,<observable>_parity,
-output_hash,duration_ms,max_rss_kb,reason
+output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,
+compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,
+parity_comparator,parity_tier,profile_flags,population_id,selected_count,
+executed_count,evidence_count
 ```
 
 - `run_mode` — `regression` | `expansion` (hermit) or `reverie`.
@@ -163,15 +166,24 @@ output_hash,duration_ms,max_rss_kb,reason
 - `deterministic` / `<observable>_parity` — `1` | `0` | blank (unknown).
   Hermit and e9patch stdout comparisons write `stdout_parity`; Reverie counter
   comparisons write `tool_count_parity`. Scorecards written before this rename
-  use the ambiguous `parity` spelling; the renderer reads it only as a legacy
-  fallback for the observable explicitly selected by `--observable`.
+  use the ambiguous `parity` spelling. A parity boolean is qualified only when
+  the same row carries both SHA-256 operands, exact product SHAs, comparator,
+  tier, full profile, population receipt, and selected/executed/evidence counts.
+  Historical booleans missing those conditions live in
+  `legacy_parity_unqualified` and are never counted by the renderer.
   `deterministic` records run1==run2 independently of either parity observable.
-- `output_hash` — the comparable observable (hermit: guest-output hash; reverie:
-  the syscall total).
+- `output_hash` / `ref_output_hash` — SHA-256 operands for the candidate and
+  reference observables (guest output or the decimal syscall-count text).
+- `parity_comparator` / `parity_tier` / `profile_flags` — the comparison
+  contract and exact argv/profile that condition a qualified verdict.
+- `population_id` — SHA-256 receipt over the sorted selected row identities;
+  the verifier re-derives it. The three count columns state the selected,
+  executed, and evidence-bearing denominators for that run.
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
 
-The renderer keys logical cells on `(bucket, test_id, test_mode, backend)` and,
-with `--all`, keeps the newest `run_id` per cell (last-writer-wins).
+The renderer keys logical cells on `(bucket, test_id, test_mode, backend)`.
+`--all` is accepted only for a single run identity; mixed-run aggregation is
+refused. Use `--run-id` (or `--latest`) so a table has one code/population state.
 
 ## Two modes (hermit envelope)
 
@@ -232,7 +244,7 @@ busybox applets.
 #     --bin reverie-kvm-counter1 --bin reverie-kvm-counter2
 ./collect-reverie-compat.rs --repo ../hermit --csv reverie-scorecard.csv
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter \
-    --backends kvm --observable tool-count --all
+    --backends kvm --observable tool-count --latest
 ```
 
 Only tools that have both launchers become tool-count-parity cells; a ptrace-only example
@@ -293,13 +305,13 @@ disk (defaults resolve to the `worktrees/e9patch` checkout).
 ## Rendering
 
 ```bash
-./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --all
-./render-scorecard.rs --csv scorecard.csv --observable stdout --all
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --run-id RUN_ID
+./render-scorecard.rs --csv scorecard.csv --observable stdout --latest
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter \
-    --backends kvm --observable tool-count --all
+    --backends kvm --observable tool-count --latest
 ./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch \
     --observable stdout --latest
-./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --all --json
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --run-id RUN_ID --json
 ```
 
 `--csv` is required. A bare invocation exits 2 rather than silently choosing
