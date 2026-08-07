@@ -766,10 +766,134 @@ class ProtocolTest(unittest.TestCase):
                 ),
                 0,
             )
-        self.assertEqual(
-            output.getvalue().strip(),
-            "WATCH OBLIGATIONS: checked=0 unresolved=0 remediation_required=0",
+        printed = output.getvalue()
+        # The human-readable domain result is unchanged...
+        self.assertIn(
+            "WATCH OBLIGATIONS: checked=0 unresolved=0 remediation_required=0", printed
         )
+        # ...and it now travels with the typed completeness fields, so a
+        # consumer can tell "swept everything and found nothing" from "never
+        # finished the sweep". Absence of findings is not evidence of health.
+        self.assertIn("watch_status=complete", printed)
+        self.assertIn("watch_timed_out=false", printed)
+        self.assertIn("watch_planned=0", printed)
+        self.assertIn("watch_checked=0", printed)
+
+    # ---------------------------------------------------------------- budget
+    #
+    # The gate used to be SIGKILLed by tick-hub's 30s guillotine mid-sweep,
+    # which discarded ALL captured output -- so a tick where the sweep never
+    # finished was indistinguishable from one that swept clean. These bracket
+    # the wall budget in BOTH directions: it must fire and preserve partials,
+    # and it must NOT fire when the sweep fits.
+
+    def _budget_fixture(self, count: int, seconds_per_poll: float):
+        """A fake clock advanced by each poll, so the budget is deterministic.
+
+        Advancing the clock from inside the mocked poll (rather than asserting
+        on a fixed sequence of monotonic() calls) keeps the test robust to
+        refactors of where the timing calls sit.
+        """
+        clock = {"t": 0.0}
+        records = [
+            {
+                "obligation_id": f"ob-{i}",
+                "repo": "rrnewton/hermit",
+                "landed_sha": f"{i}" * 40,
+                "overall_state": "open",
+                "local": {"state": "green"},
+                "github": {"state": "no_result"},
+                "recommendation": {},
+                "remediation": {},
+            }
+            for i in range(count)
+        ]
+
+        def fake_poll(obligation_id: str, store_path: Path) -> dict:
+            clock["t"] += seconds_per_poll
+            return next(r for r in records if r["obligation_id"] == obligation_id)
+
+        return clock, records, fake_poll
+
+    def test_one_shot_watch_stops_on_budget_and_keeps_partial_results(self) -> None:
+        clock, records, fake_poll = self._budget_fixture(5, seconds_per_poll=10.0)
+        output = io.StringIO()
+        with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
+             mock.patch.object(protocol.obligations, "unresolved_records",
+                               return_value=records), \
+             mock.patch.object(protocol, "poll_obligation", fake_poll), \
+             redirect_stdout(output):
+            rc = protocol.watch(
+                store_path=self.store,
+                obligation_id=None,
+                once=True,
+                poll_seconds=1,
+                budget_secs=25.0,
+            )
+        printed = output.getvalue()
+        # 0s, 10s, 20s are all under 25s; the fourth check at 30s is not.
+        self.assertIn("watch_status=partial", printed)
+        self.assertIn("watch_timed_out=true", printed)
+        self.assertIn("watch_planned=5", printed)
+        self.assertIn("watch_checked=3", printed)
+        # THE POINT: the three already-polled obligations survive. Under the
+        # old SIGKILL path every one of them was lost.
+        for i in range(3):
+            self.assertIn(f"ob-{i}", printed)
+        # And an unfinished sweep must NOT report clean.
+        self.assertEqual(rc, 1)
+
+    def test_one_shot_watch_that_fits_the_budget_reports_complete(self) -> None:
+        """Positive control: the budget must not fire when the sweep fits."""
+        clock, records, fake_poll = self._budget_fixture(3, seconds_per_poll=1.0)
+        output = io.StringIO()
+        with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
+             mock.patch.object(protocol.obligations, "unresolved_records",
+                               return_value=records), \
+             mock.patch.object(protocol, "poll_obligation", fake_poll), \
+             redirect_stdout(output):
+            protocol.watch(
+                store_path=self.store,
+                obligation_id=None,
+                once=True,
+                poll_seconds=1,
+                budget_secs=25.0,
+            )
+        printed = output.getvalue()
+        self.assertIn("watch_status=complete", printed)
+        self.assertIn("watch_timed_out=false", printed)
+        self.assertIn("watch_checked=3", printed)
+        self.assertNotIn("watch_status=partial", printed)
+
+    def test_per_poll_wall_and_cpu_are_reported_as_comment_lines(self) -> None:
+        """The timing basis must ride along without polluting the gate fields.
+
+        tick-hub's parse_kv_lines ignores '#' lines, so these are visible to a
+        human reading captured output but contribute no key/value fields.
+        """
+        clock, records, fake_poll = self._budget_fixture(2, seconds_per_poll=1.0)
+        output = io.StringIO()
+        with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
+             mock.patch.object(protocol.obligations, "unresolved_records",
+                               return_value=records), \
+             mock.patch.object(protocol, "poll_obligation", fake_poll), \
+             redirect_stdout(output):
+            protocol.watch(
+                store_path=self.store,
+                obligation_id=None,
+                once=True,
+                poll_seconds=1,
+                budget_secs=100.0,
+            )
+        timing = [
+            line
+            for line in output.getvalue().splitlines()
+            if line.startswith("# poll ")
+        ]
+        self.assertEqual(len(timing), 2)
+        for line in timing:
+            self.assertIn("wall=", line)
+            self.assertIn("cpu=", line)
 
     def test_local_run_persists_tool_cost_payload(self) -> None:
         self.create()

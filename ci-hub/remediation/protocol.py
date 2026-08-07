@@ -36,6 +36,28 @@ DEFAULT_GITHUB_WAIT_SECONDS = 120
 DEFAULT_NETWORK_TIMEOUT = float(
     os.environ.get("CI_HUB_REMEDIATION_NETWORK_TIMEOUT", "120")
 )
+# BOUND INVERSION -- the reason `watch --once --gate` used to be SIGKILLed.
+#
+# tick-hub runs each gate under a 30s guillotine
+# (agent-utils/py/tick_hub/probes.py DEFAULT_GATE_TIMEOUT_SECS = 30) and, on
+# expiry, kills the process group and DISCARDS the captured stdout. Meanwhile
+# `watch` polls every unresolved obligation serially, each poll making network
+# calls bounded at DEFAULT_NETWORK_TIMEOUT = 120s -- FOUR TIMES the whole outer
+# budget, ten call sites, five obligations in the measured run. One slow GitHub
+# call therefore blew the outer bound on its own, the process was killed
+# mid-loop, and every obligation already polled was thrown away: the tick saw
+# no fields at all and could not distinguish that from "nothing is wrong".
+#
+# The fix is a WALL BUDGET the gate honours ITSELF, so it always returns under
+# its own power with a typed result instead of being killed with none. Measured
+# 2026-08-07 on devbig014: the work is ~1.7s of user CPU; the tail is blocking
+# network wait (a 31.9s run showed 6144 voluntary context switches against ~600
+# on fast runs, with flat CPU). So the budget is not a guess about how long the
+# work takes -- it is the outer bound minus measured startup and the
+# print_status tail, and the gate reports how much of the plan it completed.
+DEFAULT_WATCH_GATE_BUDGET_SECS = float(
+    os.environ.get("CI_HUB_WATCH_GATE_BUDGET", "20")
+)
 TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
 # Only a genuine failing ANSWER remediates. A no_result (a cancelled hosted run,
 # an OOM-killed local validate, a lost runner, a network error reaching GitHub)
@@ -1721,23 +1743,83 @@ def _watch_complete(record: Mapping[str, Any]) -> bool:
     )
 
 
+def _poll_within_budget(
+    records: Sequence[Mapping[str, Any]],
+    store_path: Path,
+    deadline: float | None,
+) -> tuple[list[dict[str, Any]], int, bool]:
+    """Poll obligations one at a time, stopping when the wall budget is spent.
+
+    Returns ``(updated, planned, timed_out)``. Polling one at a time -- rather
+    than the list comprehension this replaces -- is what makes a partial result
+    possible at all: the old form had to finish every obligation before anything
+    could be reported, so an outer kill discarded the ones already done.
+
+    Per-op wall and CPU go to stdout as ``#`` comment lines. That is deliberate:
+    tick-hub's ``parse_kv_lines`` ignores ``#``, so the timing basis rides along
+    in the captured output for a human without polluting the gate's fields. The
+    flat-user/exploding-system split is the entire diagnostic for this gate and
+    was previously invisible.
+    """
+    updated: list[dict[str, Any]] = []
+    for record in records:
+        if deadline is not None and time.monotonic() >= deadline:
+            return updated, len(records), True
+        op_wall = time.monotonic()
+        op_cpu = time.process_time()
+        updated.append(poll_obligation(record["obligation_id"], store_path))
+        print(
+            f"# poll {record['obligation_id']} "
+            f"wall={time.monotonic() - op_wall:.2f}s "
+            f"cpu={time.process_time() - op_cpu:.2f}s"
+        )
+    return updated, len(records), False
+
+
 def watch(
     *,
     store_path: Path,
     obligation_id: str | None,
     once: bool,
     poll_seconds: int,
+    budget_secs: float | None = None,
 ) -> int:
+    started = time.monotonic()
+    deadline = None if budget_secs is None else started + budget_secs
     while True:
         records = (
             [obligations.get_record(obligation_id, store_path)]
             if obligation_id
             else obligations.unresolved_records(store_path)
         )
-        updated = [
-            poll_obligation(record["obligation_id"], store_path) for record in records
-        ]
+        updated, planned, timed_out = _poll_within_budget(
+            records, store_path, deadline
+        )
+        if timed_out:
+            # TYPED, NON-CRASHING. We stop under our own power and report what
+            # we actually checked, so the consumer can tell PARTIAL from CLEAN.
+            # Exit 1 (not 0) because an unfinished sweep has NOT established
+            # that there is nothing to act on -- treating it as clean is the
+            # exact failure this task exists to remove.
+            print(
+                f"WATCH OBLIGATIONS: checked={len(updated)} of planned={planned} "
+                f"PARTIAL (wall budget {budget_secs:.0f}s exhausted)"
+            )
+            print("watch_status=partial")
+            print(f"watch_planned={planned}")
+            print(f"watch_checked={len(updated)}")
+            print("watch_timed_out=true")
+            print(f"watch_budget_secs={budget_secs:.0f}")
+            print(f"watch_elapsed_secs={time.monotonic() - started:.1f}")
+            for record in updated:
+                print(f"  {_summary_line(record)}")
+            return 1
         if once or all(_watch_complete(record) for record in updated):
+            print("watch_status=complete")
+            print(f"watch_planned={planned}")
+            print(f"watch_checked={len(updated)}")
+            print("watch_timed_out=false")
+            print(f"watch_elapsed_secs={time.monotonic() - started:.1f}")
             remediation = sum(
                 record["overall_state"] == "remediation_required" for record in updated
             )
@@ -2098,6 +2180,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     watch_parser.add_argument("--gate", action="store_true")
     watch_parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS)
     watch_parser.add_argument(
+        "--budget-secs",
+        type=float,
+        default=DEFAULT_WATCH_GATE_BUDGET_SECS,
+        help=(
+            "wall budget for a --once sweep; on expiry the gate returns a typed "
+            "PARTIAL result under its own power instead of being killed by the "
+            "outer tick guillotine (which discards all output)"
+        ),
+    )
+    watch_parser.add_argument(
         "--store", type=Path, default=obligations.default_store_path()
     )
 
@@ -2171,6 +2263,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 obligation_id=args.id,
                 once=args.once,
                 poll_seconds=args.poll_seconds,
+                # Only bound the ONE-SHOT gate path. A long-lived `watch` (no
+                # --once) is a deliberate foreground poll with no outer
+                # guillotine over it, and must not acquire one here.
+                budget_secs=args.budget_secs if args.once else None,
             )
             if args.gate:
                 return print_status(
