@@ -102,14 +102,24 @@ def memory_records(msgs: list[str]) -> list[tuple[str, str]]:
     return out
 
 
-def run_backend(binary: Path, libs: Path, backend: str, log: Path, out: Path) -> None:
+def run_backend(binary: Path, libs: Path, backend: str, log: Path, out: Path) -> int:
+    # A failed launch must not inherit valid logs from an earlier invocation and turn
+    # the wrapper failure into a MATCH.
+    for path in (log, out, Path(f"{out}.stdout")):
+        path.unlink(missing_ok=True)
     pin = " ".join(PINNED + [f"LD_LIBRARY_PATH={libs}"])
     inner = (f"env -i {pin} {binary} --backend {backend} --log info --log-file {log} "
              f"run --strict --detlog-stack --detlog-heap -- {' '.join(GUEST)} "
              f"> {out}.stdout 2> {out}")
-    subprocess.run([str(BOX), "--cpu-budget", "180", "--wall", "240",
-                    "--label", f"paritygate-{backend}", "--", "bash", "-c", inner],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+    try:
+        completed = subprocess.run(
+            [str(BOX), "--cpu-budget", "180", "--wall", "240",
+             "--label", f"paritygate-{backend}", "--", "bash", "-c", inner],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        return 124
+    return completed.returncode
 
 
 def load(log: Path, err: Path) -> list[str]:
@@ -175,15 +185,27 @@ def main() -> int:
         return 2
     args.workdir.mkdir(parents=True, exist_ok=True)
 
-    report: dict = {"enforced": {}, "known_red": {f"{a}->{b}": r for (a, b), r in KNOWN_RED.items()}}
+    report: dict = {
+        "backend_runs": {},
+        "enforced": {},
+        "known_red": {f"{a}->{b}": r for (a, b), r in KNOWN_RED.items()},
+    }
     logs: dict[str, list[str]] = {}
+    backend_failed = False
     for backend in sorted({b for pair in ENFORCED_PAIRS for b in pair}):
         log, err = args.workdir / f"{backend}.log", args.workdir / f"{backend}.err"
-        run_backend(args.binary, args.libs, backend, log, err)
+        backend_rc = run_backend(args.binary, args.libs, backend, log, err)
+        report["backend_runs"][backend] = {"returncode": backend_rc}
+        if backend_rc != 0:
+            backend_failed = True
+            logs[backend] = []
+            print(f"parity-gate: {backend}: BOXED RUN FAILED (wrapper rc={backend_rc}); "
+                  "refusing output", file=sys.stderr)
+            continue
         logs[backend] = load(log, err)
         print(f"parity-gate: {backend}: {len(logs[backend])} messages")
 
-    rc = 0
+    rc = 2 if backend_failed else 0
     for a, b in ENFORCED_PAIRS:
         r = compare(logs.get(a, []), logs.get(b, []))
         report["enforced"][f"{a}->{b}"] = r

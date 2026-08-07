@@ -83,6 +83,7 @@ calibrate_crash_seed() {
   local image="$artifacts/chaos-buggy.img"
   local output="$artifacts/.calibration.out"
   local seed rc fixture executed=0 attempted=0 last_rc="" cached_fixture
+  local box_mode=BOXED box_rc
 
   fixture="$(fixture_identity)"
 
@@ -124,12 +125,33 @@ calibrate_crash_seed() {
   # reported "boxing available" for a call shape that could not box.
   set +e
   "${box[@]}" -- true >/dev/null 2>&1
-  local box_rc=$?
+  box_rc=$?
   set -e
   if [ "$box_rc" -eq 3 ]; then
-    echo "WARNING: cgroup boxing unavailable here (hermit-box-run exit 3); calibrating UNBOXED." >&2
+    box_mode=UNBOXED
+    {
+      echo "**********************************************************************"
+      echo "*** SAFETY DEGRADATION: DEMO 8 CALIBRATION WILL RUN UNBOXED        ***"
+      echo "*** hermit-box-run refused cgroup setup (exit 3). The per-seed     ***"
+      echo "*** timeout and ephemeral-host teardown are the only remaining     ***"
+      echo "*** containment. See $artifacts/boxing-mode.txt"
+      echo "**********************************************************************"
+    } >&2
     box+=(--allow-cgroup-failure)
+  elif [ "$box_rc" -ne 0 ]; then
+    fail "Demo 8 boxing probe failed (hermit-box-run rc=$box_rc); refusing calibration"
   fi
+
+  # Carry the execution condition with the result. A console-only warning disappears when
+  # the caller recycles and cannot establish later that calibration ran without a reaper.
+  {
+    printf 'schema_version=1\n'
+    printf 'calibration_execution_mode=%s\n' "$box_mode"
+    printf 'boxing_probe_exit_code=%s\n' "$box_rc"
+    printf 'recorded_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'repository_commit=%s\n' \
+      "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unknown)"
+  } >"$artifacts/boxing-mode.txt"
 
   echo "Calibrating a deterministic crashing seed for fixture ${fixture:0:12}" \
     "(up to $CALIBRATION_SEEDS seeds, ${CALIBRATION_TIMEOUT}s each)..."
@@ -149,16 +171,26 @@ calibrate_crash_seed() {
     set -e
     attempted=$((attempted + 1))
     last_rc=$rc
+    if [ "$rc" -eq 137 ]; then
+      rm -f -- "$image"
+      if [ "$box_mode" = BOXED ]; then
+        fail "KILLED-BY-BOX: Demo 8 calibration seed $seed exceeded its cgroup limit;" \
+          "the ASAN text in its partial output is NOT a test result"
+      fi
+      fail "KILLED: unboxed Demo 8 calibration seed $seed exited 137;" \
+        "the ASAN text in its partial output is NOT a test result"
+    fi
     if seed_executed "$rc" "$output"; then
       executed=$((executed + 1))
-    fi
-    # ASAN can report the UAF on a thread whose process still exits 0, so the report text --
-    # not the exit status -- is the detector. The exit status is what proves the guest ran.
-    if grep -qa 'AddressSanitizer: heap-use-after-free' "$output"; then
-      printf '%s %s\n' "$seed" "$fixture" >"$ASSETS/.crash-seed"
-      rm -f -- "$image" "$output"
-      echo "Demo 8 crash seed calibrated: $seed (guest exit $rc, fixture ${fixture:0:12})"
-      return
+      # ASAN can report the UAF on a thread whose process still exits 0, so the report text --
+      # not the exit status -- is the detector. The accepted exit status is what proves this
+      # is a completed guest observation rather than partial output from a killed wrapper.
+      if grep -qa 'AddressSanitizer: heap-use-after-free' "$output"; then
+        printf '%s %s\n' "$seed" "$fixture" >"$ASSETS/.crash-seed"
+        rm -f -- "$image" "$output"
+        echo "Demo 8 crash seed calibrated: $seed (guest exit $rc, fixture ${fixture:0:12})"
+        return
+      fi
     fi
   done
 

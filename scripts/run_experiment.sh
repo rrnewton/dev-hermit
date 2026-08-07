@@ -20,7 +20,9 @@ Options:
   -h, --help         Show this help
 
 The script exits 0 for DETERMINISTIC, 1 for NON-DETERMINISTIC, and 2 for a
-usage or setup error. A consistent nonzero program exit is still deterministic.
+usage, setup, or boxing failure. A consistent nonzero program exit is still
+deterministic, but an exit 137 from hermit-box-run is KILLED-BY-BOX and is not
+a program observation.
 USAGE
 }
 
@@ -150,17 +152,21 @@ command_line=${command_line% }
 } >"$output_dir/metadata.txt"
 
 manifest=$output_dir/runs.tsv
-printf 'run\texit_code\tstdout_sha256\tstderr_sha256\tfingerprint_sha256\n' >"$manifest"
+printf 'run\texit_code\trun_status\tstdout_sha256\tstderr_sha256\tfingerprint_sha256\n' \
+  >"$manifest"
 
 declare -A seen_fingerprints=()
 reference_fingerprint=
 result=DETERMINISTIC
 unique_fingerprints=0
+attempted_runs=0
+completed_test_runs=0
 
 for ((run = 1; run <= runs; run++)); do
   run_name=$(printf 'run-%04d' "$run")
   run_dir=$output_dir/runs/$run_name
   mkdir "$run_dir"
+  ((attempted_runs += 1))
 
   set +e
   # Box the bare hermit run so a leaked core/held namespace is reaped by cgroup.kill.
@@ -168,6 +174,7 @@ for ((run = 1; run <= runs; run++)); do
   # per-stream sha256 determinism fingerprint below is unchanged, and the child's REAL
   # exit status (part of the fingerprint) is propagated verbatim.
   "$script_dir/hermit-box-run" --passthrough --label run-experiment \
+    --diag-log "$run_dir/box.log" \
     -- "$hermit_bin" --log "$hermit_log" run -- "$program" "${program_args[@]}" \
     >"$run_dir/stdout" 2>"$run_dir/stderr"
   exit_code=$?
@@ -175,6 +182,39 @@ for ((run = 1; run <= runs; run++)); do
 
   stdout_hash=$(sha256_file "$run_dir/stdout")
   stderr_hash=$(sha256_file "$run_dir/stderr")
+
+  # Passthrough propagates 137 when hermit-box-run reaps an over-budget cgroup.
+  # That is infrastructure evidence, not a deterministic program observation.
+  run_status=TEST-RESULT
+  case $exit_code in
+    137)
+      run_status=KILLED-BY-BOX
+      result=$run_status
+      ;;
+    3)
+      run_status=BOX-REFUSED
+      result=$run_status
+      ;;
+  esac
+
+  if [[ $run_status != TEST-RESULT ]]; then
+    fingerprint=NOT-A-TEST-RESULT
+    printf '%s  stdout\n' "$stdout_hash" >"$run_dir/stdout.sha256"
+    printf '%s  stderr\n' "$stderr_hash" >"$run_dir/stderr.sha256"
+    {
+      printf 'exit_code=%s\n' "$exit_code"
+      printf 'run_status=%s\n' "$run_status"
+      printf 'stdout_sha256=%s\n' "$stdout_hash"
+      printf 'stderr_sha256=%s\n' "$stderr_hash"
+      printf 'fingerprint_sha256=%s\n' "$fingerprint"
+    } >"$run_dir/observation.txt"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$run_name" "$exit_code" "$run_status" "$stdout_hash" "$stderr_hash" \
+      "$fingerprint" >>"$manifest"
+    break
+  fi
+
+  ((completed_test_runs += 1))
   fingerprint=$(
     printf 'exit_code=%s\nstdout_sha256=%s\nstderr_sha256=%s\n' \
       "$exit_code" "$stdout_hash" "$stderr_hash" |
@@ -186,13 +226,14 @@ for ((run = 1; run <= runs; run++)); do
   printf '%s  stderr\n' "$stderr_hash" >"$run_dir/stderr.sha256"
   {
     printf 'exit_code=%s\n' "$exit_code"
+    printf 'run_status=%s\n' "$run_status"
     printf 'stdout_sha256=%s\n' "$stdout_hash"
     printf 'stderr_sha256=%s\n' "$stderr_hash"
     printf 'fingerprint_sha256=%s\n' "$fingerprint"
   } >"$run_dir/observation.txt"
 
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$run_name" "$exit_code" "$stdout_hash" "$stderr_hash" "$fingerprint" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$run_name" "$exit_code" "$run_status" "$stdout_hash" "$stderr_hash" "$fingerprint" \
     >>"$manifest"
 
   if [[ -z ${seen_fingerprints[$fingerprint]+present} ]]; then
@@ -209,6 +250,8 @@ done
 {
   printf 'result=%s\n' "$result"
   printf 'runs=%s\n' "$runs"
+  printf 'attempted_runs=%s\n' "$attempted_runs"
+  printf 'completed_test_runs=%s\n' "$completed_test_runs"
   printf 'unique_fingerprints=%s\n' "$unique_fingerprints"
   printf 'reference_fingerprint=%s\n' "$reference_fingerprint"
   printf 'manifest=runs.tsv\n'
@@ -219,4 +262,7 @@ printf 'Evidence: %s\n' "$output_dir"
 
 if [[ $result == NON-DETERMINISTIC ]]; then
   exit 1
+fi
+if [[ $result != DETERMINISTIC ]]; then
+  exit 2
 fi
