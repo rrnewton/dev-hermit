@@ -181,7 +181,10 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@command -v shellcheck >/dev/null 2>&1 || { echo 'ERROR: shellcheck is required.' >&2; exit 1; }
 	@command -v python3 >/dev/null 2>&1 || { echo 'ERROR: python3 is required.' >&2; exit 1; }
 	rustfmt --edition 2021 --check scripts/*.rs
-	shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push
+	shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push \
+	    .orc/plugins/hermit-dev/gh-issue-create \
+	    .orc/plugins/hermit-dev/gh-coord-comment \
+	    .orc/plugins/hermit-dev/gh-coord-pr-create
 	python3 -m py_compile scripts/*.py
 	python3 -m unittest discover -s scripts -p 'test_*.py'
 	@$(MAKE) --no-print-directory check-rust-error-string-proxies
