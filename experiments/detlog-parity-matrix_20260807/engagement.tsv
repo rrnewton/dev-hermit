@@ -1,0 +1,43 @@
+cell	backend	witness
+notsc	ptrace	reference
+notsc	kvm	launching guest through reverie-kvm
+notsc	dbi	Detcore Tool active; running "./notsc" under DynamoRIO
+notsc	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+notsc	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+notsc	liteinst	preload_refs=3
+detlog_syscalls	ptrace	reference
+detlog_syscalls	kvm	launching guest through reverie-kvm
+detlog_syscalls	dbi	Detcore Tool active; running "./pg/detlog_syscalls" under Dy
+detlog_syscalls	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+detlog_syscalls	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+detlog_syscalls	liteinst	preload_refs=3
+heap_fragment_reuse	ptrace	reference
+heap_fragment_reuse	kvm	launching guest through reverie-kvm
+heap_fragment_reuse	dbi	Detcore Tool active; running "./pg/heap_fragment_reuse" unde
+heap_fragment_reuse	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+heap_fragment_reuse	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+heap_fragment_reuse	liteinst	preload_refs=3
+stack_deep_recursion	ptrace	reference
+stack_deep_recursion	kvm	launching guest through reverie-kvm
+stack_deep_recursion	dbi	Detcore Tool active; running "./pg/stack_deep_recursion" und
+stack_deep_recursion	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+stack_deep_recursion	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+stack_deep_recursion	liteinst	preload_refs=3
+stdout_bytes	ptrace	reference
+stdout_bytes	kvm	launching guest through reverie-kvm
+stdout_bytes	dbi	Detcore Tool active; running "./pg/stdout_bytes" under Dynam
+stdout_bytes	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+stdout_bytes	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+stdout_bytes	liteinst	preload_refs=3
+bin_true	ptrace	reference
+bin_true	kvm	launching guest through reverie-kvm
+bin_true	dbi	Detcore Tool active; running "/bin/true" under DynamoRIO
+bin_true	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+bin_true	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+bin_true	liteinst	preload_refs=3
+bin_echo	ptrace	reference
+bin_echo	kvm	launching guest through reverie-kvm
+bin_echo	dbi	Detcore Tool active; running "/bin/echo" under DynamoRIO
+bin_echo	sabre	ptrace_fallback_sites=0 trusted_shared_object_sites=0 guest_rpc_observed=true
+bin_echo	e9patch	candidate_sites=0; mapped_sites=0; b0_sites=0; instruction_map_cache=Hit; rewrite_cache=not-applicable; artifact_sha256=none
+bin_echo	liteinst	preload_refs=3
