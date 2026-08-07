@@ -1,0 +1,14 @@
+arm,hermit_build,backend,guest,flags,runs,pairs,denominator,differing_pairs,worst_pair_differing,verdict
+base,g0041130ccb0d,liteinst,notsc,--strict --base-env=minimal --detlog-stack,3,3,412,3,302,NONDETERMINISTIC
+base,g0041130ccb0d,liteinst,tscleak,--strict --base-env=minimal --detlog-stack,3,3,412,3,302,NONDETERMINISTIC
+base,g0041130ccb0d,liteinst,cat /proc/self/maps,--strict --base-env=minimal,2,1,56,1,14,NONDETERMINISTIC
+fix,g077833ad6595,liteinst,notsc,--strict --base-env=minimal --detlog-stack,12,66,412,0,0,DETERMINISTIC
+fix,g077833ad6595,liteinst,tscleak,--strict --base-env=minimal --detlog-stack,5,10,412,0,0,DETERMINISTIC
+fix,g077833ad6595,liteinst,cat /proc/self/maps,--strict --base-env=minimal,5,10,56,0,0,DETERMINISTIC
+fix,g077833ad6595,ptrace,notsc,--strict --base-env=minimal --detlog-stack,2,1,44,0,0,DETERMINISTIC
+fix,g077833ad6595,ptrace,tscleak,--strict --base-env=minimal --detlog-stack,2,1,44,0,0,DETERMINISTIC
+negative-control,g077833ad6595,liteinst,notsc,--no-virtualize-time --no-virtualize-metadata --base-env=minimal --detlog-stack,2,1,412,1,362,NONDETERMINISTIC
+negative-control,g077833ad6595,liteinst,tscleak,--no-virtualize-time --no-virtualize-metadata --base-env=minimal --detlog-stack,2,1,412,1,369,NONDETERMINISTIC
+install-path-A,g077833ad6595,liteinst,notsc,--strict --base-env=minimal --detlog-stack,3,3,412,0,0,DETERMINISTIC
+install-path-B,g077833ad6595,liteinst,notsc,--strict --base-env=minimal --detlog-stack,12,66,412,0,0,DETERMINISTIC
+install-path-C,g077833ad6595,liteinst,notsc,--strict --base-env=minimal --detlog-stack,3,3,412,0,0,DETERMINISTIC
