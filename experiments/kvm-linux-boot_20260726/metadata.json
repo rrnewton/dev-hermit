@@ -2,7 +2,7 @@
   "date": "2026-07-26",
   "task": "impl-kvm-linux-boot",
   "host": {
-    "hostname": "devbig030.atn3.facebook.com",
+    "hostname": "devbig030",
     "kernel": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 x86_64",
     "rustc": "rustc 1.99.0-nightly (be8e82435 2026-07-11)",
     "cargo": "cargo 1.99.0-nightly (59800466c 2026-07-07)",

@@ -5,7 +5,7 @@
   "agent": "hermit-274",
   "hermit_sha": "6044c2d39ace4bd84f32598a9fde692fcea67b3f",
   "backend": "ptrace",
-  "host": "devbig030.atn3.facebook.com",
+  "host": "devbig030",
   "tools": "GNU make (/usr/bin/make), gcc 11, coreutils",
   "results": {
     "coreutils_make": {"L1":"PASS","L2_verify":"PASS","L4":"5/5","artifact_md5":"8e530518ccaa5466d022ffc575e3721a (combined.dat, identical to native, stable across independent runs)"},

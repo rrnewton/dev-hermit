@@ -2,7 +2,7 @@
   "question": "Do Hermit's complete proc/sys sanitizer classes leak host state across deterministic runs?",
   "answer": "No leak observed: 67/67 source-derived ProcfsKind cells passed stripped internal verify and byte-exact stdout equality across two additional runs. Canonical internal-log verification remains blocked by a /bin/true baseline divergence.",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "hermit_source_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
   "hermit_version": "hermit 0.2.0 (2026-08-06, gf89c69766371)",
   "binary_sha256": "5f4aa9ab8e6b1cf3bf98f73cca35001211e28c2829215e97d9c2c927e5ae9047",

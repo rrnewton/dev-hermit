@@ -52,8 +52,8 @@ Bucket distribution is `omit=1,077`, `one_sentence=475`, `paragraph=227`,
 ## Hostname privacy
 
 The preflight found internal FQDNs in existing ignored artifacts, including
-`devbig014.atn7.facebook.com`, `devbig030.atn3.facebook.com`,
-`devbig030.facebook.com`, `devvm16873.pnb0.facebook.com`, and
+`devbig014`, `devbig030`,
+`devbig030`, `devvm16873`, and
 `git.vip.facebook.com`.
 
 Parent commits `00d594a66f0567b705d1cb561fad29a05cabb89d`,

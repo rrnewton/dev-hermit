@@ -5,7 +5,7 @@
   "epic": "epic-nix-reprobuild",
   "question": "Can wrapping the Nix builder exec under `hermit run` determinize a non-reproducible Nix build? Prototype the execBuilder seam and a rebuild-and-compare-hash harness on the research targets.",
   "host": {
-    "hostname": "devbig014.atn7.facebook.com",
+    "hostname": "devbig014",
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "nproc": 316,
     "arch": "x86_64"

@@ -2,7 +2,7 @@
   "question": "Why does DBI emit raw host TIDs as dtid where ptrace emits a constant 3?",
   "root_cause": "detcore never virtualizes tid -- detcore/src/lib.rs:1150 uses the backend-supplied tid directly, with an in-code TODO(T78538674) saying so. ptrace's determinism is borrowed from container.rs unshare(Namespace::PID); DBI's tool-side tid is not namespace-translated.",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "measured": {"dbi_dtid_3_runs": [2179371, 2179454, 2179541], "ptrace_dtid_2_runs": [3, 3]},
   "binary": "worktrees/oci/hermit/target/release/hermit built 2026-08-06 04:30, --features third-party-backends",
   "guest": "~/.local/hermit-deps/guests/guest_heap (gcc -O1, dynamic)",

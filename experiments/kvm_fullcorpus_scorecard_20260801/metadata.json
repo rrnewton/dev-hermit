@@ -5,7 +5,7 @@
   "hermit_sha": "82a8e853357584a3a567fd80812e015572a607c7",
   "reverie_sha": "a4f33d69a56ed4233a53b218c39d93807ffc8cd0",
   "denominator_source": "compat-envelope/corpus-manifest.csv (235 scorecard-full-manifest-denominator, 200 cells)",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "cpu_cores": 316,
   "dev_kvm": "present (crw-rw-rw- root:kvm 10,232)",

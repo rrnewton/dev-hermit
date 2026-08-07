@@ -1,7 +1,7 @@
 # Compatibility envelope: tier and relaxation reclassification
 
 **Published:** 2026-08-07T06:24:49Z
-**Host:** `devbig014.atn7.facebook.com`, kernel
+**Host:** `devbig014`, kernel
 `6.18.39-0_fbk0_hardened_0_ga43d5727b443`
 **Measured main:** `rrnewton/dev-hermit`
 `614644bc829adb22a365535357abaaed5405ab0d`

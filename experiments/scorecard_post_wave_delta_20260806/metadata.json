@@ -1,7 +1,7 @@
 {
   "question": "What is the current compat standing after the ratchet/parity wave, and what changed vs the last snapshot?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "method": "diff of two COMMITTED snapshots of compat-envelope/scorecard.csv (the file is tracked), plus a read of the current one -- no cell re-run",
   "snapshot_a": "d83a34b (2026-08-03), 534 rows, 101 enabled",
   "snapshot_b": "13c791e (2026-08-05, HEAD), 618 rows, 180 enabled",

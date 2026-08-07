@@ -5,7 +5,7 @@ Date: 2026-07-23 PDT / 2026-07-24 UTC
 Repository: `rrnewton/hermit`
 Revision: `dd60278fc3c20f102442f26bb02b98a35e7246e3`
 Branch under test: `qemu-boot-debug-overnight-slot47`
-Host: `devbig030.atn3.facebook.com`
+Host: `devbig030`
 
 ## Result
 

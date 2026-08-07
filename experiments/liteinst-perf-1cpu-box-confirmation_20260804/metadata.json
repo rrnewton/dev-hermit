@@ -4,7 +4,7 @@
   "lane": "hermit-perf",
   "task": "liteinst-perf-attribution-fastpath",
   "question": "Does the mandated 1-CPU sequentializing box confirm the prior (unboxed, under-load) attribution that in-guest LiteInst is the perf leader, and is sequentialization a confound?",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cpu": "AMD EPYC 9D85, 316 logical CPUs",
   "box_mechanism": "sched_setaffinity",
   "box_mechanism_reason": "cgroup cpuset NOT delegated on 3pai sandbox (cgroup.controllers = io memory pids); sched_setaffinity is the only working size-K box on this host",

@@ -1,7 +1,7 @@
 {
   "question": "Force PR #1200 codex findings F1 (host-timing-dependent admission order) and F3 (reconnect panic) on the unfixed code, and show stability on the fix, per the e9patch #359 template.",
   "date": "2026-08-04",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "toolchain": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
   "hermit_fix_sha": "1b6c9ef38669b1fbe20fe0e0c1a760297c65a063",
   "hermit_fix_branch": "codex/fix-1200-admission-epoch",

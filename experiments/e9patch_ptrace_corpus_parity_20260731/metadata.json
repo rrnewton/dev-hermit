@@ -8,7 +8,7 @@
   "hermit_branch": "codex/e9patch-ptrace-corpus-parity-ratchet",
   "reverie_sha": "2112c0045f25f895388257caed43b7b5abb9b50a",
   "e9tool_version": "E9Tool 1.0.1",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "cc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-14)",
   "arch": "x86_64",

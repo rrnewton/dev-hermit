@@ -15,7 +15,7 @@
   "host": {
     "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
     "arch": "x86_64",
-    "hostname": "devbig030.atn3.facebook.com"
+    "hostname": "devbig030"
   },
   "toolchain": {
     "gcc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-15)"

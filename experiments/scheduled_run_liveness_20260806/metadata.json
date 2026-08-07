@@ -1,7 +1,7 @@
 {
   "question": "A cancelled scheduled run is silent. What does PR #1634 cover, what can an in-run detector never cover, and what detects the rest?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "egress": "DOWN (403) -- no gh API calls; GitHub run history is cited from hermit-ghdag's prior measurement, not re-measured",
   "hermit_origin_main": "b64d893ae9ea6404472eae9cb86102d91ec642ef",
   "pr_1634_head": "49a357059eac030aaaea81d92ff04dc181279b49",

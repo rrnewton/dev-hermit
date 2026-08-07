@@ -4,7 +4,7 @@ Run `liteinst-fullcorpus-1785621912` measured the 200 manifest tests that
 declare a ptrace `verify` cell at Hermit
 `464cbd9f9bb43d5505c914783819e1d349630283` and Reverie
 `aa6f1283aeee3efd174c57f6dd8198310bd307e1` on
-`devbig014.atn7.facebook.com` (Linux 6.18.39, x86-64). The checkout was clean.
+`devbig014` (Linux 6.18.39, x86-64). The checkout was clean.
 
 ## Scorecard cells
 

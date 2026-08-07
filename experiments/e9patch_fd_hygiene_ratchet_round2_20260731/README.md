@@ -3,7 +3,7 @@
 **Date:** 2026-07-31
 **Task:** `e9patch-ratchet-round2-nongated`
 **Backend:** e9patch preprocessing + ptrace backend
-**Host:** devbig014.atn7.facebook.com, kernel 6.18.39, GCC 11.5.0, e9tool 1.0.1
+**Host:** devbig014, kernel 6.18.39, GCC 11.5.0, e9tool 1.0.1
 **Hermit PR:** https://github.com/rrnewton/hermit/pull/1220
 (branch `codex/e9patch-corpus-fd-hygiene-round2` @ `50b62fb4`, base `origin/main`
 `c4b7b1a6`; runner = hermit built `--features e9patch` at merged #1216 `61d52337`)

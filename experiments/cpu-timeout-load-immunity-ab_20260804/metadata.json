@@ -1,7 +1,7 @@
 {
   "date": "2026-08-04",
   "question": "Is the DAG runner's per-node cpu_timeout verdict load-immune? I.e. when host load rises ~10x, does the kill-decision variable (per-cgroup accrued CPU-seconds) stay put so a burner is still caught and healthy nodes are not false-killed?",
-  "host": "devbig014.atn7.facebook.com (2x AMD EPYC 9D85 158-Core = 316 cores)",
+  "host": "devbig014 (2x AMD EPYC 9D85 158-Core = 316 cores)",
   "runner": "agent-utils checkout 1c7c855 (parent gitlink), python engine (SAFE_CI_DAG_RUNNER_ENGINE=python); enforces per-step cpu_timeout via 1 Hz cpu.stat usage_usec poll + whole-cgroup reap (#7 / 0eb4203, landed both engines)",
   "runner_git_sha_in_profile": "b883ace53822159c94c7910f43de09acf89bea5e",
   "parent_main_at_run": "9534790",

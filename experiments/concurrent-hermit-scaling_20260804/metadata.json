@@ -4,7 +4,7 @@
   "question": "Does concurrent `hermit run --strict` scale past 150 cores? If it scales, the validate strategy inverts from serialize-to-avoid-contention to run-the-corpus-wide.",
   "owner_task": "headline-inner-step-scaling-curves-cargo-and-strict-compat (CURVE 3)",
   "agent": "hermit-ghdag (opus-4.8)",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cpu": "AMD EPYC 9D85 class, 158 physical cores x 2 SMT = 316 hardware threads",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "hermit_sha": "a6201fc65d29c3a1a88cc7af4b117b68e9950284",

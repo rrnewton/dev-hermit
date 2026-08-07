@@ -12,7 +12,7 @@
   "sabre_loader_sha256": "f595e94cb5b276b683dd808d117e1cc6b1e1eb11c8b94eb9891f6683d7d411d6",
   "e9tool_sha256": "8569c9c62f2b9ad79f22903ae01b58d99abad438023f7a4d49538785419625d0",
   "e9patch_sha256": "adba5e2577c378b4f3733f5accfd6ce45f7edfb1492b8cc589008ab96e59f567",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "host_cpu": "AMD EPYC 9D85 158-Core Processor",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "perf_event_paranoid": 1,

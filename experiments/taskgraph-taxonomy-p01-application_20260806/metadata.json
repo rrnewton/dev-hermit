@@ -10,5 +10,5 @@
  "validator_invocation": "python3 ci-hub/taskgraph/label_taxonomy.py --gate p01",
  "source_db": "~/.tg/hermit.db (read-only, every read inside BEGIN ... ROLLBACK)",
  "mutations": "TaskGraph tags only; no status/owner/priority/dependency/description changed",
- "host": "devbig014.atn7.facebook.com"
+ "host": "devbig014"
 }

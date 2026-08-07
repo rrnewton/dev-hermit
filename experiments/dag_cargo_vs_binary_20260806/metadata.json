@@ -1,7 +1,7 @@
 {
   "question": "How many DAG steps invoke cargo, which of them merely run tests, and can those call the built artifact instead?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
   "dev_hermit_parent_head": "6d12f300dbb1b66a097b93524c0dde4a037fee21",
   "dag_files": ["ci/dag/portable.json (47 steps)", "ci/dag/privileged.json (8 steps)"],

@@ -1,7 +1,7 @@
 # LiteInst instrumentation-side stats — is the 14.5x per-syscall ptrace, from the patch-site side?
 
 **Task:** `liteinst-instrumentation-stats` (owner hermit-liteinst, research-only).
-**Date:** 2026-08-04. **Host:** devbig014.atn7.facebook.com (316 CPU, kernel 6.18.39).
+**Date:** 2026-08-04. **Host:** devbig014 (316 CPU, kernel 6.18.39).
 
 ## Question
 

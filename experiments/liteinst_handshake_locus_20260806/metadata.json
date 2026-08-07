@@ -2,7 +2,7 @@
   "question": "Is the LiteInst preload-handshake failure caused by the container remapping the DSO path (the prior note's leading hypothesis)?",
   "answer": "NO -- refuted by construction for the default run path",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "method": "source reading only -- no guest run required, which is what stalled the previous attempt",
   "code_sites": [
     "reverie/reverie-ptrace/src/task.rs:2106-2160 validate_liteinst_handshake (exact path equality, confirmed)",

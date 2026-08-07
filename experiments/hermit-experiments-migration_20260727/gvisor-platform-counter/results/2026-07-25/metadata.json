@@ -11,7 +11,7 @@
   "gvisor_counter": "/home/newton/.cache/bazel/_bazel_newton/27cf56145fa90856f08ddbc242651a20/execroot/_main/bazel-out/k8-opt/bin/pkg/sentry/platform/counter/counter_/counter",
   "gvisor_counter_sha256": "f56f18e98882d03380a2bffb00794f1d7ae9f033bfa0ee1e8452e8403255017a",
   "gvisor_profile": "opt",
-  "host": "Linux devbig030.atn3.facebook.com 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64",
+  "host": "Linux devbig030 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64",
   "iterations": 100000,
   "reverie_counter": "/home/newton/work/dev-hermit/reverie/target/debug/counter2",
   "reverie_counter_sha256": "11c98859b093b1f2893e82e717b60ba8c51de2f1f92683999c2c53df74cf0d9d",

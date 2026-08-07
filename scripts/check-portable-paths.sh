@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reject owner- and machine-specific paths in tracked build/run files.
+# Reject owner- and machine-specific paths in tracked files.
 
 set -euo pipefail
 
@@ -11,7 +11,7 @@ for arg in "$@"; do
     case "$arg" in
         -h | --help)
             cat <<'EOF'
-check-portable-paths.sh — reject owner/machine-specific paths in tracked build & run files
+check-portable-paths.sh — reject owner/machine-specific data in tracked files
 
 USAGE:
   scripts/check-portable-paths.sh                 check parent + hermit/reverie/liteinst2
@@ -63,7 +63,7 @@ is_excluded() {
 
 scan_file() {
     local path=$1
-    awk -v path="$path" '
+    LC_ALL=C awk -v path="$path" '
         function is_comment(line) {
             return line ~ /^[[:space:]]*(#|\/\/|\/\*|\*|<!--)/
         }
@@ -101,6 +101,17 @@ scan_file() {
     '
 }
 
+scan_machine_fqdn() {
+    LC_ALL=C awk '
+        {
+            line = tolower($0)
+            if (line ~ /[[:alnum:]_-]*[0-9][[:alnum:]_.-]*[.]facebook[.]com/) {
+                print FNR ":" $0
+            }
+        }
+    '
+}
+
 self_test() {
     local hits
 
@@ -120,6 +131,20 @@ self_test() {
         scan_file scripts/build.sh)
     [[ -n $hits ]] || {
         echo "portability self-test failed to reject a machine-specific host" >&2
+        return 1
+    }
+
+    hits=$(printf '%s%s\n' 'host="devbig999.atn7' '.facebook.com"' |
+        scan_machine_fqdn)
+    [[ -n $hits ]] || {
+        echo "portability self-test failed to reject a machine FQDN" >&2
+        return 1
+    }
+
+    hits=$(printf '%s\n' 'host="devbig999" url="https://www.facebook.com"' |
+        scan_machine_fqdn)
+    [[ -z $hits ]] || {
+        echo "portability self-test rejected a short host or public URL" >&2
         return 1
     }
 
@@ -184,10 +209,19 @@ for repo in "${repos[@]}"; do
         exit 1
     fi
     repo_label=$(basename "$repo")
+
+    while IFS= read -r hit; do
+        printf '%s/%s\n' "$repo_label" "$hit"
+        found=1
+    done < <(
+        git -C "$repo" grep -I -n -E \
+            '[[:alnum:]_-]*[0-9][[:alnum:]_.-]*[.]facebook[.]com' -- . || true
+    )
+
     while IFS= read -r -d '' path; do
-        is_excluded "$path" && continue
         file="$repo/$path"
         [[ -f $file ]] || continue
+        is_excluded "$path" && continue
         if ! is_build_file "$path" && [[ ! -x $file ]]; then
             continue
         fi
@@ -202,7 +236,7 @@ for repo in "${repos[@]}"; do
 done
 
 if ((found)); then
-    echo "portability check failed: replace literal homes/hosts with HOME, repo-relative paths, PATH lookup, or explicit environment overrides" >&2
+    echo "portability check failed: shorten machine FQDNs and replace literal homes/hosts with HOME, repo-relative paths, PATH lookup, or explicit environment overrides" >&2
     exit 1
 fi
 

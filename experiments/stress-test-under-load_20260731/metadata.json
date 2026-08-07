@@ -11,7 +11,7 @@
     "parent": "8776039db0c69549aa658fd0b15080f56c1a07f5"
   },
   "host": {
-    "hostname": "devbig014.atn7.facebook.com",
+    "hostname": "devbig014",
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "nproc": 316,
     "cpu": "AMD EPYC 9D85 158-Core Processor",

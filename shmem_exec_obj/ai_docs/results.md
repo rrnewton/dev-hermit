@@ -68,7 +68,7 @@ on 2026-07-26 at commit
 `7165198cb82dc47d0853b814c3de7aaf44cd07d6`.
 
 ```text
-Host:       devbig030.atn3.facebook.com
+Host:       devbig030
 Kernel:     Linux 6.17.13 x86_64
 Page size:  4096
 MSRV:       rustc 1.85.0, LLVM 19.1.7
@@ -186,7 +186,7 @@ implementation was validated at commit
 `d9bd9e27730b8e9e0754ddaa4fadc21e152f9356`.
 
 ```text
-Host:       devbig030.atn3.facebook.com
+Host:       devbig030
 Kernel:     Linux 6.17.13 x86_64
 CPU:        AMD EPYC 9D85, 316 logical CPUs
 Page size:  4096

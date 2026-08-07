@@ -69,7 +69,7 @@ state-machine defect independent of load.
 
 ## Method
 
-- Host: devbig014.atn7.facebook.com
+- Host: devbig014
 - hermit: `683fb5ca25b6b4af2391c634a01f5245349a46ad` (= PR #1147 head), ptrace
   build; reverie git-dep `d973a85`.
 - Guests (this dir): `nonleader_exec.c` (worker thread execs; non-leader),

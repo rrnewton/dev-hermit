@@ -4,7 +4,7 @@
   "date": "2026-08-04",
   "task": "liteinst-instrumentation-stats (owner hermit-liteinst)",
   "host": {
-    "name": "devbig014.atn7.facebook.com",
+    "name": "devbig014",
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "logical_cpus": 316,
     "note": "Reported counts are exact integer event counters, host-independent and load-independent; each config repeated and bitwise-identical across repeats."

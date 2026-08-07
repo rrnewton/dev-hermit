@@ -1,7 +1,7 @@
 {
   "question": "How many tasks are filed without a checkable verify criterion, and what filing-time guard would fix it?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "db": "/home/newton/.tg/hermit.db",
   "db_size_bytes": 123813888,
   "tasks_at_start": 4232,
