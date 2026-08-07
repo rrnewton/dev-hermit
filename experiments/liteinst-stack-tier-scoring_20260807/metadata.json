@@ -1,0 +1,12 @@
+{
+  "task": "score-liteinst-stack-cells-under-tightened-rules",
+  "agent": "hermit-w2", "date": "2026-08-07",
+  "snapshot_caveat": "compat-envelope/scorecard.csv changed from 646 to 618 rows during this analysis; another agent is writing it. All counts are a single snapshot.",
+  "cells_changing_class": 0,
+  "denominator": "0 LiteInst stack-dimension rows exist in any scorecard",
+  "tier_bitwise_rows": 0,
+  "tier_any_value_rows": 0,
+  "total_rows": 2284,
+  "csv_malformed_lines": {"24_fields": 106, "27_fields": 1, "28_fields": 2, "well_formed_23": 510},
+  "planted_divergence_detected": "11/414 differing at fix commit 077833ad, evidence bcede29"
+}

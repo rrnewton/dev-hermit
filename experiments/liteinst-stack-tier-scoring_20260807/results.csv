@@ -1,0 +1,6 @@
+scope,artifact,rows,tier_column_present,rows_with_any_tier_value,rows_reaching_tier_bitwise,liteinst_stack_dimension_rows,note
+scorecard,compat-envelope/scorecard.csv,618,yes,0,0,0,"615 empty; 3 apparent values are reason-field text misaligned by ragged CSV"
+scorecard,compat-envelope/e9patch-scorecard.csv,454,no,0,0,0,no tier column at all
+scorecard,compat-envelope/fullcorpus-scorecard.csv,1200,no,0,0,0,no tier column at all
+scorecard,compat-envelope/reverie-scorecard.csv,12,no,0,0,0,no tier column at all
+TOTAL,all four,2284,1 of 4,0,0,0,"ceiling confirmed exactly at the stated 2284 denominator"
