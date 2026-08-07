@@ -9,7 +9,7 @@
 `f1e08b25ce732c8464140531008fbc361b00791d`
 **Staged relaxation provenance:** PR #81
 `2bcdf2de946938f3e71a302c7df0bf884698d333`, paired with the PR #79
-relaxation consumer at `d064fb86fe5123dc0d666616c1e1e9a36c6db9b1`
+relaxation consumer at `24f71eb60c81521da1f493b7059e998ac312518b`
 
 ## Result: the drop is the point
 
@@ -110,6 +110,8 @@ historical backfill are still open draft PRs #79 and #81; they are not
 ancestors of main. Therefore the relaxation-qualified column above is a
 **staged reclassification**, not a live main-branch scorecard total. This
 distinction is deliberate: unlanded evidence does not alter a main-branch cell.
+PR #79 is reconciled and mergeable at the exact head above; PR #81 remains the
+separate historical-backfill dependency.
 
 Main scorecard blob IDs, in table order, are:
 
