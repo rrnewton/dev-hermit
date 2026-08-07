@@ -30,6 +30,7 @@
 #     [--par N]                parallelism (default: 16)
 #     [--no-assert]            measure only; do not fail on ratchet regression
 #     [--out PATH]             output CSV (default: fullcorpus-scorecard.csv)
+#     [--self-check-env-pin]    bracket the generated Hermit argv; run no guests
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +50,98 @@ TMO_RUN="${TMO_RUN:-90}"
 TMO_VERIFY="${TMO_VERIFY:-120}"
 backends_arg=""
 do_assert=1
+self_check_env_pin=0
+
+# Build every measured Hermit command in one place. `--base-env host` is the
+# default, but that makes the caller's ambient environment part of the guest's
+# initial stack and invalidates output comparisons across invocations. Keep the
+# exact pin in step with collect-envelope.rs and the DBI/e9patch collectors.
+build_hermit_argv() { # $1=array name $2=backend $3=verify(0|1) $4=lane
+  local output_name="$1" backend="$2" verify="$3" lane="$4"
+  local -n output_ref="$output_name"
+  output_ref=("$BIN")
+  [ "$backend" = ptrace ] || output_ref+=(--backend "$backend")
+  output_ref+=(run --strict)
+  [ "$verify" = 0 ] || output_ref+=(--verify)
+  [ "$lane" = portable ] && output_ref+=(--no-virtualize-cpuid --max-timeslice=disabled)
+  output_ref+=(--base-env minimal -e LC_ALL=C -e TZ=UTC --)
+}
+
+# Project just the environment-bearing options before the guest separator and
+# require the precise, ordered profile. Used only by the fail-closed self-check.
+guest_env_pin_is_exact() { # $1=array name
+  local argv_name="$1"
+  local -n argv_ref="$argv_name"
+  local -a projected=() expected=(--base-env minimal -e LC_ALL=C -e TZ=UTC)
+  local separator=-1 index=0
+  for ((index=0; index<${#argv_ref[@]}; index++)); do
+    if [ "${argv_ref[$index]}" = -- ]; then separator=$index; break; fi
+  done
+  [ "$separator" -ge 0 ] || return 1
+  index=0
+  while [ "$index" -lt "$separator" ]; do
+    case "${argv_ref[$index]}" in
+      --base-env|-e|--env)
+        [ $((index + 1)) -lt "$separator" ] || return 1
+        projected+=("${argv_ref[$index]}" "${argv_ref[$((index + 1))]}")
+        index=$((index + 2))
+        ;;
+      --base-env=*|--env=*|-e?*)
+        projected+=("${argv_ref[$index]}")
+        index=$((index + 1))
+        ;;
+      *) index=$((index + 1)) ;;
+    esac
+  done
+  [ "${#projected[@]}" -eq "${#expected[@]}" ] || return 1
+  for ((index=0; index<${#expected[@]}; index++)); do
+    [ "${projected[$index]}" = "${expected[$index]}" ] || return 1
+  done
+}
+
+self_check_guest_env_pin() {
+  local -a argv mutation omission reordered
+  local backend verify lane index lc_index=-1 tz_index=-1 positives=0
+  for backend in ptrace kvm dbi sabre e9patch liteinst; do
+    for verify in 0 1; do
+      for lane in portable privileged; do
+        build_hermit_argv argv "$backend" "$verify" "$lane"
+        guest_env_pin_is_exact argv || {
+          echo "self-check: generated argv lacks exact pin: ${argv[*]}" >&2
+          return 1
+        }
+        positives=$((positives + 1))
+      done
+    done
+  done
+
+  mutation=("${argv[@]}")
+  for ((index=0; index<${#mutation[@]}; index++)); do
+    [ "${mutation[$index]}" = TZ=UTC ] && mutation[$index]=TZ=localtime
+  done
+  ! guest_env_pin_is_exact mutation || { echo "self-check: mutation accepted" >&2; return 1; }
+
+  omission=("${argv[@]}")
+  for ((index=0; index<${#omission[@]}; index++)); do
+    [ "${omission[$index]}" = LC_ALL=C ] && lc_index=$index
+  done
+  [ "$lc_index" -gt 0 ] || return 1
+  unset "omission[$lc_index]" "omission[$((lc_index - 1))]"
+  omission=("${omission[@]}")
+  ! guest_env_pin_is_exact omission || { echo "self-check: omission accepted" >&2; return 1; }
+
+  reordered=("${argv[@]}")
+  for ((index=0; index<${#reordered[@]}; index++)); do
+    [ "${reordered[$index]}" = LC_ALL=C ] && lc_index=$index
+    [ "${reordered[$index]}" = TZ=UTC ] && tz_index=$index
+  done
+  [ "$lc_index" -ge 0 ] && [ "$tz_index" -ge 0 ] || return 1
+  reordered[$lc_index]=TZ=UTC
+  reordered[$tz_index]=LC_ALL=C
+  ! guest_env_pin_is_exact reordered || { echo "self-check: reordering accepted" >&2; return 1; }
+
+  echo "self-check: $positives generated argv variants accepted; mutation, omission, and reordering refused"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -56,10 +149,16 @@ while [ $# -gt 0 ]; do
     --par) PAR="$2"; shift 2 ;;
     --no-assert) do_assert=0; shift ;;
     --out) OUT="$2"; shift 2 ;;
+    --self-check-env-pin) self_check_env_pin=1; shift ;;
     -h|--help) grep '^#' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "collect-fullcorpus: unknown arg $1" >&2; exit 2 ;;
   esac
 done
+
+if [ "$self_check_env_pin" = 1 ]; then
+  self_check_guest_env_pin
+  exit $?
+fi
 
 [ -x "$BIN" ] || { echo "collect-fullcorpus: HERMIT_BIN not executable: $BIN" >&2; exit 2; }
 [ -f "$CORPUS_C" ] || { echo "collect-fullcorpus: missing $CORPUS_C" >&2; exit 2; }
@@ -117,7 +216,7 @@ baseline() {
 }
 
 ROWS="$(mktemp -d)"
-HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason"
+HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason"
 RUN_UTC="@$(date +%s)"
 
 # --- one (backend,cell) measurement ------------------------------------------
@@ -125,8 +224,9 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   local backend="$1" cell="$2" lane="$3" id="$4"; shift 4
   local -a gcmd=("$@")
   local bucket="${id%%/*}"
-  local flags=""
-  [ "$lane" = portable ] && flags="--no-virtualize-cpuid --max-timeslice=disabled"
+  local -a run_cmd verify_cmd
+  build_hermit_argv run_cmd "$backend" 0 "$lane"
+  build_hermit_argv verify_cmd "$backend" 1 "$lane"
   export LC_ALL=C TZ=UTC
   local re=0
   # ptrace: TWO runs.
@@ -138,10 +238,10 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   #  (2) --strict --verify -> det signal (L2 self-verify exit code).
   if [ "$backend" = ptrace ]; then
     local t0 t1 dur re ve ohash det outcome reason
-    timeout "$TMO_RUN" "$BIN" run --strict $flags -- "${gcmd[@]}" >"$cell/ptv.out" 2>"$cell/ptv.err"; re=$?
+    timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" >"$cell/ptv.out" 2>"$cell/ptv.err"; re=$?
     ohash=$(sha256sum "$cell/ptv.out" | cut -c1-64)
     t0=$(date +%s%3N)
-    timeout "$TMO_VERIFY" "$BIN" run --strict --verify $flags -- "${gcmd[@]}" >/dev/null 2>"$cell/ptvv.err"; ve=$?
+    timeout "$TMO_VERIFY" "${verify_cmd[@]}" "${gcmd[@]}" >/dev/null 2>"$cell/ptvv.err"; ve=$?
     t1=$(date +%s%3N); dur=$((t1-t0))
     if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";
     elif [ "$ve" = 124 ]; then det=0; outcome=timeout; reason="ptrace-verify-timeout-${TMO_VERIFY}s";
@@ -160,10 +260,10 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
     return
   fi
   # non-ptrace backend: strict (for parity) + strict --verify (for det)
-  timeout "$TMO_RUN" "$BIN" --backend "$backend" run --strict $flags -- "${gcmd[@]}" >"$cell/$backend.out" 2>"$cell/$backend.err"; re=$?
+  timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" >"$cell/$backend.out" 2>"$cell/$backend.err"; re=$?
   local t0 t1 dur ve bhash phash det outcome reason parity ohash
   t0=$(date +%s%3N)
-  timeout "$TMO_VERIFY" "$BIN" --backend "$backend" run --strict --verify $flags -- "${gcmd[@]}" >"$cell/${backend}v.out" 2>"$cell/${backend}v.err"; ve=$?
+  timeout "$TMO_VERIFY" "${verify_cmd[@]}" "${gcmd[@]}" >"$cell/${backend}v.out" 2>"$cell/${backend}v.err"; ve=$?
   t1=$(date +%s%3N); dur=$((t1-t0))
   bhash=$(sha256sum "$cell/$backend.out" | cut -c1-64); ohash="$bhash"
   if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";
@@ -177,7 +277,7 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   fi
   echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,$backend,expansion,$outcome,$det,$parity,$ohash,$dur,,$reason" > "$ROWS/${backend}_${id//\//_}.row"
 }
-export -f measure
+export -f build_hermit_argv measure
 export BIN ROWS RUN_UTC HSHA RSHA TMO_RUN TMO_VERIFY
 
 # --- compile C guests once (shared build tree) -------------------------------

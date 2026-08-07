@@ -2404,7 +2404,7 @@ wait
             .run(
                 RunArgs {
                     agent: "stubborn-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-stubborn".into(),
                     no_wait: false,
                     wait: 0,
@@ -2660,7 +2660,7 @@ wait
             .run(
                 RunArgs {
                     agent: "escaped-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-escaped".into(),
                     no_wait: false,
                     wait: 0,
@@ -2782,15 +2782,11 @@ wait
         let ready = root.join("supervisor-ready");
         let marker = root.join("payload-started");
         let target = "hard-death";
-        crate::landing_lock::install_run_hard_death_hook(
-            &format!("validate:{target}"),
-            point,
-            ready,
-        );
+        crate::landing_lock::install_run_hard_death_hook(&format!("bench:{target}"), point, ready);
         let result = ValidateLock { paths }.run(
             RunArgs {
                 agent: "hard-death-validate".into(),
-                kind: Kind::Validate,
+                kind: Kind::Bench,
                 target: target.into(),
                 no_wait: false,
                 wait: 0,
@@ -2905,12 +2901,12 @@ wait
             };
             let marker = paths.lock.parent().unwrap().join("payload-started");
             let target = format!("crash-{index}");
-            crate::landing_lock::install_run_crash_hook(&format!("validate:{target}"), point);
+            crate::landing_lock::install_run_crash_hook(&format!("bench:{target}"), point);
             let error = lock
                 .run(
                     RunArgs {
                         agent: "crash-validate".into(),
-                        kind: Kind::Validate,
+                        kind: Kind::Bench,
                         target: target.clone(),
                         no_wait: false,
                         wait: 0,
@@ -3033,7 +3029,7 @@ exit 0
             .run(
                 RunArgs {
                     agent: "normal-exit-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "normal-exit".into(),
                     no_wait: false,
                     wait: 0,

@@ -113,24 +113,45 @@ def observe_merged_sha(
 
 
 def _existing_obligation(repo: str, sha: str, store: Path) -> dict[str, Any] | None:
-    for record in obligations.latest_records(store).values():
-        if record.get("repo") == repo and record.get("landed_sha") == sha:
-            return record
-    return None
+    return protocol.recoverable_obligation(repo, sha, store)
 
 
 def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
+    repo = str(intent["repo"])
+    persisted_policy = intent.get("verification_policy")
+    if persisted_policy is None:
+        # Compatibility for write-ahead intents created before policies were
+        # recorded. The resulting obligation persists this derived binding in
+        # its initial opened event.
+        policy = protocol.verification_policy_for_repo(repo)
+    elif isinstance(persisted_policy, Mapping):
+        policy = protocol.validate_verification_policy(persisted_policy)
+    else:
+        raise LandError("land intent verification policy is not an object")
+    if policy["repo"] != repo:
+        raise LandError(
+            f"land intent verification policy does not match repository {repo!r}"
+        )
+    raw_source = intent.get("source")
+    source = protocol.resolve_repo_source(
+        repo,
+        Path(str(raw_source)) if raw_source is not None else None,
+    )
     store = Path(str(intent["store"]))
-    existing = _existing_obligation(str(intent["repo"]), sha, store)
-    if existing is not None:
-        return 0, str(existing["obligation_id"])
+    prior_records = {
+        str(record["obligation_id"]): str(record.get("event_id") or "")
+        for record in obligations.latest_records(store).values()
+        if record.get("repo") == repo and record.get("landed_sha") == sha
+    }
     arguments = [
         "arm",
         sha,
         "--repo",
-        str(intent["repo"]),
+        repo,
+        "--verification-policy-json",
+        json.dumps(policy, sort_keys=True, separators=(",", ":")),
         "--source",
-        str(intent["source"]),
+        str(source),
         "--land-mode",
         str(intent["land_mode"]),
         "--actor",
@@ -143,16 +164,44 @@ def arm_sha(intent: Mapping[str, Any], sha: str) -> tuple[int, str | None]:
         str(store),
     ]
     code = protocol.main(arguments)
-    record = _existing_obligation(str(intent["repo"]), sha, store)
-    return code, str(record["obligation_id"]) if record is not None else None
+    all_matching = [
+        record
+        for record in obligations.latest_records(store).values()
+        if record.get("repo") == repo and record.get("landed_sha") == sha
+    ]
+    matching = [
+        record
+        for record in all_matching
+        if str(record.get("obligation_id")) not in prior_records
+        or str(record.get("event_id") or "")
+        != prior_records[str(record.get("obligation_id"))]
+    ] or all_matching
+    record = (
+        max(
+            matching,
+            key=lambda candidate: (
+                str(candidate.get("updated_at") or ""),
+                str(candidate.get("opened_at") or ""),
+                str(candidate.get("obligation_id") or ""),
+            ),
+        )
+        if matching
+        else None
+    )
+    if record is None or not protocol.obligation_launch_durable(record):
+        return code or 2, None
+    return code, str(record["obligation_id"])
 
 
 def _new_intent(args: argparse.Namespace, command: Sequence[str]) -> dict[str, Any]:
+    policy = protocol.verification_policy_for_repo(args.repo)
+    source = protocol.resolve_repo_source(args.repo, args.source)
     return {
         "schema_version": 1,
         "repo": args.repo,
+        "verification_policy": policy,
         "pr": args.pr,
-        "source": str(args.source.expanduser().resolve()),
+        "source": str(source),
         "land_mode": args.land_mode,
         "actor": args.actor,
         "store": str(args.store.expanduser().resolve()),
@@ -272,8 +321,26 @@ def recover_intent(path: Path, *, observe_timeout: int) -> int:
         raise LandError(f"cannot read recovery intent {path}: {error}") from error
     if not isinstance(intent, dict) or intent.get("schema_version") != 1:
         raise LandError(f"unsupported recovery intent: {path}")
-    if intent.get("state") in {"armed", "land-command-failed"}:
+    if intent.get("state") == "land-command-failed":
         return 0
+    if intent.get("state") == "armed":
+        obligation_id = intent.get("obligation_id")
+        if isinstance(obligation_id, str):
+            try:
+                record = obligations.get_record(
+                    obligation_id, Path(str(intent["store"]))
+                )
+            except obligations.StoreError:
+                record = None
+            if record is not None and protocol.obligation_launch_durable(record):
+                return 0
+        # "armed" is a cache, not authority.  A missing/incomplete obligation
+        # falls back into the same idempotent resume path as merged-unarmed.
+        intent.update(
+            state="merged-unarmed",
+            error="cached armed state lacked durable verifier/watcher evidence",
+        )
+        _atomic_json(path, intent)
     sha = intent.get("landed_sha")
     if not isinstance(sha, str) or not obligations.SHA_RE.fullmatch(sha):
         state, observed = _pr_state(str(intent["repo"]), int(intent["pr"]))
@@ -324,7 +391,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     run_parser = subparsers.add_parser("run", help="run a land and arm its merged SHA")
     run_parser.add_argument("--repo", default=protocol.DEFAULT_REPO)
     run_parser.add_argument("--pr", type=int, required=True)
-    run_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    run_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     run_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), required=True
     )
@@ -354,7 +426,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     prepare_parser.add_argument("--repo", default=protocol.DEFAULT_REPO)
     prepare_parser.add_argument("--pr", type=int, required=True)
-    prepare_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    prepare_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     prepare_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), required=True
     )

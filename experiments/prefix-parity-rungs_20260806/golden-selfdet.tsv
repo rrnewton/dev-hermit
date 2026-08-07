@@ -1,0 +1,11 @@
+rung	runs	verdict	Y_depth	Z_total	detail
+true	3	IDENTICAL	538	538	all pairs agree over the whole log
+echo	3	IDENTICAL	729	729	all pairs agree over the whole log
+cat-hostname	3	IDENTICAL	746	746	all pairs agree over the whole log
+wc-hostname	3	IDENTICAL	736	736	all pairs agree over the whole log
+fork-exec-pipe	3	IDENTICAL	1301	1301	all pairs agree over the whole log
+sh-loop-200	3	IDENTICAL	934	934	all pairs agree over the whole log
+ls-recursive	3	IDENTICAL	1715	1715	all pairs agree over the whole log
+python-startup	3	TOOL-ERROR	-	-	/bin/sh: -c: line 1: syntax error near unexpected token `(' /bin/sh: -c: line 1: `/usr/bin/python3 -c print(1)' 
+readdir-heavy	3	IDENTICAL	1715	1715	all pairs agree over the whole log
+cat-big	3	IDENTICAL	746	746	all pairs agree over the whole log

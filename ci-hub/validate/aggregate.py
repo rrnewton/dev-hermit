@@ -79,8 +79,14 @@ def parent_root() -> str:
 
 
 def tmpdirs() -> list[str]:
+    override = os.environ.get("CI_HUB_AGGREGATE_TMPDIRS")
+    if override is not None:
+        candidates = override.split(os.pathsep)
+    else:
+        candidates = (os.environ.get("TMPDIR", "").rstrip("/"), "/tmp")
     seen, out = set(), []
-    for d in (os.environ.get("TMPDIR", "").rstrip("/"), "/tmp"):
+    for d in candidates:
+        d = d.rstrip("/")
         if d and d not in seen and os.path.isdir(d):
             seen.add(d)
             out.append(d)

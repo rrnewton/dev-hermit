@@ -48,6 +48,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install rust-script
         shell: bash
@@ -61,6 +63,20 @@ jobs:
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check \
             --requirement ci-hub/tests/requirements-workflow.txt
+
+      - name: Materialize the pinned Hermit test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --checkout -- hermit
+
+      - name: Preserve frozen append-only history prefixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=KILL 1m scripts/check-append-only-prefix.py \
+            --base e272e66a984fbd6eb5812d15ddab8cdafed4a4b9 \
+            ai_docs/status-log/status-log.jsonl worktrees/ARCHIVED.md
 
       - name: Compile the typed front door
         shell: bash
@@ -88,7 +104,14 @@ jobs:
           ulimit -t 240
           timeout --signal=KILL 4m python3 ci-hub/tests/documented_commands.py
 
-      - name: Materialize the pinned live-query dependency
+      - name: Prove worktree release is target-scoped
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m scripts/release-worktree-target-scope-test.sh
+
+      - name: Materialize the pinned live-query and topology dependency
         shell: bash
         run: |
           set -euo pipefail
@@ -100,6 +123,13 @@ jobs:
             >"$RUNNER_TEMP/bin/with-proxy"
           chmod +x "$RUNNER_TEMP/bin/with-proxy"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+
+      - name: Verify the live Claude and Codex skill topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m python3 scripts/check-codex-setup.py
 
       - name: Assert harness help probes are pure
         shell: bash

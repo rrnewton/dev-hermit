@@ -1,0 +1,7 @@
+rung	target_band	runs	verdict	Y	Z	detail
+gcc-tiny-c	~5K	3	FAIL	277	5413	run1 vs run2 @277: - INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #122: readlink(0x | + INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #122: readlink(0x
+tar-usr-include	~10K	3	IDENTICAL	12011	12011	all pairs agree
+fork-100	~18K	3	IDENTICAL	18040	18040	all pairs agree
+grep-recursive	~31K	3	IDENTICAL	30738	30738	all pairs agree
+fork-500	~89K	3	IDENTICAL	88528	88528	all pairs agree
+fork-2000	~353K	3	IDENTICAL	352862	352862	all pairs agree
