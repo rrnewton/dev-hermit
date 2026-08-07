@@ -1,0 +1,7 @@
+probe,package,variant_a,variant_b,native_verdict,hermit_norcb_verdict,note
+guest-path-varied,hostname 3.11,/work/build,/work/build-with-a-substantially-longer-directory-name,DIFFERS,DIFFERS,mechanism-1: hermit correctly does not mask a truthful path difference
+guest-path-varied,tree 1.6.0-1,/work/build,/work/build-with-a-substantially-longer-directory-name,DIFFERS,DIFFERS,mechanism-1
+guest-path-varied,zip 3.0-6,/work/build,/work/build-with-a-substantially-longer-directory-name,DIFFERS,DIFFERS,mechanism-1
+same-guest-path-control,hostname 3.11,/work/build-with-a-substantially-longer-directory-name,same,n/a,IDENTICAL,control: difference above is caused by the path not by residual nondeterminism
+same-guest-path-control,tree 1.6.0-1,/work/build-with-a-substantially-longer-directory-name,same,n/a,IDENTICAL,control
+same-guest-path-control,zip 3.0-6,/work/build-with-a-substantially-longer-directory-name,same,n/a,IDENTICAL,control

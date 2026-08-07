@@ -70,11 +70,17 @@ build_native() { # $1 root  $2 srcdir
     /usr/bin/dpkg-buildpackage -uc -us -b >"$1.log" 2>&1
 }
 
-build_hermit() { # $1 root  $2 srcdir
+build_hermit() { # $1 root  $2 srcdir  $3 extra hermit flags (may be empty)
   # Same shape as rebuild.sh's proven invocation: the root is bind-mounted at
   # /tmp/drb-root so build output lands in the real host root rather than in
   # Hermit's private /tmp tmpfs, and /proc + /dev are bound for dpkg.
-  timeout "$BUILD_TIMEOUT" "$HERMIT_BIN" run --strict --base-env=minimal --network=local \
+  #
+  # $3 carries --no-rcb-time for the corrected arm. That flag is REQUIRED on a
+  # host whose PMU fails validation: Hermit derives virtual time from retired
+  # conditional branch counts, so unreliable counters make Hermit's own clock a
+  # nondeterminism source. Both arms are measured so the confound is auditable.
+  # shellcheck disable=SC2086
+  timeout "$BUILD_TIMEOUT" "$HERMIT_BIN" run --strict $3 --base-env=minimal --network=local \
     --bind="$1:/tmp/drb-root" \
     --mount=type=bind,source=/proc,target=/tmp/drb-root/proc \
     --mount=type=bind,source=/dev,target=/tmp/drb-root/dev \
@@ -99,12 +105,16 @@ for package in "$@"; do
   declare -A H=()
   ok=1
   # Four roots at four DIFFERENT paths: that path difference is the variable.
-  for spec in native:n1 native:n2 hermit:a hermit:b; do
+  for spec in native:n1 native:n2 hermit:a hermit:b hermit-norcb:a hermit-norcb:b; do
     executor="${spec%%:*}"; tag="${spec##*:}"
     root="$RUNS/$package/${executor}-${tag}/rootfs"
     rm -rf "$(dirname "$root")"; mkdir -p "$(dirname "$root")"
     cp -a --reflink=auto "$prepared" "$root" || { ok=0; break; }
-    if [ "$executor" = native ]; then build_native "$root" "$srcdir"; else build_hermit "$root" "$srcdir"; fi
+    case "$executor" in
+      native)       build_native "$root" "$srcdir" ;;
+      hermit)       build_hermit "$root" "$srcdir" "" ;;
+      hermit-norcb) build_hermit "$root" "$srcdir" "--no-rcb-time --max-timeslice=disabled" ;;
+    esac
     h="$(hash_artifacts "$root")"
     # An empty artifact set hashes to a constant; treat it as a failed build
     # rather than silently "reproducible".
@@ -118,6 +128,7 @@ for package in "$@"; do
 
   nat=DIVERGES; [ "${H[native-n1]}" = "${H[native-n2]}" ] && nat=IDENTICAL
   her=DIVERGES; [ "${H[hermit-a]}" = "${H[hermit-b]}" ] && her=IDENTICAL
-  printf '%-28s native:%-9s hermit:%-9s\n' "$package" "$nat" "$her"
+  nor=DIVERGES; [ "${H[hermit-norcb-a]}" = "${H[hermit-norcb-b]}" ] && nor=IDENTICAL
+  printf '%-24s native:%-9s hermit:%-9s hermit+norcb:%-9s\n' "$package" "$nat" "$her" "$nor"
 done
 exit "$overall"
