@@ -34,16 +34,25 @@ need it?
      [hermit#1849](https://github.com/rrnewton/hermit/issues/1849) and **FIXED**
      in [hermit#1851](https://github.com/rrnewton/hermit/pull/1851); `which` and
      `hello` now clear `unpackPhase` with no workaround.
-   - R3b, **pipe readiness/EOF never delivered to a guest reader after the writer
-     exits** — filed as
-     [hermit#1850](https://github.com/rrnewton/hermit/issues/1850); observed
-     twice, as a `cmake` `epoll_wait` hang and a `fixupPhase` bash `read` hang,
-     each with zero accumulated CPU. Still open; this is what keeps N=0.
-5. **CA store: crisp negative.** `nix --check` does **not** detect nondeterminism
+   - R3b, a **scheduler deadlock**: `handle_epoll_pwait` injected a blocking
+     `epoll_pwait(timeout=-1)` and waited for it while holding the scheduler
+     turn, so the only task that could satisfy the wait never ran. Filed as
+     [hermit#1850](https://github.com/rrnewton/hermit/issues/1850) and **FIXED**
+     in [hermit#1864](https://github.com/rrnewton/hermit/pull/1864); reproducer
+     goes from `rc=124` at 90 s to `rc=0` at 2 s. My first diagnosis of this
+     ("pipe EOF not delivered") was **wrong and is retracted in place** — see
+     R3b, including the invalid `/proc` evidence that produced it.
+5. **Both blockers are now fixed, and a real package got much further.** With
+   #1851 and #1864, `nixpkgs.lensfun` — the one real on-machine
+   nondeterministic package found — completed configure, build and install
+   under the wrap and reached `fixupPhase`; previously it never cleared cmake
+   configure. Whether its N=3 canonical rebuild finishes is recorded in
+   `results.csv` under `lensfun-epollfix`.
+6. **CA store: crisp negative.** `nix --check` does **not** detect nondeterminism
    in a `__contentAddressed` derivation on nix 2.30.2 (nix#5336 reproduces), so
    CA cannot be the oracle. Hermit *does* collapse a CA derivation onto one
    content-addressed path.
-6. **Ergonomics: `passthru.needsHermit` + a one-overlay `hermitizeIfNeeded`**,
+7. **Ergonomics: `passthru.needsHermit` + a one-overlay `hermitizeIfNeeded`**,
    verified with a two-sided gate — the marked package is wrapped, the unmarked
    package's derivation is byte-identical to stock.
 
@@ -462,79 +471,74 @@ uid range in the user namespace; (b) virtualize `chown`/`fchown` to a
 no-op-success when the guest believes it is root; (c) do not virtualize uid to
 0 when sharing the host filesystem.
 
-#### R3b. Real builds HANG under `hermit run` — pipe readiness/EOF is not delivered — [#1850](https://github.com/rrnewton/hermit/issues/1850)
+#### R3b. Real builds HANG under `hermit run` — a scheduler deadlock, [#1850](https://github.com/rrnewton/hermit/issues/1850), fixed by [#1864](https://github.com/rrnewton/hermit/pull/1864)
 
-**Two independent hangs, both in pipe wakeup, both with zero accumulated CPU.**
-This — not performance — is what stops real nixpkgs packages.
+> **RETRACTED DIAGNOSIS, kept visible.** An earlier revision of this section
+> titled this "pipe readiness/EOF is not delivered" and cited "the guest bash had
+> NO children at all". **Both parts were wrong**, and the way they were wrong is
+> worth more than the original claim:
+>
+> 1. **Pipe delivery is fine.** A six-probe syscall-level differential
+>    ([`harness/pipe-wakeup-probe.c`](harness/pipe-wakeup-probe.c)) shows hermit
+>    matches native exactly on blocking-read EOF, `epoll_wait` `EPOLLHUP`, `poll`
+>    `POLLHUP`, buffered-data read, and data+HUP — with a `writer-alive` control
+>    that must hang and does. I had generalised from a symptom to a mechanism
+>    without testing the mechanism.
+> 2. **The "no children" evidence did not exist.** I read it from
+>    `/proc/<pid>/task/<tid>/children`, **which this kernel does not have**
+>    (no `CONFIG_PROC_CHILDREN`). The command printed nothing and I recorded the
+>    empty output as an observation. The children were alive the whole time.
+>    Re-derive with `ps -eo pid,ppid`.
 
-**Hang 2, first, because it is the simpler shape.** `figlet-2.2.5` (autotools,
-with the `TAR_OPTIONS` workaround) unpacked, patched, configured, compiled and
-installed under the wrap, then stalled in `fixupPhase`. Live state after 29
-minutes:
-
-```
-guest bash 1416984   State: S   TIME: 00:00:00   (no children at all)
-  wchan   -> anon_pipe_read
-  syscall -> 0 0x0 …  0x1        == read(fd 0, buf, 1 byte)   <- bash `while read`
-  fd 0    -> pipe:[329546543]
-  fd 63   -> pipe:[329546543]    <- same pipe, bash's saved duplicate
-hermit supervisor    TIME: 00:00:04 over 1729 s wall
-```
-
-Nothing in the guest is runnable, nothing can write to that pipe, and the reader
-never sees EOF.
-
-**Hang 1: `cmake` configure.** Minimal reproducer,
-[`harness/cmake-hang-repro.sh`](harness/cmake-hang-repro.sh) — a three-line
-`CMakeLists.txt` and one `main.c`:
+**Actual root cause.** Walking the tree with a tool that exists:
 
 ```
-native: rc=0   wall=1s
-hermit: rc=124 wall=90s     (124 == timed out; hermit produced NO output)
+timeout
+ └─ hermit (supervisor)      anon_pipe_read
+     └─ hermit (tracer)      epoll_wait
+         └─ cmake            epoll_wait(281)      <- victim, not cause
+             └─ uname   state=t  ptrace_stop, openat(".../LC_MEASUREMENT")
 ```
 
-This is the blocker that stopped the real-package arm, and it is a hang, not
-slowness. Minimal reproducer: [`harness/cmake-hang-repro.sh`](harness/cmake-hang-repro.sh),
-a three-line `CMakeLists.txt` and one `main.c`:
+The child is **alive and ptrace-stopped**, never resumed. Hermit's own scheduler
+log (`--log=debug`) says why, and simply ends:
 
 ```
-native: rc=0   wall=1s
-hermit: rc=124 wall=90s     (124 == timed out)
+COMMIT turn 197, dettid 5 using resources {Path(".../LC_MEASUREMENT"): R}
+  DETLOG [syscall][dtid 5] inbound syscall: openat(...)      <- awaiting a turn
+COMMIT turn 198, dettid 3 using resources {}
+  [sched-step3] Stepping scheduler, queue len 2
+  [tool] (tid 3) beginning inject of syscall: epoll_pwait, arg3: -1
+<end of log — turn 199 never happens>
 ```
 
-`hermit` produced **no output at all** before the timeout. The two in-flight
-`lensfun` builds hung at the same place and were still there after 28 minutes.
+`handle_epoll_pwait` injected a blocking `epoll_pwait(timeout=-1)` and waited for
+it to return **while holding the scheduler turn**. The only task that could
+satisfy that wait was queued behind it. A textbook deterministic-scheduler
+deadlock; the pipe was never involved.
 
-Root cause, read off the live process rather than inferred:
+Why nobody hit it in a unit test: **glibc implements `epoll_wait(2)` as
+`epoll_pwait` with a NULL sigmask**, so real programs never reach
+`handle_epoll_wait`, which has always handled the blocking case correctly.
+`epoll_pwait` was also the only member of the poll/epoll family with no
+`NonblockableSyscall`/`TimeoutableSyscall` impl — while `Ppoll`, the sigmask
+variant of `poll`, has had both all along.
 
-```
-/proc/<cmake-pid>/syscall  ->  281 0x3 0x7fffffff2880 0x400 0xffffffff …
-                               ^^^ epoll_wait   epfd=3   maxevents=1024  timeout=-1
-/proc/<cmake-pid>/wchan    ->  do_epoll_wait
-/proc/<cmake-pid>/fd/3     ->  anon_inode:[eventpoll]
-/proc/<cmake-pid>/fd/4,12  ->  pipe:[…]        (pipes to a child that has exited)
-ps TIME                    ->  00:00:00 after 28 minutes of wall clock
-```
+**Fix and effect** ([#1864](https://github.com/rrnewton/hermit/pull/1864)):
+route NULL-sigmask `epoll_pwait` through the existing `epoll_wait` path. The
+committed reproducer goes from **`rc=124` after 90 s with no output** to
+**`rc=0` in 2 s wall**. Non-NULL sigmask is deliberately left alone — a
+timeout-0 polling loop cannot reproduce the atomic mask swap — so that path can
+still block, and says so in the code.
 
-cmake spawns a compiler-probe child, watches its pipes with `epoll_wait` and an
-**infinite** timeout, and never receives the readable/EOF event after the child
-exits. Zero accumulated CPU confirms a lost wakeup rather than a slow one.
-Reproduces under **both** `--tmp=/tmp` and `--no-namespace`, so it is
-independent of the mode correction.
+**Effect on the real package:** `lensfun` under the seam previously never got
+past cmake configure. With the fix it completed configure, build **and install**
+and reached `fixupPhase`.
 
-**What is and is not established.** Both hangs are *measured*: the blocked
-syscall, the pipe fds, the absence of live writers, and the zero CPU all come
-from `/proc` on the live processes, not from inference. That they share **one**
-root cause is a **hypothesis** — one blocks in `epoll_wait`, the other in a
-blocking `read`, and a bash `while read` holding the pipe on a saved fd (63) has
-its own idioms. The defensible statement is: *Hermit does not deliver pipe
-readiness/EOF to a guest reader after the writer exits, observed through two
-different waiting primitives.*
-
-Impact: every cmake-based nixpkgs package is out of reach of this seam until
-Hang 1 is fixed — including `lensfun`, the one real nondeterministic package we
-found. Hang 2 additionally blocks stdenv's `fixupPhase`, which nearly every
-package runs. Together they are the reason N=0.
+**Still open:** whether the Debian lane's `figlet` `fixupPhase` hang shares this
+cause. It presents as a blocking `read`, not `epoll_wait`, so it may be a second
+instance of the same "blocking syscall holds the turn" class rather than the same
+syscall. Do not assume #1864 fixes it without re-testing.
 
 ### R4. Cost, and what does get through
 
@@ -773,6 +777,8 @@ stops the harness before it fills the disk.
 | `harness/dose-sweep.sh` | minimum-dose sweep over namespace/clock flag sets |
 | `harness/screen-batch.sh` | two-step real-package triage (native, then hermit) |
 | `harness/spawn-cost.sh` | per-process cost of the seam |
+| `harness/pipe-wakeup-probe.c` | six-probe pipe-edge differential with a must-hang control; refuted the first #1850 diagnosis |
+| `harness/cmake-hang-repro.sh` | 90-second reproducer for the scheduler deadlock (#1850) |
 | `harness/namespace-refusal-probe.sh` | why the seam wraps the builder and not `nix` (with the false-discriminator warning) |
 | `harness/ca-probe.sh` | `ca-derivations` assessment |
 | `harness/ergonomics-check.sh` | two-sided gate on the opt-in overlay |

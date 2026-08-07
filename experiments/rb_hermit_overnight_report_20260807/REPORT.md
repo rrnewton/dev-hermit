@@ -196,7 +196,7 @@ Dir: `buck2-action-bitwise-determinism_20260806`. The directory labels itself
 | Hermit determinizes a nondeterministic tar (Sarah Clark's 2022 test, unmodified) | 1 script, 2 runs | **[C]** | native NONDETERMINISTIC → **DETERMINIZED** |
 | Fleet telemetry, `ds=2026-08-05`, **user builds only** | — | **[C]** | 85,674 flagged rows / 41,701 targets |
 | Inverted join: flagged set ∩ known-buildable frame | 74 targets | **[C]** | **0 flagged targets** in that tree — corroborates the control arm |
-| Flagged-target arm | 5 targets | **[NR]** | **NOT MEASURED** — see retraction below. Not blocked, not negative. |
+| **Flagged-target arm** | **8 targets, 3,287 executed actions/round** | **[C]** | **0 reproduced** — see interpretation below |
 
 > **RETRACTION (published on main, `47ebae27`).** An earlier version of this section — and of the
 > experiment directory — reported the flagged arm as *"blocked by buildability: flagged targets do
@@ -226,6 +226,46 @@ an action to its first result**, suppressing observable divergence for most remo
 actions — so the residual signal concentrates in *locally* executed actions. That cuts against the
 naive reading of "run RE actions twice". fbcode build-stamping also makes many binaries
 nondeterministic by design, so 41,701 flagged targets is emphatically not 41,701 bugs.
+
+> **Of 8 fbcode targets the fleet flagged on 2026-08-05, 0 reproduced their nondeterminism in a
+> controlled two-round local rebuild over 3,287 executed actions per round.** Executor mix
+> `Local=3287, Cache=0, RE=0`. The flagged action class for these targets is the final `rustc link`
+> step, and those actions demonstrably executed in both rounds — this is **not** "the flagged action
+> never ran". Sampling rule: flagged, `rustc`-only, non-GPU/ASIC/torch → largest coherent cluster
+> (30 unittests in one Rust-port tree) → first 8 by sorted name. Arbitrary but reproducible.
+
+**This is probably not a null result, and the reasoning matters more than the zero.** A same-host
+A/B **cannot** reproduce cross-environment nondeterminism by construction: the telemetry observes
+differing output digests across *developers, machines, paths, times, and toolchain states*, and two
+local rounds hold every one of those constant. So 0/8 is the **expected** outcome if these flags
+encode cross-environment nondeterminism, and would have been surprising only if they encoded
+intra-host nondeterminism (uninitialized memory, hash iteration order, parallelism races).
+
+It does not say the fleet is wrong. It **narrows what the flags can be** — and that cuts against
+the naive framing of the buck2 ask:
+
+| | |
+|---|---|
+| Hermit determinizes **within** a run — time, PIDs, scheduling, randomness | right tool for intra-host nondeterminism |
+| Hermit does **not** normalize hostname or absolute build paths across machines | if these flags are path/host-sourced, **Hermit is not the fix** — a hermetic-root or path-normalization change is |
+
+No Hermit leg was run, deliberately: nothing reproduced locally for it to fix, and manufacturing a
+divergence would prove nothing about these targets. Against the Debian lane's shape
+(13/13 → 13/13) this is **8 flagged → 0 reproduced → 0 available for Hermit** — a different shape
+because the upstream step produced no candidates, not because Hermit underperformed.
+
+> **OPEN CROSS-TRACK QUESTION, unresolved.** The Debian two-root experiment varies precisely one
+> environment axis — the absolute build root path — and Hermit makes 13/13 byte-identical. The
+> buck2 reading above says Hermit does not normalize absolute build paths. Both cannot be simply
+> true as stated. Plausible reconciliation: in the Debian case the root path *triggers* divergence
+> in sources Hermit does virtualize (timestamps, randomness, readdir order) rather than being
+> embedded in the output. **Nobody has run the discriminating experiment**, and it is the single
+> cheapest high-value follow-up on the board.
+
+The retraction: two earlier `BUILD FAILED` results were **resource exhaustion, not target
+unbuildability** — first seven concurrent buck2 daemons, then host memory pressure (146 kill signals
+across 13 third-party rustc/link actions with four lanes sharing the box). `-j 4` made it pass, and
+round 1 then built all 8 flagged targets in 3.5 minutes. Neither failure was ever about the targets.
 
 Methodological carry: a **two-isolation-dir** double build is **unsound** — it produced a false
 positive whose only difference was the isolation-dir substring embedded in `buck-out` paths.
@@ -311,7 +351,10 @@ longer exists.
    arm on a **working-PMU host** to confirm directly that the 7/13 was a PMU confounder rather
    than inferring it from the flip pattern.
 3. **Bisect the GHC `-C0` non-replication.** The harness now exists, so it is cheap.
-4. **Retry the buck2 flagged arm serially** — one isolation dir for the whole session, killed
+4. **Vary ONE environment axis at a time** in the buck2 A/B — different absolute path, different
+   user, shifted clock — instead of holding everything constant. That identifies which axis a
+   flagged action is sensitive to, and only then does Hermit have a defined job. Also resolve the
+   open cross-track question above. Superseded: retry the flagged arm serially — one isolation dir for the whole session, killed
    between phases, one target at a time. The failure was daemon memory pressure from
    concurrency, not target size; the harness now carries a `trap ... kill`.
 5. **Do not chase cross-machine reproducibility with these harnesses** — they measure one host and
