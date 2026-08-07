@@ -152,9 +152,9 @@ _HOST_ENV_REASON_SIGNATURES = (
     # PATH is talking about host tool visibility by construction. Included
     # because a guest reworded from "lua5.4 not found" to the more accurate
     # PATH phrasing silently fell back to `code`: keying on prose means a
-    # message edit can flip a class. See
-    # `emit-structured-host-fault-markers-instead-of-matching-prose` for the
-    # durable fix; until then this list must track the phrasings guests use.
+    # message edit can flip a class. See TaskGraph
+    # `validate_classifier_keys_fault` for the durable structured-marker fix;
+    # until then this list must track the phrasings guests actually use.
     " on path",
 )
 
