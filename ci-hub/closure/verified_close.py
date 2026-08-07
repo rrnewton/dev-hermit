@@ -126,8 +126,6 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
     if not path.is_absolute():
         path = ROOT / path
     path = path.resolve()
-    if not path.is_file():
-        return Evidence("refused", "artifact", reference, reason="artifact is not a file")
     try:
         relative = str(path.relative_to(ROOT))
     except ValueError:
@@ -137,11 +135,19 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
             reference,
             reason="local artifact is outside the versioned workspace; use a URL",
         )
-    tracked = run(("git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative), cwd=ROOT)
-    if tracked.returncode != 0:
-        return Evidence(
-            "refused", "artifact", reference, reason="artifact is not version-controlled"
-        )
+    # The authority for a parent artifact is `origin/main`, NOT this checkout.
+    # Deliberately no `path.is_file()` and no `git ls-files` here: the parent
+    # primary runs tens of commits behind origin (it was 41 behind on
+    # 2026-08-06), and the only safe way to publish a parent artifact is from a
+    # worktree off origin/main -- so a correctly published artifact is routinely
+    # absent from this working tree and this index. Gating on either refused
+    # every such closure with "artifact is not a file", which named the wrong
+    # cause: the file was tracked, pushed, and ancestry-present.
+    #
+    # Nothing is weakened by dropping them. Existence, version-control, and
+    # blob-ness are all re-established below against the freshly fetched
+    # origin/main, which is strictly the stronger authority -- a working tree
+    # can hold an untracked or locally-modified file that was never published.
     fetched = run(
         (
             "with-proxy",
@@ -188,13 +194,25 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
                 detail += (" | set CI_HUB_HERDR_AGENT=<agent> to relay the fetch through"
                            " herdr-run when running inside an agent sandbox")
             return Evidence("unverifiable", "artifact", reference, reason=detail)
-    present = run(
-        ("git", "-C", str(ROOT), "cat-file", "-e", f"origin/main:{relative}"),
+    # `-t` answers presence and object type in one call. The type check is
+    # load-bearing: `cat-file -e origin/main:<dir>` succeeds for a TREE, so
+    # existence alone would let a caller close a task against a directory. The
+    # dropped `path.is_file()` used to supply that guard by accident.
+    kind = run(
+        ("git", "-C", str(ROOT), "cat-file", "-t", f"origin/main:{relative}"),
         cwd=ROOT,
     )
-    if present.returncode != 0:
+    if kind.returncode != 0:
         return Evidence(
             "refused", "artifact", reference, reason="artifact is not on parent main"
+        )
+    object_type = kind.stdout.strip()
+    if object_type != "blob":
+        return Evidence(
+            "refused",
+            "artifact",
+            reference,
+            reason=f"artifact on parent main is a {object_type or 'non-blob'}, not a file",
         )
     content = run(
         (

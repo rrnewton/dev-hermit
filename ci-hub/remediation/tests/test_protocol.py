@@ -1264,7 +1264,14 @@ class ProtocolTest(unittest.TestCase):
         estimate_cost.assert_not_called()
         spawn.assert_called_once()
         self.assertEqual(spawn.call_args.args[0][0], "watch")
-        self.assertTrue(protocol.obligation_launch_durable(armed))
+        # `obligation_launch_durable` asks `_pid_alive` whether the recorded
+        # watcher pid is running. The fixture's pids (101/102) are arbitrary, so
+        # keep `_pid_alive` stubbed while asserting: outside the stub this
+        # assertion silently becomes "does pid 102 happen to exist on this host",
+        # which is true on a many-core box (kernel threads reach into the low
+        # hundreds) and false on a small CI runner.
+        with mock.patch.object(protocol, "_pid_alive", return_value=True):
+            self.assertTrue(protocol.obligation_launch_durable(armed))
         self.assertTrue(protocol._local_policy_skip_valid(armed))
         self.assertEqual(armed["watcher"]["state"], "running")
 
