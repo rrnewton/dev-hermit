@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,run_flags";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,run_flags";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -308,6 +308,18 @@ fn main() {
             } else {
                 ""
             };
+            // The tier this row EARNED, carried beside the comparator so a bare
+            // `deterministic=1` can never again stand in for "which comparison".
+            // `stripped` is the ceiling this harness can reach: it passes no
+            // compare-mode flag, so hermit runs the Stripped policy, whose own
+            // --verify-json reports bitwise_parity:false. `bitwise` is therefore
+            // NOT emittable here and is not merely unset -- it is unreachable.
+            let tier = if verify_compare.is_empty() { "" } else { "stripped" };
+            // Blank, not "0": this harness does not read --verify-json, so it has
+            // no parity boolean and no message counts to report. Blank means "not
+            // recorded"; a 0 would assert a measurement that was never taken.
+            let bitwise_parity = "";
+            let compared_log_messages = "";
             let (
                 parity,
                 parity_exercised,
@@ -388,6 +400,9 @@ fn main() {
                 String::new(), // max_rss_kb: filled by expansion-dag.rs cgroup path
                 reason,
                 verify_compare.to_string(),
+                bitwise_parity.to_string(),
+                compared_log_messages.to_string(),
+                tier.to_string(),
                 run_flags,
             ];
             let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");

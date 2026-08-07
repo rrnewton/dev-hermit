@@ -56,6 +56,25 @@ if [ "${do_reverie}" -eq 1 ]; then
   fi
 fi
 
+# EVERY determinism claim must be EARNED, and must say what earned it.
+#
+# This gate had no production call site: it existed, it worked, and nothing ran
+# it, so a row could claim `deterministic=1` (or `tier=bitwise` on a stripped
+# comparison, or with 0|0 counts) and no pipeline would object. An unwired
+# verifier is a comment. It runs on the CSVs the collectors just wrote, so it
+# gates the freshly produced evidence rather than a stale snapshot.
+echo "== compat-envelope: determinism claims must be earned =="
+if ! "${here}/check-determinism-earned.sh" "${here}/scorecard.csv"; then
+  echo "validate-envelope: UNEARNED or OVER-TIERED determinism claims in scorecard.csv" >&2
+  fail=1
+fi
+if [ "${do_reverie}" -eq 1 ] && [ -f "${here}/reverie-scorecard.csv" ]; then
+  if ! "${here}/check-determinism-earned.sh" "${here}/reverie-scorecard.csv"; then
+    echo "validate-envelope: UNEARNED or OVER-TIERED determinism claims in reverie-scorecard.csv" >&2
+    fail=1
+  fi
+fi
+
 if [ "${fail}" -ne 0 ]; then
   echo "validate-envelope: FAILED — see regressions above" >&2
   exit 1
