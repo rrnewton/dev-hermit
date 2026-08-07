@@ -87,7 +87,6 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const ROOT: &str = "/home/newton/work/dev-hermit";
 const GCHAT_SPACE: &str = "spaces/AAQAA6Irlwg";
 const DEFAULT_STALE_PENDING_SECS: u64 = 900;
 
@@ -99,6 +98,8 @@ const USAGE: &str = r#"Usage: hourly-status-relay.rs [OPTIONS]
 Fire one hourly owner-status wake, at most once per scheduled UTC hour.
 
 Options:
+  --root PATH             dev-hermit checkout. Defaults to walking up from the
+                          working directory for .gitmodules + AGENTS.md.
   --state-dir PATH        Root of this driver's durable state
                           (default: $HOME/.local/state/hermit-hourly-status).
                           Holds invocations.log, latest.status, hours/, wakes/.
@@ -176,6 +177,11 @@ enum Decision {
     DuplicateHour,
     /// A `pending` claim is young enough that another run may still be working.
     InFlight { age_secs: u64 },
+    /// The claim file exists but did not parse. A file we cannot read is a file
+    /// whose `state` we cannot read, so it may be `delivered`; treating it as
+    /// anything deliverable would risk the duplicate this design exists to
+    /// exclude. Never deliverable, and never silently repaired.
+    CorruptClaim { reason: String },
 }
 
 impl Decision {
@@ -184,11 +190,29 @@ impl Decision {
     }
 }
 
+/// Outcome of reading an hour's claim file. Distinguishing ABSENT from CORRUPT
+/// is load-bearing: collapsing them (either way) is a double-send bug. Absent
+/// means nobody has this hour; corrupt means somebody may have delivered it and
+/// we can no longer prove otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClaimRead {
+    Absent,
+    Valid(Claim),
+    Corrupt { reason: String },
+}
+
 /// THE dedupe rule. A delivered hour is closed forever; a pending hour is
-/// someone else's until it is provably abandoned.
-fn decide(existing: Option<&Claim>, now: u64, stale_pending_secs: u64) -> Decision {
-    let Some(claim) = existing else {
-        return Decision::Deliver;
+/// someone else's until it is provably abandoned; an unreadable hour is nobody's
+/// to take.
+fn decide(existing: &ClaimRead, now: u64, stale_pending_secs: u64) -> Decision {
+    let claim = match existing {
+        ClaimRead::Absent => return Decision::Deliver,
+        ClaimRead::Corrupt { reason } => {
+            return Decision::CorruptClaim {
+                reason: reason.clone(),
+            };
+        }
+        ClaimRead::Valid(claim) => claim,
     };
     if claim.state == STATE_DELIVERED {
         return Decision::DuplicateHour;
@@ -293,21 +317,32 @@ fn wake_path(state_dir: &Path, hour: &str) -> PathBuf {
     state_dir.join("wakes").join(format!("{hour}.md"))
 }
 
-fn read_claim(state_dir: &Path, hour: &str) -> Option<Claim> {
-    let text = fs::read_to_string(claim_path(state_dir, hour)).ok()?;
-    // A corrupt claim is deliberately NOT treated as "no claim". Deleting it
-    // would be the one move that can double-send, so it reads as a pending claim
-    // stamped at epoch 0, which ages out into a reclaim rather than wedging.
+fn read_claim(state_dir: &Path, hour: &str) -> ClaimRead {
+    let path = claim_path(state_dir, hour);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ClaimRead::Absent,
+        // An existing-but-unreadable file (permissions, I/O error) is NOT absent.
+        // We cannot see its `state`, so it gets the same fail-closed treatment as
+        // a corrupt one.
+        Err(e) => {
+            return ClaimRead::Corrupt {
+                reason: format!("unreadable: {e}"),
+            };
+        }
+    };
+    // A corrupt claim is deliberately NOT treated as "no claim", and equally NOT
+    // as a pending claim stamped at epoch 0. The epoch-0 fallback was the bug:
+    // `serde_json::from_str` rejects TRAILING CONTENT, so appending one
+    // human-readable line to an otherwise valid `delivered` claim turned it into
+    // a synthetic pending@0, which then aged straight into `ReclaimStale` and
+    // re-delivered an hour that had already gone out. Losing the `delivered`
+    // state is precisely what must not happen, so corruption fails closed.
     match serde_json::from_str::<Claim>(&text) {
-        Ok(claim) => Some(claim),
-        Err(_) => Some(Claim {
-            hour: hour.to_string(),
-            state: STATE_PENDING.to_string(),
-            claimed_at: 0,
-            claimed_by_pid: 0,
-            delivered_at: None,
-            detail: Some("unparseable claim file".to_string()),
-        }),
+        Ok(claim) => ClaimRead::Valid(claim),
+        Err(e) => ClaimRead::Corrupt {
+            reason: format!("unparseable at line {} column {}: {e}", e.line(), e.column()),
+        },
     }
 }
 
@@ -468,14 +503,27 @@ fn execute(args: &Args) -> Result<TickResult, String> {
     }
 
     let existing = read_claim(&args.state_dir, &hour);
-    let decision = decide(existing.as_ref(), now, args.stale_pending_secs);
+    let decision = decide(&existing, now, args.stale_pending_secs);
     match &decision {
+        Decision::CorruptClaim { reason } => {
+            // Actionable on purpose: name the file, because the ONLY safe repair
+            // is a human deciding whether that hour actually went out. This tick
+            // sends nothing and takes nothing.
+            return Ok(done(
+                "corrupt-claim",
+                format!(
+                    "reason={reason} path={} claimed=no-op delivered=no \
+                     repair=inspect-file-and-restore-valid-json",
+                    claim_path(&args.state_dir, &hour).display()
+                ),
+            ));
+        }
         Decision::DuplicateHour => {
-            let delivered = existing
-                .as_ref()
-                .and_then(|c| c.delivered_at)
-                .map(format_utc)
-                .unwrap_or_else(|| "unknown".to_string());
+            let delivered = match &existing {
+                ClaimRead::Valid(c) => c.delivered_at.map(format_utc),
+                _ => None,
+            }
+            .unwrap_or_else(|| "unknown".to_string());
             return Ok(done(
                 "duplicate-hour",
                 format!("already-delivered-at={delivered} claimed=no-op"),
@@ -606,9 +654,41 @@ fn default_socket() -> PathBuf {
     PathBuf::from(format!("/run/user/{uid}/orc-tmux/tmux-{uid}/default"))
 }
 
+/// Locate the dev-hermit checkout by walking up from the working directory,
+/// the same way `scripts/status-log.rs` does. Hard-coding an owner's path would
+/// pin this tool to one machine and one account -- and the portability gate
+/// rejects exactly that. The systemd unit sets `WorkingDirectory=` to the
+/// checkout, so the walk starts inside the repo; `--root` overrides it for any
+/// caller that cannot guarantee a cwd.
+fn repository_root() -> Result<PathBuf, String> {
+    let mut path = env::current_dir().map_err(|e| format!("current directory: {e}"))?;
+    loop {
+        if path.join(".gitmodules").is_file() && path.join("AGENTS.md").is_file() {
+            return Ok(path);
+        }
+        if !path.pop() {
+            return Err(
+                "could not locate the dev-hermit repository root above the working \
+                 directory; pass --root PATH"
+                    .to_string(),
+            );
+        }
+    }
+}
+
 fn parse_args() -> Result<Args, String> {
     let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    let root = PathBuf::from(ROOT);
+    // --root is parsed in the same pass below, so resolve lazily: a caller that
+    // supplies --root must not be forced to stand in the repo to be understood.
+    let explicit_root = env::args()
+        .skip(1)
+        .zip(env::args().skip(2))
+        .find(|(flag, _)| flag == "--root")
+        .map(|(_, value)| PathBuf::from(value));
+    let root = match explicit_root {
+        Some(path) => path,
+        None => repository_root()?,
+    };
     let mut args = Args {
         state_dir: PathBuf::from(&home).join(".local/state/hermit-hourly-status"),
         prompt_file: root.join("hourly_status_prompt.md"),
@@ -629,6 +709,11 @@ fn parse_args() -> Result<Args, String> {
                 .ok_or_else(|| format!("{name} requires a value\n\n{USAGE}"))
         };
         match flag.as_str() {
+            // Already resolved before this loop; consume its value so it is
+            // not mistaken for a positional or an unknown flag.
+            "--root" => {
+                let _ = next("--root")?;
+            }
             "--state-dir" => args.state_dir = PathBuf::from(next("--state-dir")?),
             "--prompt-file" => args.prompt_file = PathBuf::from(next("--prompt-file")?),
             "--relay" => args.relay = PathBuf::from(next("--relay")?),
@@ -688,6 +773,11 @@ mod tests {
             fs::create_dir_all(&root).unwrap();
             let prompt = root.join("prompt.md");
             fs::write(&prompt, "SEND THE STATUS\n").unwrap();
+            // A relay file that EXISTS but is never executed. The precondition
+            // chain checks the relay before the socket, so a nonexistent relay
+            // would make every socket test skip for the wrong reason and quietly
+            // stop testing the socket at all.
+            fs::write(root.join("relay-stub"), "#!/bin/sh\nexit 0\n").unwrap();
             Fixture {
                 state: root.join("state"),
                 witness: root.join("relay-calls.log"),
@@ -729,7 +819,7 @@ mod tests {
             Args {
                 state_dir: self.state.clone(),
                 prompt_file: self.prompt.clone(),
-                relay: PathBuf::from(ROOT).join("scripts/orc-hermit-msg.py"),
+                relay: self.root.join("relay-stub"),
                 socket: self.root.join("fake.socket"),
                 relay_command: Some(self.relay_command(relay_succeeds)),
                 hour: Some(hour.to_string()),
@@ -746,6 +836,13 @@ mod tests {
                 .lines()
                 .map(str::to_string)
                 .collect()
+        }
+    }
+
+    fn expect_valid(state_dir: &Path, hour: &str) -> Claim {
+        match read_claim(state_dir, hour) {
+            ClaimRead::Valid(claim) => claim,
+            other => panic!("expected a valid claim for {hour}, got {other:?}"),
         }
     }
 
@@ -818,7 +915,7 @@ mod tests {
         );
 
         // Finalizing the claim is what actually closes the hour.
-        let claim = read_claim(&fixture.state, "2026-08-07T01").unwrap();
+        let claim = expect_valid(&fixture.state, "2026-08-07T01");
         assert_eq!(claim.state, STATE_DELIVERED);
         assert!(claim.delivered_at.is_some());
 
@@ -872,7 +969,7 @@ mod tests {
         // Guards against a future "did I run recently" rewrite.
         let claim = delivered_claim("2026-08-07T01", 1_786_064_436);
         assert_eq!(
-            decide(Some(&claim), 1_786_064_436 + 86_400, DEFAULT_STALE_PENDING_SECS),
+            decide(&ClaimRead::Valid(claim.clone()), 1_786_064_436 + 86_400, DEFAULT_STALE_PENDING_SECS),
             Decision::DuplicateHour
         );
     }
@@ -937,23 +1034,23 @@ mod tests {
         let claim = pending(hour, claimed_at);
 
         assert_eq!(
-            decide(Some(&claim), claimed_at + 60, 900),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 60, 900),
             Decision::InFlight { age_secs: 60 },
             "a young pending claim may still be a live run; do not steal it"
         );
         assert_eq!(
-            decide(Some(&claim), claimed_at + 900, 900),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 900, 900),
             Decision::ReclaimStale { age_secs: 900 },
             "past the window the owner is gone and the hour must be reclaimable"
         );
         assert_eq!(
-            decide(Some(&claim), claimed_at + 86_400, 0),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 86_400, 0),
             Decision::InFlight { age_secs: 86_400 },
             "--stale-pending-secs 0 must disable reclaim entirely"
         );
         // A clock step backwards must not manufacture a reclaim.
         assert_eq!(
-            decide(Some(&claim), claimed_at - 5_000, 900),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at - 5_000, 900),
             Decision::InFlight { age_secs: 0 }
         );
     }
@@ -971,7 +1068,7 @@ mod tests {
 
         let result = execute(&fixture.args(hour, 1_786_064_436 + 1_200, true)).unwrap();
         assert_eq!(result.outcome, "delivered", "detail: {}", result.detail);
-        assert_eq!(read_claim(&fixture.state, hour).unwrap().state, STATE_DELIVERED);
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_DELIVERED);
         assert_eq!(fixture.deliveries().len(), 1);
     }
 
@@ -1000,7 +1097,7 @@ mod tests {
             result.detail
         );
         assert!(
-            read_claim(&fixture.state, "2026-08-07T01").is_none(),
+            read_claim(&fixture.state, "2026-08-07T01") == ClaimRead::Absent,
             "a skipped hour must stay open for a later attempt"
         );
         assert!(fixture.deliveries().is_empty());
@@ -1028,7 +1125,7 @@ mod tests {
         assert_eq!(failed.outcome, "wake-failed", "detail: {}", failed.detail);
         assert!(failed.detail.contains("released=true"));
         assert!(
-            read_claim(&fixture.state, "2026-08-07T01").is_none(),
+            read_claim(&fixture.state, "2026-08-07T01") == ClaimRead::Absent,
             "a fail-closed relay means nothing was delivered, so the hour must be released"
         );
         // The relay WAS invoked -- that is what distinguishes this from a skip.
@@ -1048,7 +1145,7 @@ mod tests {
         assert_eq!(result.outcome, "wake-failed");
         assert!(result.detail.contains("released=false"));
 
-        let claim = read_claim(&fixture.state, "2026-08-07T01").expect("claim must survive");
+        let claim = expect_valid(&fixture.state, "2026-08-07T01");
         assert_eq!(claim.state, STATE_PENDING);
         assert!(
             claim.detail.as_deref().unwrap_or_default().contains("wake failed rc=1"),
@@ -1060,23 +1157,151 @@ mod tests {
         assert_eq!(fixture.deliveries().len(), 1);
     }
 
-    // ---- a corrupt claim must never read as "no claim" ----
+    // ---- a corrupt claim must never read as "no claim", and never as reclaimable ----
 
     #[test]
-    fn unparseable_claim_is_treated_as_pending_not_as_absent() {
+    fn unparseable_claim_is_typed_corruption_not_absent_and_not_reclaimable() {
         let fixture = Fixture::new("corrupt");
         let hour = "2026-08-07T01";
         fs::create_dir_all(fixture.state.join("hours")).unwrap();
         fs::write(claim_path(&fixture.state, hour), "{ this is not json").unwrap();
 
-        let claim = read_claim(&fixture.state, hour).expect("corrupt claim must not read as absent");
-        assert_eq!(claim.state, STATE_PENDING);
-        // claimed_at = 0 means it ages out immediately rather than wedging the
-        // hour forever, so a corrupt file degrades to "retry", not to "silent".
-        assert!(matches!(
-            decide(Some(&claim), 1_786_064_436, DEFAULT_STALE_PENDING_SECS),
-            Decision::ReclaimStale { .. }
-        ));
+        assert!(
+            matches!(read_claim(&fixture.state, hour), ClaimRead::Corrupt { .. }),
+            "a corrupt file is neither absent nor a synthetic pending claim"
+        );
+        let decision = decide(
+            &read_claim(&fixture.state, hour),
+            1_786_064_436,
+            DEFAULT_STALE_PENDING_SECS,
+        );
+        assert!(matches!(decision, Decision::CorruptClaim { .. }));
+        assert!(
+            !decision.proceeds(),
+            "corruption must fail CLOSED: we cannot read `state`, so the hour may \
+             already have been delivered"
+        );
+    }
+
+    /// THE REGRESSION. A valid `delivered` claim plus one appended human-readable
+    /// line used to parse-fail into a synthetic pending@epoch0, age straight into
+    /// `ReclaimStale`, and re-send an hour that had already gone out. Measured
+    /// with the real driver: pure JSON gave `duplicate-hour claimed=no-op`, the
+    /// same file plus a trailing line gave `would-deliver reclaimed=true`.
+    #[test]
+    fn delivered_claim_plus_trailing_content_is_not_deliverable() {
+        let fixture = Fixture::new("trailing");
+        let hour = "2026-08-07T01";
+        let at = 1_786_064_436;
+        fs::create_dir_all(fixture.state.join("hours")).unwrap();
+        let valid = serde_json::to_string(&delivered_claim(hour, at)).unwrap();
+
+        // Control: the same bytes WITHOUT the trailing line still dedupe.
+        fs::write(claim_path(&fixture.state, hour), format!("{valid}\n")).unwrap();
+        assert_eq!(
+            decide(
+                &read_claim(&fixture.state, hour),
+                at + 86_400,
+                DEFAULT_STALE_PENDING_SECS
+            ),
+            Decision::DuplicateHour,
+            "control: a clean delivered claim must dedupe"
+        );
+
+        // Now append exactly what the reporting task appended.
+        fs::write(
+            claim_path(&fixture.state, hour),
+            format!("{valid}\nstatus delivered by hand at 01:04Z\n"),
+        )
+        .unwrap();
+        let decision = decide(
+            &read_claim(&fixture.state, hour),
+            at + 86_400,
+            DEFAULT_STALE_PENDING_SECS,
+        );
+        assert!(
+            matches!(decision, Decision::CorruptClaim { .. }),
+            "trailing content must be typed corruption, got {decision:?}"
+        );
+        assert!(
+            !decision.proceeds(),
+            "trailing content must NOT resurrect a delivered hour"
+        );
+        assert!(
+            !matches!(decision, Decision::ReclaimStale { .. }),
+            "the epoch-0 -> ReclaimStale fallback is the bug itself"
+        );
+
+        // End to end through the real driver: nothing is sent, nothing is claimed.
+        let result = execute(&fixture.args(hour, at + 86_400, true)).unwrap();
+        assert_eq!(result.outcome, "corrupt-claim");
+        assert!(
+            fixture.deliveries().is_empty(),
+            "a corrupt claim must send nothing, got {:?}",
+            fixture.deliveries()
+        );
+        // The operator needs the path to repair; assert the log is actionable.
+        assert!(
+            result.detail.contains("path=") && result.detail.contains("claimed=no-op"),
+            "detail must name the file and say nothing was taken: {}",
+            result.detail
+        );
+        // And the corrupt bytes are preserved, not silently repaired or deleted.
+        let on_disk = fs::read_to_string(claim_path(&fixture.state, hour)).unwrap();
+        assert!(on_disk.contains("status delivered by hand"));
+    }
+
+    /// The positive half of the bracket: fixing corruption must not have made the
+    /// ordinary absent hour undeliverable.
+    #[test]
+    fn genuinely_absent_hour_still_delivers() {
+        let fixture = Fixture::new("absent-still-delivers");
+        let hour = "2026-08-07T02";
+        assert_eq!(read_claim(&fixture.state, hour), ClaimRead::Absent);
+        assert_eq!(
+            decide(
+                &read_claim(&fixture.state, hour),
+                1_786_064_436,
+                DEFAULT_STALE_PENDING_SECS
+            ),
+            Decision::Deliver
+        );
+
+        let result = execute(&fixture.args(hour, 1_786_064_436, true)).unwrap();
+        assert_eq!(result.outcome, "delivered");
+        assert_eq!(fixture.deliveries().len(), 1);
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_DELIVERED);
+    }
+
+    /// The documented safe workaround: write the outcome into `detail` by atomic
+    /// rewrite instead of appending. It must stay parseable AND keep every
+    /// pre-existing field, or the workaround silently becomes the bug.
+    #[test]
+    fn atomic_detail_update_preserves_all_pre_existing_fields() {
+        let fixture = Fixture::new("detail-update");
+        let hour = "2026-08-07T01";
+        let at = 1_786_064_436;
+        let original = delivered_claim(hour, at);
+        write_claim(&fixture.state, &original).unwrap();
+
+        let updated = Claim {
+            detail: Some("status delivered by hand at 01:04Z".to_string()),
+            ..expect_valid(&fixture.state, hour)
+        };
+        write_claim(&fixture.state, &updated).unwrap();
+
+        let after = expect_valid(&fixture.state, hour);
+        assert_eq!(after.detail.as_deref(), Some("status delivered by hand at 01:04Z"));
+        assert_eq!(after.hour, original.hour);
+        assert_eq!(after.state, original.state);
+        assert_eq!(after.claimed_at, original.claimed_at);
+        assert_eq!(after.claimed_by_pid, original.claimed_by_pid);
+        assert_eq!(after.delivered_at, original.delivered_at);
+        // Still dedupes afterwards -- the whole point of using `detail`.
+        assert_eq!(
+            decide(&read_claim(&fixture.state, hour), at + 86_400, DEFAULT_STALE_PENDING_SECS),
+            Decision::DuplicateHour
+        );
     }
 
     #[test]
@@ -1104,7 +1329,7 @@ mod tests {
         args.dry_run = true;
         let result = execute(&args).unwrap();
         assert_eq!(result.outcome, "dry-run");
-        assert!(read_claim(&fixture.state, "2026-08-07T01").is_none());
+        assert_eq!(read_claim(&fixture.state, "2026-08-07T01"), ClaimRead::Absent);
         assert!(fixture.deliveries().is_empty());
         assert!(!fixture.state.join("invocations.log").exists());
     }
@@ -1117,6 +1342,6 @@ mod tests {
         let result = execute(&args).unwrap();
         assert_eq!(result.outcome, "skipped");
         assert!(result.detail.contains("prompt-unreadable"));
-        assert!(read_claim(&fixture.state, "2026-08-07T01").is_none());
+        assert_eq!(read_claim(&fixture.state, "2026-08-07T01"), ClaimRead::Absent);
     }
 }

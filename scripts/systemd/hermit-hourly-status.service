@@ -10,10 +10,14 @@ Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/hourly-st
 
 [Service]
 Type=oneshot
-Environment=HOME=/home/newton
-Environment=PATH=/home/newton/.cargo/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/home/newton/work/dev-hermit
-ExecStart=/home/newton/work/dev-hermit/scripts/hourly-status-relay.rs
+# %h is systemd's specifier for the invoking user's home. Spelling an owner's
+# home literally would pin this unit to one account on one box, which the
+# portability gate rejects and which would silently break for anyone else. HOME
+# is not set explicitly at all: systemd --user already exports it, and repeating
+# it is one more copy to drift.
+Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/work/dev-hermit
+ExecStart=%h/work/dev-hermit/scripts/hourly-status-relay.rs
 
 # The driver returns 0 for EVERY recorded tick outcome -- delivered,
 # duplicate-hour, in-flight, skipped, wake-failed -- because all of those are
