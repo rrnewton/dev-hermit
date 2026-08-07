@@ -34,6 +34,23 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # libunwind on the GitHub-hosted image is built WITH LZMA support (compressed
+  # .gnu_debugdata / minidebuginfo), so `-lunwind -lunwind-generic
+  # -lunwind-ptrace` -- which the third-party `unwind-sys` crate emits -- drags in
+  # six lzma_* symbols that nothing else supplies. Without this the release build
+  # fails to LINK and the gate never reaches the denominator step at all:
+  #   rust-lld: error: undefined reference: lzma_stream_buffer_decode  (+5 more)
+  # liblzma-dev is already installed below; it was the LINK FLAG that was missing,
+  # not the package. This is NOT host-universal -- a libunwind built without LZMA
+  # (e.g. the devbox: 0 lzma refs in /lib64/libunwind.so) links fine unflagged.
+  #
+  # This line is copied from rrnewton/hermit, where the IDENTICAL remedy appears in
+  # SIX workflows (ci-dag, ci-portable, ci-privileged, demo-hot-path, docs,
+  # validation-levels). That duplication is the argument for moving it to
+  # hermit-cli/build.rs instead: this gate is the SEVENTH consumer and the first in
+  # another repository, so it never inherited the copy-paste and rediscovered the
+  # breakage as a red gate. Tracked separately; this env var unblocks the gate now.
+  RUSTFLAGS: -C link-arg=-llzma
 
 jobs:
   portable-denominator:
