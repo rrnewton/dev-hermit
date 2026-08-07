@@ -119,7 +119,10 @@ class PlantedMutations(unittest.TestCase):
     def test_M6_empty_stream_is_NOT_MEASURED_never_pass(self):
         v = dc.self_determinism(raw(BASE), "")
         self.assertEqual(v["verdict"], dc.NOT_MEASURED)
-        self.assertIn("empty detlog stream", v["reason"])
+        # Assert the SEMANTIC, not the wording: the reason must name the
+        # zero-record condition. Pinning exact prose makes the test brittle to a
+        # refactor that changed nothing observable.
+        self.assertIn("no detlog records", v["reason"])
 
     def test_M7_both_streams_empty_is_NOT_MEASURED_not_a_trivial_pass(self):
         """THE VACUOUS-GREEN TRAP. Two empty streams have an identical digest, so
