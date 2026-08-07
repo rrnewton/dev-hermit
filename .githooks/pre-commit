@@ -4,16 +4,25 @@
 #
 # The DEFAULT hygiene practice is to write anything you won't commit -- raw logs,
 # boot artifacts, scratch, big outputs -- directly into an ignored/ dir from the
-# start, so there is no commit-time judgment call. This hook is only a BACKSTOP:
-# it WARNS + BLOCKS when a staged file exceeds a soft size limit, so an oversized
-# artifact never lands by accident. It does NOT blanket-ban any extension; small
-# curated logs/reports commit freely.
+# start, so there is no commit-time judgment call. This hook is only a BACKSTOP.
+# It applies TWO INDEPENDENT hygiene gates to the staged blobs:
 #
-# Override (you testify you've verified this file is a genuinely-needed, curated
-# tracked report / machine-readable state):
+#   1. BINARY TYPE, size-independent -- ELF / ar-archive magic is refused at any
+#      size (Hard Invariant 11). A 17 KiB compiled mutant is as refused as a
+#      50 MB one; no size limit can catch that shape.
+#   2. SOFT SIZE, type-independent -- WARNS + BLOCKS over a per-file limit, so an
+#      oversized artifact never lands by accident.
+#
+# Neither blanket-bans an extension; small curated logs/reports commit freely.
+#
+# Override the SIZE gate (you testify you've verified this file is a
+# genuinely-needed, curated tracked report / machine-readable state):
 #     HERMIT_HYGIENE_OVERRIDE=1 git commit ...
-# Tune the limit (KiB):
+# Tune the size limit (KiB):
 #     HERMIT_HYGIENE_MAX_KB=2048 git commit ...
+# Override the BINARY gate -- SEPARATE FLAG BY DESIGN; needs a repo-owner policy
+# decision, and HERMIT_HYGIENE_OVERRIDE deliberately does NOT reach it:
+#     HERMIT_BINARY_GUARD=off git commit ...
 #
 # Install:  scripts/setup-hooks.sh   (sets core.hooksPath=.githooks)
 # Policy:   .githooks/hygiene-policy.md
@@ -135,6 +144,82 @@ if [ -x scripts/primary_checkout.py ] && [ -f hermit/Cargo.toml ]; then
       exit 1
     fi
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# BINARY-TYPE GUARD (SIZE-INDEPENDENT). Runs BEFORE the size check below.
+#
+# The size check is a soft budget; this is Hard Invariant 11 ("never commit
+# binaries to any repository"), which has no size threshold. Keeping them
+# separate matters because the two failure modes are different: a 4 MiB CSV is
+# a judgment call, a 17 KiB ELF is never correct at any size.
+#
+# Measured 2026-08-06 (audit `ai_docs/parent-dirty-ownership-audit_20260806.md`
+# section 4): experiments/strict-certification-mutation-sweep_20260806/mutants/
+# held 7 unignored ELF executables, 17,256-907,448 bytes, ~5.4 MB total, none
+# ignored by `git check-ignore`. EVERY ONE was under LIMIT_KB=1024, so the
+# size-only guard would have passed all 5.4 MB silently on one `git add -A`.
+# The smallest (`clean_trivial`, 17 KiB) is the shape no size limit can ever
+# catch -- which is the whole point of checking TYPE instead of SIZE.
+#
+# SCOPE IS DELIBERATELY NARROW: the executable/object/archive family, matched on
+# magic bytes of the STAGED BLOB (not the worktree file, not the extension, not
+# `file`(1) -- no external dependency, and nothing an extension rename evades):
+#     \x7fELF     ELF -- executables, .so shared libs, .o relocatables, core dumps
+#     !<arch>\n   ar  -- .a static libraries (and .deb)
+# This is NOT a general binary heuristic on purpose. Verified against the whole
+# tracked tree at 2026-08-06: ZERO tracked files match either magic, so this
+# gate cannot false-positive on anything the repo already contains. A broader
+# net (git's own NUL-byte heuristic) would catch legitimate tracked fixtures and
+# golden logs and is NOT adopted here.
+#
+# Escape hatch is SEPARATE from HERMIT_HYGIENE_OVERRIDE on purpose. That flag
+# means "I testify this is a curated tracked report/state", which a compiled
+# binary can never be, so it MUST NOT silence this gate -- one flag for two
+# different authorities is exactly the collapse that lets a real breach ride in
+# on an unrelated testimony. Committing a binary needs a repo-owner policy
+# decision (see Hard Invariant 11 on Git LFS), so the hatch is deliberately
+# separate and greppable:  HERMIT_BINARY_GUARD=off git commit ...
+#
+# Bracket harness (both directions, counted): .githooks/tests/test-binary-guard.sh
+# ---------------------------------------------------------------------------
+bins=()
+if [ "${HERMIT_BINARY_GUARD:-block}" != "off" ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    # Magic bytes of the STAGED blob. `od -N8` stops after 8 bytes; the SIGPIPE
+    # this sends to `git cat-file` is expected and harmless (no pipefail here).
+    # Fail OPEN on any lookup error -- a guard defect must never wedge a commit.
+    magic=$(git cat-file blob ":$f" 2>/dev/null | od -An -tx1 -v -N8 2>/dev/null | tr -d ' \n') || continue
+    case "$magic" in
+      7f454c46*)         bins+=("$(printf '  ELF      %s' "$f")") ;;
+      213c617263683e0a*) bins+=("$(printf '  ARCHIVE  %s' "$f")") ;;
+    esac
+  done < <(git diff --cached --name-only --diff-filter=ACM)
+fi
+
+if [ "${#bins[@]}" -gt 0 ]; then
+  {
+    echo "----------------------------------------------------------------------"
+    echo "REPO HYGIENE: staged file(s) are COMPILED BINARIES (matched by magic"
+    echo "bytes of the staged blob, independent of size):"
+    for b in "${bins[@]}"; do echo "$b"; done
+    echo
+    echo "Hard Invariant 11: never commit binaries to any repository -- no size"
+    echo "is small enough. Build outputs, mutants, fixtures and compiled test"
+    echo "guests belong under an ignored/ dir, written there FROM THE START."
+    echo "If evidence depends on one, commit a small TEXT manifest instead:"
+    echo "location, checksum, producing command, tool version, source SHA."
+    echo
+    echo "NOTE: HERMIT_HYGIENE_OVERRIDE=1 does NOT bypass this -- it attests a"
+    echo "curated report/state file, which a compiled binary is not."
+    echo "Policy: ${POLICY}"
+    echo
+    echo "BLOCKED. Committing a binary needs a repo-owner policy decision; if you"
+    echo "have one, it is:  HERMIT_BINARY_GUARD=off git commit ..."
+    echo "----------------------------------------------------------------------"
+  } >&2
+  exit 1
 fi
 
 big=()
