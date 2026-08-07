@@ -97,6 +97,20 @@ case "$GOLDEN_SHA" in
                  "The commit does not identify the source; binary_sha256=$BIN_SHA256" \
                  "is the only handle on what actually ran." >&2 ;;
 esac
+# Identity alone is not staleness. The stamp above says WHICH binary; this says
+# how far behind main it is -- the 23-commits-behind binary that produced three
+# false nondeterminism verdicts on 2026-08-07 had a perfectly precise identity.
+BIN_PROV=$(python3 - "$H" "/home/newton/work/dev-hermit/hermit" 2>/dev/null <<'PROV'
+import sys
+sys.path.insert(0, "/home/newton/work/dev-hermit/ci-hub")
+try:
+    from provenance import binary_provenance
+except ImportError:
+    print("staleness=UNAVAILABLE"); raise SystemExit(0)
+print(binary_provenance(sys.argv[1], sys.argv[2]).render())
+PROV
+)
+[ -n "$BIN_PROV" ] && echo "$BIN_PROV" >&2
 DATE=$(date -u +%Y-%m-%d)
 # EMIT is the candidate's own comparable-record count. It is printed as its own
 # column because Y alone cannot distinguish "compared and diverged immediately"
