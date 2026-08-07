@@ -1,0 +1,6 @@
+guest,shape,syscall_insns_in_main_elf,e9patch_candidate_sites,e9patch_mapped_sites,e9patch_b0_sites,verdict
+inline_syscall_sites,inline asm syscalls in a dynamically linked main ELF,2,2,2,0,EXERCISED
+mixed_inline_and_libc_syscalls,inline asm interleaved with ordinary libc calls,1,1,1,0,EXERCISED
+static_nolibc_syscall_sites,-static -nostdlib -nostartfiles freestanding _start,2,2,2,0,EXERCISED
+notsc,ordinary dynamically linked libc guest (CONTRAST),0,0,0,0,NOT-EXERCISED
+/bin/true,system binary (CONTRAST),0,0,0,0,NOT-EXERCISED

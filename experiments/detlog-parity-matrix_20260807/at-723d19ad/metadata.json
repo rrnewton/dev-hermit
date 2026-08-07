@@ -1,0 +1,56 @@
+{
+  "experiment": "detlog-parity-matrix (re-measurement at current main)",
+  "date_utc": "2026-08-07",
+  "task": "re-measure-the-detlog-matrix-at-current-main",
+  "agent": "hermit-w7",
+  "question": "Re-run the checked-in matrix harness at CURRENT hermit main and report which cells change relative to the 0041130c arm.",
+  "binary": {
+    "path": "worktrees/w7/hermit/target/release/hermit",
+    "self_reported_version": "hermit 0.2.0 (2026-08-07, g723d19ad5d10)",
+    "dirty": false,
+    "sha256": "878d7a33b4cf6e243e131c4b23bd1386770abd8117120653f47887f415816407",
+    "commit": "723d19ad5d10d40705ba10040f5a5e8edd9699b5",
+    "commit_status": "This WAS hermit origin/main at measurement time AND still was at report time: freshly fetched, commits-after-measurement = 0.",
+    "reverie_pin": "038e993926e45514264d30367b70df9b6ac3b9b8",
+    "build": "HERMIT_INSTALL_FORCE_RESTAGE=w7-matrix-723d19ad cargo build --release --locked -p hermit --features third-party-backends -p detcore-dbi -p detcore-sabre -p hermit-install",
+    "staged_third_party": {"sabre_revision": "41113f849f8799932ed8c7883f5a4de616b9e9fa"}
+  },
+  "prior_arm": {
+    "commit": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "sha256": "cc6236843764cb0beb49f1b70c48fc6965f38f4059b686088e30705ca9048257",
+    "reverie_pin": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+    "artifact": "experiments/detlog-parity-matrix_20260807 (content commit 06a34621)"
+  },
+  "intervening_commits": {
+    "count": 9,
+    "substantive": [
+      "590fcc9ee Bump the Reverie pin to 6144323c and carry the DBI budget forward",
+      "4be8edcd2 Bump Reverie pin to 038e9939 and carry the DBI budget on a narrower argument"
+    ],
+    "non_runtime": [
+      "723d19ad5 Ignore safe-ci-dag-runner's per-checkout profile store (gitignore)",
+      "e80832238 Give the e2e manifests a per-backend guest-argument channel (test harness)",
+      "75506005d Fix two clippy::nonminimal_bool errors (lint)",
+      "11dfe3a3b / 4da445156 / 0b2475b23 / a86113e0c backend-parity scorecard tooling (hermit-w7's landed PR #1832; parent-facing, not the runtime)"
+    ],
+    "net_runtime_variable": "Reverie pin 0ae0c01b -> 6144323c -> 038e9939",
+    "pr_1847_landed": false,
+    "pr_1847_ancestry_check": "077833ad65955b30309d40ac3105a135779c0dce is NOT an ancestor of 723d19ad5d10d40705ba10040f5a5e8edd9699b5"
+  },
+  "runs": {
+    "n30_matrix": 1260,
+    "n3_like_for_like_matrix": 126,
+    "engagement_pass": 42,
+    "planted_divergence": 6,
+    "runs_with_nonzero_rc": 0,
+    "runs_with_zero_detlog_records": 0
+  },
+  "method_unchanged_from_prior_arm": true,
+  "harness": "../harness/{matrix_collect.sh,notsc.c,notsc_mut.c}; scorer is at-723d19ad/matrix_score.py",
+  "scorer_changes": [
+    "self-determinism now reports DISTINCT OUTCOME CLASSES over n runs, not only a differing-pair count: a pair count cannot distinguish 'one minority class' (liteinst 21|9) from 'every run unique' (dbi 30 classes over 30 runs), and those are different defects.",
+    "the carried SELFDET_OVERRIDE is now applied only when the collected run count is below 30. With the matrix itself at n=30 the override is moot, and leaving it unconditional would have let a stale number from the previous arm mask a real change -- exactly what this task exists to detect."
+  ],
+  "no_memory_hash_flags": "--detlog-stack and --detlog-heap are not passed. DETLOG is measured as its own emission stream; nothing here transfers to stack or heap in either direction.",
+  "relaxations": "none"
+}

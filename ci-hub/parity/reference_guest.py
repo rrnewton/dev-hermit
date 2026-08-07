@@ -132,6 +132,23 @@ def emit(
     m = manifest or load_manifest()
     ref = reference_for(dimension, m)
 
+    # NOT-COMPARABLE IS A REAL RESULT; A BLANK IS A FALSE ONE.
+    #
+    # A dimension whose REFERENCE is uncontrolled cannot yield a meaningful
+    # cross-backend number, so it is REFUSED here rather than left absent.
+    # Absent would surface as "unknown dimension", which reads as "nobody got to
+    # it yet" -- indistinguishable from a gap, and the thing that lets a false
+    # parity value get published later. Declaring it makes the refusal carry its
+    # reason. The literal string matches
+    # compat-envelope/self_determinism_gate.py so both gates read alike.
+    nc = ref.get("not_comparable")
+    if nc:
+        raise RefusedError(
+            f"NOT-COMPARABLE [{nc['verdict']}] {ref['source'].split('/')[-1]}/{dimension}: "
+            f"{nc['reason']}. MECHANISM: {nc['mechanism']} EVIDENCE: {nc['evidence']}. "
+            f"CONSEQUENCE: {nc['consequence']}. NOTE: {nc['self_determinism_still_valid']}"
+        )
+
     actual = source_sha256(guest_source)
     expected = ref["source_sha256"]
     if actual != expected:

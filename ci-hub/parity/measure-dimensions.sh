@@ -20,6 +20,24 @@ mkdir -p "$OUT/bin"
 
 if [ ! -x "$H" ]; then echo "no hermit at $H (set HERMIT=)" >&2; exit 2; fi
 
+# EMIT THE PROVENANCE OF WHAT WE READ, before any number is printed.
+#
+# On 2026-08-07 a hermit binary 23 commits behind main produced three FALSE
+# nondeterminism verdicts against the golden reference and a 60x-inflated cost.
+# The binary was internally consistent and gave no signal it was stale -- a
+# surprising result from a stale artifact looks identical to a discovery. So the
+# binary states its own distance from main here, beside the cells it produces.
+python3 - "$H" "$ROOT/hermit" <<'PROV' >&2
+import sys
+sys.path.insert(0, "/home/newton/work/dev-hermit/ci-hub")
+sys.path.insert(0, __import__("os").environ.get("CI_HUB_DIR", ""))
+try:
+    from provenance import binary_provenance
+except ImportError:
+    print("provenance: UNAVAILABLE (ci-hub/provenance.py not importable)"); raise SystemExit(0)
+print(binary_provenance(sys.argv[1], sys.argv[2]).render())
+PROV
+
 # Build every pinned guest from the manifest, so "checked in" also means
 # "re-runnable from source" rather than trusting a stale binary.
 mapfile -t DIMS < <(python3 -c "

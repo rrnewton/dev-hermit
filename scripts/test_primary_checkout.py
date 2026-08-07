@@ -207,12 +207,22 @@ class _ParentWorkspaceFixture(unittest.TestCase):
         generated = {
             Path("Cargo.lock"): lock_text,
             Path("liteinst-runtime-build/Cargo.lock"): lock_text,
-            Path("ci/dag/portable.json"): f"liteinst-runtime-build-{reverie_rev[:8]}\n",
+            # These four carry UNSUFFIXED bases, matching the real tree: the
+            # 8-hex suffix is appended at run time by stage-liteinst-runtime.sh.
+            # The fixture previously seeded literal suffixes here because the old
+            # check REQUIRED them; that modelled a design hermit no longer has.
+            Path("ci/dag/portable.json"): "$PWD/target/liteinst-runtime-build\n",
             Path("hermit-cli/tests/common/liteinst.rs"): (
-                f"liteinst-runtime-build-{reverie_rev[:8]}\n"
+                'target_dir.join("liteinst-runtime-build")\n'
             ),
-            Path("hermit-install/build.rs"): f"liteinst-runtime-{reverie_rev[:8]}\n",
-            Path("validate.sh"): f"liteinst-runtime-build-{reverie_rev[:8]}\n",
+            Path("hermit-install/build.rs"): 'build_root.join("liteinst-runtime")\n',
+            Path("validate.sh"): "$ROOT_DIR/target/liteinst-runtime-build\n",
+            # The derivation site the check now asserts.
+            Path("scripts/stage-liteinst-runtime.sh"): (
+                "#!/usr/bin/env bash\n"
+                'reverie_pin=$("$root_dir/ci/run-reverie-pin-check.sh" --print-pin)\n'
+                'liteinst_target_dir=$(realpath -m -- "$3-${reverie_pin:0:8}")\n'
+            ),
         }
         for relative, contents in generated.items():
             path = self.seeds["hermit"] / relative
@@ -399,7 +409,15 @@ class PrimaryCheckoutTests(_ParentWorkspaceFixture):
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
         self.assertIn("Cargo.lock: stale Reverie source", err.getvalue())
 
-    def test_snapshot_refuses_stale_revision_cache_key(self) -> None:
+    def test_snapshot_refuses_hardcoded_revision_cache_key(self) -> None:
+        """A hardcoded suffix must be REFUSED, not required.
+
+        This is the same plant as before the polarity flip, and it must still be
+        refused -- but for the opposite reason. The suffix is appended at run time
+        by stage-liteinst-runtime.sh from the canonical pin; a literal in the tree
+        is the drift hazard, so pasting one in must not be a way to turn the gate
+        green.
+        """
         original_parent = git(self.root, "rev-parse", "HEAD")
         cache = self.seeds["hermit"] / "validate.sh"
         cache.write_text("liteinst-runtime-build-00000000\n")
@@ -419,7 +437,7 @@ class PrimaryCheckoutTests(_ParentWorkspaceFixture):
 
         self.assertEqual(result, 1)
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
-        self.assertIn("validate.sh: cache keys=00000000", err.getvalue())
+        self.assertIn("validate.sh: hardcoded LiteInst cache key", err.getvalue())
 
     def test_check_pins_passes_on_consistent_tree(self) -> None:
         out, err = StringIO(), StringIO()
@@ -497,9 +515,11 @@ class PrimaryCheckoutTests(_ParentWorkspaceFixture):
         self.assertIn("not internally consistent", err.getvalue())
 
     def test_check_pins_ignores_cache_key_drift(self) -> None:
-        # The revision-keyed cache files are deliberately OUTSIDE the blocking
-        # gate (7-char/heterogeneous keys would false-positive). Staling one in
-        # the RECORDED tree must still not block check-pins.
+        # The cache key is outside the BLOCKING gate: it is derived at run time,
+        # so there is nothing here for check-pins to compare. Planting a literal
+        # in the RECORDED tree must still not block check-pins -- the snapshot
+        # path reports it (see test_snapshot_refuses_hardcoded_revision_cache_key),
+        # this one must not.
         cache = self.root / "hermit" / "validate.sh"
         cache.write_text("liteinst-runtime-build-00000000\n")
         git(self.root / "hermit", "add", "validate.sh")

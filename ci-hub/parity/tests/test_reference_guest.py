@@ -48,9 +48,55 @@ STATIC = "".join(
 
 # ------------------------------- manifest ---------------------------------- #
 
-def test_all_four_dimensions_are_pinned():
+def test_every_dimension_is_pinned_and_split_by_comparability():
+    """Six declared: four comparable, two explicitly NOT-COMPARABLE.
+
+    The split is the point. rdrand/rdseed are DECLARED rather than left absent
+    so their refusal carries a reason -- an absent dimension refuses with
+    "unknown dimension", which reads as "nobody got to it yet" and is exactly
+    the blank this marking exists to replace.
+    """
     dims = load_manifest()["dimensions"]
-    assert set(dims) == {"stdout", "detlog", "stack", "heap"}
+    assert set(dims) == {"stdout", "detlog", "stack", "heap", "rdrand", "rdseed"}
+    comparable = {d for d, v in dims.items() if not v.get("not_comparable")}
+    marked = {d for d, v in dims.items() if v.get("not_comparable")}
+    assert comparable == {"stdout", "detlog", "stack", "heap"}
+    assert marked == {"rdrand", "rdseed"}
+
+
+def test_not_comparable_axes_are_refused_with_the_literal_marking():
+    """The marking must be the literal string, matching self_determinism_gate.py."""
+    for dim in ("rdrand", "rdseed"):
+        with pytest.raises(RefusedError, match="NOT-COMPARABLE"):
+            emit(dim, "ptrace", 1, guest_source=GUESTS / "entropy_instructions.c",
+                 guest_stdout="cpuid1_ecx=90b82201\n")
+
+
+def test_not_comparable_is_refused_for_every_backend_not_just_ptrace():
+    """The AXIS is uncomparable because the REFERENCE is uncontrolled.
+
+    So a backend that determinizes RDRAND correctly must also be refused -- it
+    would otherwise score as diverging from an uncontrolled reference, which
+    would penalise the fix.
+    """
+    for backend in ("ptrace", "kvm", "dbi", "sabre", "liteinst", "e9patch"):
+        with pytest.raises(RefusedError, match="NOT-COMPARABLE"):
+            emit("rdrand", backend, 1, guest_source=GUESTS / "entropy_instructions.c",
+                 guest_stdout="cpuid1_ecx=90b82201\n")
+
+
+def test_the_marking_carries_its_reason_and_evidence():
+    """A marking without its reason is a blank with extra steps."""
+    try:
+        emit("rdrand", "ptrace", 1, guest_source=GUESTS / "entropy_instructions.c",
+             guest_stdout="cpuid1_ecx=90b82201\n")
+        raise AssertionError("should have refused")
+    except RefusedError as e:
+        text = str(e)
+        assert "NO-REFERENCE" in text
+        assert "6/6 distinct" in text          # the evidence
+        assert "CR4.TSD" in text               # the mechanism it contrasts against
+        assert "penalise the fix" in text      # the consequence
 
 
 def test_pinned_sha_matches_the_checked_in_source():

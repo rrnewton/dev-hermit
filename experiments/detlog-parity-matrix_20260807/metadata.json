@@ -1,0 +1,50 @@
+{
+  "experiment": "detlog-parity-matrix",
+  "date_utc": "2026-08-07",
+  "task": "assemble-the-detlog-parity-matrix-across-measured-backends",
+  "agent": "hermit-w7",
+  "question": "One cross-backend DETLOG parity matrix: every cell carrying executed counts, tier, corpus, and its OWN self-determinism status, with non-measurable cells present as explicit no-results and counts summing to the population.",
+  "why_remeasured_rather_than_aggregated": "The task cites per-backend numbers taken at hermit 590fcc9e by another agent. Assembling those into one matrix would mix binaries, corpora and run counts across cells, so the resulting rows would not be comparable to each other. Everything here is one binary, one corpus, one run count. The prior numbers are reported separately as corroboration with the binary difference stated.",
+  "binary": {
+    "path": "worktrees/w7/hermit/target/release/hermit",
+    "self_reported_version": "hermit 0.2.0 (2026-08-07, g0041130ccb0d)",
+    "dirty": false,
+    "sha256": "cc6236843764cb0beb49f1b70c48fc6965f38f4059b686088e30705ca9048257",
+    "commit": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "commit_status": "ANCESTOR of origin/main, not the tip. main was e808322385d4 at measurement time.",
+    "reverie_pin": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+    "build": "HERMIT_INSTALL_FORCE_RESTAGE=w7-matrix-0041130c cargo build --release --locked -p hermit --features third-party-backends -p detcore-dbi -p detcore-sabre -p hermit-install",
+    "staged_third_party": {
+      "sabre_revision": "41113f849f8799932ed8c7883f5a4de616b9e9fa",
+      "resources": "target/install_pkg/rsrcs/{e9patch,e9tool,sabre,dynamorio,libdetcore_dbi.so,libdetcore_sabre.so,libreverie_liteinst.so}"
+    }
+  },
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "population": {
+    "cells": 7,
+    "backends": 6,
+    "matrix_rows": 42,
+    "runs_collected": 126,
+    "runs_with_rc_nonzero": 0,
+    "runs_with_zero_detlog_records": 0
+  },
+  "command": "hermit --log=info --backend=<be> run --strict --base-env=minimal -- <guest>, stderr filtered with grep -o 'DETLOG .*'",
+  "no_memory_hash_flags": "--detlog-stack and --detlog-heap are deliberately NOT passed. DETLOG is measured as its own emission stream; nothing here transfers to stack or heap in either direction.",
+  "policies": {
+    "raw": "byte-exact DETLOG lines",
+    "hex": "0x<hex> -> HEX, verbatim ci-hub/parity/prefix_depth.sh's commits() normalisation",
+    "addr_diagnostic": "hex plus ordinalising '= Ok(N)' where N >= 1<<20. DIAGNOSTIC ONLY, never a tier: it could mask a genuinely large returned count."
+  },
+  "relaxations": "none",
+  "known_confound_controlled": "LiteInst DETLOG content depends on the hermit binary's install path, because the absolute LD_PRELOAD path sits in the guest environment block. Every arm here was driven from one fixed path.",
+  "related_artifacts": [
+    "experiments/liteinst-detlog-parity_20260807 (commit dc1e28ea)",
+    "experiments/liteinst-maps-inode-self-determinism_20260807 (commit 5467805, on origin/main)"
+  ]
+}
