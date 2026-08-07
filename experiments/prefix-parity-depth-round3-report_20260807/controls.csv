@@ -1,0 +1,9 @@
+round,guest,control,y,z,meaning
+1,bin-true,positive-ptrace-self,5,5,full depth reachable
+1,bin-true,liteinst-baseline,2,5,measured candidate
+1,bin-true,perturb-candidate-record-1,1,5,planted regression lowers depth
+1,bin-true,perturb-candidate-record-0,0,5,planted regression produces a real zero with known denominator
+2,coreutil-wc,positive-ptrace-self,7,7,full depth reachable
+2,coreutil-wc,liteinst-baseline,2,7,measured candidate
+2,coreutil-wc,perturb-candidate-record-1,1,7,planted regression lowers depth
+2,coreutil-wc,perturb-candidate-record-0,0,7,planted regression produces a real zero with known denominator

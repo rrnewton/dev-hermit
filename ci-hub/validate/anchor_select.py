@@ -90,6 +90,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# The canonical coverage predicate is SHARED, not re-implemented here: a private
+# copy is exactly how this file came to disagree with it. Mirrors the sys.path
+# pattern used by aggregate.py / finalize_receipt.py for the hyphenated dir.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from qualifying_receipt import coverage_satisfied  # noqa: E402
+
 HERE = Path(os.path.abspath(__file__)).parent
 CI_HUB = HERE.parent
 PARENT = CI_HUB.parent
@@ -137,17 +143,26 @@ def load_predicate(path: Path) -> dict:
 
 
 def _coverage_satisfied(row: dict) -> bool:
-    """Per-node coverage obligation: completeness is COVERAGE, not a count."""
-    cov = row.get("coverage")
-    if not isinstance(cov, dict):
-        return False
-    if not isinstance(cov.get("planned_test_nodes"), int) or cov["planned_test_nodes"] <= 0:
-        return False
-    if cov.get("zero_executed_nodes"):
-        return False
-    if cov.get("absent_nodes"):
-        return False
-    return True
+    """Per-node coverage obligation: completeness is COVERAGE, not a count.
+
+    DELEGATES to the canonical predicate. This was a private re-implementation
+    that DISAGREED with it, and the disagreement was fail-OPEN in the one place
+    that can least afford it: `_coverage_satisfied` gates whether a commit may
+    serve as an ANCHOR, so a receipt it wrongly calls covered becomes a green
+    that later incremental runs INHERIT.
+
+    The private copy tested the two name lists for truthiness
+    (`if cov.get("zero_executed_nodes"): return False`). A MISSING key is falsy,
+    so the check fell through and the receipt was called SATISFIED, where the
+    canonical `== []` refuses it — an unreported list is unknown, and unknown is
+    refused. Measured across six shapes the two agreed on 2 and diverged on 4,
+    and all four divergences were in the permissive direction.
+
+    Do not reintroduce a local copy. ci-hub/lib/records.rs records this same bug
+    being fixed on the Rust side while Python was strict; the permissive form
+    surviving here is the other half of that split brain.
+    """
+    return coverage_satisfied(row.get("coverage"))
 
 
 def row_qualifies(row: dict, predicate: dict) -> tuple[bool, str]:

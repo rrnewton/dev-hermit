@@ -29,6 +29,13 @@ class Evidence:
     reference: str
     resolved: str | None = None
     reason: str | None = None
+    # Which verified landing state the code evidence carried: "landed" (the
+    # commit is an ancestor of freshly-fetched target main) or
+    # "implemented-unlanded" (the PR/commit exists and resolved, but has not
+    # merged yet). Both close. Recorded in the closure note so a reader can
+    # tell them apart afterwards -- "closed" alone must never be readable as
+    # "landed".
+    landing: str | None = None
 
     @property
     def rc(self) -> int:
@@ -54,6 +61,24 @@ def _run(
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return subprocess.CompletedProcess(list(command), UNVERIFIABLE, "", str(error))
+
+
+def task_has_implemented_tag(task: str, *, run: Run = _run) -> bool:
+    """Is `implemented` on the task right now?
+
+    Gate for closing an unlanded task. Landing pendency is tracked by the
+    `drain-implemented-to-landed` query, which selects on this tag -- so
+    closing an unlanded task WITHOUT it would drop the work out of every view
+    at once: not ready, not active, and not in the drain. Requiring the tag is
+    what keeps "closed but not yet landed" discoverable rather than lost.
+    """
+    result = run(("tg", "show", task), cwd=ROOT)
+    if result.returncode != 0:
+        return False
+    for line in result.stdout.splitlines():
+        if line.strip().lower().startswith("tags:"):
+            return "implemented" in line.lower()
+    return False
 
 
 def _json_object(output: str) -> dict[str, object] | None:
@@ -96,8 +121,32 @@ def verify_code(
     resolved = str(payload.get("resolved_sha") or "") or None
     reason = str(payload.get("reason") or state)
     if result.returncode == CLOSED and state == "landed" and resolved:
-        return Evidence("verified", "code", reference, resolved=resolved)
+        # Carry the repository WITH the SHA. `resolved=<sha>` alone was
+        # unfalsifiable on inspection: a parent-repo task closed against
+        # hermit's PR #56 recorded `CLOSURE-VERIFIED ... resolved=299e5b90`,
+        # which reads correct until you discover that object does not exist in
+        # dev-hermit at all. The 40-hex is still extractable by
+        # ci-hub/directives/tg_landed.py, which regexes for it.
+        return Evidence(
+            "verified", "code", reference, resolved=f"{repo}@{resolved}", landing="landed"
+        )
     if result.returncode == REFUSED and state == "not-landed":
+        # NOT-LANDED IS A VERIFIED STATE, NOT A FAILURE (2026-08-06). The
+        # verifier dereferenced the reference and resolved a real commit; it
+        # simply is not on target main yet. Under the close-on-implemented
+        # rule that is a complete implementation, so it closes -- with the
+        # landing state recorded, and only when the caller still needs no
+        # further work. Note what is NOT relaxed: a reference that does not
+        # resolve at all never reaches here, and still refuses below.
+        if resolved:
+            return Evidence(
+                "verified",
+                "code",
+                reference,
+                resolved=f"{repo}@{resolved}",
+                reason=reason,
+                landing="implemented-unlanded",
+            )
         return Evidence("refused", "code", reference, resolved=resolved, reason=reason)
     return Evidence("unverifiable", "code", reference, resolved=resolved, reason=reason)
 
@@ -126,8 +175,6 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
     if not path.is_absolute():
         path = ROOT / path
     path = path.resolve()
-    if not path.is_file():
-        return Evidence("refused", "artifact", reference, reason="artifact is not a file")
     try:
         relative = str(path.relative_to(ROOT))
     except ValueError:
@@ -137,11 +184,19 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
             reference,
             reason="local artifact is outside the versioned workspace; use a URL",
         )
-    tracked = run(("git", "-C", str(ROOT), "ls-files", "--error-unmatch", relative), cwd=ROOT)
-    if tracked.returncode != 0:
-        return Evidence(
-            "refused", "artifact", reference, reason="artifact is not version-controlled"
-        )
+    # The authority for a parent artifact is `origin/main`, NOT this checkout.
+    # Deliberately no `path.is_file()` and no `git ls-files` here: the parent
+    # primary runs tens of commits behind origin (it was 41 behind on
+    # 2026-08-06), and the only safe way to publish a parent artifact is from a
+    # worktree off origin/main -- so a correctly published artifact is routinely
+    # absent from this working tree and this index. Gating on either refused
+    # every such closure with "artifact is not a file", which named the wrong
+    # cause: the file was tracked, pushed, and ancestry-present.
+    #
+    # Nothing is weakened by dropping them. Existence, version-control, and
+    # blob-ness are all re-established below against the freshly fetched
+    # origin/main, which is strictly the stronger authority -- a working tree
+    # can hold an untracked or locally-modified file that was never published.
     fetched = run(
         (
             "with-proxy",
@@ -188,13 +243,25 @@ def verify_artifact(reference: str, *, run: Run = _run) -> Evidence:
                 detail += (" | set CI_HUB_HERDR_AGENT=<agent> to relay the fetch through"
                            " herdr-run when running inside an agent sandbox")
             return Evidence("unverifiable", "artifact", reference, reason=detail)
-    present = run(
-        ("git", "-C", str(ROOT), "cat-file", "-e", f"origin/main:{relative}"),
+    # `-t` answers presence and object type in one call. The type check is
+    # load-bearing: `cat-file -e origin/main:<dir>` succeeds for a TREE, so
+    # existence alone would let a caller close a task against a directory. The
+    # dropped `path.is_file()` used to supply that guard by accident.
+    kind = run(
+        ("git", "-C", str(ROOT), "cat-file", "-t", f"origin/main:{relative}"),
         cwd=ROOT,
     )
-    if present.returncode != 0:
+    if kind.returncode != 0:
         return Evidence(
             "refused", "artifact", reference, reason="artifact is not on parent main"
+        )
+    object_type = kind.stdout.strip()
+    if object_type != "blob":
+        return Evidence(
+            "refused",
+            "artifact",
+            reference,
+            reason=f"artifact on parent main is a {object_type or 'non-blob'}, not a file",
         )
     content = run(
         (
@@ -300,10 +367,25 @@ def verify_run(run_id: str, *, repo: str, run: Run = _run) -> Evidence:
 def close_task(task: str, evidence: Evidence, *, run: Run = _run) -> int:
     if evidence.state != "verified" or not evidence.resolved:
         return evidence.rc
+    if evidence.landing == "implemented-unlanded" and not task_has_implemented_tag(
+        task, run=run
+    ):
+        print(
+            "REFUSED closing an unlanded task that is not tagged `implemented`: "
+            f"{task}. The drain query `drain-implemented-to-landed` selects on "
+            "that tag, so closing without it would remove the work from ready, "
+            "active, AND the drain in one step. Add the tag, then close.",
+            file=sys.stderr,
+        )
+        return REFUSED
     note = (
         "CLOSURE-VERIFIED: "
         f"kind={evidence.kind} reference={evidence.reference} "
-        f"resolved={evidence.resolved} verifier=ci-hub/bin/close-task"
+        f"resolved={evidence.resolved} "
+        # State the landing fact explicitly. `closed` no longer implies landed,
+        # so a closure note that omits this would be read as a landing claim it
+        # cannot support.
+        f"landing={evidence.landing or 'n/a'} verifier=ci-hub/bin/close-task"
     )
     noted = run(("tg", "note", task, note), cwd=ROOT)
     if noted.returncode != 0:
@@ -339,8 +421,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     reference.add_argument("--code", metavar="PR_OR_SHA")
     reference.add_argument("--artifact", metavar="PATH_OR_URL")
     reference.add_argument("--run-id")
-    parser.add_argument("--repo", default="rrnewton/hermit")
-    parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    # Sentinel defaults so main() can tell "the caller chose hermit" from "the
+    # caller said nothing and got hermit" -- the distinction that let a
+    # parent-repo task close against a hermit PR.
+    parser.add_argument("--repo", default=None)
+    parser.add_argument("--source", type=Path, default=None)
     parser.add_argument("--target", default="main")
     parser.add_argument(
         "--check-only",
@@ -350,20 +435,46 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+DEFAULT_REPO = "rrnewton/hermit"
+
+
 def main(argv: Sequence[str] | None = None, *, run: Run = _run) -> int:
     args = parse_args(argv)
+    repo_was_explicit = args.repo is not None
+    repo = args.repo or DEFAULT_REPO
+    source = args.source if args.source is not None else ROOT / "hermit"
     if args.code is not None:
+        # A bare PR number is not self-identifying: every repository has a #56.
+        # A 40-hex SHA is -- the verifier can only resolve it where it exists.
+        # So the dangerous combination is exactly `--code <N>` with a DEFAULTED
+        # repo, which silently means hermit. That is how
+        # `execute-ambiguous-zero-fix-order-a3-a4-first`, a parent-repo task
+        # about compat-envelope/render-scorecard.rs, was closed against
+        # hermit's "docs: add Hermit error catalog (#56)" from three weeks
+        # earlier. The ancestry check was real; nothing bound the REPOSITORY to
+        # the task's subject.
+        if args.code.isdecimal() and not repo_was_explicit:
+            print(
+                f"REFUSED task={args.task} kind=code reference={args.code} "
+                f"reason=a bare PR number needs an explicit --repo: every repository "
+                f"has a #{args.code}, so defaulting to {DEFAULT_REPO} would verify a "
+                f"landing that may have nothing to do with this task. Pass "
+                f"--repo <owner/repo> --source <checkout>, or give the 40-hex SHA. "
+                f"rc={REFUSED}",
+                file=sys.stderr,
+            )
+            return REFUSED
         evidence = verify_code(
             args.code,
-            repo=args.repo,
-            source=args.source,
+            repo=repo,
+            source=source,
             target=args.target,
             run=run,
         )
     elif args.artifact is not None:
         evidence = verify_artifact(args.artifact, run=run)
     else:
-        evidence = verify_run(args.run_id, repo=args.repo, run=run)
+        evidence = verify_run(args.run_id, repo=repo, run=run)
 
     if evidence.state != "verified":
         print(

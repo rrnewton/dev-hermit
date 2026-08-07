@@ -1,0 +1,17 @@
+guest,dimension,measurement,backend_a,backend_b,numerator,denominator,domain_div,content_div,verdict
+pthread_lifecycle,heap,self_determinism,ptrace,ptrace,38,38,0,0,PASS
+pthread_lifecycle,heap,self_determinism,kvm,kvm,38,38,0,0,PASS
+pthread_lifecycle,heap,cross_backend_parity,ptrace,kvm,1,38,0,37,FAIL
+pthread_lifecycle,stack,self_determinism,ptrace,ptrace,75,75,0,0,PASS
+pthread_lifecycle,stack,self_determinism,kvm,kvm,38,59,0,21,FAIL
+pthread_lifecycle,stack,cross_backend_parity,ptrace,kvm,0,59,59,0,NOT-COMPARABLE
+heap_exercising,heap,self_determinism,ptrace,ptrace,6,6,0,0,PASS
+heap_exercising,heap,self_determinism,kvm,kvm,6,6,0,0,PASS
+heap_exercising,heap,cross_backend_parity,ptrace,kvm,6,6,0,0,PASS
+heap_const,heap,cross_backend_parity,ptrace,kvm,3,3,0,0,PASS
+heap_ptr,heap,cross_backend_parity,ptrace,kvm,3,3,0,0,PASS
+thread_const,heap,cross_backend_parity,ptrace,kvm,5,42,0,37,FAIL
+heap_snap_nthreads1,heapwords,differing_words,ptrace,kvm,1,6,0,1,FAIL
+heap_snap_nthreads2,heapwords,differing_words,ptrace,kvm,2,10,0,2,FAIL
+heap_snap_nthreads4,heapwords,differing_words,ptrace,kvm,4,18,0,4,FAIL
+heap_snap_nthreads8,heapwords,differing_words,ptrace,kvm,8,40,0,8,FAIL

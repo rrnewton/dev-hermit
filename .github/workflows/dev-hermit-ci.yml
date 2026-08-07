@@ -42,12 +42,39 @@ jobs:
           git -c submodule.agent-utils.update=none submodule update --init --depth 1 -- hermit reverie liteinst2
           timeout --signal=KILL 2m scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
 
+      # `if: always()` because this shard's first step is independently red
+      # (scripts/test_primary_checkout.py, 6 `git commit` exit-128 fixture
+      # errors) and a default step ordering would SKIP the checks below --
+      # observed on 0b8939cd, where they never executed. The job still fails on
+      # the earlier step; this only stops one red from silently disabling an
+      # unrelated gate.
+      - name: Install rust-script
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v rust-script >/dev/null 2>&1 || cargo install rust-script
+
+      # The status-log mapping schema is what stops the hourly report from
+      # rendering an agent's whole ownership set as simultaneous activity. Its
+      # tests only gate anything if something runs them.
+      - name: Run parent rust-script unit tests
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 300
+          timeout --signal=KILL 1m rustfmt --edition 2021 --check scripts/status-log.rs
+          timeout --signal=KILL 5m rust-script --test scripts/status-log.rs
+
   ci-hub:
     name: ci-hub bounded operations shard
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install rust-script
         shell: bash
@@ -61,6 +88,20 @@ jobs:
           set -euo pipefail
           python3 -m pip install --disable-pip-version-check \
             --requirement ci-hub/tests/requirements-workflow.txt
+
+      - name: Materialize the pinned Hermit test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule update --init --checkout -- hermit
+
+      - name: Preserve frozen append-only history prefixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=KILL 1m scripts/check-append-only-prefix.py \
+            --base e272e66a984fbd6eb5812d15ddab8cdafed4a4b9 \
+            ai_docs/status-log/status-log.jsonl worktrees/ARCHIVED.md
 
       - name: Compile the typed front door
         shell: bash
@@ -88,7 +129,14 @@ jobs:
           ulimit -t 240
           timeout --signal=KILL 4m python3 ci-hub/tests/documented_commands.py
 
-      - name: Materialize the pinned live-query dependency
+      - name: Prove worktree release is target-scoped
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m scripts/release-worktree-target-scope-test.sh
+
+      - name: Materialize the pinned live-query and topology dependency
         shell: bash
         run: |
           set -euo pipefail
@@ -100,6 +148,13 @@ jobs:
             >"$RUNNER_TEMP/bin/with-proxy"
           chmod +x "$RUNNER_TEMP/bin/with-proxy"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+
+      - name: Verify the live Claude and Codex skill topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -t 240
+          timeout --signal=KILL 4m python3 scripts/check-codex-setup.py
 
       - name: Assert harness help probes are pure
         shell: bash

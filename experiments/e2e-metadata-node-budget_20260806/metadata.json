@@ -1,0 +1,15 @@
+{
+  "question": "Why does the e2e.metadata DAG node exceed its 60s timeout under fleet load, and is its OOM the same problem?",
+  "hermit_sha": "a8951eff4c259f363a71836e8e93271a6231230a",
+  "hermit_branch": "w17/e2e-metadata-node-budget",
+  "parent_sha": "199fa4820e792a0b72446377d423231aa044000a",
+  "host": "devbig014",
+  "nproc": 316,
+  "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+  "jq": "jq-1.6",
+  "boxing": "systemd-run --user --scope; caps verified by reading cpu.max/memory.max back from the live process's own cgroup",
+  "counters": "cgroup cpu.stat usage_usec/user_usec/system_usec, memory.peak, memory.events oom_kill, pids.peak",
+  "command_under_test": "./ci/test_harness.sh validate",
+  "date_utc": "2026-08-07T03:15:18Z",
+  "generator": "measure.py"
+}

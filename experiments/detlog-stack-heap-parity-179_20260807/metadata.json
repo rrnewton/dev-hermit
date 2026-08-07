@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "run_id": "detlog-stack-heap-parity-179-20260807",
+  "measurement_type": "correctness_sweep_not_performance_benchmark",
+  "collection_window_utc_inferred_from_raw_file_mtimes": {
+    "first": "2026-08-07T03:55:19.908467531Z",
+    "last": "2026-08-07T04:08:06.696926159Z",
+    "summary_written": "2026-08-07T04:15:16.492153947Z"
+  },
+  "publication_audit_utc": "2026-08-07T04:56:54Z",
+  "host": {
+    "short_hostname": "devbig014",
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+    "python": "3.12.13+meta",
+    "cgroup_and_cpu_set": "not recorded; results are correctness classifications, not timing claims"
+  },
+  "measurement_sources": {
+    "hermit": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "reverie_runtime_pin": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+    "liteinst2_runtime_pin": "95ee5e6917fa33191eb41c3f1606ea8b03c1b78c",
+    "hermit_binary_sha256": "0ee947522db96beeefd657c970ac18ada8f932212c0bb11dc60fa6f058e43300",
+    "hermit_worktree_dirty": false,
+    "reverie_worktree_dirty": false
+  },
+  "publication_frontier": {
+    "parent_main_base": "c25bdb72992347735727a0c9f4391ab8d21ec08f",
+    "hermit_main": "75506005d873a76f62be00b1d82696188651047a",
+    "reverie_main": "6144323c5dab8b521278fce206f8774360c2b05f",
+    "liteinst2_main": "8bf704feb06a62e7a05bee3b237d70793e4e2689"
+  },
+  "denominator": {
+    "count": 179,
+    "sha256": "1dd6b79c57f790eb2585206fccdb2228ee003623c66ed2079efa0fb890a6bb10",
+    "historical_source_csv_sha256": "021201c9906fd9f317e861c5706501d910036cec8b326393fe84dcdfc2afc983",
+    "historical_source_hermit": "82a8e853357584a3a567fd80812e015572a607c7",
+    "selection": "distinct test_id where run_id=ptrace-fullcorpus-scorecard, outcome=pass, deterministic=1"
+  },
+  "execution": {
+    "arms": [
+      "ptrace",
+      "ptrace-control",
+      "dbi",
+      "kvm",
+      "sabre",
+      "liteinst",
+      "e9patch"
+    ],
+    "flags": [
+      "--log info",
+      "--strict",
+      "--no-virtualize-cpuid",
+      "--max-timeslice=disabled",
+      "--detlog-stack",
+      "--detlog-heap"
+    ],
+    "run_receipts": 1253,
+    "comparison_rows": 3222,
+    "timeout_seconds_per_run": 90,
+    "raw_corpus_bytes": 7362752694,
+    "raw_event_files": 1245,
+    "raw_files_containing_explicit_hostaddr_marker": 0,
+    "pure_info_only_leg": "not_run"
+  },
+  "comparison_contract": {
+    "producer": "BitwiseInfoV1: wall-clock prefix stripped; explicit <hostaddr 0x...> markers ordinalized; all other bytes exact",
+    "independent_verifier": "wall-clock prefix stripped; all payload bytes exact",
+    "continuous_virtual_time": "preserved exactly; no rounding, freezing, coarsening, reset, or removal",
+    "hostaddr_canonicalizer_effect": "inert because 0 of 1245 raw event files contained a marker"
+  },
+  "source_file_sha256": {
+    "denominator-179.txt": "1dd6b79c57f790eb2585206fccdb2228ee003623c66ed2079efa0fb890a6bb10",
+    "results.csv": "4a631d5f1d903282b4e2620aea74c631ff603f985ff7c7c30c67fd3d651e8902",
+    "summary.json": "3cc24b5850f100742310df2643ae18f0ced7662a7d4c74654fc08a4bbea5c5b4",
+    "comparator-bracket.json": "8f8b75aa36f19025e8bf08893eca4158d3d93810e06bb02e8584d8b9bd1d5d19",
+    "prepare.sh": "0e5831c852e232d9e12dadbcfb9f3e671cfb812ad5c4a8061b90af100d555b00",
+    "probe.sh": "296d55807906d090c82d630f69d307f0b8ebd1ef064f1e91f3b82bc5c73bba37",
+    "run-one.sh": "f07cc7215da5acb630bee702b3382b2126cf39ff83957ec43f96c9172932ac4d",
+    "generate-dag.sh": "bf3aad38b74c3fbca16d000e92278a014ca7c16c170ade28f0358e5e00e4022f",
+    "generate-repair-dag.sh": "047a926226b3bc79c1a9dae3700724bfaf3c25b47b7bec83f07f1c24afff27d2",
+    "compare.py": "23ef9cdcaefb3e73c164396a21dd389947e51b2977fea477ff46f19097bfd745",
+    "analyze-raw-corpus.py": "19efe604681b4ca30cfebe3641bd932730e3dc8fe0e593248550b985608d702a"
+  },
+  "known_limitations": [
+    "Pure INFO-only was not run; INFO was observed with stack and heap flags enabled.",
+    "The runner omitted current collector guest flags --base-env minimal -e LC_ALL=C -e TZ=UTC.",
+    "The 6.9 GiB raw corpus is local/ignored and is not part of this compact durable artifact.",
+    "The producer summary origin string contains a malformed historical Hermit SHA; this metadata records the corrected source SHA.",
+    "DBI and SaBRe use a labeled stderr fallback.",
+    "LiteInst, e9patch, and SaBRe retain ptracer involvement and are not performance-attributable patching paths."
+  ]
+}

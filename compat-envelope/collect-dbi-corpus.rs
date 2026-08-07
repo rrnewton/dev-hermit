@@ -51,7 +51,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason";
+const PINNED_GUEST_ENV_ARGS: &[&str] =
+    &["--base-env", "minimal", "-e", "LC_ALL=C", "-e", "TZ=UTC"];
 
 fn die(msg: &str) -> ! {
     eprintln!("collect-dbi-corpus: {msg}");
@@ -83,6 +85,118 @@ fn hermit_bin(repo: &Path) -> PathBuf {
     repo.join("target/release/hermit")
 }
 
+/// Build the Hermit side of one corpus invocation, excluding only `timeout`.
+///
+/// Keep the guest environment in step with `collect-envelope.rs::run_and_hash`.
+/// Hermit's default `--base-env host` lets the collector's ambient environment
+/// decide the guest's initial stack address, so stack-derived observations stop
+/// being comparable between invocations. `minimal` fixes PATH/HOSTNAME/HOME;
+/// LC_ALL and TZ are re-added explicitly because the corpus relies on them and
+/// an unset TZ falls back to host `/etc/localtime`.
+fn hermit_argv(hermit: &Path, backend: &str, verify: bool, guest: &[String]) -> Vec<String> {
+    let mut argv = vec![
+        hermit.to_string_lossy().into_owned(),
+        "run".into(),
+        "--backend".into(),
+        backend.into(),
+        "--strict".into(),
+    ];
+    if verify {
+        argv.push("--verify".into());
+    }
+    argv.push("--no-virtualize-cpuid".into());
+    argv.push("--max-timeslice=disabled".into());
+    argv.extend(PINNED_GUEST_ENV_ARGS.iter().map(|arg| (*arg).to_string()));
+    argv.push("--".into());
+    argv.extend(guest.iter().cloned());
+    argv
+}
+
+#[cfg(test)]
+mod guest_env_pin_tests {
+    use super::*;
+
+    fn projected_env_args(argv: &[String]) -> Option<Vec<String>> {
+        let separator = argv.iter().position(|arg| arg == "--")?;
+        let mut projected = Vec::new();
+        let mut index = 0;
+        while index < separator {
+            match argv[index].as_str() {
+                "--base-env" | "-e" | "--env" => {
+                    if index + 1 >= separator {
+                        return None;
+                    }
+                    projected.push(argv[index].clone());
+                    projected.push(argv[index + 1].clone());
+                    index += 2;
+                }
+                arg if arg.starts_with("--base-env=")
+                    || arg.starts_with("--env=")
+                    || (arg.starts_with("-e") && arg.len() > 2) =>
+                {
+                    projected.push(arg.to_string());
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+        }
+        Some(projected)
+    }
+
+    fn has_exact_pin(argv: &[String]) -> bool {
+        projected_env_args(argv)
+            == Some(PINNED_GUEST_ENV_ARGS.iter().map(|arg| (*arg).to_string()).collect())
+    }
+
+    fn actual_argv() -> Vec<String> {
+        hermit_argv(
+            Path::new("/hermit"),
+            "dbi",
+            true,
+            &["/guest".to_string()],
+        )
+    }
+
+    #[test]
+    fn every_backend_and_level_carries_the_exact_pin_before_the_guest() {
+        for backend in ["ptrace", "dbi"] {
+            for verify in [false, true] {
+                let argv = hermit_argv(
+                    Path::new("/hermit"),
+                    backend,
+                    verify,
+                    &["/guest".to_string()],
+                );
+                assert!(has_exact_pin(&argv), "missing pin in {argv:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mutated_value_is_refused() {
+        let mut argv = actual_argv();
+        *argv.iter_mut().find(|arg| arg.as_str() == "TZ=UTC").unwrap() = "TZ=localtime".into();
+        assert!(!has_exact_pin(&argv));
+    }
+
+    #[test]
+    fn an_omitted_entry_is_refused() {
+        let mut argv = actual_argv();
+        let index = argv.iter().position(|arg| arg == "LC_ALL=C").unwrap();
+        argv.drain(index - 1..=index);
+        assert!(!has_exact_pin(&argv));
+    }
+
+    #[test]
+    fn reordered_entries_are_refused() {
+        let mut argv = actual_argv();
+        let lc = argv.iter().position(|arg| arg == "LC_ALL=C").unwrap();
+        let tz = argv.iter().position(|arg| arg == "TZ=UTC").unwrap();
+        argv.swap(lc, tz);
+        assert!(!has_exact_pin(&argv));
+    }
+}
+
 /// One outcome of a single backend run of a guest.
 struct RunOutcome {
     rc: i32,
@@ -106,17 +220,9 @@ fn run_guest(repo: &Path, backend: &str, verify: bool, guest: &[String], timeout
     let hermit = hermit_bin(repo);
     let mut cmd = Command::new("timeout");
     cmd.arg("-k").arg("5s").arg(format!("{timeout_s}s"));
-    cmd.arg(&hermit).arg("run").arg("--backend").arg(backend).arg("--strict");
-    if verify {
-        cmd.arg("--verify");
-    }
-    // Portable profile mirrors collect-envelope.rs::run_and_hash so DBI cells
-    // are comparable with the rest of the scorecard.
-    cmd.arg("--no-virtualize-cpuid").arg("--max-timeslice=disabled");
-    cmd.arg("--");
-    for g in guest {
-        cmd.arg(g);
-    }
+    // The pure builder is shared by every ptrace/DBI and L1/L2 leg, making it
+    // impossible for one recording path to silently omit the environment pin.
+    cmd.args(hermit_argv(&hermit, backend, verify, guest));
     cmd.env("LC_ALL", "C").env("TZ", "UTC").current_dir(repo);
 
     // Redirect child stdout/stderr to FILES, not pipes. hermit forks a

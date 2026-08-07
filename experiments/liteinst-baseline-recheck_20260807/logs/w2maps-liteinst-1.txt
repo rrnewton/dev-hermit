@@ -1,0 +1,56 @@
+70f80000-71000000 r-xs 00000000 00:01 195994                             /memfd:liteinst2-trampoline (deleted)
+71000000-71001000 r-xp 00000000 00:00 0 
+5555554d4000-555555554000 r-xs 00000000 00:01 195995                     /memfd:liteinst2-trampoline (deleted)
+555555554000-555555556000 r--p 00000000 00:1f 100490                     /usr/bin/cat
+555555556000-55555555a000 r-xp 00002000 00:1f 100490                     /usr/bin/cat
+55555555a000-55555555c000 r--p 00006000 00:1f 100490                     /usr/bin/cat
+55555555c000-55555555d000 r--p 00007000 00:1f 100490                     /usr/bin/cat
+55555555d000-55555555e000 rw-p 00008000 00:1f 100490                     /usr/bin/cat
+55555555e000-55555557f000 rw-p 00000000 00:00 0                          [heap]
+7ffff3580000-7ffff3600000 r-xs 00000000 00:01 196000                     /memfd:liteinst2-trampoline (deleted)
+7ffff3600000-7ffff3680000 rw-s 00000000 00:01 196000                     /memfd:liteinst2-trampoline (deleted)
+7ffff3680000-7ffff3700000 r-xs 00000000 00:01 195999                     /memfd:liteinst2-trampoline (deleted)
+7ffff3700000-7ffff3780000 rw-s 00000000 00:01 195999                     /memfd:liteinst2-trampoline (deleted)
+7ffff3780000-7ffff3800000 r-xs 00000000 00:01 195998                     /memfd:liteinst2-trampoline (deleted)
+7ffff3800000-7ffff3880000 rw-s 00000000 00:01 195998                     /memfd:liteinst2-trampoline (deleted)
+7ffff3880000-7ffff3900000 r-xs 00000000 00:01 195997                     /memfd:liteinst2-trampoline (deleted)
+7ffff3900000-7ffff3980000 rw-s 00000000 00:01 195997                     /memfd:liteinst2-trampoline (deleted)
+7ffff3980000-7ffff3a00000 r-xs 00000000 00:01 195996                     /memfd:liteinst2-trampoline (deleted)
+7ffff3a00000-7ffff3a29000 r--p 00000000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3a29000-7ffff3afe000 r-xp 00029000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3afe000-7ffff3b00000 r-xp 000fe000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3b00000-7ffff3b03000 r-xp 00100000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3b03000-7ffff3b04000 r-xp 00103000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3b04000-7ffff3b08000 r-xp 00104000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3b08000-7ffff3b09000 r-xp 00108000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3b09000-7ffff3b9e000 r-xp 00109000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3b9e000-7ffff3bf7000 r--p 0019e000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3bf7000-7ffff3bfb000 r--p 001f6000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3bfb000-7ffff3bfd000 rw-p 001fa000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff3bfd000-7ffff3c0a000 rw-p 00000000 00:00 0 
+7ffff3c5e000-7ffff3c80000 rw-p 00000000 00:00 0 
+7ffff3c80000-7ffff3d00000 rw-s 00000000 00:01 195996                     /memfd:liteinst2-trampoline (deleted)
+7ffff3d00000-7ffff3d80000 rw-s 00000000 00:01 195995                     /memfd:liteinst2-trampoline (deleted)
+7ffff3d80000-7ffff3e00000 rw-s 00000000 00:01 195994                     /memfd:liteinst2-trampoline (deleted)
+7ffff3e00000-7ffff3e6c000 r--p 00000000 00:2d 250511390                  /home/newton/work/dev-hermit/worktrees/cc/hermit/target/release/libreverie_liteinst.so
+7ffff3e6c000-7ffff3f01000 r-xp 0006b000 00:2d 250511390                  /home/newton/work/dev-hermit/worktrees/cc/hermit/target/release/libreverie_liteinst.so
+7ffff3f01000-7ffff3f07000 r--p 000ff000 00:2d 250511390                  /home/newton/work/dev-hermit/worktrees/cc/hermit/target/release/libreverie_liteinst.so
+7ffff3f07000-7ffff5f0a000 rw-p 00104000 00:2d 250511390                  /home/newton/work/dev-hermit/worktrees/cc/hermit/target/release/libreverie_liteinst.so
+7ffff5f0a000-7ffff7f4b000 rw-p 00000000 00:00 0 
+7ffff7f63000-7ffff7f96000 rw-p 00000000 00:00 0 
+7ffff7f96000-7ffff7f99000 r--p 00000000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7f99000-7ffff7fad000 r-xp 00003000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7fad000-7ffff7fb1000 r--p 00017000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7fb1000-7ffff7fb2000 r--p 0001a000 00:1f 1250577                    /usr/lib64/libgcc_s-11-20240719.so.1
+7ffff7fb2000-7ffff7fb3000 rw-p 00000000 00:00 0 
+7ffff7fba000-7ffff7fbc000 rw-p 00000000 00:00 0 
+7ffff7fbc000-7ffff7fc0000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fc0000-7ffff7fc2000 r--p 00000000 00:00 0                          [vvar_vclock]
+7ffff7fc2000-7ffff7fc4000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fc4000-7ffff7fc6000 r--p 00000000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fc6000-7ffff7fef000 r-xp 00002000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fef000-7ffff7ffb000 r--p 0002b000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7ffb000-7ffff7ffd000 r--p 00037000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7ffd000-7ffff7fff000 rw-p 00039000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffffffde000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]

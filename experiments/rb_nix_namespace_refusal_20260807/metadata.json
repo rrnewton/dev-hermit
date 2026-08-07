@@ -1,0 +1,71 @@
+{
+  "experiment": "rb_nix_namespace_refusal_20260807",
+  "date_utc": "2026-08-07",
+  "agent": "claude-coord-176",
+  "question": "After PR #1843 gave `run --image` a /dev, nix 2.3.16 runs in the image but a chroot-store build fails with `changing ownership of path ...: Invalid argument`. Can chroot-store nix be made to work under image mode?",
+  "headline": "The chown is fixed by an existing nix option (`--option build-users-group \"\"`), after which nix-instantiate succeeds. A nix BUILD still cannot run, because Detcore deterministically refuses `unshare` (and the whole mount/namespace syscall family) with a fixed -EPERM, and nix 2.3 unshares a mount namespace before every builder on Linux. This is a deliberate determinism policy, blocks every Hermit mode rather than just --image, and is therefore written up rather than fixed.",
+  "host": {
+    "short_hostname": "devbig176",
+    "kernel": "6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba",
+    "cores": 176,
+    "user_namespaces_permitted": true,
+    "note": "AMD; ARCH_SET_CPUID returns ENODEV and PMU reports AmdSpecLockMapShouldBeDisabled. Neither affects these probes, which test syscall admission, not timing."
+  },
+  "repos": {
+    "hermit": {
+      "sha": "bde714e262c1090a720f34042a2b25a984edce25",
+      "branch": "image-mode-minimal-dev",
+      "pr": "https://github.com/rrnewton/hermit/pull/1843",
+      "base": "a8951eff4c259f363a71836e8e93271a6231230a",
+      "note": "PR #1843 (minimal /dev for image mode) is a PREREQUISITE: without it the guest fails earlier, on an empty /dev."
+    },
+    "reverie": {
+      "sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+      "modified": false
+    }
+  },
+  "image": "docker.io/nixos/nix:2.3.16",
+  "toolchain": {
+    "nix": "nix-build (Nix) 2.3.16",
+    "buildah": "/usr/bin/buildah (rootless)",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)"
+  },
+  "commands": [
+    "hermit run --image docker.io/nixos/nix:2.3.16 --tmp=/tmp -- /bin/sh -c 'nix-instantiate --store \"local?root=/tmp/ns\" -E \"derivation {...}\"'",
+    "hermit run --image ... -- /bin/sh -c 'nix-instantiate --option build-users-group \"\" --store \"local?root=/tmp/ns\" -E \"derivation {...}\"'",
+    "hermit run --image ... -e HOME=/tmp/nixhome -- /bin/sh -c 'nix-build -vv --option build-users-group \"\" --option sandbox false --store \"local?root=/tmp/ns\" --no-out-link -E \"derivation {...}\"'",
+    "hermit run --image ... -- /bin/sh -c 'unshare --user true'",
+    "hermit run --tmp=/tmp -- /usr/bin/unshare --user /bin/true"
+  ],
+  "results_summary": {
+    "chroot_store_chown": "FIXED by `--option build-users-group \"\"` (gid 30000 nixbld is outside the container's single-id gid map, so chown returns EINVAL)",
+    "nix_instantiate": "OK - produces the .drv",
+    "nix_build_chroot_store": "BLOCKED - 'writing to file: Operation not permitted'",
+    "nix_build_default_store": "BLOCKED - 'setting up a private mount namespace: Operation not permitted'",
+    "unshare_user_native": "OK",
+    "unshare_user_hermit_default_namespace": "EPERM",
+    "unshare_user_hermit_image": "EPERM",
+    "root_cause": "detcore/src/syscall_classification.rs refuses mount, umount2, mount_setattr, move_mount, open_tree, fsopen, fsmount, fsconfig, fspick, unshare and setns with a fixed -EPERM, naming 'user-namespace unshare' explicitly as a deliberate deterministic refusal."
+  },
+  "refuted_hypotheses": [
+    {
+      "hypothesis": "image mode's chroot(2) is the cause, because create_user_ns() returns EPERM for a chrooted process",
+      "verdict": "REFUTED - Hermit's default mode does no chroot and unshare --user is still EPERM there"
+    },
+    {
+      "hypothesis": "the chroot STORE is the cause, because nix 2.3 forces useChroot for a diverted store regardless of `sandbox = false`",
+      "verdict": "REFUTED - the default store fails too, one step earlier, at unshare(CLONE_NEWNS)"
+    },
+    {
+      "hypothesis": "host kernel policy forbids user namespaces",
+      "verdict": "REFUTED - native `unshare --user` succeeds and /proc/sys/user/max_user_namespaces is non-zero"
+    }
+  ],
+  "limitations": [
+    "Only nix 2.3.16 was tested. Later nix versions may unshare differently; the Detcore refusal would still apply to whatever namespace syscall they use.",
+    "ptrace backend only.",
+    "The precise nix code path that calls unshare(CLONE_NEWNS) was inferred from nix's error strings, not read from nix source at this version. The MEASURED facts are the two error messages and the direct unshare probes; the nix-internal call site is attribution.",
+    "No attempt was made to relax the Detcore refusal and re-measure; that is the policy question this document hands back.",
+    "Single host, N=1 per nix outcome. These are deterministic admission failures, not sampled behaviour."
+  ]
+}

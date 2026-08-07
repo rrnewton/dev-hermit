@@ -1,0 +1,23 @@
+[Unit]
+Description=Attempt a Reverie pin auto-safe-bump daily
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/ci-hub/pin/bump_job.py
+
+[Timer]
+# DAILY, not hourly. The gate is a full validation run, which is box-exclusive;
+# a period shorter than the work stacks runs against the same lock. If the job
+# starts reporting `bumped-over-budget`, the period is too short — lengthen it
+# rather than raising the budget, or the next tick overlaps the previous one.
+OnCalendar=daily
+
+# Catch up a tick missed while the box was down. Safe here because the job is
+# idempotent: when every entry is already at the tip it records
+# `noop-already-current` and changes nothing.
+Persistent=true
+
+# The bump competes with agents for the validate lock, so avoid every host
+# firing on the same second.
+RandomizedDelaySec=900
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

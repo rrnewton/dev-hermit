@@ -9,6 +9,41 @@ Can wrapping the Nix builder's `exec` under `hermit run` determinize a
 non-reproducible Nix build? Prototype the seam and a rebuild-and-compare-hash
 harness against the research targets nftables-1.1.6 and bcachefs-tools.
 
+> ## ⚠️ CORRECTION 2026-08-06 — three claims below are refuted; do not act on them
+>
+> Superseded by
+> [`experiments/rb_no_namespace_random_leaks_20260806/`](../rb_no_namespace_random_leaks_20260806/README.md),
+> which measured each source individually instead of inferring it from a build
+> hash. **The history below is left intact; only this note is added.**
+>
+> 1. **`--no-namespace` is NOT required.** The mode table below says the default
+>    full-namespace mode discards writes to `$out` via the "private mnt ns".
+>    That is wrong — a mount namespace isolates the *mount table*, not file
+>    contents, and writes outside `/tmp` were measured **visible** under the
+>    default mode. What is discarded is `/tmp` alone, because Hermit mounts a
+>    private tmpfs there; with `sandbox = false` Nix's build directory lives in
+>    `/tmp/nix-build-*`, and *that* is what vanished.
+>    **Use `hermit run --tmp=/tmp`**, which keeps every namespace, makes host
+>    writes visible, and needs no `setarch -R` (the full-namespace mode pins
+>    ASLR itself).
+> 2. **The `AT_RANDOM` leak does not exist.** `AT_RANDOM` is byte-identical
+>    across 10 runs in *every* mode, including `--no-namespace`. Detcore
+>    rewrites it in `handle_post_exec` (`detcore/src/lib.rs`), a post-exec hook
+>    that namespaces never gated. It is not why `$RANDOM` varies.
+> 3. **The `/proc/sys/kernel/random/uuid` leak does not exist.** Identical
+>    across 10 runs in every mode; Hermit intercepts the path by name in
+>    `detcore/src/procfs.rs` (`ProcfsKind::RandomUuid`), so it does not depend on
+>    procfs being privately mounted. `rb_nix_minimum_hermit_dose_20260730` was
+>    right about this and this document was wrong.
+>
+> **What is real:** under `--no-namespace` only, `getpid()` returns a host PID
+> (10 distinct values in 10 runs) because Hermit's PID determinism comes from
+> the PID namespace, not from syscall virtualization. bash `$RANDOM` is the
+> observable consequence and is **intermittent** (3–5 distinct in 10), which is
+> why it was mis-attributed twice. Any mode that keeps the PID namespace fixes
+> it. Note the mechanism from `getpid` to `$RANDOM` is established by
+> elimination, not from bash's source.
+
 ## TL;DR
 
 - **Mechanism works.** Nix runs the whole builder process tree under Hermit via
@@ -63,6 +98,12 @@ Two mode choices were forced empirically (see `logs/` and the task notes):
 |---|---|---|---|
 | default (full namespace) | **no** (private mnt ns discards them) | yes | no |
 | `--no-namespace` | yes | no (leaks to `$RANDOM`) | **yes** + `setarch -R` |
+
+> **⚠️ 2026-08-06: this table is wrong on both rows — see the correction at the
+> top.** Measured: the default mode persists writes *outside* `/tmp` (only
+> `/tmp` is discarded, and only because Hermit mounts a private tmpfs there),
+> and `--no-namespace` leaks `getpid()`, not ASLR or `AT_RANDOM`. The correct
+> row is `--tmp=/tmp`: writes persist, ASLR pinned, no PID leak, no `setarch`.
 
 `--no-namespace` is required so the build output lands in `/nix/store`;
 `setarch -R` (ADDR_NO_RANDOMIZE) then pins ASLR at the host level since Hermit
@@ -129,6 +170,15 @@ same-machine oracle for self-referential outputs; use the canonical-rebuild
 oracle (or compare independent hosts) instead.**
 
 ## Limitations / what Hermit does NOT virtualize under `--no-namespace`
+
+> **⚠️ 2026-08-06: both bullets in this section are refuted.** `AT_RANDOM` and
+> `/proc/sys/kernel/random/uuid` are both determinized under `--no-namespace`
+> (10/10 identical each). The single real leak is `getpid()`. See the correction
+> at the top and
+> [`rb_no_namespace_random_leaks_20260806/`](../rb_no_namespace_random_leaks_20260806/README.md).
+> The closing recommendation — "(a) a Hermit mode that persists `$out` while
+> retaining full-namespace determinism" — was the right instinct, and that mode
+> already exists: `--tmp=/tmp`.
 
 - `AT_RANDOM`-seeded userspace PRNGs: bash `$RANDOM` differs across wrapped
   builds because glibc/bash derive it from the kernel-supplied `AT_RANDOM`

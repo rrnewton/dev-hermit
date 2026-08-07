@@ -746,7 +746,7 @@ mod tests {
             id: "4fb50e87-5d91-4294-88b2-afeedf6cc917".to_string(),
             name: "hermit".to_string(),
             pid,
-            cwd: Some("/home/newton/work/dev-hermit".to_string()),
+            cwd: Some("/home/example/work/dev-hermit".to_string()),
             updated_at: Some("2026-08-07T01:02:30Z".to_string()),
         }
     }
@@ -761,7 +761,7 @@ mod tests {
     #[test]
     fn live_orc_process_is_not_flagged() {
         let root = temp_root("live");
-        plant_process(&root, 2_592_813, &["/home/newton/orc-bin/orc", "--db", "hermit"], 11_097_326);
+        plant_process(&root, 2_592_813, &["/home/example/orc-bin/orc", "--db", "hermit"], 11_097_326);
         let (state, observations) = classify_with(vec![session(Some(2_592_813))], &root);
         assert_eq!(state, State::Live);
         assert!(state.is_healthy());
@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn one_live_session_among_dead_ones_is_live() {
         let root = temp_root("mixed");
-        plant_process(&root, 4_242, &["/home/newton/orc-bin/orc"], 5);
+        plant_process(&root, 4_242, &["/home/example/orc-bin/orc"], 5);
         let mut dead = session(Some(999_999));
         dead.id = "dead-row".to_string();
         let mut live = session(Some(4_242));
@@ -969,7 +969,7 @@ mod tests {
     fn expected_command_is_matched_on_basename_not_substring() {
         let root = temp_root("basename");
         // "orchestrator" contains "orc"; a substring check would call this live.
-        plant_process(&root, 7_777, &["/usr/local/bin/orchestrator"], 1);
+        plant_process(&root, 7_777, &["/opt/orchestration/bin/orchestrator"], 1);
         let (state, observations) = classify_with(vec![session(Some(7_777))], &root);
         assert_eq!(state, State::DeadPidRecycled);
         assert_eq!(
@@ -977,5 +977,150 @@ mod tests {
             Some("orchestrator")
         );
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- PORTABILITY: this file must not re-acquire an owner-specific path ----
+
+    /// Scan text the way `scripts/check-portable-paths.sh` does, narrowed to the
+    /// three rules that actually bit this file. Returns offending `(line, text)`.
+    ///
+    /// Kept as a function so the test can bracket BOTH sides: a scanner that
+    /// only ever returns empty would pass forever without checking anything.
+    /// Substring match bounded by non-identifier characters on both sides.
+    fn contains_word(haystack: &str, needle: &str) -> bool {
+        let ident = |c: char| c.is_alphanumeric() || c == '_';
+        let mut from = 0;
+        while let Some(at) = haystack[from..].find(needle) {
+            let start = from + at;
+            let end = start + needle.len();
+            let before_ok = start == 0 || !haystack[..start].chars().next_back().is_some_and(ident);
+            let after_ok = end >= haystack.len() || !haystack[end..].chars().next().is_some_and(ident);
+            if before_ok && after_ok {
+                return true;
+            }
+            from = start + needle.len();
+        }
+        false
+    }
+
+    fn owner_specific_lines(text: &str) -> Vec<(usize, String)> {
+        // Needles are assembled at runtime. Spelling them literally here would
+        // plant the very strings this guards against, and the real gate --
+        // which scans source text, not behaviour -- would flag this test.
+        let owner = format!("{}{}", "new", "ton");
+        let host = format!("{}{}", "dev", "big");
+        let local_bin = concat!("/usr/", "local", "/bin/");
+        // The real lint exempts these placeholder homes; mirror it or this
+        // rejects the very fixtures we just made portable.
+        let exempt = ["user", "test", "example"];
+
+        let mut hits = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let lower = line.to_lowercase();
+            // The owner name must match on WORD BOUNDARIES, exactly as the real
+            // lint does -- its rule brackets the name with non-identifier
+            // characters on both sides. A naive substring check flags the
+            // GitHub org in this file's own Documentation= URL, which embeds
+            // the owner name inside a longer identifier and is a repository
+            // name, not an owner path. (The comment explaining this cannot
+            // spell the name either: the real gate scans comments too, and
+            // exempts only author/copyright headers.)
+            let mut bad = contains_word(&lower, &owner) || lower.contains(&host);
+            if lower.contains(local_bin) {
+                // A PATH element (":/usr/local/bin:") has no trailing slash and
+                // is fine; a path INTO that directory is not.
+                bad = true;
+            }
+            for prefix in ["/home/", "/users/"] {
+                let mut rest = lower.as_str();
+                while let Some(at) = rest.find(prefix) {
+                    let tail = &rest[at + prefix.len()..];
+                    let name: String =
+                        tail.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect();
+                    if !name.is_empty() && !exempt.contains(&name.as_str()) {
+                        bad = true;
+                    }
+                    rest = &tail[name.len().min(tail.len())..];
+                }
+            }
+            if bad {
+                hits.push((index + 1, line.to_string()));
+            }
+        }
+        hits
+    }
+
+    /// POSITIVE CONTROL for the scanner itself: it must FIRE on planted cases.
+    #[test]
+    fn owner_path_scanner_is_not_inert() {
+        let owner = format!("{}{}", "new", "ton");
+        let planted = format!(
+            "let a = \"/home/{owner}/work\";\nlet b = \"{}orchestrator\";\nlet c = \"host-{}014\";\n",
+            concat!("/usr/", "local", "/bin/"),
+            format!("{}{}", "dev", "big"),
+        );
+        let hits = owner_specific_lines(&planted);
+        assert_eq!(hits.len(), 3, "scanner missed a planted violation: {hits:?}");
+
+        // ...and must NOT fire on the placeholder homes the real lint exempts,
+        // or it would reject this file's own portable fixtures.
+        let clean = format!(
+            "let a = \"/home/example/orc-bin/orc\";\n\
+             let b = \"/opt/orchestration/bin/orchestrator\";\n\
+             // https://github.com/rr{}/dev-hermit/blob/main/x.rs\n\
+             let d = \"a:/usr/local/bin:b\";\n",
+            owner
+        );
+        let clean = clean.as_str();
+        assert!(
+            owner_specific_lines(clean).is_empty(),
+            "scanner rejected an exempt placeholder home: {:?}",
+            owner_specific_lines(clean)
+        );
+    }
+
+    /// The actual guard: this source and its unit template carry no owner path.
+    ///
+    /// `file!()` resolves to the real script path under `rust-script`, so this
+    /// reads the same bytes the CI gate reads rather than a copy.
+    #[test]
+    fn no_owner_specific_paths_in_this_script_or_its_unit() {
+        let source_path = Path::new(file!());
+        let source = fs::read_to_string(source_path)
+            .unwrap_or_else(|e| panic!("read own source {}: {e}", source_path.display()));
+        let hits = owner_specific_lines(&source);
+        assert!(hits.is_empty(), "owner-specific path(s) in the watchdog: {hits:?}");
+
+        // The unit template is where the main-red actually came from, so guard
+        // it here too instead of trusting that someone re-runs the shell gate.
+        let unit = source_path
+            .parent()
+            .expect("script has a parent directory")
+            .join("systemd/hermit-orc-liveness.service");
+        let unit_text = fs::read_to_string(&unit)
+            .unwrap_or_else(|e| panic!("read unit {}: {e}", unit.display()));
+        let unit_hits = owner_specific_lines(&unit_text);
+        assert!(unit_hits.is_empty(), "owner-specific path(s) in the unit: {unit_hits:?}");
+
+        // And it must use the systemd specifier rather than a shell variable,
+        // which systemd would take literally in ExecStart/WorkingDirectory.
+        assert!(
+            unit_text.contains("ExecStart=%h/"),
+            "unit must derive ExecStart from %h"
+        );
+        // Scoped to DIRECTIVE lines: the unit's own comment explains why %h is
+        // used instead of $HOME, and a blunt contains() would reject the
+        // explanation along with the mistake it warns about.
+        let shell_var_directives: Vec<&str> = unit_text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+            .filter(|line| line.contains("$HOME"))
+            .collect();
+        assert!(
+            shell_var_directives.is_empty(),
+            "systemd does not expand shell variables in ExecStart/WorkingDirectory; \
+             use %h instead: {shell_var_directives:?}"
+        );
     }
 }

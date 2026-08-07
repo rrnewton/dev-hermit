@@ -8,10 +8,18 @@ Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/orc-liven
 
 [Service]
 Type=oneshot
-Environment=HOME=/home/newton
-Environment=PATH=/home/newton/.cargo/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/home/newton/work/dev-hermit
-ExecStart=/home/newton/work/dev-hermit/scripts/orc-liveness-watchdog.rs
+# %h is systemd's specifier for the invoking user's home, expanded at load time.
+# Spelling an owner's home literally pinned this unit to one account on one box;
+# the portability gate covers *.service as of 656a8fb and rejects it. Note %h,
+# not $HOME: systemd does NOT expand shell variables in ExecStart or
+# WorkingDirectory, so $HOME would be taken as a literal path component.
+#
+# HOME is deliberately not set at all. systemd --user already exports it, and
+# the watchdog derives every path it uses from HOME at runtime, so a second copy
+# here is only somewhere for the two to drift apart.
+Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/work/dev-hermit
+ExecStart=%h/work/dev-hermit/scripts/orc-liveness-watchdog.rs
 
 # 0=LIVE, 1=DEAD, 2=UNKNOWN are all SUCCESSFUL RUNS of the watchdog -- the
 # watchdog did its job and recorded a verdict. Only 3 (usage/internal error)

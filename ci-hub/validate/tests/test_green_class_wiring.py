@@ -129,12 +129,58 @@ def test_malformed_provenance_is_refused_clause_by_clause() -> None:
             {"delta_kind": gc.DELTA_REBASE_ONLY, "branch_commits": -1},
         ),
         (
-            "inherited_from.force_full_paths must be a list",
+            "inherited_from.branch_commits must be a non-negative int",
+            {"delta_kind": gc.DELTA_REBASE_ONLY, "branch_commits": False},
+        ),
+        (
+            "inherited_from.upstream_commits must be a non-negative int",
+            {
+                "delta_kind": gc.DELTA_REBASE_ONLY,
+                "branch_commits": 0,
+                "upstream_commits": False,
+            },
+        ),
+        (
+            "inherited_from.upstream_commits must be a non-negative int",
+            {
+                "delta_kind": gc.DELTA_REBASE_PLUS_UPSTREAM,
+                "branch_commits": 0,
+                "upstream_commits": True,
+            },
+        ),
+        (
+            "inherited_from.upstream_commits must be a non-negative int",
+            {
+                "delta_kind": gc.DELTA_REBASE_PLUS_UPSTREAM,
+                "branch_commits": 0,
+                "upstream_commits": 1 << 64,
+            },
+        ),
+        (
+            "inherited_from.force_full_paths must be a list of strings",
+            {
+                "delta_kind": gc.DELTA_REBASE_ONLY,
+                "branch_commits": 0,
+                "upstream_commits": 0,
+                "force_full_paths": None,
+            },
+        ),
+        (
+            "inherited_from.force_full_paths must be a list of strings",
             {
                 "delta_kind": gc.DELTA_REBASE_PLUS_UPSTREAM,
                 "branch_commits": 0,
                 "upstream_commits": 1,
                 "force_full_paths": "validate.sh",
+            },
+        ),
+        (
+            "inherited_from.force_full_paths must be a list of strings",
+            {
+                "delta_kind": gc.DELTA_REBASE_PLUS_UPSTREAM,
+                "branch_commits": 0,
+                "upstream_commits": 1,
+                "force_full_paths": ["validate.sh", 7],
             },
         ),
     ]
@@ -144,6 +190,17 @@ def test_malformed_provenance_is_refused_clause_by_clause() -> None:
         assert derived == gc.REFUSED, (inherited, derived)
         assert reason == expected_reason, (reason, expected_reason)
         assert qr.is_qualified(row) is False
+
+
+def test_non_string_validated_head_is_refused_without_raising() -> None:
+    row = _row(
+        validated_head_sha=7,
+        inherited_from={"delta_kind": gc.DELTA_REBASE_ONLY, "branch_commits": 0},
+    )
+    derived, reason = gc.derive_class(row)
+    assert derived == gc.REFUSED
+    assert reason == "validated_head_sha must be a string"
+    assert qr.is_qualified(row) is False
 
 
 def test_laundered_label_does_not_qualify() -> None:

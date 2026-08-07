@@ -1,0 +1,8 @@
+check,backend,hermit_build,metric,differing,matching,denominator,first_differing_ordinal,note
+stack-self-determinism,ptrace,86842f741,stack hash ordinals across 2 runs,0,44,44,none,clean reference
+stack-self-determinism,liteinst,86842f741,stack hash ordinals across 2 runs,300,110,410,110,contiguous tail; 0 matches at or after ordinal 110
+maps-reproducer,ptrace,86842f741,/proc/self/maps lines differing across 2 runs,0,25,25,none,clean
+maps-reproducer,liteinst,86842f741,/proc/self/maps lines differing across 2 runs,14,42,56,none,all 14 are memfd:liteinst2-trampoline
+maps-reproducer-inode-masked,liteinst,86842f741,maps lines differing ignoring inode field,0,56,56,none,inode is the ONLY differing field
+reference-2026-08-07,ptrace,ignored/land-1624,stack hash ordinals across 2 runs,0,45,45,none,prior measurement (diagnose task)
+reference-2026-08-07,liteinst,ignored/land-1624,stack hash ordinals across 2 runs,303,110,413,110,prior measurement (diagnose task)

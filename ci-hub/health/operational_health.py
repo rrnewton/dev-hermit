@@ -40,10 +40,11 @@ BROKEN_AGENT_STATES = frozenset(
 ACTIVE_AGENT_STATES = frozenset(("active", "busy", "in_progress", "running", "working"))
 DEFAULT_STUCK_AFTER_SECS = 60 * 60
 DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS = 10 * 60
-# Per-repo wall-clock budget for the auto-invoked PR-health gate. tick-hub's
-# SubprocessGateRunner hard-kills any gate at 30s, so the gate MUST resolve well
-# under that: two repos queried serially at 12s each is ~24s worst case. Staying
-# under the guillotine is what lets pr_status emit its own structured
+# Per-repo wall-clock budget for the auto-invoked PR-health gate, including its
+# bounded exact-job dereferences. tick-hub's SubprocessGateRunner hard-kills any
+# gate at 30s, so the gate MUST resolve well under that: two repos queried
+# serially at 12s each is ~24s worst case. Staying under the guillotine lets
+# pr_status emit its own structured
 # degraded/unavailable result (distinguishing "GitHub was slow" from "ci-hub is
 # broken") instead of the gate timing out into a bare, undifferentiated failure.
 DEFAULT_PR_GATE_TIMEOUT_SECS = float(
@@ -83,10 +84,41 @@ class TaskRecord:
     title: str
     owner: str
     tags: tuple[str, ...]
+    # Defaulted so existing fixtures that only describe live work stay valid.
+    status: str = "IN_PROGRESS"
 
     @property
     def implemented(self) -> bool:
         return "implemented" in self.tags
+
+    @property
+    def closed(self) -> bool:
+        return self.status.strip().upper() == "CLOSED"
+
+    @property
+    def awaiting_landing(self) -> bool:
+        """Finished work whose landing is still owed.
+
+        TAG FIRST, STATUS SECOND — the same rule `scripts/status-log.rs`
+        `classify_task` already applies. Under the close-on-implemented
+        lifecycle an implemented task is CLOSED immediately, so keying
+        awaiting-landing off `IN_PROGRESS` (as this module used to) reports
+        ~zero while the real population sits in CLOSED. Keying off the tag is
+        correct under BOTH the old and new lifecycles.
+        """
+        return self.implemented
+
+    @property
+    def lifecycle_violation(self) -> bool:
+        """An implemented task that was NOT closed.
+
+        The current lifecycle closes implemented work immediately and lets
+        `drain-implemented-to-landed` enumerate the landing debt from
+        CLOSED+implemented records. A nonterminal implemented row is therefore
+        a deviation to fix, not a state to honour — it is invisible to the
+        drain tracker while still occupying the live queue.
+        """
+        return self.implemented and not self.closed
 
 
 @dataclass(frozen=True)
@@ -115,6 +147,7 @@ class Misroute:
 class ActiveWorkReport:
     in_progress: tuple[TaskRecord, ...]
     awaiting_land: tuple[TaskRecord, ...]
+    lifecycle_violations: tuple[TaskRecord, ...]
     stale: tuple[TaskRecord, ...]
     owned_active: tuple[TaskRecord, ...]
     actually_active: tuple[TaskRecord, ...]
@@ -137,6 +170,7 @@ class ActiveWorkReport:
         return {
             "in_progress": len(self.in_progress),
             "awaiting_land": len(self.awaiting_land),
+            "lifecycle_violations": len(self.lifecycle_violations),
             "stale": len(self.stale),
             "owned_active": len(self.owned_active),
             "actually_active": len(self.actually_active),
@@ -207,6 +241,8 @@ def pull_request_gate() -> int:
                 "pending": 0,
                 "green": 0,
                 "real_reds": 0,
+                "setup_only_no_result_checks": 0,
+                "prerequisite_no_result_checks": 0,
                 "outage": "no",
                 "degraded": "yes",
                 "summary": f"all repos unavailable ({reasons})",
@@ -215,8 +251,16 @@ def pull_request_gate() -> int:
         return 1
 
     counts = {
-        state: sum(getattr(status, state) for status in statuses)
-        for state in ("open", "green", "red", "pending", "real_reds")
+        state: sum(getattr(status, state, 0) for status in statuses)
+        for state in (
+            "open",
+            "green",
+            "red",
+            "pending",
+            "real_reds",
+            "setup_only_no_result_checks",
+            "prerequisite_no_result_checks",
+        )
     }
     outage = any(status.outage_suspected for status in statuses)
     unhealthy = counts["real_reds"] > 0 or outage
@@ -233,6 +277,8 @@ def pull_request_gate() -> int:
     summary = (
         f"open={counts['open']},red={counts['red']},"
         f"pending={counts['pending']},real={counts['real_reds']},"
+        f"setup_only_no_result={counts['setup_only_no_result_checks']},"
+        f"prerequisite_no_result={counts['prerequisite_no_result_checks']},"
         f"outage={'yes' if outage else 'no'}"
     )
     if degraded:
@@ -245,6 +291,8 @@ def pull_request_gate() -> int:
             "pending": counts["pending"],
             "green": counts["green"],
             "real_reds": counts["real_reds"],
+            "setup_only_no_result_checks": counts["setup_only_no_result_checks"],
+            "prerequisite_no_result_checks": counts["prerequisite_no_result_checks"],
             "outage": "yes" if outage else "no",
             "degraded": "yes" if degraded else "no",
             "summary": summary,
@@ -505,15 +553,27 @@ def cache_agent_snapshot(snapshot: str | None = None) -> int:
 
 
 def _taskgraph_in_progress() -> tuple[TaskRecord, ...]:
+    # Two populations, deliberately in one query:
+    #   * IN_PROGRESS       -- the live queue (activity, staleness, routing)
+    #   * implemented, ANY status -- the landing debt, which under the
+    #     close-on-implemented lifecycle lives in CLOSED and was previously
+    #     invisible here because the filter was `status = 'IN_PROGRESS'` alone.
+    # Tag matching uses json_each on the JSON array so `implemented` cannot be
+    # matched inside some longer tag by a LIKE '%implemented%'.
     sql = """
 SELECT json_object(
   'id', local_id,
   'title', title,
   'owner', COALESCE(owner, ''),
+  'status', status,
   'tags', json(tags)
 ) AS task_json
 FROM tasks
 WHERE status = 'IN_PROGRESS'
+   OR EXISTS (
+        SELECT 1 FROM json_each(tasks.tags)
+        WHERE json_each.value = 'implemented'
+      )
 ORDER BY local_id
 """.strip()
     last_error = "unknown failure"
@@ -564,6 +624,7 @@ ORDER BY local_id
                 title=str(raw.get("title") or ""),
                 owner=str(raw.get("owner") or "").strip(),
                 tags=tuple(tags),
+                status=str(raw.get("status") or "IN_PROGRESS").strip(),
             )
         )
     count_match = re.search(r"\((\d+) rows\)", process.stdout)
@@ -604,8 +665,23 @@ def reconcile_active_work(
     tasks: Sequence[TaskRecord],
     agents: Sequence[AgentRecord],
 ) -> ActiveWorkReport:
-    in_progress = tuple(sorted(tasks, key=lambda task: task.id))
-    awaiting_land = tuple(task for task in in_progress if task.implemented)
+    everything = tuple(sorted(tasks, key=lambda task: task.id))
+    # LANDING DEBT: keyed off the tag, not the status, so it survives the
+    # close-on-implemented lifecycle. These records are CLOSED; they are the
+    # set `drain-implemented-to-landed` enumerates, and ancestry verification
+    # is that tracker's job, not this monitor's.
+    awaiting_land = tuple(task for task in everything if task.awaiting_landing)
+    # LIFECYCLE DEVIATION: implemented but not closed. Reported separately so
+    # it is fixable rather than silently absorbed into the landing debt.
+    lifecycle_violations = tuple(
+        task for task in everything if task.lifecycle_violation
+    )
+    # THE LIVE QUEUE. Everything downstream — staleness, ownership, routing,
+    # orphan detection — is derived from this and ONLY this, so a closed
+    # implemented record can never be surfaced as ready work or dispatched.
+    in_progress = tuple(
+        task for task in everything if task.status.strip().upper() == "IN_PROGRESS"
+    )
     active_candidates = tuple(task for task in in_progress if not task.implemented)
     stale = tuple(task for task in active_candidates if not task.owner)
     owned_active = tuple(task for task in active_candidates if task.owner)
@@ -687,6 +763,7 @@ def reconcile_active_work(
     return ActiveWorkReport(
         in_progress=in_progress,
         awaiting_land=awaiting_land,
+        lifecycle_violations=lifecycle_violations,
         stale=stale,
         owned_active=owned_active,
         actually_active=tuple(sorted(actually_active, key=lambda task: task.id)),
@@ -704,9 +781,24 @@ def _active_work_detail(report: ActiveWorkReport) -> list[str]:
     detail: list[str] = []
     detail.extend(f"ORPHANED {task.id} owner={task.owner}" for task in report.orphaned)
     detail.extend(f"STALE {task.id}" for task in report.stale)
+    # The landing debt is now the whole CLOSED+implemented population, so
+    # enumerating it here would bury every other line. Show a bounded sample
+    # and state the residue explicitly -- a silent truncation would read as
+    # "that is all of them".
+    _AWAITING_SAMPLE = 5
+    shown = report.awaiting_land[:_AWAITING_SAMPLE]
     detail.extend(
-        f"AWAITING-LAND {task.id} owner={task.owner or 'none'}"
-        for task in report.awaiting_land
+        f"AWAITING-LAND {task.id} owner={task.owner or 'none'}" for task in shown
+    )
+    residue = len(report.awaiting_land) - len(shown)
+    if residue > 0:
+        detail.append(
+            f"AWAITING-LAND +{residue} more (full set via drain-implemented-to-landed)"
+        )
+    detail.extend(
+        f"LIFECYCLE-VIOLATION {task.id} status={task.status} "
+        "implemented-but-not-closed"
+        for task in report.lifecycle_violations
     )
     detail.extend(
         f"OFF-BOOK {agent.name} status={agent.status}" for agent in report.off_book
@@ -775,6 +867,7 @@ def active_work_gate(
                 f"in-progress={counts['in_progress']},"
                 f"actually-active={counts['actually_active']},"
                 f"awaiting-land={counts['awaiting_land']},"
+                f"lifecycle-violations={counts['lifecycle_violations']},"
                 f"stale={counts['stale']},orphaned={counts['orphaned']},"
                 f"off-book={counts['off_book']},misrouted={counts['misrouted']}"
             ),
@@ -859,12 +952,11 @@ def _scan_fields(stdout: str) -> dict[str, str]:
 
 
 def memory_skill_sync_gate() -> int:
-    """Schedule the memory<->skill sync checks so being in-sync is enforced, not luck.
+    """Check authoritative repository skills; local memories are advisory mirrors.
 
-    Runs the authoritative structural linter (lint-memory-skill-sync.rs) AND the
-    report-only contradiction scanner (memory-skill-contradiction-scan.rs), and
-    emits combined tick-hub fields. Fires (non-zero) on any structural problem or
-    contradiction. Report-only: neither tool edits memories or skills.
+    The structural linter validates versioned skills. The scanner gates only
+    contradictions in those skills; local-memory absence or drift never makes
+    machine-local state authoritative. Both tools are report-only.
     """
     lint_rc, lint_out, lint_err = _run_tool([str(MEMORY_SKILL_LINTER), "--quiet"])
     scan_rc, scan_out, scan_err = _run_tool([str(MEMORY_SKILL_SCANNER), "--gate"])
@@ -893,7 +985,6 @@ def memory_skill_sync_gate() -> int:
 
     scan = _scan_fields(scan_out)
     contradictions = int(scan.get("contradictions", "0") or "0")
-    scan_drift = int(scan.get("drift", "0") or "0")
 
     healthy = lint_rc == 0 and scan_rc == 0 and problems == 0 and contradictions == 0
     if healthy:
@@ -906,11 +997,9 @@ def memory_skill_sync_gate() -> int:
         state = "drift"
 
     summary = (
-        f"structural problems={problems}, contradictions={contradictions}, "
-        f"scanner-drift={scan_drift}; "
-        "run ./scripts/memory-skill-contradiction-scan.rs for the per-file proposal "
-        "(REPORT-ONLY: coordinator applies; sessionForget is 1-based positional, "
-        "delete DESCENDING)"
+        f"repository structural problems={problems}, "
+        f"repository contradictions={contradictions}; "
+        "versioned skills are authoritative and optional local-memory drift is advisory"
     )
 
     # Build a single-line `detail` proposal from the tools' human output. It must

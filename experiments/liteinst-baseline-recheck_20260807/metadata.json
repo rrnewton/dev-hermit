@@ -1,0 +1,23 @@
+{
+  "task": "re-measure-liteinst-baseline-after-self-scan-fix",
+  "agent": "hermit-w2",
+  "date": "2026-08-07",
+  "host": "devbig014",
+  "hermit_build": {"slot": "worktrees/cc/hermit", "sha": "86842f741", "liteinst_so": "target/release/libreverie_liteinst.so"},
+  "guest": "scratch/w27-tsc/notsc.c compiled -O0 dynamic (control: constant stamps, rdtsc() defined but never called)",
+  "command": "hermit --log=info --log-file=<f> run --backend <be> --strict --base-env=minimal --detlog-stack --tmp=/tmp -- notsc",
+  "extraction": "grep -oE '\\[stack\\]->[0-9a-f]+' then compare ordinal-by-ordinal between run 1 and run 2",
+  "fix_under_test": {
+    "pr": 1847,
+    "state": "OPEN, draft, NOT merged",
+    "head": "077833ad65955b30309d40ac3105a135779c0dce",
+    "fix_commit": "de638e587d621daeb33cca6904f7cdaee2039a8a",
+    "landed_on_main": false,
+    "measured_against_baseline": false
+  },
+  "key_results": {
+    "liteinst_matching": 110, "liteinst_denominator": 410, "liteinst_first_differing_ordinal": 110,
+    "ptrace_matching": 44, "ptrace_denominator": 44,
+    "verify_clause_satisfied": false
+  }
+}

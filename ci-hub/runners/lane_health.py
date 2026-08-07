@@ -52,7 +52,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # A single saturated reading can be a momentary supersession blip; only a streak
 # is worth throttling on. Default 3 consecutive observations x 900s cadence
@@ -133,6 +133,10 @@ class Observation:
     host_suitable: bool | None
     host_note: str
     green_pct: float | None
+    green_hours: float | None = None
+    green_authoritative_run_hours: float | None = None
+    green_window_start: str | None = None
+    green_window_end: str | None = None
     schema: int = SCHEMA_VERSION
 
 
@@ -173,6 +177,11 @@ def _to_obs(rec: dict) -> Observation:
         host_suitable=rec.get("host_suitable"),
         host_note=rec.get("host_note", ""),
         green_pct=rec.get("green_pct"),
+        green_hours=rec.get("green_hours"),
+        green_authoritative_run_hours=rec.get(
+            "green_authoritative_run_hours"),
+        green_window_start=rec.get("green_window_start"),
+        green_window_end=rec.get("green_window_end"),
         schema=int(rec.get("schema", SCHEMA_VERSION)),
     )
 
@@ -195,7 +204,11 @@ def latest_observation(path: Path, repo: str) -> Observation | None:
 def record_observation(path: Path, repo: str, *, saturated: bool, reason: str,
                        host_suitable: bool | None, host_note: str,
                        green_pct: float | None, now_epoch: float, now_iso: str,
-                       sustained_ticks: int = DEFAULT_SUSTAINED_TICKS
+                       sustained_ticks: int = DEFAULT_SUSTAINED_TICKS,
+                       green_hours: float | None = None,
+                       green_authoritative_run_hours: float | None = None,
+                       green_window_start: str | None = None,
+                       green_window_end: str | None = None,
                        ) -> Observation:
     """Append one observation, computing the saturation streak from the prior
     record for ``repo`` under a single exclusive lock (read-latest + append is
@@ -222,7 +235,10 @@ def record_observation(path: Path, repo: str, *, saturated: bool, reason: str,
                 consecutive_saturated=consecutive, streak_since=streak_since,
                 sustained=bool(saturated and consecutive >= sustained_ticks),
                 host_suitable=host_suitable, host_note=host_note,
-                green_pct=green_pct,
+                green_pct=green_pct, green_hours=green_hours,
+                green_authoritative_run_hours=green_authoritative_run_hours,
+                green_window_start=green_window_start,
+                green_window_end=green_window_end,
             )
             fh.write(json.dumps(asdict(obs), sort_keys=True) + "\n")
             fh.flush()
@@ -316,12 +332,11 @@ def _probe_host(sample_seconds: float) -> tuple[bool | None, str]:
         return None, f"load-probe unavailable: {exc}"
 
 
-def _green_pct(repo: str) -> float | None:
+def _green_metric(repo: str) -> dict | None:
     try:
         q = _history_query()
         res = q.green_time(q.parent_root(), repo, None, None)
-        gp = res.get("green_pct")
-        return float(gp) if gp is not None else None
+        return res if res.get("green_pct") is not None else None
     except Exception:
         return None
 
@@ -348,17 +363,27 @@ def do_tick(repo: str, gh_cmd: str, limit: int, *,
     saturated = bc not in ("", "none")
     reason = bc if saturated else "lane not saturated"
     host_suitable, host_note = _probe_host(sample_seconds)
-    green_pct = _green_pct(repo)
+    green = _green_metric(repo)
+    green_pct = float(green["green_pct"]) if green else None
     now_epoch, now_iso = now or _now()
     obs = record_observation(
         path, repo, saturated=saturated, reason=reason,
         host_suitable=host_suitable, host_note=host_note, green_pct=green_pct,
-        now_epoch=now_epoch, now_iso=now_iso, sustained_ticks=sustained_ticks)
+        now_epoch=now_epoch, now_iso=now_iso, sustained_ticks=sustained_ticks,
+        green_hours=green.get("green_hours") if green else None,
+        green_authoritative_run_hours=(
+            green.get("authoritative_run_hours") if green else None),
+        green_window_start=green.get("window_start") if green else None,
+        green_window_end=green.get("window_end_utc") if green else None)
 
     state = "sustained" if obs.sustained else ("saturating" if obs.saturated
                                                else "ok")
-    green_txt = ("green-time %s%%" % obs.green_pct if obs.green_pct is not None
-                 else "green-time n/a")
+    green_txt = (
+        f"green-time {obs.green_pct}% = {obs.green_hours} green h / "
+        f"{obs.green_authoritative_run_hours} authoritative-run h; window "
+        f"{obs.green_window_start}..{obs.green_window_end}"
+        if obs.green_pct is not None else "green-time n/a"
+    )
     host_txt = ("host=suitable" if obs.host_suitable is True else
                 "host=unsuitable" if obs.host_suitable is False else "host=n/a")
     if obs.saturated:

@@ -16,11 +16,17 @@ _spec.loader.exec_module(lh)
 
 
 def _rec(path, repo, *, saturated, epoch, iso=None, reason="lane full",
-         host_suitable=True, host_note="ok", green_pct=6.5, ticks=3):
+         host_suitable=True, host_note="ok", green_pct=6.5, ticks=3,
+         green_hours=6.5, green_authoritative_run_hours=100.0,
+         green_window_start="window-start", green_window_end="window-end"):
     return lh.record_observation(
         path, repo, saturated=saturated, reason=reason,
         host_suitable=host_suitable, host_note=host_note, green_pct=green_pct,
-        now_epoch=epoch, now_iso=iso or f"iso-{epoch}", sustained_ticks=ticks)
+        now_epoch=epoch, now_iso=iso or f"iso-{epoch}", sustained_ticks=ticks,
+        green_hours=green_hours,
+        green_authoritative_run_hours=green_authoritative_run_hours,
+        green_window_start=green_window_start,
+        green_window_end=green_window_end)
 
 
 class StoreTest(unittest.TestCase):
@@ -67,13 +73,19 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(latest.consecutive_saturated, 2)
         self.assertEqual(latest.observed_epoch, 2.0)
 
-    def test_records_host_verdict_and_green_pct(self):
+    def test_records_host_verdict_and_qualified_green_metric(self):
         obs = _rec(self.path, "r/h", saturated=True, epoch=1.0,
-                   host_suitable=False, host_note="cpu hot", green_pct=3.14)
+                   host_suitable=False, host_note="cpu hot", green_pct=3.14,
+                   green_hours=3.14, green_authoritative_run_hours=10.0,
+                   green_window_start="s", green_window_end="e")
         latest = lh.latest_observation(self.path, "r/h")
         self.assertIs(latest.host_suitable, False)
         self.assertEqual(latest.host_note, "cpu hot")
         self.assertEqual(latest.green_pct, 3.14)
+        self.assertEqual(latest.green_hours, 3.14)
+        self.assertEqual(latest.green_authoritative_run_hours, 10.0)
+        self.assertEqual(latest.green_window_start, "s")
+        self.assertEqual(latest.green_window_end, "e")
 
     def test_malformed_lines_ignored(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,14 +170,20 @@ class TickTest(unittest.TestCase):
         self.path = Path(self.tmp.name) / "lane-health.jsonl"
         self._qh = lh._queue_health
         self._probe = lh._probe_host
-        self._green = lh._green_pct
+        self._green = lh._green_metric
         lh._probe_host = lambda s: (True, "cpu 14% <= 50%")
-        lh._green_pct = lambda r: 6.48
+        lh._green_metric = lambda r: {
+            "green_pct": 6.48,
+            "green_hours": 6.48,
+            "authoritative_run_hours": 100.0,
+            "window_start": "s",
+            "window_end_utc": "e",
+        }
 
     def tearDown(self):
         lh._queue_health = self._qh
         lh._probe_host = self._probe
-        lh._green_pct = self._green
+        lh._green_metric = self._green
         self.tmp.cleanup()
 
     def _fake_qh(self, state, bc):
@@ -197,6 +215,9 @@ class TickTest(unittest.TestCase):
         self.assertTrue(latest.sustained)
         self.assertTrue(latest.host_suitable)
         self.assertEqual(latest.green_pct, 6.48)
+        self.assertEqual(latest.green_authoritative_run_hours, 100.0)
+        self.assertEqual(latest.green_window_start, "s")
+        self.assertEqual(latest.green_window_end, "e")
 
     def test_clear_tick_records_and_returns_0(self):
         self._fake_qh("ok", "none")

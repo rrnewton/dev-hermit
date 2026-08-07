@@ -4,7 +4,7 @@ Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/alignment
 
 [Service]
 Type=oneshot
-ExecStart=/home/newton/work/dev-hermit/scripts/alignment-reminder-relay.sh
+ExecStart=%h/work/dev-hermit/scripts/alignment-reminder-relay.sh
 # The driver already swallows delivery failures and exits 0; this is belt-and-
 # braces so a future edit cannot put the unit into a failed state, which is the
 # state from which a schedule quietly stops being useful.
