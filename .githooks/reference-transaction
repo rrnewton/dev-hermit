@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Compare-and-swap guard: refuse to REWIND a shared branch unless the caller
+# proves the tip is still their own commit.
+#
+# THE INCIDENT THIS PREVENTS (2026-08-07 ~03:20Z, parent main, reflog verbatim):
+#   HEAD@{5} commit: 29e2cf7   agent A's commit
+#   HEAD@{4} commit: 57f0558   agent B's commit, on top
+#   HEAD@{3} reset:  HEAD~1 -> 29e2cf7   drops B's OWN commit -- intended
+#   HEAD@{2} reset:  HEAD~1 -> be7ae26   drops A's commit     -- COLLATERAL
+#   HEAD@{1} commit: 7bbb34a   B recommits only their own work
+# A's commit was off the branch for ~20 minutes while HEAD advanced twice on
+# top of the deletion, and 29e2cf7 is STILL not an ancestor of main today: the
+# content was recovered by re-committing under a new SHA, the commit never was.
+#
+# WHY A POLICY LINE IS NOT ENOUGH. `git reset HEAD~1` reads as "undo my last
+# commit". On a branch with ~15 concurrent committers, "my last commit" and
+# "the branch tip" are frequently different commits. `HEAD~1` is a PROXY for
+# "the commit I just made" and NOTHING BINDS THEM -- which is why the operation
+# deletes a stranger's work while looking routine. This hook binds them.
+#
+# THE CONTRACT. To rewind a shared branch you must declare which commit you
+# expect the tip to be:
+#
+#     my_sha=$(git rev-parse HEAD)      # right after YOUR commit
+#     ...
+#     HERMIT_RESET_EXPECT=$my_sha git reset --hard HEAD~1
+#
+# If the tip still equals your recorded SHA, the rewind removes only your own
+# commit and is allowed. If anyone committed in between, the tip has moved, the
+# comparison fails, and the rewind is REFUSED naming the commits it would have
+# deleted. That is a compare-and-swap: the swap happens only if the compare
+# holds. Replaying the incident, reset 1 is allowed (tip is B's own commit) and
+# reset 2 is refused (tip is now A's).
+#
+# SCOPE, deliberately narrow so this cannot become noise:
+#   * only refs/heads/<shared>  (default `main`; add with
+#     `git config --add hermit.sharedbranch <name>`)
+#   * only REWINDS -- the new tip being an ancestor of the old one. Ordinary
+#     commits, fast-forwards and merges are untouched.
+#   * detached HEAD and feature branches in scratch worktrees are untouched,
+#     which is where nearly all agent work happens.
+# A guard that fires on ordinary work gets disabled, so it fires on nothing else.
+#
+# NOT COVERED, and deliberately not faked: branch DELETION. Measured on git
+# 2.53 -- `git branch -D <other>` reports the transaction as
+# `refs/heads/<other> 0000000 -> 0000000`, with NO old value. There is nothing
+# to distinguish a delete from a create and no SHA to report, so a deletion arm
+# here would be unreachable code that reads as protection. An earlier draft had
+# exactly that: a mutation sweep disabling the arm changed no test result,
+# because the arm never ran. Deleting a shared branch remains ungated.
+
+set -uo pipefail
+
+# Only the `prepared` phase can abort the transaction; the others are reports.
+[ "${1:-}" = "prepared" ] || exit 0
+
+# The hook shells out to git for ancestry. Those commands read refs but never
+# write them, so they cannot re-enter -- this is belt and braces.
+[ -n "${HERMIT_REF_GUARD_ACTIVE:-}" ] && exit 0
+export HERMIT_REF_GUARD_ACTIVE=1
+
+ZERO="0000000000000000000000000000000000000000"
+
+shared_branches() {
+  local configured
+  configured=$(git config --get-all hermit.sharedbranch 2>/dev/null)
+  if [ -n "$configured" ]; then printf '%s\n' "$configured"; else printf 'main\n'; fi
+}
+
+is_shared() {
+  local ref="$1" name b
+  case "$ref" in refs/heads/*) name="${ref#refs/heads/}" ;; *) return 1 ;; esac
+  while IFS= read -r b; do [ "$name" = "$b" ] && return 0; done < <(shared_branches)
+  return 1
+}
+
+refuse() {
+  # Everything the caller needs to act, on stderr, where git shows it.
+  cat >&2 <<REFUSAL
+
+────────────────────────────────────────────────────────────────────────────
+REFUSED: this would REWIND the shared branch '$1'.
+
+  branch tip is   $2
+  you would move  it back to $3
+
+$4
+The tip is not the commit you declared, so this rewind would delete work that
+is not yours. On this branch that has already happened once: a plain
+'git reset HEAD~1' silently took a concurrent agent's commit, and it is still
+not on main today.
+
+Choose one:
+  * git revert <sha>              — never removes anyone's commit. Prefer this.
+  * bind the proxy and retry:
+        HERMIT_RESET_EXPECT=<the SHA you expect the tip to be> git reset ...
+    The rewind proceeds only if the tip still equals that SHA.
+────────────────────────────────────────────────────────────────────────────
+REFUSAL
+}
+
+status=0
+while read -r old new ref; do
+  is_shared "$ref" || continue
+  [ "$old" = "$new" ] && continue
+  [ "$old" = "$ZERO" ] && continue          # branch creation
+
+  # A rewind is the new tip being an ancestor of the old one: the branch moves
+  # BACKWARDS. Fast-forwards and merges are descendants and never reach here.
+  git merge-base --is-ancestor "$new" "$old" 2>/dev/null || continue
+
+  # THE COMPARE half of compare-and-swap.
+  if [ -n "${HERMIT_RESET_EXPECT:-}" ]; then
+    expected=$(git rev-parse --verify --quiet "${HERMIT_RESET_EXPECT}^{commit}" 2>/dev/null || true)
+    if [ -n "$expected" ] && [ "$expected" = "$old" ]; then
+      dropped=$(git rev-list --count "$new..$old" 2>/dev/null || echo "?")
+      echo "reset-guard: allowed — tip is still your declared commit ${old:0:12}; dropping $dropped commit(s)." >&2
+      continue
+    fi
+  fi
+
+  losing=$(git log --oneline --no-decorate "$new..$old" 2>/dev/null | sed 's/^/    /')
+  [ -z "$losing" ] && losing="    (none listed)"
+  refuse "$ref" "${old:0:12}" "${new:0:12}" "would delete these commit(s):
+$losing
+"
+  status=1
+done
+
+exit "$status"

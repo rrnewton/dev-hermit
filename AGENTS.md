@@ -503,6 +503,12 @@ integration or pinning step; unexpected movement is a reason to reassess, not to
   Detection is `ci-hub/health/rescue_ref_reconcile.py`, which reconciles the `rescue/auto-*` refs against
   `main` and reports commits that exist only on a rescue ref. It does not prevent the reset; it makes a
   silent drop loud, and its `--baseline` file is what keeps the known backlog from muting it.
+  **Prevention** is the `.githooks/reference-transaction` compare-and-swap guard: a rewind of a shared
+  branch is REFUSED unless you declare the tip you expect, `HERMIT_RESET_EXPECT=<sha> git reset …`, and it
+  still equals that SHA. Replaying the incident, reset 1 (the resetter's own commit) is allowed and reset 2
+  (the collateral one) is refused, naming the commit it protected. Ordinary commits, fast-forwards, feature
+  branches and detached HEAD are untouched. Branch DELETION is not covered — git reports it with no old
+  value, so the hook cannot see it.
 - Do not move uncommitted work between slots without recording its owner and exact recovery procedure. Do not silently adopt another agent's branch or worktree.
 - If a feature no longer fast-forwards, update the private branch and retest; never paper over divergence with a merge commit.
 - If a primary is dirty, integration stops until the changes are attributed.
