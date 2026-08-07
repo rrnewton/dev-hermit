@@ -153,8 +153,8 @@
     "spawn_cost_ratio": 8.4,
     "spawn_cost_workload": "200 sequential /bin/true execs from bash",
     "observed_real_phase_slowdowns": {
-      "which updateAutotoolsGnuConfigScriptsPhase": "2 min 49 s under the wrap (sub-second natively)",
-      "lensfun cmake configure": ">25 min under the wrap, did not complete; whole native build is 7 s"
+      "RETRACTED": "Earlier entries quoted stdenv's 'completed in N minutes' phase timings as wall-clock slowdowns. Those come from bash $SECONDS, which under the wrap reads HERMIT'S VIRTUAL CLOCK, and were being compared against native wall time. Verified: `hermit run -- bash -c 'sleep 1; echo $SECONDS'` prints 3 while host wall elapsed is 0s. Do not read any phase duration in a wrapped nix build log as wall clock.",
+      "still_valid": "spawn-cost (host-measured with date +%s.%N outside hermit, 8.4x); the harness wall_s column; and the hang evidence, which is host wall clock plus zero accumulated CPU."
     },
     "clock_quantum_ms": 250,
     "clock_quantum_evidence": "nondet-demo-fast, 6 wrapped builds: urandom/bashrandom/uuid identical 6/6; date=1767228154.422875000 (1/6) vs 1767228154.672875000 (5/6)",
@@ -245,6 +245,12 @@
         "/proc/sys/kernel/random/uuid": "identical 6/6"
       },
       "correction": "A relayed per-source table claimed --no-namespace determinizes procfs_uuid and leaks only getpid and bash_random. Measured here on the same derivation as the aggregate: procfs_uuid is NOT virtualized under --no-namespace at all (6 distinct in 6). The 10/10 aggregate must not be read as 'determinizes nothing' either - the clock and /dev/urandom ARE virtualized."
+    },
+    "virtual_clock_rate_probe": {
+      "command": "hermit run --tmp=/tmp --no-rcb-time --max-timeslice disabled -- bash -c 'sleep 1; echo $SECONDS'",
+      "guest_SECONDS": 3,
+      "host_wall_s": 0,
+      "meaning": "guest-visible time advances at a different rate from wall clock; guest-reported durations are not wall durations"
     }
   },
   "ca_derivations": {
@@ -278,7 +284,18 @@
         "map a wider uid range in the user namespace",
         "virtualize chown/fchown to no-op-success when the guest believes it is root",
         "do not virtualize uid to 0 when sharing the host filesystem"
-      ]
+      ],
+      "issue": "https://github.com/rrnewton/hermit/issues/1849",
+      "status": "FIXED",
+      "fix": {
+        "pr": "https://github.com/rrnewton/hermit/pull/1851",
+        "branch": "nix-uid-chown-unpackphase",
+        "head_sha": "aa48b9cbd652aff69ac4c6121331a6e7097f1305",
+        "base": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+        "approach": "move chown/fchown/fchownat/lchown from PassThrough to Determinized, emulate as no-op success, by analogy with the credential-setting family (#787) and credential-query family (#1549)",
+        "evidence": "chown 0:0 and chown 1000:1000 both succeed in both modes; host ownership unchanged (212630:100); stock nixpkgs which and hello clear unpackPhase with NO TAR_OPTIONS workaround and reach configurePhase",
+        "validation_gap": "validate.sh / ci-hub validate-run NOT run - this task holds no validation lease; exact-head receipt still required before landing"
+      }
     },
     {
       "id": "pipe-readiness-eof-not-delivered",
@@ -290,7 +307,9 @@
       ],
       "measured_impact": "Hang 1 puts every cmake-based nixpkgs package out of reach, including lensfun -- the one real on-machine-nondeterministic package found. Hang 2 blocks stdenv fixupPhase, which nearly every package runs. Together they are why N=0.",
       "suggested_fix": "audit detcore's pipe readiness/EOF delivery for both epoll registration and blocking read when the writer exits",
-      "claim_strength": "The two hangs are measured from /proc on live processes. A SHARED root cause is a HYPOTHESIS, not established: one waits in epoll_wait and the other in a blocking read, and a bash `while read` holding the pipe on a saved fd has its own idioms. Defensible statement: hermit does not deliver pipe readiness/EOF to a guest reader after the writer exits, observed through two different waiting primitives."
+      "claim_strength": "The two hangs are measured from /proc on live processes. A SHARED root cause is a HYPOTHESIS, not established: one waits in epoll_wait and the other in a blocking read, and a bash `while read` holding the pipe on a saved fd has its own idioms. Defensible statement: hermit does not deliver pipe readiness/EOF to a guest reader after the writer exits, observed through two different waiting primitives.",
+      "issue": "https://github.com/rrnewton/hermit/issues/1850",
+      "status": "OPEN - this is what keeps N=0"
     },
     {
       "id": "rcb-clock-jitter-on-degraded-pmu",

@@ -113,12 +113,37 @@ raise_alarm() {
   # The marker IS the durable record, so its write is verified rather than
   # silenced. stderr previously went to /dev/null, which turned a failed write
   # into a P0 that left no evidence at all.
-  if ! printf '{"ts":"%s","repo":"%s","sha":"%s","workload":"%s","verdict":"%s","detail":"%s","attribution":"%s","severity":"P0"}\n' \
+  #
+  # The record is SERIALIZED BY A JSON WRITER, not by printf. The previous
+  # printf interpolated workload/verdict/detail raw, so a quote or backslash in
+  # a stress detail string emitted a marker no consumer could parse — the
+  # alarm's own durable record could be corrupt exactly when the detail was
+  # most interesting. Values arrive via argv, never inside the program text, so
+  # there is nothing to inject. printf remains the fallback on a host without
+  # python3, and the validity check below still covers that path.
+  local wrote=0
+  if command -v python3 >/dev/null 2>&1; then
+    if python3 -c '
+import json, sys
+keys = ("ts", "repo", "sha", "workload", "verdict", "detail", "attribution")
+record = dict(zip(keys, sys.argv[2:9]))
+record["severity"] = "P0"
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(record, handle, ensure_ascii=False, sort_keys=True)
+    handle.write("\n")
+' "$marker" "$(ts)" "$REPO" "$SHA" "$1" "$2" "$detail" "$attr"; then
+      wrote=1
+    fi
+  elif printf '{"ts":"%s","repo":"%s","sha":"%s","workload":"%s","verdict":"%s","detail":"%s","attribution":"%s","severity":"P0"}\n' \
       "$(ts)" "$REPO" "$SHA" "$1" "$2" "$detail" "$attr" > "$marker"; then
+    wrote=1
+  fi
+
+  if [ "$wrote" -ne 1 ]; then
     log "🔴 P0 ALARM RECORD FAILED: could not write $marker — the alarm below has NO durable record"
   elif command -v python3 >/dev/null 2>&1 && ! python3 -c 'import json,sys;json.load(open(sys.argv[1]))' "$marker" 2>/dev/null; then
-    # An unescaped quote in workload/detail can emit invalid JSON. Say so; a
-    # record no consumer can parse is not a record.
+    # Retained for the printf fallback path: a record no consumer can parse is
+    # not a record, so say so rather than leaving a corrupt marker behind.
     log "🔴 P0 ALARM RECORD IS NOT VALID JSON: $marker — likely an unescaped quote in workload/detail"
   else
     log "P0 alarm record persisted: $marker"

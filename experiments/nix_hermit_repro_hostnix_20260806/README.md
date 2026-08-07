@@ -28,11 +28,17 @@ need it?
    reproduced** — blocked by a Hermit hang (R3b) with a 90-second reproducer,
    not by a determinization failure. Furthest a real package got under the wrap:
    `figlet-2.2.5`, through install and into `fixupPhase`.
-4. **Two new Hermit bug classes, both blocking real nixpkgs work:** the fake
-   uid 0 that breaks `tar` in `unpackPhase` for every tarball-sourced package
-   (R3a), and **pipe readiness/EOF never delivered to a guest reader after the
-   writer exits** (R3b) — observed twice, as a `cmake` `epoll_wait` hang and as a
-   `fixupPhase` bash `read` hang, each with zero accumulated CPU.
+4. **Two new Hermit bug classes, both blocking real nixpkgs work.**
+   - R3a, the fake uid 0 that breaks `tar` in `unpackPhase` for every
+     tarball-sourced package — filed as
+     [hermit#1849](https://github.com/rrnewton/hermit/issues/1849) and **FIXED**
+     in [hermit#1851](https://github.com/rrnewton/hermit/pull/1851); `which` and
+     `hello` now clear `unpackPhase` with no workaround.
+   - R3b, **pipe readiness/EOF never delivered to a guest reader after the writer
+     exits** — filed as
+     [hermit#1850](https://github.com/rrnewton/hermit/issues/1850); observed
+     twice, as a `cmake` `epoll_wait` hang and a `fixupPhase` bash `read` hang,
+     each with zero accumulated CPU. Still open; this is what keeps N=0.
 5. **CA store: crisp negative.** `nix --check` does **not** detect nondeterminism
    in a `__contentAddressed` derivation on nix 2.30.2 (nix#5336 reproduces), so
    CA cannot be the oracle. Hermit *does* collapse a CA derivation onto one
@@ -390,7 +396,7 @@ behind a fixable compatibility bug.
 Two, both new, both actionable, and together they explain why no prior write-up
 had ever driven a real nixpkgs package through this seam.
 
-#### R3a. Hermit reports uid 0 it cannot back
+#### R3a. Hermit reports uid 0 it cannot back — [#1849](https://github.com/rrnewton/hermit/issues/1849), fixed by [#1851](https://github.com/rrnewton/hermit/pull/1851)
 
 This is the most actionable Hermit finding of the night and it is **not** in any
 prior write-up.
@@ -420,12 +426,43 @@ Workaround used here, applied to **both** arms so the comparison stays fair
 It is a no-op natively (tar only restores ownership when euid==0). With it,
 `which` gets past `unpackPhase` into `configurePhase` under the wrap.
 
-Suggested Hermit fixes, in increasing order of invasiveness: (a) map a wider
+**FIXED.** `rrnewton/hermit` issue #1849; the fix moves `chown`/`fchown`/
+`fchownat`/`lchown` from PassThrough to Determinized and emulates them as a
+no-op success, completing the fixed virtual-root identity that the credential
+*query* family (#1549) and credential *set* family (#787) already implement.
+Measured with the patched binary at the same derivation:
+
+```
+                       chown 0:0   chown 1000:1000
+  --tmp=/tmp   before      OK           EINVAL
+  --tmp=/tmp   after       OK             OK
+  --no-namespace before  EPERM           EPERM
+  --no-namespace after     OK             OK
+  host file ownership after a guest chown: 212630:100  (UNCHANGED - no host mutation)
+```
+
+End to end, **without** the `TAR_OPTIONS` workaround, using stock
+`(import <nixpkgs> {}).which` and `.hello`:
+
+```
+Running phase: unpackPhase
+unpacking source archive /nix/store/…-which-2.23.tar.gz
+unpackPhase completed              <- succeeded; previously died here
+Running phase: patchPhase
+Running phase: updateAutotoolsGnuConfigScriptsPhase
+Running phase: configurePhase
+```
+
+Both packages now clear `unpackPhase` and reach `configurePhase`. The
+`TAR_OPTIONS` workaround stays in `nix/real-candidates.nix` so the harness still
+runs against an unpatched Hermit.
+
+Options considered before choosing, in increasing order of invasiveness: (a) map a wider
 uid range in the user namespace; (b) virtualize `chown`/`fchown` to a
 no-op-success when the guest believes it is root; (c) do not virtualize uid to
 0 when sharing the host filesystem.
 
-#### R3b. Real builds HANG under `hermit run` — pipe readiness/EOF is not delivered
+#### R3b. Real builds HANG under `hermit run` — pipe readiness/EOF is not delivered — [#1850](https://github.com/rrnewton/hermit/issues/1850)
 
 **Two independent hangs, both in pipe wakeup, both with zero accumulated CPU.**
 This — not performance — is what stops real nixpkgs packages.
@@ -513,13 +550,28 @@ short-lived processes.
 | native | 0.76-0.80 ms |
 | hermit `--tmp=/tmp --no-rcb-time --max-timeslice disabled` | 6.0-6.7 ms |
 
-**~8.4x on a trivial exec** — but the observed slowdown on real build phases is
-far larger, because real child processes are not `/bin/true`:
+**~8.4x on a trivial exec.** This number is host wall clock, measured with
+`date +%s.%N` *outside* Hermit, and is the only per-process cost figure here that
+is safe to quote.
 
-- `which`: `updateAutotoolsGnuConfigScriptsPhase` took **2 min 49 s** under the
-  wrap (sub-second natively) — roughly 170x.
-- `hello`, `which`, `bc`: still inside `configurePhase` after ~25 min under the
-  wrap; an autotools `configure` is thousands of short-lived probe processes.
+> **RETRACTED — a units error, kept visible rather than deleted.** An earlier
+> revision of this section reported "`which`'s
+> `updateAutotoolsGnuConfigScriptsPhase` took **2 min 49 s** under the wrap
+> (sub-second natively), roughly 170x". That ratio is meaningless. stdenv times
+> its phases with bash's `$SECONDS`, which under the wrap reads **Hermit's
+> virtual clock**, not wall time — so it was being compared against a native
+> *wall* measurement. Direct check:
+> `hermit run … -- bash -c 'sleep 1; echo $SECONDS'` prints `3` while host wall
+> elapsed is `0s`. **Every "completed in N minutes" line in a wrapped nix build
+> log is virtual time and must not be read as wall clock.** Real slowdowns must
+> come from the harness's own `wall_s` column (host-measured) or from
+> `spawn-cost.sh`.
+
+Real wall-clock observations that do stand:
+
+- `hello`, `which`, `bc` were still inside `configurePhase` after ~25 minutes of
+  host wall clock under the wrap; an autotools `configure` is thousands of
+  short-lived probe processes.
 
 This reproduces and quantifies the 20260729 prototype's scaling finding
 (nftables >23 min, no completion, on a 316-core box) and it is unaffected by the

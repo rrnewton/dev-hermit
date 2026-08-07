@@ -12,3 +12,7 @@ HERMIT  bc,"(import <nixpkgs> {}).bc",hermit,/nix/store/sp2aybfzqjka77zrsh0ch516
 NATIVE  libarchive,"(import <nixpkgs> {}).libarchive",native,/nix/store/a0yl8jdzmh4892ndyqxf8kg059q8asmq-libarchive-3.8.1.drv,0,,error,,,delete-failed:/nix/store/a3w3ka2d796ghlhf31il839c0658m5ih-cmake-3.31.7;/nix/store/s56j2jrcmgmdirva0yrpqjl6icb05bjw-elfutils-0.193-bin;
 NATIVE  hello,"(import <nixpkgs> {}).hello",native,/nix/store/5g60vyp4cbgwl12pav5apyi571smp62s-hello-2.12.2.drv,2,1,reproducible,1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii 1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii,17 18,
 HERMIT  hello,"(import <nixpkgs> {}).hello",hermit,/nix/store/jwfhzd13syz65ihimwyw8c2dqw8xmih9-hello-2.12.2.drv,0,,build-fail,,,build1-failed
+HERMIT  tree,"(import <nixpkgs> {}).tree",hermit,/nix/store/7lkxgx8m10p33bnhpdz596rpgzvxj9r8-tree-2.2.1.drv,0,,build-fail,,,build1-failed
+HERMIT  libarchive,"(import <nixpkgs> {}).libarchive",hermit,/nix/store/gl403y7ss0lvdj1ci62b1ndcwakx9xvw-libarchive-3.8.1.drv,0,,build-fail,,,build1-failed
+harness/screen-batch.sh: line 42: unexpected EOF while looking for matching `"'
+harness/screen-batch.sh: line 43: syntax error: unexpected end of file
