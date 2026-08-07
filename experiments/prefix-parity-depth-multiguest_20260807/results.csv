@@ -1,0 +1,19 @@
+guest,backend,Y_depth,Z_golden,emitted,rc,clean,note
+true,ptrace,5,5,5,0,yes,self-reference
+true,kvm,2,5,5,0,yes,reproduces recorded rung exactly
+echo,ptrace,6,6,6,0,yes,self-reference
+echo,kvm,2,6,6,0,yes,reproduces recorded rung exactly
+wcsimple,ptrace,7,7,7,0,yes,self-reference
+wcsimple,kvm,2,7,7,0,yes,reproduces recorded rung exactly
+threaded,ptrace,19,19,19,0,yes,self-reference; pthread_lifecycle 4 threads
+threaded,kvm,2,19,19,0,yes,NEW guest; same Y=2
+heap_fragment_reuse,ptrace,6,6,6,0,yes,self-reference; pinned heap reference guest
+heap_fragment_reuse,kvm,2,6,6,0,yes,NEW guest; same Y=2
+stack_deep_recursion,ptrace,6,6,6,0,yes,self-reference; pinned stack reference guest
+stack_deep_recursion,kvm,2,6,6,0,yes,NEW guest; same Y=2
+stdout_bytes,ptrace,7,7,7,0,yes,self-reference; pinned stdout reference guest
+stdout_bytes,kvm,2,7,7,0,yes,NEW guest; same Y=2
+detlog_syscalls,ptrace,6,6,6,0,yes,self-reference; pinned detlog reference guest
+detlog_syscalls,kvm,2,6,6,0,yes,NEW guest; same Y=2
+pipeline,ptrace,27,27,27,0,yes,self-reference
+pipeline,kvm,,27,52507,1,no,GUEST FAILED rc=1 and emitted 1945x golden; NOT a depth
