@@ -215,7 +215,10 @@
       "owner": "hermit-220",
       "source_row": "10",
       "parent_id": "irq-aware-core-allocator",
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "d1f7fd393975be05342b7a75b946f8a9925ff48b"
+      }
     },
     {
       "id": "unsupported-syscalls-fail-closed-default",
