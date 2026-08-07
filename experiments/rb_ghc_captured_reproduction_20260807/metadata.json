@@ -1,0 +1,71 @@
+{
+  "experiment": "rb_ghc_captured_reproduction",
+  "date": "2026-08-07",
+  "agent": "claude-coord-176 (impl, claude-opus-5)",
+  "question": "Is the 2026-07-29 GHC reproducible-build result (rb_drb_haskell_ghc_concurrency_20260729) backed by a captured, re-runnable harness, or only by recorded numbers?",
+  "answer": "Only partially. Four measurement scripts were committed but nothing that creates the environment they run in (container, hermit staging, host-glibc closure, entrypoint); the container they named no longer exists on any host. This experiment supplies the missing capture as a single run.sh. Re-running the identical measurement through it, five of six configurations replicate exactly and the flagship one does not: hermit --strict -j8 +RTS -C0, recorded as REPRODUCIBLE (3/3 identical), measured here as NON-REPRODUCIBLE (3/3 distinct).",
+  "replication_status": "NON-REPLICATION, attribution unknown (not bisected). Candidates: a Hermit regression between 32f004cd and 1fadc037; host dependence (different machine; PMU validation fails and CPUID interception unavailable here); or the original 3-run result not being robust.",
+  "hermit": {
+    "repo": "rrnewton/hermit",
+    "sha": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+    "branch": "origin/main (clean checkout; binary reports g1fadc03779f2, no -dirty)",
+    "binary_sha256": "96a29c8d74548dc9de0faa60e697e85a10e7973e74b445237f5426bbcf5dfe87",
+    "profile": "release",
+    "backend": "ptrace",
+    "flags": "run --strict"
+  },
+  "reverie": {
+    "sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+    "state": "unchanged by this experiment; this is the pin recorded by hermit 1fadc037"
+  },
+  "compared_against": {
+    "experiment": "rb_drb_haskell_ghc_concurrency_20260729",
+    "hermit_sha": "32f004cd63f0942d05818d900af2ea5780b9f87d",
+    "recorded_flagship_aggregate": "e6037a6c158a39bd0ca90587e864fba22a7440d4c67dfc4e549ba1279797589f",
+    "host": "devbig014"
+  },
+  "toolchain": {
+    "os_image": "docker.io/library/haskell:9.8.4",
+    "image_id": "c0e532a50405a37e7efc7efef85d5e3ad145cbb02d6b72b5314f0e2687a504f2",
+    "ghc": "9.8.4",
+    "container_distro": "Debian 11 (bullseye)",
+    "container_glibc": "2.31 (Debian GLIBC 2.31-13+deb11u14)",
+    "container_runtime": "podman run --rm --privileged"
+  },
+  "host": {
+    "kernel": "Linux 6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba",
+    "glibc": "2.34",
+    "cpu": "AMD EPYC 9D85",
+    "limitations": [
+      "PMU validation fails: AmdSpecLockMapShouldBeDisabled (RCB timers unreliable)",
+      "ARCH_SET_CPUID returns ENODEV: Hermit runs without CPUID interception"
+    ]
+  },
+  "workload": {
+    "generator": "harness/gen_pkg.sh (byte-identical to the 2026-07-29 copy)",
+    "modules": 46,
+    "compile_flags": "ghc --make -j8 -O0",
+    "canonical_output_path": "/work/out"
+  },
+  "method": {
+    "measurement_script": "harness/results_csv.sh (byte-identical to the 2026-07-29 copy, so the comparison is like-for-like)",
+    "fingerprint": "sha256 over (all .o sorted by name) + final binary, computed outside the hermit boundary from the /work bind mount",
+    "runs_per_config": 3,
+    "configs": 6,
+    "wall_clock_minutes": 11
+  },
+  "results": {
+    "native_-j8_default": "NON-REPRODUCIBLE (3 distinct)",
+    "native_-j8_+RTS_-C0": "NON-REPRODUCIBLE (3 distinct)",
+    "native_-j8_+RTS_-N8": "NON-REPRODUCIBLE (3 distinct)",
+    "hermit_strict_-j8_default": "NON-REPRODUCIBLE (3 distinct)",
+    "hermit_strict_-j8_+RTS_-C0": "NON-REPRODUCIBLE (3 distinct) -- DID NOT REPLICATE",
+    "hermit_strict_-j8_+RTS_-N8": "NON-REPRODUCIBLE (3 distinct)"
+  },
+  "reproduction": "./run.sh --hermit-bin /path/to/hermit/target/release/hermit",
+  "followups": [
+    "Bisect hermit 32f004cd..1fadc037 against this harness to test the regression hypothesis.",
+    "Run the same harness on a host with working PMU/CPUID faulting to test the host-dependence hypothesis.",
+    "Raise runs-per-config above 3 before any future determinism claim from this harness."
+  ]
+}
