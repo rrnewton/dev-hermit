@@ -98,6 +98,16 @@ Other:
                          each entry's count denominator, then exit. Entries
                          written before schema 2 are labelled
                          denominator=unknown. Read-only: never rewrites.
+  --check-freshness      Compare this copy of the log against the landed one on
+                         origin/main and exit. Nonzero when this copy is missing
+                         landed rows, i.e. when publishing it would delete
+                         delivered statuses. Writes nothing. Use as a
+                         pre-commit/pre-publication guard.
+  --print-reconciled     Write the union of the landed and local rows, in
+                         timestamp order, to stdout and exit. Loses nothing and
+                         duplicates nothing. Writes no files.
+  --allow-stale-log      Append even though this copy is missing landed rows.
+                         For an isolated copy that will never be published.
   --log-file PATH        Override the repository-relative log path.
                          Default: ai_docs/status-log/status-log.jsonl
   -h, --help             Show this help.
@@ -203,6 +213,9 @@ struct Args {
     expect_bytes: Option<usize>,
     log_file: Option<PathBuf>,
     describe_log: bool,
+    allow_stale_log: bool,
+    print_reconciled: bool,
+    check_freshness: bool,
 }
 
 /// One validated workstream row: a slug, and the agent/task/workspace triple it
@@ -714,6 +727,118 @@ fn describe_entry(index: usize, entry: &Value) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// STATUS-LOG FRESHNESS
+//
+// The log is append-only and shared. A worktree whose copy is BEHIND the landed
+// one is not merely out of date: committing it DELETES landed rows, because a
+// checkout of a file is a whole-file replacement, not a merge. Measured on this
+// repository 2026-08-07T03:10Z: the shared parent copy stood at +5/-51 against
+// origin/main -- 53 local rows versus 99 landed -- so publishing it would have
+// destroyed 51 delivered status records while adding 5.
+//
+// The predicate is IDENTITY-BASED, not base-SHA-based, and that distinction is
+// load-bearing. "Is my HEAD behind origin/main?" is the wrong question: this
+// parent checkout is routinely dozens of commits behind while the log file
+// itself is identical, so a HEAD-based guard would refuse every legitimate
+// append. The harmful condition is narrower and exactly checkable: DOES THE
+// LANDED LOG CONTAIN A ROW MY COPY DOES NOT? If so, my copy can only reach
+// origin/main by reverting that row.
+// ---------------------------------------------------------------------------
+
+/// Split a JSONL log into its non-empty rows. Row text is the identity: these
+/// records are immutable once written, so byte equality is the right key and
+/// needs no parsing (a row that fails to parse still compares).
+fn log_rows(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Rows that are LANDED but absent locally -- i.e. exactly what publishing this
+/// copy would delete. Order follows the landed file so the report reads
+/// oldest-first.
+fn missing_landed_rows(local: &str, landed: &str) -> Vec<String> {
+    let mine: std::collections::HashSet<String> = log_rows(local).into_iter().collect();
+    log_rows(landed)
+        .into_iter()
+        .filter(|row| !mine.contains(row))
+        .collect()
+}
+
+/// Union of landed and local rows, in timestamp order, each row kept once.
+/// This is the reconciliation an append-only record admits: rows have identity,
+/// so merging is well defined and neither side loses anything.
+fn reconcile_rows(local: &str, landed: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for row in log_rows(landed).into_iter().chain(log_rows(local)) {
+        if seen.insert(row.clone()) {
+            out.push(row);
+        }
+    }
+    out.sort_by_key(|row| {
+        serde_json::from_str::<Value>(row)
+            .ok()
+            .and_then(|v| {
+                v.get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default()
+    });
+    out
+}
+
+/// The landed copy of the log, read from the freshly-known remote ref. Returns
+/// `None` when there is nothing to compare against (untracked log, no
+/// origin/main, git unavailable) -- an absent comparison is reported, never
+/// silently treated as a pass.
+fn landed_log(root: &Path, log_path: &Path) -> Option<String> {
+    let relative = log_path.strip_prefix(root).ok()?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("show")
+        .arg(format!("origin/main:{}", relative.display()))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
+/// Refuse an append onto a copy that would revert landed rows.
+fn check_log_freshness(local: &str, landed: &str) -> Result<usize, String> {
+    let missing = missing_landed_rows(local, landed);
+    if missing.is_empty() {
+        return Ok(log_rows(landed).len());
+    }
+    let stamp = |row: &String| -> String {
+        serde_json::from_str::<Value>(row)
+            .ok()
+            .and_then(|v| {
+                v.get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "<unparseable row>".to_string())
+    };
+    let first = missing.first().map(stamp).unwrap_or_default();
+    let last = missing.last().map(stamp).unwrap_or_default();
+    Err(format!(
+        "STALE STATUS LOG: this copy is missing {} row(s) that are already landed on origin/main \
+         (oldest {first}, newest {last}). Appending here deepens a divergence that can only be \
+         resolved by reverting those rows, which is data loss -- the log is append-only and every \
+         row is a delivered status. Reconcile first: `--print-reconciled` writes the union of the \
+         landed and local rows, in timestamp order, losing and duplicating nothing. \
+         `--allow-stale-log` overrides this for an isolated copy that will never be published.",
+        missing.len()
+    ))
+}
+
 fn die(message: &str) -> ! {
     eprintln!("status-log: {message}");
     exit(2);
@@ -777,6 +902,9 @@ fn parse_args() -> Args {
                 );
             }
             "--log-file" => parsed.log_file = Some(take_value(&arg, &mut args).into()),
+            "--allow-stale-log" => parsed.allow_stale_log = true,
+            "--print-reconciled" => parsed.print_reconciled = true,
+            "--check-freshness" => parsed.check_freshness = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
                 exit(0);
@@ -1020,6 +1148,30 @@ fn main() {
         None => root.join("ai_docs/status-log/status-log.jsonl"),
     };
 
+    // Read-only freshness modes. Neither writes anything.
+    if args.check_freshness || args.print_reconciled {
+        let local = fs::read_to_string(&log_path).unwrap_or_default();
+        let landed = landed_log(&root, &log_path)
+            .unwrap_or_else(|| die("no origin/main copy of the log to compare against"));
+        if args.print_reconciled {
+            for row in reconcile_rows(&local, &landed) {
+                println!("{row}");
+            }
+            exit(0);
+        }
+        match check_log_freshness(&local, &landed) {
+            Ok(landed_rows) => {
+                println!(
+                    "status log is publishable: {} local row(s), {} landed row(s), 0 landed rows missing",
+                    log_rows(&local).len(),
+                    landed_rows
+                );
+                exit(0);
+            }
+            Err(message) => die(&message),
+        }
+    }
+
     // Read-only. Never rewrites history; old rows are labelled, not migrated.
     if args.describe_log {
         let text = fs::read_to_string(&log_path)
@@ -1211,6 +1363,36 @@ fn main() {
         entry["awaiting_landing_to_worker"] = rows_to_json(&awaiting);
     }
     entry["count_semantics"] = count_semantics;
+
+    // Refuse to deepen a divergence that can only be undone by deleting landed
+    // rows. Recorded on success so the entry carries the condition it was
+    // written under, rather than leaving "was this copy fresh?" unanswerable.
+    let local_now = fs::read_to_string(&log_path).unwrap_or_default();
+    match landed_log(&root, &log_path) {
+        Some(landed) => match check_log_freshness(&local_now, &landed) {
+            Ok(landed_rows) => {
+                entry["log_freshness"] = json!({
+                    "checked": true, "landed_rows": landed_rows,
+                    "local_rows": log_rows(&local_now).len(), "missing_landed_rows": 0,
+                });
+            }
+            Err(message) => {
+                if !args.allow_stale_log {
+                    die(&message);
+                }
+                entry["log_freshness"] = json!({
+                    "checked": true, "overridden": true,
+                    "missing_landed_rows": missing_landed_rows(&local_now, &landed).len(),
+                });
+            }
+        },
+        // No landed copy to compare against. Say so in the record instead of
+        // letting an unchecked append look identical to a checked one.
+        None => {
+            entry["log_freshness"] = json!({"checked": false,
+                "reason": "no origin/main copy of the log to compare against"});
+        }
+    }
     let line = serde_json::to_string(&entry)
         .unwrap_or_else(|e| die(&format!("serialize status entry: {e}")));
 
@@ -1614,6 +1796,153 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         assert_eq!(states["b"], TaskState::Active);
     }
 
+    // =====================================================================
+    // STATUS-LOG FRESHNESS
+    //
+    // Measured hazard, 2026-08-07T03:10Z: the shared parent copy of
+    // ai_docs/status-log/status-log.jsonl stood at +5/-51 against origin/main
+    // (53 local rows vs 99 landed). Committing it would have deleted 51
+    // delivered status records.
+    // =====================================================================
+
+    fn row(ts: &str) -> String {
+        format!(r#"{{"timestamp":"{ts}","open_prs":1}}"#)
+    }
+    fn log_of(stamps: &[&str]) -> String {
+        stamps.iter().map(|t| row(t)).collect::<Vec<_>>().join("\n") + "\n"
+    }
+
+    // ---- NEGATIVE: a copy missing landed rows is refused ----
+
+    #[test]
+    fn a_copy_missing_landed_rows_is_refused_and_says_how_many() {
+        let landed = log_of(&["t1", "t2", "t3", "t4"]);
+        let local = log_of(&["t1", "t4"]); // t2, t3 landed while this copy sat
+        let err = check_log_freshness(&local, &landed)
+            .expect_err("a copy that would delete landed rows must be refused");
+        assert!(
+            err.contains("missing 2 row(s)"),
+            "must count the loss: {err}"
+        );
+        assert!(
+            err.contains("oldest t2") && err.contains("newest t3"),
+            "must bracket it: {err}"
+        );
+        assert!(
+            err.contains("--print-reconciled"),
+            "must name the remedy: {err}"
+        );
+        assert!(
+            err.contains("append-only"),
+            "must say why it matters: {err}"
+        );
+    }
+
+    /// The exact measured shape: 99 landed, 53 local of which 5 are local-only,
+    /// so 51 landed rows are absent.
+    #[test]
+    fn the_measured_plus5_minus51_shared_copy_is_refused() {
+        let landed_stamps: Vec<String> = (0..99).map(|i| format!("L{i:03}")).collect();
+        let landed = log_of(&landed_stamps.iter().map(String::as_str).collect::<Vec<_>>());
+        let mut local_stamps: Vec<String> = landed_stamps[..48].to_vec(); // kept 48 landed
+        local_stamps.extend((0..5).map(|i| format!("W{i}"))); // plus 5 local-only
+        let local = log_of(&local_stamps.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(log_rows(&local).len(), 53);
+        assert_eq!(log_rows(&landed).len(), 99);
+        assert_eq!(missing_landed_rows(&local, &landed).len(), 51);
+        assert!(check_log_freshness(&local, &landed).is_err());
+    }
+
+    // ---- POSITIVE: a fresh copy, and an appended-to fresh copy, are accepted ----
+
+    #[test]
+    fn an_identical_copy_is_accepted() {
+        let landed = log_of(&["t1", "t2", "t3"]);
+        assert_eq!(check_log_freshness(&landed, &landed).unwrap(), 3);
+    }
+
+    #[test]
+    fn a_superset_copy_with_local_appends_is_accepted() {
+        let landed = log_of(&["t1", "t2"]);
+        let local = log_of(&["t1", "t2", "t3"]); // ahead, nothing lost
+        assert_eq!(check_log_freshness(&local, &landed).unwrap(), 2);
+        assert!(missing_landed_rows(&local, &landed).is_empty());
+    }
+
+    /// The guard must key on ROW IDENTITY, not on being behind. This parent
+    /// checkout runs dozens of commits behind while the log matches, and a
+    /// HEAD-based guard would refuse every legitimate append.
+    #[test]
+    fn being_behind_on_commits_is_not_by_itself_staleness() {
+        let landed = log_of(&["t1", "t2"]);
+        let local = log_of(&["t1", "t2"]); // same rows, arbitrarily older HEAD
+        assert!(check_log_freshness(&local, &landed).is_ok());
+    }
+
+    // ---- RECONCILIATION: no lost rows, no duplicates, timestamp order ----
+
+    #[test]
+    fn reconciliation_loses_nothing_and_duplicates_nothing() {
+        let landed = log_of(&["t1", "t3", "t5"]);
+        let local = log_of(&["t1", "t2", "t9"]);
+        let merged = reconcile_rows(&local, &landed);
+        assert_eq!(merged.len(), 5, "union of 3 landed + 3 local sharing 1 = 5");
+        for src in [&landed, &local] {
+            for r in log_rows(src) {
+                assert!(merged.contains(&r), "reconciliation must lose nothing: {r}");
+            }
+        }
+        let unique: std::collections::HashSet<&String> = merged.iter().collect();
+        assert_eq!(unique.len(), merged.len(), "no duplicates");
+        let stamps: Vec<String> = merged
+            .iter()
+            .map(|r| {
+                serde_json::from_str::<Value>(r).unwrap()["timestamp"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            stamps,
+            vec!["t1", "t2", "t3", "t5", "t9"],
+            "timestamp order"
+        );
+    }
+
+    #[test]
+    fn a_reconciled_copy_then_passes_the_guard() {
+        // Close the loop: the remedy the refusal names actually clears it.
+        let landed = log_of(&["t1", "t2", "t3", "t4"]);
+        let local = log_of(&["t1", "t4"]);
+        assert!(check_log_freshness(&local, &landed).is_err());
+        let merged = reconcile_rows(&local, &landed).join("\n") + "\n";
+        assert!(
+            check_log_freshness(&merged, &landed).is_ok(),
+            "reconciling must be sufficient, not merely advisory"
+        );
+        assert_eq!(log_rows(&merged).len(), 4);
+    }
+
+    #[test]
+    fn an_unparseable_row_still_participates_by_identity() {
+        // Rows are compared as bytes, so a malformed landed row is still
+        // protected from deletion rather than being silently dropped.
+        let landed = "not json\n".to_string() + &row("t2") + "\n";
+        let local = row("t2") + "\n";
+        let missing = missing_landed_rows(&local, &landed);
+        assert_eq!(missing, vec!["not json".to_string()]);
+        let err = check_log_freshness(&local, &landed).unwrap_err();
+        assert!(err.contains("<unparseable row>"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_local_copy_is_maximally_stale() {
+        let landed = log_of(&["t1", "t2"]);
+        assert_eq!(missing_landed_rows("", &landed).len(), 2);
+        assert!(check_log_freshness("", &landed).is_err());
+    }
+
     // ---- POSITIVE: total-open with an explicit repo scope is accepted ----
 
     #[test]
@@ -1803,7 +2132,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         let from_file = canonical_status_text(format!("{sent}\n"));
         let from_stdin = canonical_status_text(sent.to_string());
         assert_eq!(from_file, from_stdin);
-        assert_eq!(sha256_hex(from_file.as_bytes()), sha256_hex(from_stdin.as_bytes()));
+        assert_eq!(
+            sha256_hex(from_file.as_bytes()),
+            sha256_hex(from_stdin.as_bytes())
+        );
         assert_eq!(from_file.len(), sent.len());
     }
 
@@ -1824,7 +2156,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         );
         let canonical = canonical_status_text(file_form);
         assert_eq!(canonical, api_text);
-        assert_eq!(sha256_hex(canonical.as_bytes()), sha256_hex(api_text.as_bytes()));
+        assert_eq!(
+            sha256_hex(canonical.as_bytes()),
+            sha256_hex(api_text.as_bytes())
+        );
     }
 
     // ================ covers_hour / recovery_for semantics ================
@@ -1834,9 +2169,18 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
 
     #[test]
     fn hour_bucket_parsing_accepts_real_hours_and_refuses_the_rest() {
-        assert_eq!(parse_hour_bucket("--covers-hour", "2026-08-07T01"), "2026-08-07T01");
-        assert_eq!(parse_hour_bucket("--covers-hour", "2026-12-31T23"), "2026-12-31T23");
-        assert_eq!(parse_hour_bucket("--covers-hour", "2026-01-01T00"), "2026-01-01T00");
+        assert_eq!(
+            parse_hour_bucket("--covers-hour", "2026-08-07T01"),
+            "2026-08-07T01"
+        );
+        assert_eq!(
+            parse_hour_bucket("--covers-hour", "2026-12-31T23"),
+            "2026-12-31T23"
+        );
+        assert_eq!(
+            parse_hour_bucket("--covers-hour", "2026-01-01T00"),
+            "2026-01-01T00"
+        );
     }
 
     #[test]
@@ -1893,7 +2237,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         });
         let line = describe_entry(3, &legacy);
         assert!(line.contains("covers=unknown"), "{line}");
-        assert!(!line.contains("covers=2026-08-07T02"), "must not guess: {line}");
+        assert!(
+            !line.contains("covers=2026-08-07T02"),
+            "must not guess: {line}"
+        );
     }
 
     #[test]
@@ -1919,5 +2266,4 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         assert!(COUNT_SEMANTICS_SCHEMA < COVERAGE_SCHEMA);
         assert_eq!(SCHEMA_VERSION, COVERAGE_SCHEMA);
     }
-
 }
