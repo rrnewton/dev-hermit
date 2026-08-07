@@ -1,0 +1,13 @@
+backend,mutant,comparator,rc,verdict,bitwise_parity,cmp_left,cmp_right,banner
+ptrace,clean_ctrl,stripped,0,matched,False,162,162,:: Success: deterministic. Determinism verified.
+ptrace,clean_ctrl,strict,1,diverged,False,273,273,:: Failure: nondeterministic.
+ptrace,mut_stdout,stripped,1,diverged,False,180,180,:: Failure: nondeterministic.
+ptrace,mut_stdout,strict,1,diverged,False,300,300,:: Failure: nondeterministic.
+ptrace,mut_exit,stripped,1,diverged,False,180,180,:: Failure: nondeterministic.
+ptrace,mut_exit,strict,1,diverged,False,300,300,:: Failure: nondeterministic.
+ptrace,mut_detlog_only,stripped,0,matched,False,194,194,:: Success: deterministic. Determinism verified.
+ptrace,mut_detlog_only,strict,1,diverged,False,323,323,:: Failure: nondeterministic.
+ptrace,mut_addr,stripped,0,matched,False,186,186,:: Success: deterministic. Determinism verified.
+ptrace,mut_addr,strict,1,diverged,False,310,310,:: Failure: nondeterministic.
+ptrace,mut_path,stripped,0,matched,False,190,190,:: Success: deterministic. Determinism verified.
+ptrace,mut_path,strict,1,diverged,False,317,317,:: Failure: nondeterministic.

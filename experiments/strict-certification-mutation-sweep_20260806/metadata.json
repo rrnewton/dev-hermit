@@ -1,0 +1,61 @@
+{
+  "experiment": "strict-certification-mutation-sweep",
+  "date": "2026-08-06",
+  "task": "strict-certification-mutation-sweep-green-cells",
+  "owner_agent": "hermit-w7",
+  "model": "opus-5",
+  "question": "For each GREEN (deterministic=1) cell in compat-envelope/scorecard.csv, does the probe that certified it actually FAIL when a known-wrong behaviour is planted? At what tier can each cell honestly be certified?",
+  "repos": {
+    "dev-hermit_parent": "9e577f8a8412d1aa2e018b384e6c184cc6cc81a1",
+    "hermit_primary": "f89c69766371806d3c9b2c3003531df2d59d6118",
+    "hermit_dbi_slot": "52d56e5ceb386d24ec809edbfdb6920e8484271e",
+    "reverie": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6"
+  },
+  "binaries": {
+    "ptrace_liteinst_kvm": "hermit/target/debug/hermit @ f89c69766",
+    "dbi": "worktrees/dbi/hermit/target/debug/hermit @ 52d56e5ce (run IN PLACE; copying the binary out of its worktree breaks DBI)"
+  },
+  "host": {
+    "hostname": "devbig014",
+    "cores": 316,
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "load_average_during_run": "25-60 of 316 cores (not saturated)"
+  },
+  "probe_under_test": "hermit run --strict --verify --verify-allow both --base-env=minimal --max-timeslice=disabled --tmp=/tmp [--no-virtualize-cpuid] -- GUEST",
+  "probe_source": "hermit/tests/backend-parity/run_matrix.py :: hermit_command() (line ~428)",
+  "guests": {
+    "clean_ctrl": "positive control: printf(\"constant-output\"); return 0",
+    "mut_stdout": "planted: stdout differs run-to-run (prints a monotonically growing counter)",
+    "mut_exit": "planted: exit status differs run-to-run",
+    "mut_detlog_only": "planted: only a read() return LENGTH differs; stdout+exit byte-identical",
+    "mut_addr": "planted: only a pointer ARG to a zero-length write differs; stdout+exit byte-identical",
+    "mut_path": "planted: only an openat PATH arg differs; stdout+exit byte-identical"
+  },
+  "divergence_mechanism": "each mutant appends one byte to /tmp/w7mutstate and reads the new size, so invocation A and invocation B are deterministically different by construction; verified natively before any hermit run",
+  "tiers": {
+    "T-guest": "stdout + exit status only",
+    "T-INFO": "all INFO-level log lines, exact, after stripping only the wall-clock line prefix",
+    "T-INFO-DETLOG": "INFO lines containing DETLOG, exact, after stripping only the wall-clock line prefix",
+    "T-HEAP": "T-INFO-DETLOG with --detlog-heap",
+    "T-STACK": "T-INFO-DETLOG with --detlog-stack",
+    "T-DEBUG": "all DEBUG-level lines, exact (this is what --verify-strict compares)"
+  },
+  "method_caveat": "tier measurements use TWO SEPARATE hermit invocations rather than hermit's internal --verify double-run, because --verify intermittently hits the known slow-drain (a clean_ctrl --verify-strict run exceeded 900s after completing twice in <240s). Cross-checked on clean_ctrl/ptrace: internal double-run gave INFO 56|56 0 divergent, DEBUG 217|217 14 divergent; separate invocations gave INFO 56|56 0 divergent, DEBUG 217|217 17 divergent. INFO tier agrees exactly.",
+  "counts": {
+    "scorecard_rows_total": 618,
+    "green_cells_deterministic_1": 346,
+    "green_by_backend": {"liteinst": 136, "kvm": 130, "ptrace": 72, "dbi": 8},
+    "planted_defects_per_backend": 5,
+    "controls_per_backend": 1,
+    "tiers_measured": 5
+  },
+  "outputs": [
+    "results.csv",
+    "tier2-results-ptrace.csv",
+    "tier2-results-ptrace-dyn.csv",
+    "tier2-results-liteinst-dyn.csv",
+    "tier3-results-dbi.csv",
+    "tier4-dbi-dtidcanon.csv"
+  ]
+}
