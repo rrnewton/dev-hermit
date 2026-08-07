@@ -688,7 +688,95 @@ class GhEngineLoudFailureTests(unittest.TestCase):
             pr_status.fetch_repo_status_gh(
                 "rrnewton/hermit", net_wrapper=[], timeout=1.0
             )
+
+    @mock.patch("pr_status.time.sleep", lambda _: None)
+    @mock.patch("pr_status.subprocess.run")
+    def test_truncated_api_response_is_RETRIED_then_succeeds(
+        self, run: mock.Mock
+    ) -> None:
+        """THE REGRESSION. A truncated gh response took out a whole repo.
+
+        gh exits NON-ZERO and prints "unexpected end of JSON input" when the API
+        response is cut off mid-stream. That marker was absent from
+        _RETRYABLE_MARKERS, so `retryable` was False, the loop broke on attempt
+        1, and MAX_FETCH_ATTEMPTS was never reached -- the tool carried a retry
+        budget the only failure occurring in practice could not use. Measured on
+        2 of 5 consecutive lander polls against rrnewton/hermit.
+
+        Asserts the RETRY happens AND the recovered payload is returned, so a
+        regression to break-on-first-attempt fails here rather than silently
+        degrading a repo to unavailable.
+        """
+        payload = '[{"number": 7, "isDraft": false}]'
+        run.side_effect = [
+            subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="",
+                stderr="unexpected end of JSON input",
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=payload, stderr=""
+            ),
+        ]
+        raw = pr_status._fetch_open_prs_gh(
+            "rrnewton/hermit", fields=pr_status.GH_FIELDS, net_wrapper=[]
+        )
+        self.assertEqual(raw, [{"number": 7, "isDraft": False}])
+        self.assertEqual(run.call_count, 2, "the truncated response was not retried")
+
+    @mock.patch("pr_status.time.sleep", lambda _: None)
+    @mock.patch("pr_status.subprocess.run")
+    def test_truncated_api_response_still_fails_closed_when_it_never_recovers(
+        self, run: mock.Mock
+    ) -> None:
+        """Retrying must not become a way to hide a persistent failure."""
+        run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="",
+            stderr="unexpected end of JSON input",
+        )
+        with self.assertRaisesRegex(pr_status.RepoUnavailable, "unexpected end of"):
+            pr_status._fetch_open_prs_gh(
+            "rrnewton/hermit", fields=pr_status.GH_FIELDS, net_wrapper=[]
+        )
+        self.assertEqual(run.call_count, pr_status.MAX_FETCH_ATTEMPTS)
+
+    @mock.patch("pr_status.time.sleep", lambda _: None)
+    @mock.patch("pr_status.subprocess.run")
+    def test_a_non_retryable_error_is_still_not_retried(self, run: mock.Mock) -> None:
+        """NEGATIVE SIDE OF THE BRACKET: widening the marker list must not make
+        every failure retryable. A genuine auth error is not transient and
+        re-running it three times only wastes the budget."""
+        run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="",
+            stderr="gh: authentication required",
+        )
+        with self.assertRaises(pr_status.RepoUnavailable):
+            pr_status._fetch_open_prs_gh(
+            "rrnewton/hermit", fields=pr_status.GH_FIELDS, net_wrapper=[]
+        )
         run.assert_called_once()
+
+    def test_partial_result_line_does_not_assert_a_time_budget(self) -> None:
+        """The summary line must not name a cause it does not know.
+
+        It previously said "could not be queried within the time budget" for
+        EVERY unavailable repo. The real failure was a truncated response with a
+        300s budget on a 5.0s query -- so the message sent the reader to raise a
+        timeout that was never binding.
+        """
+        def _status(repo: str, available: bool) -> pr_status.RepoStatus:
+            return pr_status.RepoStatus(
+                repo=repo, open=0, green=0, red=0, pending=0, real_reds=0,
+                outage_suspected=False, prs=[], available=available,
+            )
+
+        statuses = [
+            _status("rrnewton/hermit", False),
+            _status("rrnewton/reverie", True),
+        ]
+        report = pr_status.render_report(statuses, warn_threshold=10, engine="gh")
+        self.assertIn("PARTIAL RESULT", report)
+        self.assertNotIn("time budget", report)
+        self.assertIn("rrnewton/hermit", report)
 
     @mock.patch("pr_status.banked_failure_tier_commits", return_value={})
     @mock.patch("pr_status.banked_green_commits", return_value=frozenset())

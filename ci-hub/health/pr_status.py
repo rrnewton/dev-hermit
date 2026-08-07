@@ -144,6 +144,23 @@ _RETRYABLE_MARKERS = (
     "connection reset",
     "temporarily unavailable",
     "changed during collection",
+    # A TRUNCATED API RESPONSE. gh itself exits non-zero and prints this when it
+    # cannot parse what the API returned mid-stream -- the same transport class
+    # as "stream error"/"connection reset", and just as transient.
+    #
+    # Measured 2026-08-06/07: this took out the WHOLE hermit repo on 2 of 5
+    # consecutive lander polls, and because the marker was absent `retryable`
+    # was False, so the loop broke on attempt 1 and MAX_FETCH_ATTEMPTS (3) was
+    # never reached. The tool had a retry budget that the one failure actually
+    # occurring in practice could not use.
+    #
+    # Enriched queries are the ones at risk: measured on rrnewton/hermit at 106
+    # open PRs, adding `statusCheckRollup` takes the response from 34,051 to
+    # 461,854 bytes (13.6x) and 0.8s to 5.0s (6x). A 462 KB proxied response has
+    # far more opportunity to arrive truncated. NOTE that is a plausible
+    # mechanism, not a proven cause: 4 of 4 controlled A/B trials succeeded, so
+    # the failure was never reproduced on demand.
+    "unexpected end of json input",
 )
 
 # Keep this exact language in sync with Hermit's
@@ -1655,11 +1672,21 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                     f"{invalid_detail}{draft} {audit.title}"
                 )
     if unavailable:
+        # DO NOT NAME A CAUSE THIS LINE DOES NOT KNOW. It previously asserted
+        # "could not be queried within the time budget" for EVERY unavailable
+        # repo, whatever actually happened. Measured 2026-08-06/07: the real
+        # failure was gh exiting non-zero with "unexpected end of JSON input"
+        # against a 300s budget on a 5.0s query -- nowhere near binding. Anyone
+        # acting on the printed message would have raised
+        # CI_HUB_PR_STATUS_TIMEOUT and seen no change, because the timeout was
+        # never the constraint. The per-repo reason is already reported verbatim
+        # above; this line points at it instead of inventing one.
+        reasons = ", ".join(sorted(s.repo for s in unavailable))
         lines.append(
             f"PARTIAL RESULT: {len(unavailable)} of {len(statuses)} repo(s) "
-            "could not be queried within the time budget; open-PR totals above "
-            "cover only the repos that responded (NOT a claim that they have no "
-            "PRs)."
+            f"could not be queried ({reasons}); see the UNAVAILABLE line above "
+            "for each repo's exact reason. Open-PR totals above cover only the "
+            "repos that responded (NOT a claim that they have no PRs)."
         )
     if total > warn_threshold:
         lines.append(
