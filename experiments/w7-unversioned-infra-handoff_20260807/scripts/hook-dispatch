@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Canonical hook dispatcher for the dev-hermit PARENT repo.
+#
+# WHY THIS EXISTS. core.hooksPath was a RELATIVE path, so each of ~41 checkouts
+# ran its own tree's copy of the hooks and a stale checkout was a silently
+# disabled gate (measured: 2 of 41 enforcing). Pointing hooksPath at an absolute
+# directory of COPIED hooks fixed that but created a worse failure: one stale
+# directory that reads as full coverage. It was 3 commits behind within an hour.
+#
+# SO THIS DIRECTORY HOLDS NO HOOK CONTENT. It holds this dispatcher, which
+# materialises the hooks FROM THE REPOSITORY'S OWN OBJECT STORE at origin/main
+# on every invocation. There is nothing to resync: the moment anyone fetches,
+# the next hook invocation uses the new hooks. Staleness is bounded by fetch
+# frequency rather than by somebody remembering to copy files.
+#
+# FAIL DIRECTION IS PER-HOOK AND DELIBERATE. If the real hook cannot be
+# materialised, pre-push REFUSES (the parent-main gate must fail closed) while
+# every other hook WARNS AND ALLOWS -- bricking commits in 41 checkouts is a
+# worse outcome than a temporarily unenforced hygiene warning, and the push gate
+# is the one carrying an integrity invariant.
+set -uo pipefail
+
+name=$(basename "$0")
+self_dir=$(cd "$(dirname "$0")" && pwd)
+cache_root="$self_dir/cache"
+
+fail() {   # $1 = message
+  echo "hook-dispatch($name): $1" >&2
+  case "$name" in
+    pre-push) exit 1 ;;   # the parent-main gate fails CLOSED
+    *)        exit 0 ;;   # never brick ordinary work on a dispatcher fault
+  esac
+}
+
+command -v git >/dev/null 2>&1 || fail "git not on PATH"
+
+# No network. origin/main is whatever the last fetch left; that IS the source of
+# truth and it is shared by every worktree of this repo.
+src=$(git rev-parse --verify -q origin/main 2>/dev/null) || src=""
+[ -n "$src" ] || fail "cannot resolve origin/main (no remote-tracking ref?)"
+
+dir="$cache_root/$src"
+if [ ! -d "$dir" ]; then
+  tmp="$cache_root/.tmp.$$"
+  rm -rf "$tmp"; mkdir -p "$tmp" || fail "cannot create $tmp"
+  n=0
+  while read -r path; do
+    [ -n "$path" ] || continue
+    base=$(basename "$path")
+    case "$base" in *.md) continue ;; esac
+    git cat-file blob "$src:$path" > "$tmp/$base" 2>/dev/null || continue
+    chmod +x "$tmp/$base"; n=$((n+1))
+  done < <(git ls-tree --name-only "$src" .githooks/ 2>/dev/null | grep -v '/$')
+  [ "$n" -gt 0 ] || { rm -rf "$tmp"; fail "materialised 0 hooks from $src"; }
+  printf 'source_commit=%s\nmaterialised_hooks=%s\n' "$src" "$n" > "$tmp/SOURCE"
+  mv -T "$tmp" "$dir" 2>/dev/null || rm -rf "$tmp"   # lost a race: another run won
+fi
+
+hook="$dir/$name"
+# A hook the repo does not define is not an error -- git simply asked for one
+# that does not exist in this tree.
+[ -f "$hook" ] || exit 0
+
+# TAMPER-EVIDENT. The cache is an ordinary directory on a shared box, so trusting
+# it would just relocate the staleness problem into a place nobody looks. Verify
+# the exact blob we are about to exec against the source tree; two cheap local
+# git calls, no network. A mismatch re-materialises rather than running unknown
+# code -- found by planting a modified cache entry and watching it get used.
+want=$(git rev-parse --verify -q "$src:.githooks/$name" 2>/dev/null || true)
+if [ -n "$want" ]; then
+  got=$(git hash-object "$hook" 2>/dev/null || true)
+  if [ "$want" != "$got" ]; then
+    echo "hook-dispatch($name): cache entry does not match $src:.githooks/$name (want ${want:0:12} got ${got:0:12}); re-materialising" >&2
+    git cat-file blob "$src:.githooks/$name" > "$hook.repair.$$" 2>/dev/null &&
+      chmod +x "$hook.repair.$$" && mv -f "$hook.repair.$$" "$hook" ||
+      { rm -f "$hook.repair.$$"; fail "could not repair a tampered cache entry"; }
+  fi
+fi
+[ -x "$hook" ] || chmod +x "$hook" 2>/dev/null
+
+exec "$hook" "$@"

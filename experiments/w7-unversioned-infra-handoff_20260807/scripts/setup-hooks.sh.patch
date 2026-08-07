@@ -1,0 +1,30 @@
+--- a/scripts/setup-hooks.sh
++++ b/scripts/setup-hooks.sh
+@@
+ #!/usr/bin/env bash
+-# Install the parent dev-hermit repo-hygiene git hooks for THIS clone.
+-# core.hooksPath is local config (not tracked), so each clone runs this once.
++# Install the parent dev-hermit repo-hygiene git hooks for THIS clone.
++# core.hooksPath is local config (not tracked), so each clone runs this once.
++#
++# Point it at the CANONICAL DISPATCHER, not at .githooks. A relative .githooks
++# is resolved per working tree, so each checkout ran its own tree's copy and a
++# stale checkout was a silently disabled gate (measured: 2 of 41 enforcing).
++# The dispatcher holds no hook content: it materialises the hooks from the
++# repository's own object store at origin/main on every invocation, so there is
++# nothing to resync and no directory that can go stale.
+ set -euo pipefail
+ cd "$(git rev-parse --show-toplevel)"
+-git config core.hooksPath .githooks
+-chmod +x .githooks/* 2>/dev/null || true
++CANON=${HERMIT_CANONICAL_HOOKS:-$HOME/.dev-hermit-canonical-hooks-v2}
++mkdir -p "$CANON/cache"
++install -m 755 scripts/hook-dispatch   "$CANON/hook-dispatch"
++install -m 755 scripts/hooks-currency  "$CANON/hooks-currency"
++for h in pre-push pre-commit commit-msg post-commit reference-transaction \
++         post-checkout post-merge prepare-commit-msg; do
++  install -m 755 "$CANON/hook-dispatch" "$CANON/$h"
++done
++git config core.hooksPath "$CANON"
++"$CANON/hooks-currency" || echo "WARNING: hooks currency check reports a risk (above)." >&2
+ echo "core.hooksPath -> $CANON (self-currenting dispatcher; hooks come from origin/main)."

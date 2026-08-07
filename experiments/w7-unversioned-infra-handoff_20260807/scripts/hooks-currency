@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Report what the canonical dispatcher will actually run, and how fresh it is.
+#
+# THE FAILURE THIS ANSWERS. A directory of copied hooks goes stale silently and
+# 41/41 "enforcing" then reads as full coverage while enforcing an old gate --
+# strictly worse than 2/41 enforcing a current one, because it looks fine. The
+# dispatcher removes the copy, so the only residual staleness is "when did
+# anyone last fetch origin/main". This prints that, and exits nonzero when it
+# exceeds a threshold so a caller can gate on it.
+set -uo pipefail
+max_age_min=${HOOKS_CURRENCY_MAX_AGE_MIN:-120}
+root=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "currency: not in a git repo" >&2; exit 2; }
+src=$(git rev-parse --verify -q origin/main) || { echo "currency: origin/main unresolvable -- hooks CANNOT be materialised" >&2; exit 2; }
+
+common=$(git rev-parse --git-common-dir)
+case "$common" in /*) ;; *) common="$root/$common" ;; esac
+ref="$common/refs/remotes/origin/main"; [ -f "$ref" ] || ref="$common/FETCH_HEAD"
+if [ -f "$ref" ]; then age_min=$(( ( $(date +%s) - $(stat -c %Y "$ref") ) / 60 )); else age_min=-1; fi
+
+echo "hooks source commit : $src"
+echo "hooks source ref age: ${age_min} min (threshold ${max_age_min})"
+echo "hooksPath           : $(git config --get core.hooksPath || echo UNSET)"
+hp=$(git config --get core.hooksPath || true)
+disp=$([ -n "$hp" ] && [ -x "$hp/hook-dispatch" ] && echo yes || echo NO)
+echo "dispatcher present  : $disp"
+
+rc=0
+[ -n "$hp" ] || { echo "STALE-RISK: core.hooksPath is unset -- this checkout runs NO hooks" >&2; rc=1; }
+# THE FAILURE THIS WHOLE TASK IS ABOUT: hooks that are present but frozen. A
+# non-dispatcher hooksPath is a directory of COPIES, which goes stale silently
+# and then reads as full coverage. Found by planting exactly that and watching
+# this reporter say CURRENT.
+[ "$disp" = yes ] || { echo "STALE-RISK: core.hooksPath=$hp has no hook-dispatch -- this is a FROZEN COPY of the hooks, not the self-currenting dispatcher" >&2; rc=1; }
+if [ "$age_min" -lt 0 ]; then echo "STALE-RISK: cannot age the source ref" >&2; rc=1
+elif [ "$age_min" -ge "$max_age_min" ] && [ "$max_age_min" -ge 0 ]; then
+  echo "STALE-RISK: origin/main has not been fetched for ${age_min} min (> ${max_age_min}); hooks are that old" >&2; rc=1
+fi
+[ $rc -eq 0 ] && echo "CURRENT"
+exit $rc

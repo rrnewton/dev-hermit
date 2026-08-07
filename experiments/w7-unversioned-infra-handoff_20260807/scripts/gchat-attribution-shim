@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# gchat attribution shim -- an agent may message the owner, never AS the owner.
+#
+# WHAT HAPPENED. An agent ran `gchat chat --format json send <space> "..."` with
+# the owner's credentials. Google Chat attributed the post to the ACCOUNT, so it
+# reached the coordinator as senderRole=owner / senderDisplayName=Ryan Newton and
+# the coordinator ACTED ON FOUR OF THEM as directives. The content happened to be
+# accurate, which is exactly why nothing tripped. If an agent can post as the
+# owner, an agent can steer the fleet.
+#
+# WHY A SHIM AND NOT A RULE. The owner's policy is that every agent-originated
+# message carries a speaker label. A label the agent has to remember is a
+# CONVENTION; this makes it a CONTROL. /usr/local/bin/gchat is a root-owned
+# system binary we must not modify, but ~/orc-bin precedes /usr/local/bin in the
+# fleet PATH (position 3 vs 19), so this shim gets first resolution.
+#
+# HONEST LIMIT, stated rather than implied: an explicit /usr/local/bin/gchat
+# still bypasses this. It closes the default path, not every path -- the same
+# shape as the hooks fix. A PATH shim cannot be a complete control.
+#
+# FAIL DIRECTION: if identity cannot be determined we still prefix, with an
+# explicit unknown-agent marker. This never passes an unlabeled send through.
+set -uo pipefail
+
+REAL=/usr/local/bin/google-mux
+LOG="${GCHAT_SHIM_LOG:-$HOME/.gchat-shim.log}"
+
+[ -x "$REAL" ] || { echo "gchat-shim: real binary missing at $REAL" >&2; exit 127; }
+
+# Anything that is not a send goes straight through, untouched.
+is_send=0
+for a in "$@"; do [ "$a" = "send" ] && { is_send=1; break; }; done
+[ $is_send -eq 1 ] || exec "$REAL" "$@"
+
+agent_label() {
+  local n=""
+  # The fleet names each agent's tmux WINDOW (hermit-w7, hermit-coord, ...).
+  # Scope to our own pane: an unscoped display-message returns the ATTACHED
+  # client's window, which is the coordinator's -- it would mislabel every post.
+  if [ -n "${TMUX_PANE:-}" ]; then
+    n=$(tmux display-message -t "$TMUX_PANE" -p '#{window_name}' 2>/dev/null)
+  fi
+  case "$n" in ''|orc) n="" ;; esac
+  if [ -n "$n" ]; then printf '[This is the %s agent.] ' "$n"
+  # Never invent a name. An unidentified agent is still labelled as an agent.
+  elif [ -n "${AGENT_SESSION_ID:-}" ]; then printf '[This is an automated agent (session %s), not Ryan.] ' "$AGENT_SESSION_ID"
+  else printf '[This is an automated agent (unidentified), not Ryan.] '
+  fi
+}
+
+already_labelled() {  # $1 = text
+  case "$1" in
+    '[This is '*) return 0 ;;
+    '[Human]'*|'[human]'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+LABEL=$(agent_label)
+
+# EXPLICIT owner-authored sends. Policy: as the user ONLY on his direct request.
+# Loud by construction -- it is recorded, never silent.
+if [ "${GCHAT_SEND_AS_OWNER:-}" = "1" ]; then
+  printf '%s\tAS-OWNER-OVERRIDE\t%s\tpane=%s\targs=%s\n' \
+    "$(date -u +%FT%TZ)" "${LABEL}" "${TMUX_PANE:-none}" "$*" >> "$LOG" 2>/dev/null
+  echo "gchat-shim: GCHAT_SEND_AS_OWNER=1 -- sending UNLABELLED as the account owner (recorded in $LOG)" >&2
+  exec "$REAL" "$@"
+fi
+
+# Rewrite the message text wherever it lives: positional, --text-file, or stdin.
+args=(); i=0; seen_send=0; target_taken=0; text_taken=0; textfile_idx=-1
+argv=("$@")
+while [ $i -lt ${#argv[@]} ]; do
+  a="${argv[$i]}"
+  if [ "$a" = "--text-file" ] && [ $seen_send -eq 1 ]; then
+    args+=("$a"); i=$((i+1)); textfile_idx=${#args[@]}; args+=("${argv[$i]}"); i=$((i+1)); continue
+  fi
+  if [ "$a" = "send" ] && [ $seen_send -eq 0 ]; then seen_send=1; args+=("$a"); i=$((i+1)); continue; fi
+  if [ $seen_send -eq 1 ] && [ "${a:0:1}" != "-" ]; then
+    if [ $target_taken -eq 0 ]; then target_taken=1; args+=("$a"); i=$((i+1)); continue; fi
+    if [ $text_taken -eq 0 ]; then
+      text_taken=1
+      if already_labelled "$a"; then args+=("$a"); else args+=("${LABEL}${a}"); fi
+      i=$((i+1)); continue
+    fi
+  fi
+  args+=("$a"); i=$((i+1))
+done
+
+# --text-file: prefix the file's contents into a temp file and point at that.
+if [ $textfile_idx -ge 0 ]; then
+  f="${args[$textfile_idx]}"
+  if [ -r "$f" ]; then
+    body=$(cat "$f")
+    if ! already_labelled "$body"; then
+      tmpf=$(mktemp); printf '%s%s\n' "$LABEL" "$body" > "$tmpf"
+      args[$textfile_idx]="$tmpf"
+      trap 'rm -f "$tmpf"' EXIT
+    fi
+  fi
+fi
+
+# *** FORCE A NON-OWNER TRANSPORT IDENTITY. ***
+# This is the part a label cannot do. google-mux defaults to --as-user ("Send as
+# your user account (default)"), which is precisely why an agent post arrived
+# with senderRole=owner / senderDisplayName=Ryan Newton and was consumed as a
+# directive. --as-bot ("Send as Meta Bot instead of your user account") makes the
+# TRANSPORT attribute the message, so the sender is not the owner as a matter of
+# fact rather than as a matter of text. The label stays as belt-and-braces: it
+# survives any client that renders the bot name poorly, and it names WHICH agent.
+have_ident=0
+for a in "${args[@]}"; do
+  case "$a" in --as-bot|--as-user|--hidden) have_ident=1 ;; esac
+done
+# Respect an explicit --as-user: that is the owner's documented escape hatch and
+# it is already gated above by GCHAT_SEND_AS_OWNER for the unlabelled case.
+if [ $have_ident -eq 0 ]; then
+  out=(); j=0
+  while [ $j -lt ${#args[@]} ]; do
+    out+=("${args[$j]}")
+    [ "${args[$j]}" = "send" ] && out+=("--as-bot")
+    j=$((j+1))
+  done
+  args=("${out[@]}")
+fi
+
+printf '%s\tLABELLED\t%s\tpane=%s\n' "$(date -u +%FT%TZ)" "$LABEL" "${TMUX_PANE:-none}" >> "$LOG" 2>/dev/null
+
+# stdin path: text omitted entirely, or given as "-".
+if [ $text_taken -eq 0 ] && [ $textfile_idx -lt 0 ] && [ ! -t 0 ]; then
+  # BOUNDED READ. '! -t 0' is true for ANY non-tty stdin, including a batch
+  # context where nothing was piped at all -- an unbounded `cat` there hangs the
+  # caller forever instead of letting the real CLI report a missing argument.
+  # Found by the shim hanging its own test harness.
+  body=""
+  if IFS= read -r -t "${GCHAT_SHIM_STDIN_TIMEOUT:-10}" -d '' -N 1048576 body || [ -n "$body" ]; then :; fi
+  if [ -z "$body" ]; then exec "$REAL" "${args[@]}" < /dev/null; fi
+  if already_labelled "$body"; then printf '%s' "$body" | exec "$REAL" "${args[@]}"
+  else printf '%s%s' "$LABEL" "$body" | exec "$REAL" "${args[@]}"; fi
+fi
+
+exec "$REAL" "${args[@]}"
