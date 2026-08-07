@@ -291,3 +291,33 @@ git --git-dir={bare} update-ref refs/heads/main {base}
     assert publisher.spooled(spool_dir), (
         "a push whose commit does not become an ancestor must NOT drain the spool"
     )
+
+
+def test_a_leftover_file_from_a_failed_attempt_is_not_mistaken_for_published(tmp_path, remote_and_clone):
+    """Published state comes from the remote ref, not from the working tree.
+
+    A previous attempt can leave the shard written but uncommitted. Reading the
+    working tree treats that leftover as already-published content, so publish()
+    finds nothing to add, reports success, and drains the spool -- losing every
+    event. This is the exact failure that migrating the 654-row legacy ledger
+    hit: attempt 1 wrote the file then failed at commit, attempt 2 reported
+    0 published and dropped the batch.
+    """
+    bare, clone = remote_and_clone
+    rel = f"ledger/{TEAM}/{HOST}/2026-08.jsonl"
+
+    # Simulate the wreckage of a failed attempt: the shard exists locally with
+    # exactly the content we are about to publish, but nothing is committed.
+    leftover = clone / rel
+    leftover.parent.mkdir(parents=True, exist_ok=True)
+    leftover.write_text(json.dumps(ev("01A"), sort_keys=True) + "\n")
+
+    spool_dir = tmp_path / "spool"
+    publisher.spool(spool_dir, TEAM, HOST, [ev("01A")])
+    out = publisher.publish(clone, spool_dir)
+
+    assert out["published"] == 1, f"the event must actually be published, got {out}"
+    published = subprocess.run(["git", "-C", str(bare), "show", f"main:{rel}"],
+                               capture_output=True, text=True, check=True).stdout
+    assert [json.loads(l)["event_id"] for l in published.splitlines() if l.strip()] == ["01A"]
+    assert not publisher.spooled(spool_dir)

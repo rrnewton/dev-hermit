@@ -166,7 +166,15 @@ def publish(
         for (team, host, month), events in sorted(pending.items()):
             rel = f"ledger/{team}/{host}/{month}.jsonl"
             target = repo / rel
-            remote_text = target.read_text() if target.exists() else ""
+            # The PUBLISHED content, read from the remote ref -- never from the
+            # working tree. A leftover file from a failed earlier attempt is our
+            # own output, not published state; reading it made publish()
+            # conclude "all events already published" and DRAIN THE SPOOL while
+            # nothing had landed. Found the hard way migrating the 654-row
+            # legacy ledger: attempt 1 wrote the file and then failed at commit,
+            # attempt 2 saw its own leftover and reported 0 published.
+            shown = _git(repo, "show", f"{remote}/{branch}:{rel}", check=False)
+            remote_text = shown.stdout if shown.returncode == 0 else ""
             merged = merge_shard(remote_text, events)
             violations = verify_append_only(remote_text, merged)
             if violations:
