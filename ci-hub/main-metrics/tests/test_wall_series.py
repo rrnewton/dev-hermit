@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Both-direction tests for the main-branch wall series.
+
+The alarm this builds is only worth having if it can be WRONG. So every
+"regression detected" case is paired with a case that must NOT fire, and the
+refusal path (unconditioned inputs) is tested as a first-class outcome rather
+than as an error branch.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import wall_series as ws  # noqa: E402
+
+
+def pt(wall, cpu, conc, commit="c", started="2026-08-07T00:00:00Z"):
+    return ws.Point(commit=commit, started_at=started, wall=wall, cpu=cpu,
+                    ratio=round(cpu / wall, 3) if wall else None,
+                    concurrency=conc, bucket=ws.bucket_of(conc),
+                    dag_jobs=None, cache_state=None, peak_memory_kb=None)
+
+
+# ---------------------------------------------------------------- buckets
+
+def test_bucket_boundaries_follow_the_measured_knee():
+    assert ws.bucket_of(0) == "0-3"
+    assert ws.bucket_of(3) == "0-3"
+    assert ws.bucket_of(4) == "4-6"
+    assert ws.bucket_of(6) == "4-6"      # knee: budget holds up to here
+    assert ws.bucket_of(7) == "7-9"      # and breaks above it
+    assert ws.bucket_of(14) == "14+"
+    assert ws.bucket_of(999) == "14+"
+
+
+def test_missing_concurrency_is_unknown_not_zero():
+    """The majority bucket. Calling it 0 would silently claim an idle box."""
+    assert ws.bucket_of(None) == ws.UNKNOWN
+    assert pt(500, 1400, None).conditioned is False
+    assert pt(500, 1400, 2).conditioned is True
+
+
+# ------------------------------------------------- regression, both ways
+
+def test_a_real_regression_fires():
+    base = [pt(500, 1400, 2) for _ in range(5)]
+    cand = [pt(900, 2500, 2) for _ in range(5)]
+    v = ws.compare(base, cand, threshold=0.20)
+    assert v["verdict"] == "REGRESSION"
+    assert v["delta_fraction"] > 0.20
+
+
+def test_a_flat_series_does_NOT_fire():
+    """The control. An alarm that always fires passes the test above."""
+    base = [pt(500, 1400, 2) for _ in range(5)]
+    cand = [pt(510, 1430, 2) for _ in range(5)]
+    v = ws.compare(base, cand, threshold=0.20)
+    assert v["verdict"] == "OK", v
+
+
+def test_an_improvement_does_NOT_fire():
+    base = [pt(900, 2500, 2) for _ in range(5)]
+    cand = [pt(500, 1400, 2) for _ in range(5)]
+    assert ws.compare(base, cand, threshold=0.20)["verdict"] == "OK"
+
+
+def test_just_under_threshold_does_not_fire_and_just_over_does():
+    base = [pt(500, 1400, 2)]
+    assert ws.compare(base, [pt(599, 1650, 2)], threshold=0.20)["verdict"] == "OK"
+    assert ws.compare(base, [pt(601, 1660, 2)], threshold=0.20)["verdict"] == "REGRESSION"
+
+
+# --------------------------------------- the ratio separates the causes
+
+def test_contention_is_named_when_cpu_stays_flat():
+    base = [pt(500, 1450, 2)]          # ratio 2.9
+    cand = [pt(900, 1450, 2)]          # wall up, CPU identical -> we WAITED
+    v = ws.compare(base, cand, threshold=0.20)
+    assert v["verdict"] == "REGRESSION"
+    assert "CONTENTION" in v["cause"]
+
+
+def test_more_work_is_named_when_cpu_rises_with_wall():
+    base = [pt(500, 1450, 2)]          # ratio 2.9
+    cand = [pt(900, 2900, 2)]          # ratio 3.2 -> we DID MORE
+    v = ws.compare(base, cand, threshold=0.20)
+    assert v["verdict"] == "REGRESSION"
+    assert "MORE WORK" in v["cause"]
+
+
+# ------------------------------------------------------- the refusal
+
+def test_unconditioned_inputs_REFUSE_rather_than_guess():
+    """A verdict that cannot say what both sides ran under is not a verdict."""
+    base = [pt(500, 1400, None) for _ in range(5)]
+    cand = [pt(900, 2500, None) for _ in range(5)]
+    v = ws.compare(base, cand, threshold=0.20)
+    assert v["verdict"] == "INSUFFICIENT"
+    assert v["baseline_n"] == 0 and v["candidate_n"] == 0
+
+
+def test_the_refusal_can_be_overridden_explicitly():
+    base = [pt(500, 1400, None) for _ in range(3)]
+    cand = [pt(900, 2500, None) for _ in range(3)]
+    v = ws.compare(base, cand, threshold=0.20, require_conditioned=False)
+    assert v["verdict"] == "REGRESSION"
+
+
+def test_one_sided_conditioning_still_refuses():
+    base = [pt(500, 1400, 2)]
+    cand = [pt(900, 2500, None)]
+    assert ws.compare(base, cand, threshold=0.20)["verdict"] == "INSUFFICIENT"
+
+
+# ------------------------------------------------------- summary shape
+
+def test_summary_reports_unconditioned_count_and_missing_memory():
+    pts = [pt(500, 1400, 2), pt(700, 1900, None), pt(900, 2500, 14)]
+    s = ws.summarize(pts)
+    assert s["n"] == 3
+    assert s["conditioned"] == 2 and s["unconditioned"] == 1
+    assert s["peak_memory_available"] is False
+    assert s["over_budget"] == 2          # 700 and 900 exceed 600
+    assert set(s["by_concurrency_bucket"]) == {"0-3", "14+", ws.UNKNOWN}
+
+
+def test_gate_breakdown_attributes_to_a_node_and_ranks_by_median():
+    p = pt(500, 1400, 2)
+    p.gates = [{"name": "slow.gate", "real_seconds": 300},
+               {"name": "fast.gate", "real_seconds": 5}]
+    q = pt(520, 1450, 2)
+    q.gates = [{"name": "slow.gate", "real_seconds": 320},
+               {"name": "fast.gate", "real_seconds": 7}]
+    out = ws.gate_breakdown([p, q])
+    assert out[0]["gate"] == "slow.gate"
+    assert out[0]["n"] == 2
+    assert out[0]["median_seconds"] == 310
+
+
+def test_gate_breakdown_ignores_gates_without_a_duration():
+    p = pt(500, 1400, 2)
+    p.gates = [{"name": "no-timing"}, {"name": "timed", "real_seconds": 9}]
+    out = ws.gate_breakdown([p])
+    assert [g["gate"] for g in out] == ["timed"]
+
+
+# ------------------------------------------------------- loader hygiene
+
+def test_loader_skips_blank_and_malformed_lines(tmp_path):
+    f = tmp_path / "l.jsonl"
+    f.write_text('{"a":1}\n\nnot json\n["a list"]\n{"b":2}\n', encoding="utf-8")
+    rows = ws.load_rows(f)
+    assert rows == [{"a": 1}, {"b": 2}]
+
+
+def test_rows_without_wall_are_dropped_not_zeroed():
+    rows = [{"commit": "c", "real_seconds": 0, "user_seconds": 1, "sys_seconds": 1},
+            {"commit": "c", "user_seconds": 1, "sys_seconds": 1},
+            {"commit": "c", "real_seconds": 100, "user_seconds": 200, "sys_seconds": 90}]
+    pts = ws.to_points(rows, None)
+    assert len(pts) == 1
+    assert pts[0].wall == 100 and pts[0].ratio == 2.9
+
+
+def test_only_main_filter_drops_non_ancestors():
+    rows = [{"commit": "onmain", "real_seconds": 10, "user_seconds": 5, "sys_seconds": 5},
+            {"commit": "offmain", "real_seconds": 10, "user_seconds": 5, "sys_seconds": 5}]
+    pts = ws.to_points(rows, {"onmain"})
+    assert [p.commit for p in pts] == ["onmain"]

@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""validate WALL TIME as a standing MAIN-BRANCH series, not a per-run gate.
+
+`ci/wall-budget-600s` asks "was THIS run slow". That catches a slow run and is
+blind to the thing the owner actually asked about: a change that made EVERYTHING
+slower. A migration-shaped regression arrives with a commit and is invisible
+without a series to compare against -- which is why "did the DAG migration make
+validate slower" could not be answered.
+
+This module builds that series from the validate ledger, and its first duty is to
+say how thin the series is. Measured 2026-08-07 over 691 ledger rows:
+
+    rows on main .................. 132/691  (19.1%)
+    of those, full-profile PASS ...  26/132
+    DISTINCT MAIN COMMITS with a full-pass datapoint ... 15   over 4.38 days
+    main full-pass wall ........... median 686s, min 396s, max 995s (n=26)
+
+Fifteen points across four days cannot separate a regression from noise, and the
+median already sits ABOVE the owner's 600s budget. Both facts are reported rather
+than smoothed away.
+
+CONDITIONING IS NOT OPTIONAL. A wall time without its concurrency is
+uninterpretable: median wall measured 490s at 0-3 concurrent validates and 852s
+at 14+, so an unconditioned comparison can manufacture a 74% "regression" out of
+scheduling alone. `concurrent_validates` is present on only 210/691 rows (30.4%),
+so the UNKNOWN bucket is the MAJORITY, not a corner case. Unconditioned points are
+kept but marked, and `compare` refuses to draw a verdict across them by default.
+
+CPU/WALL SEPARATES THE TWO CAUSES. Derivable on 689/691 rows today (median 2.77x):
+wall rising while CPU stays flat is CONTENTION; both rising is MORE WORK. Reporting
+wall alone cannot tell a reader which happened, so the ratio travels with it.
+
+WHAT IS ALREADY IN THE LEDGER (no new producer needed): real_seconds,
+user_seconds, sys_seconds, commit, profile, result on 691/691, and -- contrary to
+the task's assumption -- PER-GATE durations, as `gates[].real_seconds` on 690/691
+rows. Per-gate attribution is a missing VIEW, not a missing producer.
+
+WHAT IS GENUINELY MISSING: peak memory. No rss/mem/peak key exists on any of the
+51 distinct keys observed. That one needs a producer change and is reported as
+`null` here rather than silently omitted, so its absence stays visible.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Sequence
+
+DEFAULT_LEDGER = "ignored/validate-run-ledger.jsonl"
+
+# Concurrency buckets, from the measured knee: the curve is a STEP at ~6, not a
+# slope, so these boundaries are the measurement's own and not round numbers.
+BUCKETS = ((0, 3), (4, 6), (7, 9), (10, 13), (14, 10**6))
+UNKNOWN = "unknown"
+
+# The owner's budget, for reference in the report. This module does not GATE on
+# it -- gating is ci/wall-budget-600s's job -- it reports where the series sits.
+WALL_BUDGET_SECONDS = 600
+
+
+def bucket_of(n: int | None) -> str:
+    if n is None:
+        return UNKNOWN
+    for lo, hi in BUCKETS:
+        if lo <= n <= hi:
+            return f"{lo}-{hi}" if hi < 10**6 else f"{lo}+"
+    return UNKNOWN
+
+
+@dataclass
+class Point:
+    commit: str
+    started_at: str
+    wall: float
+    cpu: float
+    ratio: float | None
+    concurrency: int | None
+    bucket: str
+    dag_jobs: int | None
+    cache_state: str | None
+    peak_memory_kb: int | None  # always None today; see module docstring
+    gates: list[dict] = field(default_factory=list)
+
+    @property
+    def conditioned(self) -> bool:
+        """A point is comparable only if it carries what it was measured under."""
+        return self.concurrency is not None
+
+
+def load_rows(path: Path) -> list[dict]:
+    rows = []
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                rows.append(obj)
+    return rows
+
+
+def main_commits(repo: Path, commits: Iterable[str], ref: str = "origin/main") -> set[str]:
+    """Which commits are ancestors of main.
+
+    Ancestry, not a branch label on the row: a row can be produced from a branch
+    that later landed, and a label recorded at run time cannot know that. Asking
+    git at read time is the only thing that stays true as history moves.
+    """
+    found: set[str] = set()
+    for c in commits:
+        if not c:
+            continue
+        try:
+            p = subprocess.run(
+                ["git", "-C", str(repo), "merge-base", "--is-ancestor", c, ref],
+                capture_output=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if p.returncode == 0:
+            found.add(c)
+    return found
+
+
+def to_points(rows: Sequence[dict], keep: set[str] | None) -> list[Point]:
+    pts: list[Point] = []
+    for r in rows:
+        commit = r.get("commit") or ""
+        if keep is not None and commit not in keep:
+            continue
+        wall = r.get("real_seconds")
+        usr, sysv = r.get("user_seconds"), r.get("sys_seconds")
+        if not isinstance(wall, (int, float)) or not wall:
+            continue
+        cpu = (usr or 0) + (sysv or 0) if isinstance(usr, (int, float)) else 0.0
+        conc = r.get("concurrent_validates")
+        conc = conc if isinstance(conc, int) else None
+        pts.append(Point(
+            commit=commit, started_at=r.get("started_at") or "",
+            wall=float(wall), cpu=float(cpu),
+            ratio=round(cpu / wall, 3) if wall else None,
+            concurrency=conc, bucket=bucket_of(conc),
+            dag_jobs=r.get("dag_jobs") if isinstance(r.get("dag_jobs"), int) else None,
+            cache_state=r.get("cache_state"),
+            peak_memory_kb=None,
+            gates=[g for g in (r.get("gates") or []) if isinstance(g, dict)],
+        ))
+    pts.sort(key=lambda p: p.started_at)
+    return pts
+
+
+def gate_breakdown(points: Sequence[Point], top: int = 12) -> list[dict]:
+    """Per-gate wall, so a regression is attributable to a NODE, not to 'validate'."""
+    agg: dict[str, list[float]] = {}
+    for p in points:
+        for g in p.gates:
+            secs = g.get("real_seconds")
+            name = g.get("name")
+            if isinstance(secs, (int, float)) and isinstance(name, str):
+                agg.setdefault(name, []).append(float(secs))
+    out = [{"gate": k, "n": len(v), "median_seconds": statistics.median(v),
+            "max_seconds": max(v)} for k, v in agg.items()]
+    out.sort(key=lambda d: d["median_seconds"], reverse=True)
+    return out[:top]
+
+
+def summarize(points: Sequence[Point]) -> dict:
+    walls = [p.wall for p in points]
+    ratios = [p.ratio for p in points if p.ratio is not None]
+    conditioned = [p for p in points if p.conditioned]
+    per_bucket: dict[str, list[float]] = {}
+    for p in points:
+        per_bucket.setdefault(p.bucket, []).append(p.wall)
+    return {
+        "n": len(points),
+        "distinct_commits": len({p.commit for p in points}),
+        "span": [points[0].started_at, points[-1].started_at] if points else [],
+        "wall_median": statistics.median(walls) if walls else None,
+        "wall_min": min(walls) if walls else None,
+        "wall_max": max(walls) if walls else None,
+        "over_budget": sum(1 for w in walls if w > WALL_BUDGET_SECONDS),
+        "budget_seconds": WALL_BUDGET_SECONDS,
+        "cpu_wall_ratio_median": statistics.median(ratios) if ratios else None,
+        "conditioned": len(conditioned),
+        "unconditioned": len(points) - len(conditioned),
+        "by_concurrency_bucket": {
+            k: {"n": len(v), "wall_median": statistics.median(v)}
+            for k, v in sorted(per_bucket.items())
+        },
+        "peak_memory_available": False,
+    }
+
+
+def compare(baseline: Sequence[Point], candidate: Sequence[Point],
+            threshold: float, require_conditioned: bool = True) -> dict:
+    """Regression verdict, with an explicit refusal when the inputs cannot support one.
+
+    The refusal is the point. Comparing an unconditioned candidate against an
+    unconditioned baseline can manufacture a 74% regression out of concurrency
+    alone (490s at 0-3 concurrent vs 852s at 14+). A verdict that cannot say what
+    both sides were measured under is not a verdict, so this returns
+    `INSUFFICIENT` rather than a number that reads as one.
+    """
+    b = [p for p in baseline if p.conditioned] if require_conditioned else list(baseline)
+    c = [p for p in candidate if p.conditioned] if require_conditioned else list(candidate)
+    if not b or not c:
+        return {"verdict": "INSUFFICIENT", "reason":
+                f"need conditioned points on both sides; baseline={len(b)} candidate={len(c)}"
+                + (" (require_conditioned=True)" if require_conditioned else ""),
+                "baseline_n": len(b), "candidate_n": len(c)}
+    bm, cm = statistics.median([p.wall for p in b]), statistics.median([p.wall for p in c])
+    delta = (cm - bm) / bm if bm else 0.0
+    br = statistics.median([p.ratio for p in b if p.ratio is not None] or [0])
+    cr = statistics.median([p.ratio for p in c if p.ratio is not None] or [0])
+    if delta <= threshold:
+        verdict, cause = "OK", "within threshold"
+    else:
+        # The ratio is what separates the two causes. Wall up with CPU flat means
+        # we waited; wall up with CPU up means we did more.
+        cause = "CONTENTION (wall up, CPU/wall ratio down)" if cr < br \
+            else "MORE WORK (wall up, CPU/wall ratio held or rose)"
+        verdict = "REGRESSION"
+    return {"verdict": verdict, "baseline_median": bm, "candidate_median": cm,
+            "delta_fraction": round(delta, 4), "threshold": threshold,
+            "baseline_ratio": br, "candidate_ratio": cr, "cause": cause,
+            "baseline_n": len(b), "candidate_n": len(c)}
+
+
+def build(ledger: Path, repo: Path, only_main: bool, profile: str | None,
+          result: str | None) -> dict:
+    rows = load_rows(ledger)
+    total = len(rows)
+    sel = rows
+    if profile:
+        sel = [r for r in sel if r.get("profile") == profile]
+    if result:
+        sel = [r for r in sel if r.get("result") == result]
+    keep = None
+    if only_main:
+        keep = main_commits(repo, {r.get("commit") for r in sel})
+    pts = to_points(sel, keep)
+    rep = {
+        "ledger_rows_total": total,
+        "rows_after_profile_result_filter": len(sel),
+        "rows_on_main": len(pts) if only_main else None,
+        "only_main": only_main,
+        "summary": summarize(pts),
+        "gates_top": gate_breakdown(pts),
+        "points": [p.__dict__ | {"gates": len(p.gates)} for p in pts],
+    }
+    return rep
+
+
+def render(rep: dict) -> str:
+    s = rep["summary"]
+    L = ["validate WALL on main -- standing series (not the per-run 600s gate)"]
+    L.append(f"  ledger rows total                 : {rep['ledger_rows_total']}")
+    L.append(f"  after profile/result filter       : {rep['rows_after_profile_result_filter']}")
+    if rep["only_main"]:
+        L.append(f"  ON MAIN (ancestry-checked)        : {rep['rows_on_main']}")
+    L.append(f"  distinct main commits with a point: {s['distinct_commits']}")
+    L.append(f"  span                              : {' -> '.join(s['span']) if s['span'] else '-'}")
+    L.append("")
+    L.append(f"  wall median/min/max               : {s['wall_median']}s / {s['wall_min']}s / {s['wall_max']}s  (n={s['n']})")
+    L.append(f"  over the {s['budget_seconds']}s budget            : {s['over_budget']}/{s['n']}")
+    L.append(f"  CPU/wall ratio median             : {s['cpu_wall_ratio_median']}")
+    L.append(f"  conditioned / unconditioned       : {s['conditioned']} / {s['unconditioned']}")
+    L.append(f"  peak memory available             : {s['peak_memory_available']}  (no producer writes it)")
+    L.append("")
+    L.append("  wall median by concurrency bucket (a wall time without this is uninterpretable):")
+    for k, v in s["by_concurrency_bucket"].items():
+        L.append(f"    {k:<10} n={v['n']:<4} median={v['wall_median']}s")
+    L.append("")
+    L.append("  slowest gates by median wall (attribution to a NODE, not to 'validate'):")
+    for g in rep["gates_top"]:
+        L.append(f"    {g['median_seconds']:>7.1f}s  (max {g['max_seconds']:>6.1f}s, n={g['n']:<4}) {g['gate'][:70]}")
+    return "\n".join(L)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--ledger", default=DEFAULT_LEDGER)
+    ap.add_argument("--repo", default="hermit", help="product checkout for ancestry checks")
+    ap.add_argument("--all-commits", action="store_true",
+                    help="do NOT restrict to main (default is main-only)")
+    ap.add_argument("--profile", default="full")
+    ap.add_argument("--result", default="pass")
+    ap.add_argument("--format", choices=("json", "text"), default="text")
+    ap.add_argument("--fail-over-budget", action="store_true",
+                    help="exit 1 if the median on main exceeds the wall budget")
+    args = ap.parse_args(argv)
+    rep = build(Path(args.ledger), Path(args.repo), not args.all_commits,
+                args.profile or None, args.result or None)
+    print(json.dumps(rep, indent=2) if args.format == "json" else render(rep))
+    if args.fail_over_budget:
+        m = rep["summary"]["wall_median"]
+        return 1 if (m is not None and m > WALL_BUDGET_SECONDS) else 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
