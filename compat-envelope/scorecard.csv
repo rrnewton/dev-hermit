@@ -1,4 +1,4 @@
-run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare
+run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare
 canonical-release-ptrace-dbi,@1785608744,9429005ca04b6ae0b3d0aedbdc18969f3b770603,unknown,false,regression,portable,applications,applications/timed-progress-bar,verify,ptrace,enabled,pass,1,1,d8778ce336753d09dab6c6d94699898498ccbc31d6ec6b0b7b3d4bc559745b47,4345,,,stripped
 canonical-release-ptrace-dbi,@1785608744,9429005ca04b6ae0b3d0aedbdc18969f3b770603,unknown,false,regression,portable,applications,applications/timed-progress-bar,verify,sabre,enabled,unavailable,,,,0,,backend binary not present in this checkout,
 canonical-release-ptrace-dbi,@1785608744,9429005ca04b6ae0b3d0aedbdc18969f3b770603,unknown,false,regression,portable,c-programs,c-programs/add-key-enosys,verify,dbi,enabled,pass,1,1,392cdd6f142e243a9db3f8bd6d60cde54e983ffe6d072bf7ea3b03cc297cbf72,311,,,stripped

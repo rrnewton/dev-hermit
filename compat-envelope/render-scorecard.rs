@@ -45,8 +45,9 @@
 //!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
 //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
-//!   --observable O    Observable compared by the legacy CSV `parity` field
-//!                     (default: stdout; use tool-count for Reverie counters).
+//!   --observable O    Observable-specific parity column to read: `stdout_parity`
+//!                     by default, or `tool_count_parity` for Reverie counters.
+//!                     The legacy `parity` spelling remains readable.
 //!   --json | --tsv    Machine-readable output instead of the table.
 //!
 //! ```cargo
@@ -98,12 +99,15 @@ struct Cell {
     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
     outcome: String,   // pass | fail | error | timeout | oom | skip
     deterministic: Option<bool>,
-    // Legacy CSV field name: this stores stdout-only parity.
-    parity: Option<bool>,
+    /// Selected observable parity. The schema column is chosen from
+    /// `--observable`, with `parity` accepted only as a legacy fallback.
+    observable_parity: Option<bool>,
 }
 
-/// The canonical header this renderer and `collect-envelope.rs` agree on.
-const HEADER: &[&str] = &[
+/// Columns common to every supported scorecard schema. Observable-specific
+/// parity is resolved separately so stdout equality and Tool-count equality
+/// can never be silently conflated.
+const REQUIRED_COLUMNS: &[&str] = &[
     "run_id",
     "run_utc",
     "hermit_sha",
@@ -118,7 +122,6 @@ const HEADER: &[&str] = &[
     "cell_state",
     "outcome",
     "deterministic",
-    "parity",
     "output_hash",
     "duration_ms",
     "max_rss_kb",
@@ -230,11 +233,48 @@ fn main() {
             .position(|h| h == name)
             .unwrap_or_else(|| die(&format!("CSV missing required column `{name}`")))
     };
-    // Validate the header carries every field we rely on.
-    for h in HEADER {
+    // Validate the header carries every common field we rely on.
+    for h in REQUIRED_COLUMNS {
         let _ = idx(h);
     }
-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
+    let modern_parity_columns = ["stdout_parity", "tool_count_parity"];
+    let selected_modern = parity_key;
+    let selected_count = header
+        .iter()
+        .filter(|h| h.as_str() == selected_modern)
+        .count();
+    let legacy_count = header.iter().filter(|h| h.as_str() == "parity").count();
+    let wrong_modern: Vec<&str> = modern_parity_columns
+        .iter()
+        .copied()
+        .filter(|name| *name != selected_modern && header.iter().any(|h| h == name))
+        .collect();
+    if selected_count > 1 || legacy_count > 1 {
+        die(&format!(
+            "CSV has duplicate observable columns (`{selected_modern}` count={selected_count}, legacy `parity` count={legacy_count})"
+        ));
+    }
+    if !wrong_modern.is_empty() {
+        die(&format!(
+            "CSV observable does not match --observable `{observable}`: found `{}`, expected `{selected_modern}` (or legacy `parity`)",
+            wrong_modern.join("`, `")
+        ));
+    }
+    if selected_count == 1 && legacy_count == 1 {
+        die(&format!(
+            "CSV has ambiguous observable columns `{selected_modern}` and legacy `parity`; keep exactly one"
+        ));
+    }
+    let i_par = if selected_count == 1 {
+        idx(selected_modern)
+    } else if legacy_count == 1 {
+        idx("parity")
+    } else {
+        die(&format!(
+            "CSV missing observable column `{selected_modern}` (legacy `parity` is also accepted)"
+        ));
+    };
+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
         idx("run_id"),
         idx("bucket"),
         idx("test_id"),
@@ -242,7 +282,6 @@ fn main() {
         idx("backend"),
         idx("outcome"),
         idx("deterministic"),
-        idx("parity"),
     );
 
     let mut cells: Vec<Cell> = Vec::new();
@@ -265,7 +304,7 @@ fn main() {
             backend: get(i_backend),
             outcome: get(i_outcome),
             deterministic: parse_bool(&get(i_det)),
-            parity: parse_bool(&get(i_par)),
+            observable_parity: parse_bool(&get(i_par)),
         });
     }
     if cells.is_empty() {
@@ -363,8 +402,8 @@ fn main() {
         // for a non-ptrace backend already requires parity.
         let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
         // Parity is true only when the collector recorded a bitwise match.
-        let par = c.parity.unwrap_or(false);
-        let par_measured = c.parity.is_some();
+        let par = c.observable_parity.unwrap_or(false);
+        let par_measured = c.observable_parity.is_some();
         by_backend
             .entry(c.backend.clone())
             .or_default()

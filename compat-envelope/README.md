@@ -120,15 +120,15 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
   (`/dev/kvm` for KVM; `--features third-party-backends` for dbi/sabre/e9patch);
   a missing backend is recorded `n/a`, never a false red.
 - Runs **ptrace first** to write the stdout reference, then each other backend:
-  `det` = `--strict --verify` exits 0; `parity` (the legacy CSV field name) =
-  backend stdout SHA-256 == reference. The renderer labels this value
-  `stdout-parity`; it is not the four-signal parity standard.
+  `det` = `--strict --verify` exits 0; `stdout_parity` = backend stdout SHA-256
+  == reference. It is not the four-signal parity standard.
 - **Parity reference gotcha (important):** the reference is captured with plain
   `hermit run --strict`, *not* `--strict --verify`. `--verify` does an internal
   double-run and emits **no** guest stdout to the parent, so a `--verify` capture
   is 0 bytes and every backend's parity-vs-reference collapses to ~0. Cells where
   ptrace itself fails under plain `--strict` are marked (`ptv.fail`) so downstream
-  backends record `parity=""` (unmeasured), never a false empty-vs-empty match.
+  backends record `stdout_parity=""` (unmeasured), never a false
+  empty-vs-empty match.
 - **Ratchet-asserts** each backend's det count against a measured floor
   (ptrace 214, e9patch 214, sabre 199, dbi 190, kvm 160, liteinst 118); a drop
   below the floor fails the gate. The existing 205-cell floors and the thirty new
@@ -138,7 +138,7 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
 
 ```
 run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,
-test_id,test_mode,backend,cell_state,outcome,deterministic,parity,
+test_id,test_mode,backend,cell_state,outcome,deterministic,<observable>_parity,
 output_hash,duration_ms,max_rss_kb,reason
 ```
 
@@ -150,9 +150,12 @@ output_hash,duration_ms,max_rss_kb,reason
 - `cell_state` — `enabled` (in the regression envelope) | `disabled` (expansion
   candidate).
 - `outcome` — `pass` | `diverge` | `fail` | `skip`.
-- `deterministic` / `parity` — `1` | `0` | blank (unknown). `parity` is the
-  legacy schema name for stdout-only parity. `deterministic` records run1==run2
-  **independent of stdout parity**.
+- `deterministic` / `<observable>_parity` — `1` | `0` | blank (unknown).
+  Hermit and e9patch stdout comparisons write `stdout_parity`; Reverie counter
+  comparisons write `tool_count_parity`. Scorecards written before this rename
+  use the ambiguous `parity` spelling; the renderer reads it only as a legacy
+  fallback for the observable explicitly selected by `--observable`.
+  `deterministic` records run1==run2 independently of either parity observable.
 - `output_hash` — the comparable observable (hermit: guest-output hash; reverie:
   the syscall total).
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
@@ -243,8 +246,8 @@ two arms and asks: is the e9tool-rewritten ELF's output bitwise-identical (L2) t
 the same guest run **without** rewriting (the golden reference)?
 
 - The `ptrace` column is the golden, un-rewritten reference arm (the denominator).
-- The `e9patch` column is the e9tool-rewritten variant arm; its legacy CSV
-  `parity` field means e9 stdout == golden stdout, both under ptrace.
+- The `e9patch` column is the e9tool-rewritten variant arm; its
+  `stdout_parity` field means e9 stdout == golden stdout, both under ptrace.
 
 It lives in its own `e9patch-scorecard.csv` (like reverie), never as a column in
 the backend `scorecard.csv`, because a literal `e9patch` token in a backend field
