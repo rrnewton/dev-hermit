@@ -1,0 +1,9 @@
+guest,backend,dimension,run1,run2,match_denom,verdict,engaged
+heapy,ptrace,stdout,0,0,0/0,NOT-COMPARABLE vacuous,n/a
+heapy,ptrace,detlog,40,40,40/40,SELF-DETERMINISTIC,n/a
+heapy,ptrace,stack,9,9,9/9,SELF-DETERMINISTIC,n/a
+heapy,ptrace,heap,8,8,8/8,SELF-DETERMINISTIC,n/a
+heapy,sabre,stdout,0,0,-,ZERO QUALIFYING TRIALS - backend did not engage,NO patched_sites=0
+heapy,sabre,detlog,1,1,-,ZERO QUALIFYING TRIALS - backend did not engage,NO patched_sites=0
+heapy,sabre,stack,0,0,-,ZERO QUALIFYING TRIALS - backend did not engage,NO patched_sites=0
+heapy,sabre,heap,0,0,-,ZERO QUALIFYING TRIALS - backend did not engage,NO patched_sites=0
