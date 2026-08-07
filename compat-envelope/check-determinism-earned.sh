@@ -26,9 +26,13 @@ CSV="${1:-$(dirname "$0")/scorecard.csv}"
 [ -f "$CSV" ] || { echo "check-determinism-earned: no such CSV: $CSV" >&2; exit 2; }
 
 python3 - "$CSV" <<'PY'
-import csv, sys, collections
+import csv, sys, collections, json
 path = sys.argv[1]
-rows = list(csv.DictReader(open(path)))
+reader = csv.DictReader(open(path))
+if "relaxation_set" not in (reader.fieldnames or []):
+    print("check-determinism-earned: REFUSED: schema has no relaxation_set column", file=sys.stderr)
+    sys.exit(1)
+rows = list(reader)
 if not rows:
     print("check-determinism-earned: empty CSV", file=sys.stderr); sys.exit(2)
 
@@ -98,8 +102,27 @@ def parse_counts(raw):
         return None
 
 
-unearned, unlabelled, overtiered = [], [], []
+unearned, unlabelled, overtiered, invalid_relaxations = [], [], [], []
+non_strict_or_unknown_rows = 0
 for i, r in enumerate(rows, start=2):
+    raw_relaxations = (r.get("relaxation_set") or "").strip()
+    try:
+        relaxations = json.loads(raw_relaxations)
+    except (json.JSONDecodeError, TypeError) as error:
+        invalid_relaxations.append((i, r.get("test_id", ""), f"malformed JSON: {error}"))
+        relaxations = None
+    if relaxations is not None and (
+        not isinstance(relaxations, list)
+        or any(not isinstance(item, str) or not item for item in relaxations)
+        or len(relaxations) != len(set(relaxations))
+    ):
+        invalid_relaxations.append(
+            (i, r.get("test_id", ""),
+             "must be a JSON array of unique non-empty strings")
+        )
+        relaxations = None
+    if relaxations:
+        non_strict_or_unknown_rows += 1
     if r.get("deterministic") != "1":
         continue
     mode = r.get("test_mode", "")
@@ -108,6 +131,15 @@ for i, r in enumerate(rows, start=2):
     parity = (r.get("bitwise_parity") or "").strip()
     counts = parse_counts(r.get("compared_log_messages"))
     tid = r.get("test_id", "")
+
+    if relaxations is None:
+        overtiered.append((i, compare, tier or "<blank>",
+                           f"{tid} :: deterministic=1 has no valid relaxation binding"))
+        continue
+    if relaxations:
+        overtiered.append((i, compare, tier or "<blank>",
+                           f"{tid} :: relaxation_set={relaxations!r}; a relaxed run cannot authorise deterministic=1"))
+        continue
 
     if mode not in TWO_RUN:
         unearned.append((i, mode, tid))
@@ -165,9 +197,15 @@ for i, r in enumerate(rows, start=2):
 
 by_mode = collections.Counter(r["test_mode"] for r in rows if r.get("deterministic") == "1")
 blank    = sum(1 for r in rows if not (r.get("deterministic") or "").strip())
-print(f"rows={len(rows)}  deterministic=1 by mode: {dict(by_mode)}  blank(unmeasured)={blank}")
+print(f"rows={len(rows)}  non_strict_or_unknown={non_strict_or_unknown_rows}  "
+      f"deterministic=1 by mode: {dict(by_mode)}  blank(unmeasured)={blank}")
 
 rc = 0
+if invalid_relaxations:
+    rc = 1
+    print(f"\nINVALID relaxation bindings: {len(invalid_relaxations)}", file=sys.stderr)
+    for line, tid, why in invalid_relaxations[:10]:
+        print(f"  line {line}: test={tid} :: {why}", file=sys.stderr)
 if unearned:
     rc = 1
     print(f"\nUNEARNED determinism claims: {len(unearned)} "

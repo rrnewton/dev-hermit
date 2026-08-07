@@ -48,8 +48,8 @@ use std::process::{exit, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// Shared 19-column contract. Keep in sync with the other collectors/renderer.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,candidate_sites,mapped_sites,reach_state";
+// Shared scorecard contract. Keep the common columns in sync with the other collectors/renderer.
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,candidate_sites,mapped_sites,reach_state,relaxation_set";
 const RUN_MODE: &str = "e9patch";
 const BUCKET: &str = "e9patch-corpus";
 // Single mode token: "run the freestanding raw-syscall guest under strict verify".
@@ -773,6 +773,7 @@ fn row(
             None => "unknown-no-banner",
         }
         .to_string(),
+        "[]".to_string(), // none of the source-classified relaxation flags is used
     ]
     .join(",")
 }

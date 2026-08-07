@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import fcntl
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -36,8 +37,19 @@ PARITY_NAMES = ("stdout_parity", "tool_count_parity", "parity")
 PRESERVED = (
     "run_id", "run_utc", "hermit_sha", "reverie_sha", "dirty", "run_mode", "lane",
     "bucket", "test_id", "test_mode", "backend", "cell_state", "outcome",
-    "deterministic", "output_hash", "duration_ms", "max_rss_kb", "reason",
+    "output_hash", "duration_ms", "max_rss_kb", "reason",
 )
+RELAXATION_COLUMN = "relaxation_set"
+
+
+def historical_relaxations(_row: dict[str, str], _parity_column: str) -> list[str]:
+    """Fail closed when the old row did not carry its own relaxation set.
+
+    `lane=portable` is not an exact-set authority: historical producers varied
+    the CPUID flag per backend and test. The paired provenance migration may
+    replace this marker only from immutable per-row producer evidence.
+    """
+    return ["UNKNOWN-RELAXATION"]
 
 
 def present_or_none(header: list[str], columns: tuple[str, ...], label: str) -> bool:
@@ -100,13 +112,41 @@ def migrate(path: Path, *, apply: bool) -> int:
                 new_header[at:at] = list(TIER_COLUMNS)
             if not has_provenance:
                 new_header.extend(PROVENANCE_COLUMNS)
+            if RELAXATION_COLUMN not in new_header:
+                at = new_header.index("profile_flags") + 1
+                new_header.insert(at, RELAXATION_COLUMN)
             for row in rows:
-                for column in TIER_COLUMNS + PROVENANCE_COLUMNS:
+                for column in TIER_COLUMNS + PROVENANCE_COLUMNS + (RELAXATION_COLUMN,):
                     row.setdefault(column, "")
 
             labelled = 0
             unqualified = 0
+            ineligible = 0
+            dequalified = 0
+            relaxation_filled = 0
             for row in rows:
+                raw_relaxations = (row.get(RELAXATION_COLUMN) or "").strip()
+                if raw_relaxations:
+                    try:
+                        relaxations = json.loads(raw_relaxations)
+                    except json.JSONDecodeError as error:
+                        print(f"REFUSED: malformed relaxation_set: {error}", file=sys.stderr)
+                        return 2
+                    if not isinstance(relaxations, list) or any(
+                        not isinstance(item, str) or not item for item in relaxations
+                    ) or len(relaxations) != len(set(relaxations)):
+                        print(f"REFUSED: relaxation_set is not a string set: {raw_relaxations!r}", file=sys.stderr)
+                        return 2
+                else:
+                    relaxations = historical_relaxations(row, parity_column)
+                    row[RELAXATION_COLUMN] = json.dumps(relaxations, separators=(",", ":"))
+                    relaxation_filled += 1
+                if relaxations:
+                    ineligible += 1
+                    if row.get("deterministic") == "1":
+                        row["deterministic"] = ""
+                        dequalified += 1
+
                 mode = (row.get("test_mode") or "").strip()
                 if (
                     row.get("deterministic") == "1"
@@ -116,7 +156,11 @@ def migrate(path: Path, *, apply: bool) -> int:
                         row["verify_compare"] = row.get("verify_compare") or "syscall-count-across-reps"
                         row["tier"] = "counter"
                         labelled += 1
-                    elif (row.get("verify_compare") or "").strip() == "stripped" and mode == "verify":
+                    elif mode == "verify" and (
+                        (row.get("verify_compare") or "").strip() == "stripped"
+                        or row.get("run_mode") in ("expansion", "e9patch")
+                    ):
+                        row["verify_compare"] = row.get("verify_compare") or "stripped"
                         row["tier"] = "stripped-uncounted"
                         labelled += 1
 
@@ -142,10 +186,15 @@ def migrate(path: Path, *, apply: bool) -> int:
                         row[parity_column] = ""
                         unqualified += 1
 
-            changed = new_header != header or labelled > 0 or unqualified > 0
+            changed = (
+                new_header != header or labelled > 0 or unqualified > 0
+                or relaxation_filled > 0 or dequalified > 0
+            )
             print(
                 f"rows={len(rows)} header={len(header)}->{len(new_header)} "
-                f"tier_labels={labelled} parity_moved_unqualified={unqualified}"
+                f"tier_labels={labelled} parity_moved_unqualified={unqualified} "
+                f"non_strict_or_unknown={ineligible} "
+                f"deterministic_dequalified={dequalified}"
             )
             if not changed:
                 print(f"ALREADY MIGRATED: {path}")
@@ -171,6 +220,8 @@ def migrate(path: Path, *, apply: bool) -> int:
         return 1
     parity_column = next(name for name in PARITY_NAMES if name in after[0])
     moved = 0
+    ineligible = 0
+    dequalified = 0
     for index, (old, new) in enumerate(zip(before, after), start=2):
         for column in PRESERVED:
             if column in old and old[column] != new.get(column):
@@ -186,9 +237,21 @@ def migrate(path: Path, *, apply: bool) -> int:
                 print(f"FAILED: line {index} lost legacy parity", file=sys.stderr)
                 return 1
             moved += 1
+        parsed_relaxations = json.loads(new[RELAXATION_COLUMN])
+        if parsed_relaxations:
+            ineligible += 1
+            if old.get("deterministic") == "1":
+                if new.get("deterministic"):
+                    print(f"FAILED: line {index} retained relaxed deterministic=1", file=sys.stderr)
+                    return 1
+                dequalified += 1
+        elif old.get("deterministic") != new.get("deterministic"):
+            print(f"FAILED: line {index} changed strict deterministic verdict", file=sys.stderr)
+            return 1
     print(
-        f"OK: {len(after)} rows migrated; {moved} unbound parity values preserved "
-        "as legacy-unqualified; no provenance invented"
+        f"OK: {len(after)} rows migrated; {ineligible} non-strict-or-unknown rows recorded; "
+        f"{dequalified} relaxed deterministic positives dequalified; {moved} unbound "
+        "parity values preserved as legacy-unqualified"
     )
     return 0
 

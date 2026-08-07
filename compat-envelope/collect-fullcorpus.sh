@@ -80,6 +80,19 @@ build_hermit_argv() { # $1=array name $2=backend $3=verify(0|1) $4=lane
   output_ref+=(--base-env minimal -e LC_ALL=C -e TZ=UTC --)
 }
 
+relaxation_set_for_lane() {
+  if [ "$1" = portable ]; then
+    printf '%s' '["no-virtualize-cpuid","max-timeslice=disabled"]'
+  else
+    printf '%s' '[]'
+  fi
+}
+
+csv_quote() {
+  local value="${1//\"/\"\"}"
+  printf '"%s"' "$value"
+}
+
 # Project just the environment-bearing options before the guest separator and
 # require the precise, ordered profile. Used only by the fail-closed self-check.
 guest_env_pin_is_exact() { # $1=array name
@@ -272,7 +285,7 @@ echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-
 
 
 ROWS="$(mktemp -d)"
-HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason"
+HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,relaxation_set"
 RUN_UTC="@$(date +%s)"
 
 # --- one (backend,cell) measurement ------------------------------------------
@@ -311,6 +324,9 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   local -a gcmd=("$@")
   local bucket="${id%%/*}"
   local -a run_cmd verify_cmd
+  local relaxation_set relaxation_csv
+  relaxation_set="$(relaxation_set_for_lane "$lane")"
+  relaxation_csv="$(csv_quote "$relaxation_set")"
   build_hermit_argv run_cmd "$backend" 0 "$lane"
   build_hermit_argv verify_cmd "$backend" 1 "$lane"
   export LC_ALL=C TZ=UTC
@@ -345,7 +361,8 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
     else
       rm -f "$cell/ptv.fail"
     fi
-    echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,ptrace,expansion,$outcome,$det,,$ohash,$dur,,$reason" > "$ROWS/ptrace_${id//\//_}.row"
+    [ "$det" = 1 ] && [ "$relaxation_set" != '[]' ] && det=""
+    echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,ptrace,expansion,$outcome,$det,,$ohash,$dur,,$reason,$relaxation_csv" > "$ROWS/ptrace_${id//\//_}.row"
     return
   fi
   # non-ptrace backend: strict (for parity) + strict --verify (for det)
@@ -367,9 +384,10 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
     phash=$(sha256sum "$cell/ptv.out" | cut -c1-64)
     [ "$bhash" = "$phash" ] && parity=1 || parity=0
   fi
-  echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,$backend,expansion,$outcome,$det,$parity,$ohash,$dur,,$reason" > "$ROWS/${backend}_${id//\//_}.row"
+  [ "$det" = 1 ] && [ "$relaxation_set" != '[]' ] && det=""
+  echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,$backend,expansion,$outcome,$det,$parity,$ohash,$dur,,$reason,$relaxation_csv" > "$ROWS/${backend}_${id//\//_}.row"
 }
-export -f build_hermit_argv measure classify_verify_failure
+export -f build_hermit_argv relaxation_set_for_lane csv_quote measure classify_verify_failure
 export BIN ROWS RUN_UTC HSHA RSHA TMO_RUN TMO_VERIFY
 
 # --- compile C guests once (shared build tree) -------------------------------

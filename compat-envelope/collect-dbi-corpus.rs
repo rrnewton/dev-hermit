@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,relaxation_set";
 const PINNED_GUEST_ENV_ARGS: &[&str] =
     &["--base-env", "minimal", "-e", "LC_ALL=C", "-e", "TZ=UTC"];
 
@@ -425,6 +425,7 @@ fn push_row(
         dur,
         String::new(),
         reason.to_string(),
+        "[\"no-virtualize-cpuid\",\"max-timeslice=disabled\"]".to_string(),
     ];
     let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
     out.push_str(&line);

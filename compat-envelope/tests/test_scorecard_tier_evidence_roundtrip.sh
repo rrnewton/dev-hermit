@@ -79,7 +79,7 @@ check "live canonical header round-trips all four fields" $?
 echo "case SCHEMA — the canonical scorecard carries tier and provenance columns"
 for col in verify_compare bitwise_parity compared_log_messages tier \
            ref_output_hash parity_comparator parity_tier profile_flags \
-           population_id selected_count executed_count evidence_count; do
+           relaxation_set population_id selected_count executed_count evidence_count; do
   printf '%s' "$CANONICAL" | tr ',' '\n' | grep -qx "$col"
   check "canonical header has $col" $?
 done
@@ -165,6 +165,7 @@ row = {c: "" for c in hdr}
 row.update(run_id="fresh", test_id="x/y", backend="ptrace", test_mode="verify",
            outcome="pass", deterministic="1", verify_compare="stripped",
            tier="stripped-uncounted", bitwise_parity="", compared_log_messages="")
+row["relaxation_set"] = "[]"
 with open(sys.argv[1], "a", newline="") as f:
     csv.DictWriter(f, fieldnames=hdr).writerow(row)
 PYX

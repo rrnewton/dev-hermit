@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,relaxation_set,population_id,selected_count,executed_count,evidence_count";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -173,6 +173,16 @@ fn profile_flags(lane: &str, bucket: &str, backend: &str, mode: &str) -> String 
         "comparison": comparison,
     })
     .to_string()
+}
+
+/// Determinism-weakening options carried with the verdict they condition.
+/// Keep this in the same canonical vocabulary/order as test_harness.sh.
+fn relaxation_set(lane: &str) -> String {
+    if lane == "portable" {
+        serde_json::json!(["no-virtualize-cpuid", "max-timeslice=disabled"]).to_string()
+    } else {
+        "[]".to_string()
+    }
 }
 
 fn main() {
@@ -299,7 +309,7 @@ fn main() {
     for required in [
         "run_id", "run_utc", "hermit_sha", "reverie_sha", "test_id", "backend",
         "outcome", "deterministic", "ref_output_hash", "parity_comparator",
-        "parity_tier", "profile_flags", "population_id", "selected_count",
+        "parity_tier", "profile_flags", "relaxation_set", "population_id", "selected_count",
         "executed_count", "evidence_count",
     ] {
         if !target_header.iter().any(|c| c == required) {
@@ -392,13 +402,14 @@ fn main() {
             // It is deliberately NOT `0`: `0` asserts observed nondeterminism,
             // which a single run cannot establish either.
             let ran_two_run_comparison = c.mode == "verify";
+            let relaxation_set = relaxation_set(&lane);
             let deterministic = if !available || outcome == "skip" {
                 None
             } else if !pass {
                 // A completed non-pass IS confirmed: the cell did not reproduce
                 // its expected behaviour under its own backend.
                 Some(false)
-            } else if ran_two_run_comparison {
+            } else if ran_two_run_comparison && relaxation_set == "[]" {
                 Some(true)
             } else {
                 None
@@ -519,6 +530,7 @@ fn main() {
                 parity_comparator.to_string(),
                 parity_tier.to_string(),
                 profile_flags,
+                relaxation_set,
                 population_id.clone(),
                 String::new(), // selected_count: filled after every row is known
                 String::new(), // executed_count

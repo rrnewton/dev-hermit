@@ -151,7 +151,8 @@ run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,
 test_id,test_mode,backend,cell_state,outcome,deterministic,<observable>_parity,
 output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,
 compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,
-parity_comparator,parity_tier,profile_flags,population_id,selected_count,
+parity_comparator,parity_tier,profile_flags,relaxation_set,population_id,
+selected_count,
 executed_count,evidence_count
 ```
 
@@ -171,11 +172,16 @@ executed_count,evidence_count
   tier, full profile, population receipt, and selected/executed/evidence counts.
   Historical booleans missing those conditions live in
   `legacy_parity_unqualified` and are never counted by the renderer.
-  `deterministic` records run1==run2 independently of either parity observable.
+  `deterministic` records run1==run2 independently of either parity observable,
+  and may be `1` only when `relaxation_set` is the empty JSON set `[]`.
 - `output_hash` / `ref_output_hash` — SHA-256 operands for the candidate and
   reference observables (guest output or the decimal syscall-count text).
 - `parity_comparator` / `parity_tier` / `profile_flags` — the comparison
   contract and exact argv/profile that condition a qualified verdict.
+- `relaxation_set` — JSON array of every determinism-weakening option used by
+  the measured run. It is required on every row (`[]` means none); any non-empty
+  set makes a strict `deterministic=1` claim ineligible. Historical rows whose
+  exact set is not yet recoverable use `["UNKNOWN-RELAXATION"]`, never `[]`.
 - `population_id` — SHA-256 receipt over the sorted selected row identities;
   the verifier re-derives it. The three count columns state the selected,
   executed, and evidence-bearing denominators for that run.
