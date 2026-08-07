@@ -142,3 +142,75 @@ is interpretable.
 
 The deriver reads only committed CSVs, recomputes every figure, and refuses
 (exit 3) if any cell is unaccounted for.
+
+---
+
+# Attribution follow-up: is the sabre drop real, or a width artifact?
+
+The two sweeps did **not** use identical concurrency width — the 2026-08-01 run
+was uniform, while this one ran ptrace/dbi at width 16 and sabre/e9patch/liteinst
+at width 4 after a mid-run host-health directive. Width changes timeout
+incidence and a `--verify` timeout is scored as a determinism failure, so the
+sabre movement had to be tested against that confound before it could be called
+a finding. **It survives the test.**
+
+## Outcome composition, old vs new
+
+| backend | old pass/div/timeout | new pass/div/timeout |
+| --- | --- | --- |
+| sabre | 164 / 30 / 6 | 152 / 46 / **7** |
+| ptrace | 179 / 20 / 1 | 183 / 21 / 1 |
+| dbi | 156 / 36 / 8 | 158 / 39 / 8 |
+| e9patch | 179 / 20 / 1 | 181 / 22 / 2 |
+| liteinst | 118 / 82 / 0 | 121 / 84 / 0 |
+
+Sabre's **timeouts barely moved (6 → 7)** while its **divergences jumped 30 → 46**.
+If the width change were driving the drop, it would show up as timeouts. It does
+not.
+
+## Cell-level flips, restricted to cells present in BOTH sweeps
+
+This removes the 200-vs-205 corpus difference entirely, so only real verdict
+changes remain.
+
+| backend | lost green | gained green | net | of the losses: diverge | timeout |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **sabre** | **17** | 1 | **−16** | **16** | 1 |
+| e9patch | 3 | 0 | −3 | 2 | 1 |
+| dbi | 2 | 0 | −2 | 2 | 0 |
+| ptrace | 2 | 1 | −1 | 2 | 0 |
+| liteinst | 0 | 1 | +1 | 0 | 0 |
+
+**16 of sabre's 17 lost greens are genuine divergences** (`sabre-verify-fail-exit1`),
+not timeouts. The drop is a real determinism regression on the SaBRe backend.
+(The net −16 here vs the −12 headline is the corpus difference: the 5 cells that
+exist only in the newer 205-cell corpus contribute greens.)
+
+## The 16 cells, and why they are not random
+
+```
+applications/timed-progress-bar          c-programs/pidfd-waitid-child
+c-programs/dbi-copied-tiocgpgrp          c-programs/ptrace-attach-eperm
+c-programs/dbi-pid-virtualization        c-programs/ptrace-seize-eperm
+c-programs/dbi-wait-lifecycle            c-programs/wait-on-child
+c-programs/get-robust-list-child         determinism-stress-c/fork-tree
+determinism-stress-c/mmap-fork-shared    determinism-stress-c/pid-tid
+determinism-stress-c/pipe-chain          determinism-stress-c/pipe-prefill
+language-runtimes/python-random          system-utils/date-nanoseconds
+```
+
+These cluster on **child-process lifecycle and pid/wait semantics** —
+`fork-tree`, `wait-on-child`, `dbi-wait-lifecycle`, `pid-tid`,
+`pidfd-waitid-child`, `get-robust-list-child`, `dbi-pid-virtualization`,
+`mmap-fork-shared` — plus two `ptrace-*-eperm` cells and two pipe cells. A
+scheduling or load artifact would not select for fork/wait/pid this strongly.
+**Hypothesis (labelled as such, not established here):** a regression in SaBRe's
+handling of process creation and pid virtualisation between hermit `82a8e853`
+and `1fadc037`. Confirming it needs a bisect over that range on a few of these
+cells, which this measurement does not attempt.
+
+**The stripped-probe caveat still governs.** These are stripped-probe verdicts,
+so "genuine divergence" here means the stripped comparator — which misses three
+of five planted defects — nonetheless reported a difference. That makes each of
+the 16 a *lower bound* on divergence, not an upper one: a stricter probe can
+only find more.
