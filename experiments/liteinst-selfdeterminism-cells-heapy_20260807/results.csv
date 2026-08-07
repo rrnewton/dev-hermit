@@ -1,0 +1,9 @@
+guest,backend,dimension,run1_count,run2_count,match_denom,verdict,class_before,class_after,changed_to_scorable
+heapy,ptrace,stdout,0,0,0/0,NOT-COMPARABLE vacuous n=0,measured,measured,no
+heapy,ptrace,detlog,40,40,40/40,SELF-DETERMINISTIC,measured,measured,no
+heapy,ptrace,stack,9,9,9/9,SELF-DETERMINISTIC,measured,measured,no
+heapy,ptrace,heap,8,8,8/8,SELF-DETERMINISTIC,measured,measured,no
+heapy,liteinst,stdout,0,0,0/0,NOT-COMPARABLE vacuous n=0,UNMEASURED,NOT-COMPARABLE,no
+heapy,liteinst,detlog,4,4,4/4,SELF-DETERMINISTIC,UNMEASURED,SELF-DETERMINISTIC,yes
+heapy,liteinst,stack,0,0,0/0,NOT-COMPARABLE vacuous n=0,UNMEASURED,NOT-COMPARABLE,NO
+heapy,liteinst,heap,0,0,0/0,NOT-COMPARABLE vacuous n=0,UNMEASURED,NOT-COMPARABLE,no

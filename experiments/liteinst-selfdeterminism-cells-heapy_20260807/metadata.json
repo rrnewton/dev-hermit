@@ -1,0 +1,15 @@
+{
+  "task": "pr1847-did-not-deliver-the-predicted-baseline (retitled: score the LiteInst stack cells now scorable)",
+  "agent": "hermit-w2", "date": "2026-08-07", "host": "devbig014",
+  "build": "86842f741 (worktrees/cc/hermit, main-side; PR #1847 NOT landed)",
+  "guest": "heapy — the ledger's guest, gcc -O0 -static -nostdlib -ffreestanding",
+  "command": "hermit --log=info --log-file=<f> run --backend <be> --strict --base-env=minimal --detlog-stack --detlog-heap --tmp=/tmp -- heapy",
+  "headline": "LiteInst STACK on heapy is 0/0 vacuous -> NOT scorable. Ratchet increment above the floor of 0 is ZERO stack cells.",
+  "cells_closed": "4 of the 8 previously-unmeasured cells (liteinst x 4 dimensions) now have a class",
+  "cells_now_parity_emittable": 1,
+  "harness_bugs_found_and_fixed": [
+    "guest built without -nostdlib -ffreestanding -> link failure -> every cell read as 0/0; that is a SETUP FAILURE, not a result",
+    "awk default whitespace FS in 'paste a b | awk $1!=$2' compares words within line A, not A vs B; broke every multi-word dimension (detlog). Single-token hash files (stack/heap) unaffected."
+  ],
+  "not_done": "PR-head (077833ad) re-run of this sweep — heapy is freestanding and never reads /proc/self/maps, so the maps-inode fix cannot affect it, but this was NOT measured"
+}
