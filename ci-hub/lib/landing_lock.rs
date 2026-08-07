@@ -156,11 +156,12 @@ pub(crate) struct ProcessIdentity {
 }
 
 /// Durable state for one supervised payload domain. The `Armed` state is
-/// persisted before spawn, `Published` binds the still-gated child identity,
+/// persisted before spawn, `Active` binds the still-gated child identity,
 /// `CensusPending` durably disables heartbeat renewal before any descendant is
-/// frozen, and `Residual` records the final exact census. Every consumer
-/// must dereference this record through `verify_cleanup_record`; file existence
-/// or a printed marker is not proof.
+/// frozen, and `Published` carries a complete residual census. An `Incomplete`
+/// capture never acquires the published name. Every consumer must dereference
+/// this record through `verify_cleanup_record`; file existence or a printed
+/// marker is not proof.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CleanupRecord {
     pub(crate) agent: String,
@@ -168,7 +169,7 @@ pub(crate) struct CleanupRecord {
     pub(crate) host: String,
     pub(crate) boot_id: String,
     pub(crate) phase: CleanupPhase,
-    /// Cgroup-v2 path of the published payload, relative to the cgroup mount.
+    /// Cgroup-v2 path of the active payload, relative to the cgroup mount.
     ///
     /// The ONE supervisor-independent anchor in this record. `leader`/`pgid` are
     /// both useless post-hoc: a ppid walk needs the (now dead) subreaper, and
@@ -184,7 +185,7 @@ pub(crate) struct CleanupRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CleanupPhase {
     Armed,
-    Published {
+    Active {
         leader: ProcessIdentity,
         pgid: u32,
     },
@@ -192,9 +193,12 @@ pub(crate) enum CleanupPhase {
         leader: ProcessIdentity,
         pgid: u32,
     },
-    Residual {
+    Published {
         pgid: u32,
-        domain_complete: bool,
+        residuals: Vec<ProcessIdentity>,
+    },
+    Incomplete {
+        pgid: u32,
         residuals: Vec<ProcessIdentity>,
     },
 }
@@ -268,17 +272,20 @@ impl CleanupRecord {
                 unknown => return Err(format!("unknown cleanup field {unknown:?}")),
             }
         }
-        // v3 == v2 plus an optional `cgroup`. Both are accepted so a record
+        // v3 == v2 plus an optional `cgroup`. v4 makes the lifecycle claim
+        // explicit: active identity is not publication, and publication carries
+        // a complete residual census. All are accepted so a record
         // written by either binary generation stays readable while builds are
-        // mixed on this box; `cgroup` on a v2 record is a malformed record, not
-        // a tolerable extra.
-        match version.as_deref() {
+        // mixed on this box; `cgroup` on a v2 record is a malformed record.
+        let version = match version.as_deref() {
             Some("2") if cgroup.is_some() => {
                 return Err("cleanup version 2 cannot carry a cgroup field".to_string())
             }
-            Some("2") | Some("3") => {}
+            Some("2") => 2,
+            Some("3") => 3,
+            Some("4") => 4,
             other => return Err(format!("unsupported cleanup version {other:?}")),
-        }
+        };
         residuals.sort();
         residuals.dedup();
         let phase = match phase.as_deref() {
@@ -290,11 +297,26 @@ impl CleanupRecord {
             {
                 CleanupPhase::Armed
             }
-            Some("published") if domain_complete.is_none() && residuals.is_empty() => {
-                CleanupPhase::Published {
+            Some("active") if version == 4 && domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::Active {
                     leader: leader
-                        .ok_or_else(|| "published cleanup record has no leader".to_string())?,
-                    pgid: pgid.ok_or_else(|| "published cleanup record has no pgid".to_string())?,
+                        .ok_or_else(|| "active cleanup record has no leader".to_string())?,
+                    pgid: pgid.ok_or_else(|| "active cleanup record has no pgid".to_string())?,
+                }
+            }
+            // Compatibility: v2/v3 called identity durability "published" even
+            // though no census existed. Read it as Active; never re-emit that
+            // unsupported claim.
+            Some("published")
+                if version < 4
+                    && domain_complete.is_none()
+                    && residuals.is_empty()
+                    && leader.is_some() =>
+            {
+                CleanupPhase::Active {
+                    leader: leader.unwrap(),
+                    pgid: pgid
+                        .ok_or_else(|| "legacy published cleanup record has no pgid".to_string())?,
                 }
             }
             Some("census-pending") if domain_complete.is_none() && residuals.is_empty() => {
@@ -305,11 +327,41 @@ impl CleanupRecord {
                         .ok_or_else(|| "census-pending cleanup record has no pgid".to_string())?,
                 }
             }
-            Some("residual") if leader.is_none() => CleanupPhase::Residual {
-                pgid: pgid.ok_or_else(|| "residual cleanup record has no pgid".to_string())?,
-                domain_complete: domain_complete
-                    .ok_or_else(|| "residual cleanup record has no domain_complete".to_string())?,
-                residuals,
+            Some("published") if version == 4 && leader.is_none() => match domain_complete {
+                Some(true) => CleanupPhase::Published {
+                    pgid: pgid.ok_or_else(|| "published cleanup census has no pgid".to_string())?,
+                    residuals,
+                },
+                Some(false) => {
+                    return Err("published cleanup census must be domain_complete=true".to_string())
+                }
+                None => return Err("published cleanup census has no domain_complete".to_string()),
+            },
+            Some("incomplete") if version == 4 && leader.is_none() => match domain_complete {
+                Some(false) => CleanupPhase::Incomplete {
+                    pgid: pgid
+                        .ok_or_else(|| "incomplete cleanup census has no pgid".to_string())?,
+                    residuals,
+                },
+                Some(true) => {
+                    return Err(
+                        "incomplete cleanup census cannot be domain_complete=true".to_string()
+                    )
+                }
+                None => return Err("incomplete cleanup census has no domain_complete".to_string()),
+            },
+            // Compatibility: old complete/incomplete census records were named
+            // residual. Re-derive their semantic phase from domain_complete.
+            Some("residual") if leader.is_none() => match domain_complete {
+                Some(true) => CleanupPhase::Published {
+                    pgid: pgid.ok_or_else(|| "residual cleanup record has no pgid".to_string())?,
+                    residuals,
+                },
+                Some(false) => CleanupPhase::Incomplete {
+                    pgid: pgid.ok_or_else(|| "residual cleanup record has no pgid".to_string())?,
+                    residuals,
+                },
+                None => return Err("residual cleanup record has no domain_complete".to_string()),
             },
             Some(value) => return Err(format!("cleanup phase {value:?} has incompatible fields")),
             None => return Err("cleanup record has no phase".to_string()),
@@ -325,13 +377,22 @@ impl CleanupRecord {
     }
 
     pub(crate) fn render(&self) -> String {
-        // Emit v3 ONLY when there is actually a cgroup to carry. A record
+        // Armed is the only pre-v4 phase a new writer emits. Every later phase
+        // uses v4, whose `published` state structurally requires a complete
+        // census. A legacy record parsed from v2/v3 is re-rendered with its
+        // honest v4 semantic phase.
+        // Emit v3 for an armed record only when there is actually a cgroup. A record
         // without one renders byte-identically to what every prior binary
-        // wrote, so landing-lock records and armed/legacy validate records are
-        // untouched and stay readable by older builds still present on this
-        // box. Only a published validate payload -- the sole consumer of the
-        // mechanical census -- moves to v3.
-        let version = if self.cgroup.is_some() { 3 } else { 2 };
+        // wrote, so pre-spawn cleanup stays readable by older builds.
+        let version = if matches!(self.phase, CleanupPhase::Armed) {
+            if self.cgroup.is_some() {
+                3
+            } else {
+                2
+            }
+        } else {
+            4
+        };
         let mut output = format!(
             "version={version}\nagent={}\noperation={}\nhost={}\nboot_id={}\n",
             self.agent, self.operation, self.host, self.boot_id
@@ -341,21 +402,28 @@ impl CleanupRecord {
         }
         match &self.phase {
             CleanupPhase::Armed => output.push_str("phase=armed\n"),
-            CleanupPhase::Published { leader, pgid } => output.push_str(&format!(
-                "phase=published\nleader={}:{}\npgid={pgid}\n",
+            CleanupPhase::Active { leader, pgid } => output.push_str(&format!(
+                "phase=active\nleader={}:{}\npgid={pgid}\n",
                 leader.pid, leader.start_ticks
             )),
             CleanupPhase::CensusPending { leader, pgid } => output.push_str(&format!(
                 "phase=census-pending\nleader={}:{}\npgid={pgid}\n",
                 leader.pid, leader.start_ticks
             )),
-            CleanupPhase::Residual {
-                pgid,
-                domain_complete,
-                residuals,
-            } => {
+            CleanupPhase::Published { pgid, residuals } => {
                 output.push_str(&format!(
-                    "phase=residual\npgid={pgid}\ndomain_complete={domain_complete}\n"
+                    "phase=published\npgid={pgid}\ndomain_complete=true\n"
+                ));
+                for identity in residuals {
+                    output.push_str(&format!(
+                        "residual={}:{}\n",
+                        identity.pid, identity.start_ticks
+                    ));
+                }
+            }
+            CleanupPhase::Incomplete { pgid, residuals } => {
+                output.push_str(&format!(
+                    "phase=incomplete\npgid={pgid}\ndomain_complete=false\n"
                 ));
                 for identity in residuals {
                     output.push_str(&format!(
@@ -796,12 +864,12 @@ impl LandingLock {
         })
     }
 
-    fn publish_run(&self, agent: &str, pr: &str, gated: &GatedChild) -> Result<(), LandLockError> {
+    fn activate_run(&self, agent: &str, pr: &str, gated: &GatedChild) -> Result<(), LandLockError> {
         self.transition_run_cleanup(
             agent,
             pr,
             |phase| matches!(phase, CleanupPhase::Armed),
-            CleanupPhase::Published {
+            CleanupPhase::Active {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
             },
@@ -838,15 +906,12 @@ impl LandingLock {
         pgid: u32,
         capture: ResidualCapture,
     ) -> Result<(), LandLockError> {
+        let phase = capture.into_cleanup_phase(pgid);
         self.transition_run_cleanup(
             agent,
             pr,
             |phase| matches!(phase, CleanupPhase::CensusPending { .. }),
-            CleanupPhase::Residual {
-                pgid,
-                domain_complete: capture.complete,
-                residuals: capture.identities,
-            },
+            phase,
         )
     }
 
@@ -859,7 +924,7 @@ impl LandingLock {
         self.transition_run_cleanup(
             agent,
             pr,
-            |phase| matches!(phase, CleanupPhase::Published { .. }),
+            |phase| matches!(phase, CleanupPhase::Active { .. }),
             CleanupPhase::CensusPending {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
@@ -907,10 +972,10 @@ impl LandingLock {
             }
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Active { record, .. }
-                    if matches!(record.phase, CleanupPhase::Published { .. }) => {}
+                    if matches!(record.phase, CleanupPhase::Active { .. }) => {}
                 other => {
                     return Err(LandLockError::CleanupQuarantined(format!(
-                        "run heartbeat requires an active published domain, got {other:?}"
+                        "run heartbeat requires a durably active domain, got {other:?}"
                     )))
                 }
             }
@@ -1118,7 +1183,7 @@ impl LandingLock {
                 print_cleanup_record(&record, &reason);
             }
             CleanupVerification::Uncensused { record, reason } => {
-                println!("QUARANTINED (published domain lacks final census):");
+                println!("QUARANTINED (active domain lacks final census):");
                 print_cleanup_record(&record, &reason);
             }
             CleanupVerification::Unknown { record, reason } => {
@@ -1278,14 +1343,14 @@ impl LandingLock {
                 "test-injected supervisor crash after spawn".into(),
             ));
         }
-        self.publish_run(&args.agent, &args.pr, &gated)?;
+        self.activate_run(&args.agent, &args.pr, &gated)?;
         gated.release().map_err(|source| {
             io_error("release child start gate at", &self.paths.cleanup, source)
         })?;
         #[cfg(test)]
-        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterPublish) {
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterActivate) {
             return Err(LandLockError::CleanupQuarantined(
-                "test-injected supervisor crash after publication".into(),
+                "test-injected supervisor crash after activation".into(),
             ));
         }
 
@@ -1726,10 +1791,10 @@ pub(crate) fn verify_cleanup_record(
     }
     match &record.phase {
         CleanupPhase::Armed => CleanupVerification::Armed {
-            reason: "pre-spawn barrier is armed; no payload identity was durably published".into(),
+            reason: "pre-spawn barrier is armed; no payload identity was durably activated".into(),
             record,
         },
-        CleanupPhase::Published { leader, pgid } | CleanupPhase::CensusPending { leader, pgid } => {
+        CleanupPhase::Active { leader, pgid } | CleanupPhase::CensusPending { leader, pgid } => {
             let mut active = Vec::new();
             let mut unknown = Vec::new();
             match exact_process_liveness(leader) {
@@ -1747,7 +1812,7 @@ pub(crate) fn verify_cleanup_record(
             if !active.is_empty() {
                 CleanupVerification::Active {
                     reason: format!(
-                        "published payload identities remain active: {}",
+                        "active payload identities remain active: {}",
                         active.join(", ")
                     ),
                     record,
@@ -1755,7 +1820,7 @@ pub(crate) fn verify_cleanup_record(
             } else {
                 let mut reason = unknown;
                 reason.push(
-                    "published payload ended without a complete residual census; same-boot absence cannot exclude an escaped descendant"
+                    "active payload ended without a complete residual census; same-boot absence cannot exclude an escaped descendant"
                         .into(),
                 );
                 CleanupVerification::Uncensused {
@@ -1764,17 +1829,7 @@ pub(crate) fn verify_cleanup_record(
                 }
             }
         }
-        CleanupPhase::Residual {
-            pgid,
-            domain_complete,
-            residuals,
-        } => {
-            if !domain_complete {
-                return CleanupVerification::Unknown {
-                    reason: "residual process-domain capture was incomplete".into(),
-                    record: Some(record),
-                };
-            }
+        CleanupPhase::Published { pgid, residuals } => {
             let mut active = Vec::new();
             let mut unknown = Vec::new();
             for identity in residuals {
@@ -1810,6 +1865,12 @@ pub(crate) fn verify_cleanup_record(
                 }
             }
         }
+        CleanupPhase::Incomplete { .. } => CleanupVerification::Unknown {
+            reason:
+                "residual process-domain capture was incomplete; phase is incomplete, not published"
+                    .into(),
+            record: Some(record),
+        },
     }
 }
 
@@ -2072,7 +2133,7 @@ pub(crate) fn cgroup_population(relative: &str) -> CgroupCensus {
     }
 }
 
-/// Cgroup anchor for a published payload, or the reason there is none.
+/// Cgroup anchor for an active payload, or the reason there is none.
 ///
 /// Deliberately NOT gated on the cgroup being exclusive to this run. I tried
 /// that and backed it out: every available exclusivity test is a ppid-tree walk,
@@ -2223,6 +2284,25 @@ pub(crate) struct ResidualCapture {
     pub(crate) identities: Vec<ProcessIdentity>,
 }
 
+impl ResidualCapture {
+    /// Convert census evidence into its durable claim. This is the only writer
+    /// policy for both landing and validation locks: `published` is reachable
+    /// iff the capture proves its domain complete.
+    pub(crate) fn into_cleanup_phase(self, pgid: u32) -> CleanupPhase {
+        if self.complete {
+            CleanupPhase::Published {
+                pgid,
+                residuals: self.identities,
+            }
+        } else {
+            CleanupPhase::Incomplete {
+                pgid,
+                residuals: self.identities,
+            }
+        }
+    }
+}
+
 pub(crate) fn capture_and_freeze_residuals(supervisor_pid: u32) -> ResidualCapture {
     let mut prior = Vec::new();
     for _ in 0..4 {
@@ -2312,7 +2392,7 @@ pub(crate) fn heartbeat_test_helper_delay() {}
 pub(crate) enum RunCrashPoint {
     AfterArm,
     AfterSpawn,
-    AfterPublish,
+    AfterActivate,
 }
 
 #[cfg(test)]
@@ -2607,13 +2687,13 @@ pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
 mod cgroup_anchor_tests {
     use super::*;
 
-    fn record_with(cgroup: Option<&str>) -> CleanupRecord {
+    fn active_record(cgroup: Option<&str>) -> CleanupRecord {
         CleanupRecord {
             agent: "a".into(),
             operation: "validate:deadbeef".into(),
             host: "testhost".into(),
             boot_id: "boot".into(),
-            phase: CleanupPhase::Published {
+            phase: CleanupPhase::Active {
                 leader: ProcessIdentity {
                     pid: 42,
                     start_ticks: 7,
@@ -2624,13 +2704,13 @@ mod cgroup_anchor_tests {
         }
     }
 
-    // BACK-COMPAT, the load-bearing half of the version bump: a record with no
-    // cgroup must still render EXACTLY as version 2. Landing-lock records and
-    // every armed/legacy validate record take this path, so older binaries on
-    // this shared box keep reading them.
+    // BACK-COMPAT: the pre-spawn barrier remains readable by old binaries. New
+    // post-spawn phases require v4 so `published` cannot exist without a census.
     #[test]
-    fn record_without_a_cgroup_still_renders_version_2() {
-        let rendered = record_with(None).render();
+    fn armed_record_without_a_cgroup_still_renders_version_2() {
+        let mut record = active_record(None);
+        record.phase = CleanupPhase::Armed;
+        let rendered = record.render();
         assert!(
             rendered.starts_with("version=2\n"),
             "expected v2 for an anchorless record, got: {rendered}"
@@ -2639,14 +2719,71 @@ mod cgroup_anchor_tests {
         assert_eq!(CleanupRecord::parse(&rendered).unwrap().cgroup, None);
     }
 
-    // A record that HAS an anchor moves to v3 and round-trips.
     #[test]
-    fn record_with_a_cgroup_renders_version_3_and_round_trips() {
-        let record = record_with(Some("/user.slice/payload.scope"));
+    fn active_record_renders_version_4_and_round_trips() {
+        let record = active_record(Some("/user.slice/payload.scope"));
         let rendered = record.render();
-        assert!(rendered.starts_with("version=3\n"), "got: {rendered}");
+        assert!(rendered.starts_with("version=4\n"), "got: {rendered}");
+        assert!(rendered.contains("phase=active\n"));
         assert!(rendered.contains("cgroup=/user.slice/payload.scope\n"));
         assert_eq!(CleanupRecord::parse(&rendered).unwrap(), record);
+    }
+
+    #[test]
+    fn legacy_published_identity_is_read_as_active_and_never_republished() {
+        let legacy = "version=3\nagent=a\noperation=o\nhost=h\nboot_id=b\n\
+                      cgroup=/x\nphase=published\nleader=42:7\npgid=42\n";
+        let record = CleanupRecord::parse(legacy).unwrap();
+        assert!(matches!(record.phase, CleanupPhase::Active { .. }));
+        let rendered = record.render();
+        assert!(rendered.starts_with("version=4\n"));
+        assert!(rendered.contains("phase=active\n"));
+        assert!(!rendered.contains("phase=published\n"));
+    }
+
+    #[test]
+    fn complete_census_is_published_and_round_trips() {
+        let mut record = active_record(None);
+        record.phase = ResidualCapture {
+            complete: true,
+            identities: vec![ProcessIdentity {
+                pid: 43,
+                start_ticks: 8,
+            }],
+        }
+        .into_cleanup_phase(42);
+        let rendered = record.render();
+        assert!(rendered.contains("phase=published\n"));
+        assert!(rendered.contains("domain_complete=true\n"));
+        assert_eq!(CleanupRecord::parse(&rendered).unwrap(), record);
+    }
+
+    #[test]
+    fn incomplete_census_has_its_own_phase_and_is_not_published() {
+        let mut record = active_record(None);
+        record.phase = ResidualCapture {
+            complete: false,
+            identities: Vec::new(),
+        }
+        .into_cleanup_phase(42);
+        let rendered = record.render();
+        assert!(rendered.contains("phase=incomplete\n"));
+        assert!(rendered.contains("domain_complete=false\n"));
+        assert!(!rendered.contains("phase=published\n"));
+        assert_eq!(CleanupRecord::parse(&rendered).unwrap(), record);
+    }
+
+    // NEGATIVE CONTROL: a planted artifact that claims publication while
+    // admitting an incomplete census must be refused rather than normalized.
+    #[test]
+    fn planted_incomplete_published_census_is_refused() {
+        let planted = "version=4\nagent=a\noperation=o\nhost=h\nboot_id=b\n\
+                       phase=published\npgid=42\ndomain_complete=false\n";
+        let error = CleanupRecord::parse(planted).unwrap_err();
+        assert!(
+            error.contains("published cleanup census must be domain_complete=true"),
+            "got: {error}"
+        );
     }
 
     // Forward-compat in the other direction: a v2 record that somehow carries a
@@ -2662,7 +2799,7 @@ mod cgroup_anchor_tests {
 
     #[test]
     fn unsupported_versions_are_still_refused() {
-        let bad = "version=4\nagent=a\noperation=o\nhost=h\nboot_id=b\nphase=armed\n";
+        let bad = "version=5\nagent=a\noperation=o\nhost=h\nboot_id=b\nphase=armed\n";
         assert!(CleanupRecord::parse(bad)
             .unwrap_err()
             .contains("unsupported cleanup version"));
@@ -2825,11 +2962,19 @@ mod tests {
         inject_unreadable_scan_pid(identity.pid);
         let incomplete = capture_and_freeze_residuals(std::process::id());
         assert!(!incomplete.complete);
+        assert!(matches!(
+            incomplete.into_cleanup_phase(child.id()),
+            CleanupPhase::Incomplete { .. }
+        ));
 
         inject_unreadable_scan_pid(0);
         let visible = capture_and_freeze_residuals(std::process::id());
         assert!(visible.complete);
         assert!(visible.identities.contains(&identity));
+        assert!(matches!(
+            visible.into_cleanup_phase(child.id()),
+            CleanupPhase::Published { .. }
+        ));
         signal_exact_process(&identity, libc::SIGKILL).unwrap();
         child.wait().unwrap();
         reap_exited_children();
@@ -3173,12 +3318,8 @@ wait
         };
         let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
         let residuals = match &record.phase {
-            CleanupPhase::Residual {
-                domain_complete: true,
-                residuals,
-                ..
-            } => residuals.clone(),
-            phase => panic!("expected complete residual phase, got {phase:?}"),
+            CleanupPhase::Published { residuals, .. } => residuals.clone(),
+            phase => panic!("expected published complete census, got {phase:?}"),
         };
         assert!(residuals.contains(&escaped));
         assert!(matches!(exact_process_liveness(&escaped), Ok(true)));
@@ -3328,7 +3469,7 @@ wait
             let record =
                 CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
             assert!(matches!(record.phase, CleanupPhase::Armed));
-            assert!(!marker.exists(), "guest ran before identity publication");
+            assert!(!marker.exists(), "guest ran before identity activation");
 
             assert_eq!(
                 unsafe { libc::kill(supervisor.id() as libc::pid_t, libc::SIGKILL) },
@@ -3374,7 +3515,7 @@ wait
         for (index, point) in [
             RunCrashPoint::AfterArm,
             RunCrashPoint::AfterSpawn,
-            RunCrashPoint::AfterPublish,
+            RunCrashPoint::AfterActivate,
         ]
         .into_iter()
         .enumerate()
@@ -3406,27 +3547,27 @@ wait
 
             let record =
                 CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
-            let published = match (&point, &record.phase) {
+            let active = match (&point, &record.phase) {
                 (RunCrashPoint::AfterArm | RunCrashPoint::AfterSpawn, CleanupPhase::Armed) => None,
-                (RunCrashPoint::AfterPublish, CleanupPhase::Published { leader, pgid }) => {
+                (RunCrashPoint::AfterActivate, CleanupPhase::Active { leader, pgid }) => {
                     Some((leader.clone(), *pgid))
                 }
                 (_, phase) => panic!("crash point {point:?} left unexpected phase {phase:?}"),
             };
 
-            if let Some((leader, _)) = &published {
+            if let Some((leader, _)) = &active {
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < deadline && !marker.exists() {
                     thread::sleep(Duration::from_millis(10));
                 }
-                assert!(marker.exists(), "published guest never started");
+                assert!(marker.exists(), "active guest never started");
                 assert!(matches!(exact_process_liveness(leader), Ok(true)));
             } else {
                 thread::sleep(Duration::from_millis(100));
                 reap_exited_children();
                 assert!(
                     !marker.exists(),
-                    "guest payload ran before exact identity publication"
+                    "guest payload ran before exact identity activation"
                 );
             }
 
@@ -3457,7 +3598,7 @@ wait
             ));
             lock.status().unwrap();
 
-            if let Some((leader, pgid)) = published {
+            if let Some((leader, pgid)) = active {
                 signal_group(libc::SIGKILL, pgid);
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < deadline {
@@ -3528,12 +3669,8 @@ exit 0
         };
         let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
         let residuals = match record.phase {
-            CleanupPhase::Residual {
-                domain_complete: true,
-                residuals,
-                ..
-            } => residuals,
-            phase => panic!("expected complete residual census, got {phase:?}"),
+            CleanupPhase::Published { residuals, .. } => residuals,
+            phase => panic!("expected published complete census, got {phase:?}"),
         };
         assert!(residuals.contains(&escaped));
         assert!(lock.read_holder().unwrap().is_some());

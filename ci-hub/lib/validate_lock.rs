@@ -724,7 +724,7 @@ impl ValidateLock {
         target: &str,
         expected: fn(&CleanupPhase) -> bool,
         next: CleanupPhase,
-        // `Some` only at publish, the one transition that learns the payload's
+        // `Some` only at activation, the one transition that learns the payload's
         // cgroup. Every other transition preserves whatever is already there.
         cgroup: Option<String>,
     ) -> Result<(), ValidateLockError> {
@@ -768,7 +768,7 @@ impl ValidateLock {
         })
     }
 
-    fn publish_run(
+    fn activate_run(
         &self,
         agent: &str,
         kind: Kind,
@@ -780,7 +780,7 @@ impl ValidateLock {
             kind,
             target,
             |phase| matches!(phase, CleanupPhase::Armed),
-            CleanupPhase::Published {
+            CleanupPhase::Active {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
             },
@@ -796,7 +796,7 @@ impl ValidateLock {
                 Err(why) => {
                     // Say so rather than silently omitting it: without an anchor
                     // an orphan census of THIS run will need a human attestation,
-                    // and that is worth knowing at publish time, not at 3am.
+                    // and that is worth knowing at activation time, not at 3am.
                     eprintln!(
                         "validate-lock: no cgroup anchor recorded for this run ({why}); if the \
                          supervisor dies, censusing the orphaned domain will require \
@@ -844,16 +844,13 @@ impl ValidateLock {
         pgid: u32,
         capture: ResidualCapture,
     ) -> Result<(), ValidateLockError> {
+        let phase = capture.into_cleanup_phase(pgid);
         self.transition_run_cleanup(
             agent,
             kind,
             target,
             |phase| matches!(phase, CleanupPhase::CensusPending { .. }),
-            CleanupPhase::Residual {
-                pgid,
-                domain_complete: capture.complete,
-                residuals: capture.identities,
-            },
+            phase,
             None,
         )
     }
@@ -869,7 +866,7 @@ impl ValidateLock {
             agent,
             kind,
             target,
-            |phase| matches!(phase, CleanupPhase::Published { .. }),
+            |phase| matches!(phase, CleanupPhase::Active { .. }),
             CleanupPhase::CensusPending {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
@@ -931,10 +928,10 @@ impl ValidateLock {
             }
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Active { record, .. }
-                    if matches!(record.phase, CleanupPhase::Published { .. }) => {}
+                    if matches!(record.phase, CleanupPhase::Active { .. }) => {}
                 other => {
                     return Err(ValidateLockError::CleanupQuarantined(format!(
-                        "run heartbeat requires an active published domain, got {other:?}"
+                        "run heartbeat requires a durably active domain, got {other:?}"
                     )))
                 }
             }
@@ -1174,12 +1171,12 @@ impl ValidateLock {
                 print_cleanup_record(&record, &reason);
             }
             CleanupVerification::Uncensused { record, reason } => {
-                println!("QUARANTINED (published domain lacks final census):");
+                println!("QUARANTINED (active domain lacks final census):");
                 print_cleanup_record(&record, &reason);
                 // Uncensused used to name NO action while `reclaim-dead` refused
                 // it, which read as "wait" when nothing was ever coming. Name the
                 // exit, with the identity already restated for the operator.
-                if let CleanupPhase::Published { leader, pgid }
+                if let CleanupPhase::Active { leader, pgid }
                 | CleanupPhase::CensusPending { leader, pgid } = &record.phase
                 {
                     // Say up front whether the kernel can settle this, so the
@@ -1381,7 +1378,7 @@ impl ValidateLock {
                 }
                 CleanupVerification::Armed { reason, .. } => {
                     return Err(ValidateLockError::RecoveryNotProven(format!(
-                        "cleanup is only ARMED, so no payload was ever published and there is \
+                        "cleanup is only ARMED, so no payload was ever activated and there is \
                          no domain to census: {reason}"
                     )))
                 }
@@ -1393,7 +1390,7 @@ impl ValidateLock {
             };
 
             let (leader, pgid) = match &record.phase {
-                CleanupPhase::Published { leader, pgid }
+                CleanupPhase::Active { leader, pgid }
                 | CleanupPhase::CensusPending { leader, pgid } => (leader.clone(), *pgid),
                 other => {
                     return Err(ValidateLockError::RecoveryNotProven(format!(
@@ -1484,9 +1481,8 @@ impl ValidateLock {
             .map_err(ValidateLockError::RecoveryNotProven)?;
 
             let mut recovered = record.clone();
-            recovered.phase = CleanupPhase::Residual {
+            recovered.phase = CleanupPhase::Published {
                 pgid,
-                domain_complete: true,
                 residuals: Vec::new(),
             };
             write_cleanup_record(&self.paths.cleanup, &recovered)
@@ -1640,17 +1636,17 @@ impl ValidateLock {
                 "test-injected supervisor crash after spawn".into(),
             ));
         }
-        self.publish_run(&args.agent, args.kind, &args.target, &gated)?;
+        self.activate_run(&args.agent, args.kind, &args.target, &gated)?;
         gated.release().map_err(|source| {
             io_error("release child start gate at", &self.paths.cleanup, source)
         })?;
         #[cfg(test)]
         if crate::landing_lock::take_run_crash_hook(
             &format!("{}:{}", args.kind.as_str(), args.target),
-            crate::landing_lock::RunCrashPoint::AfterPublish,
+            crate::landing_lock::RunCrashPoint::AfterActivate,
         ) {
             return Err(ValidateLockError::CleanupQuarantined(
-                "test-injected supervisor crash after publication".into(),
+                "test-injected supervisor crash after activation".into(),
             ));
         }
 
@@ -2230,7 +2226,8 @@ extern "C" fn record_termination_signal(signal: libc::c_int) {
 /// defaults to `control-group`, TERMing every process in the cgroup at once) the
 /// supervisor died instantly inside `supervise_child` and never reached
 /// `begin_run_census`/`capture_and_freeze_residuals`. The record was left at
-/// `phase=published`, which `verify_cleanup_record` classifies as `Uncensused` —
+/// legacy `phase=published`, which `verify_cleanup_record` reads as `Active`
+/// and classifies as `Uncensused` once its identities disappear —
 /// a state `reclaim_dead` refuses and, because the census can only be taken from
 /// the live subreaper, nothing could ever discharge. Every agent's validate was
 /// refused until it was cleared by hand.
@@ -2889,7 +2886,8 @@ wait
     //
     // This is the 2026-08-06 fleet wedge in miniature. With no handler the
     // supervisor died inside `supervise_child`, the cleanup record stayed at
-    // `phase=published` (which `verify_cleanup_record` maps to Uncensused), and
+    // legacy `phase=published` (which the parser reads as Active and the
+    // verifier maps to Uncensused once the identities disappear), and
     // every agent's validate was refused until it was censused by hand.
     //
     // The flag is pre-set rather than delivered as a real signal so the test
@@ -3109,12 +3107,8 @@ wait
         };
         let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
         let residuals = match &record.phase {
-            CleanupPhase::Residual {
-                domain_complete: true,
-                residuals,
-                ..
-            } => residuals.clone(),
-            phase => panic!("expected complete residual phase, got {phase:?}"),
+            CleanupPhase::Published { residuals, .. } => residuals.clone(),
+            phase => panic!("expected published complete census, got {phase:?}"),
         };
         assert!(residuals.contains(&escaped));
         assert!(matches!(exact_process_liveness(&escaped), Ok(true)));
@@ -3267,7 +3261,7 @@ wait
             let record =
                 CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
             assert!(matches!(record.phase, CleanupPhase::Armed));
-            assert!(!marker.exists(), "guest ran before identity publication");
+            assert!(!marker.exists(), "guest ran before identity activation");
 
             assert_eq!(
                 unsafe { libc::kill(supervisor.id() as libc::pid_t, libc::SIGKILL) },
@@ -3307,7 +3301,7 @@ wait
         for (index, point) in [
             crate::landing_lock::RunCrashPoint::AfterArm,
             crate::landing_lock::RunCrashPoint::AfterSpawn,
-            crate::landing_lock::RunCrashPoint::AfterPublish,
+            crate::landing_lock::RunCrashPoint::AfterActivate,
         ]
         .into_iter()
         .enumerate()
@@ -3346,32 +3340,32 @@ wait
 
             let record =
                 CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
-            let published = match (&point, &record.phase) {
+            let active = match (&point, &record.phase) {
                 (
                     crate::landing_lock::RunCrashPoint::AfterArm
                     | crate::landing_lock::RunCrashPoint::AfterSpawn,
                     CleanupPhase::Armed,
                 ) => None,
                 (
-                    crate::landing_lock::RunCrashPoint::AfterPublish,
-                    CleanupPhase::Published { leader, pgid },
+                    crate::landing_lock::RunCrashPoint::AfterActivate,
+                    CleanupPhase::Active { leader, pgid },
                 ) => Some((leader.clone(), *pgid)),
                 (_, phase) => panic!("crash point {point:?} left unexpected phase {phase:?}"),
             };
 
-            if let Some((leader, _)) = &published {
+            if let Some((leader, _)) = &active {
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < deadline && !marker.exists() {
                     thread::sleep(Duration::from_millis(10));
                 }
-                assert!(marker.exists(), "published guest never started");
+                assert!(marker.exists(), "active guest never started");
                 assert!(matches!(exact_process_liveness(leader), Ok(true)));
             } else {
                 thread::sleep(Duration::from_millis(100));
                 reap_exited_children();
                 assert!(
                     !marker.exists(),
-                    "guest payload ran before exact identity publication"
+                    "guest payload ran before exact identity activation"
                 );
             }
 
@@ -3396,7 +3390,7 @@ wait
             ));
             lock.status().unwrap();
 
-            if let Some((leader, pgid)) = published {
+            if let Some((leader, pgid)) = active {
                 signal_group(libc::SIGKILL, pgid);
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < deadline {
@@ -3474,12 +3468,8 @@ exit 0
         };
         let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
         let residuals = match record.phase {
-            CleanupPhase::Residual {
-                domain_complete: true,
-                residuals,
-                ..
-            } => residuals,
-            phase => panic!("expected complete residual census, got {phase:?}"),
+            CleanupPhase::Published { residuals, .. } => residuals,
+            phase => panic!("expected published complete census, got {phase:?}"),
         };
         assert!(residuals.contains(&escaped));
         assert!(lock.read_holder().unwrap().is_some());

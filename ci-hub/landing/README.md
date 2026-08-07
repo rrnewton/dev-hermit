@@ -58,7 +58,7 @@ Runtime state (all machine-local, gitignored):
 | `~/work/dev-hermit/.landing-lock.owner`  | supervised owner identity; does not alter the legacy holder format |
 | `~/work/dev-hermit/.landing-lock.guard`  | `flock` target (impl detail) |
 | `~/work/dev-hermit/.landing-lock.queue`  | FIFO waiter list |
-| `~/work/dev-hermit/.landing-lock.cleanup-required` | fsynced armed/published/residual process-domain authority; blocks ordinary acquisition and reclaim |
+| `~/work/dev-hermit/.landing-lock.cleanup-required` | fsynced armed/active/census-pending/published/incomplete process-domain authority; blocks ordinary acquisition and reclaim |
 | `~/work/dev-hermit/.landing-lock.cleanup-required.tmp-*` | atomic-replacement scratch, machine-local and ignored |
 
 `validate-lock` uses the identical cleanup-authority suffixes beside
@@ -131,20 +131,22 @@ or via `land-pr.sh`, which self-wraps) so the lease is bound to a bounded child.
 ### Abnormal termination and evidence-based recovery
 
 Before spawn, `run` fsyncs an `armed` cleanup authority. The gated child cannot
-exec the payload until an atomic replacement publishes its exact PID/start-time
+exec the payload until an atomic replacement activates its exact PID/start-time
 identity and process group. Before any descendant census, `run` persists
 `census-pending`, disables heartbeat renewal, and joins the heartbeat; only then
-may it freeze descendants and publish a complete `residual` census. Normal exit,
-nonzero exit, and hard deadline clear the authority only after both the process
-group and residual census prove the domain empty.
+may it freeze descendants. A complete census becomes `published`; a capture
+that cannot prove the full domain becomes `incomplete` and can never carry the
+published claim. Normal exit, nonzero exit, and hard deadline clear the authority
+only after both the process group and published census prove the domain empty.
 
 SIGKILL and machine loss cannot finish that census. `status` therefore reports
 the lease as `QUARANTINED`, not merely `ORPHANED`, and every ordinary acquire,
 renew, release, and dead-owner reclaim refuses. While recorded identities are
-live, even explicit recovery is refused. A complete residual record becomes
+live, even explicit recovery is refused. A published complete census becomes
 recoverable only after every exact PID/start-ticks identity and its group are
 absent; `reclaim-dead` must additionally prove the supervisor owner dead. A
-same-boot `published`/`census-pending` record with no final census remains
+same-boot `active`/`census-pending` record with no final census, or an
+`incomplete` census, remains
 unrecoverable even after its leader disappears, because an escaped descendant
 may be unrecorded. A host reboot (different boot ID) is the stronger proof that
 such a process domain is gone. This preserves the rule that one lander never

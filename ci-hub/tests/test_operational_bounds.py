@@ -443,6 +443,43 @@ class OperationalBoundsTest(unittest.TestCase):
             )
             self.assertEqual(visible.returncode, 1, durable_near_miss)
 
+    def test_land_lock_refuses_a_planted_incomplete_published_census(self) -> None:
+        lock = self.temp / "planted-incomplete.lock"
+        cleanup = Path(f"{lock}.cleanup-required")
+        cleanup.write_text(
+            "version=4\n"
+            "agent=planted\n"
+            "operation=pr:planted\n"
+            "host=planted\n"
+            "boot_id=planted\n"
+            "phase=published\n"
+            "pgid=42\n"
+            "domain_complete=false\n"
+        )
+        env = self.env | {"CI_HUB_LANDING_LOCK": str(lock)}
+
+        status = self.run_bounded("land-lock", "status", env=env)
+        self.assertIn("QUARANTINED (cleanup unverifiable)", status.stdout)
+        self.assertIn(
+            "published cleanup census must be domain_complete=true",
+            status.stdout,
+        )
+        refused = self.run_bounded(
+            "land-lock",
+            "acquire",
+            "--agent",
+            "replacement-lander",
+            "--pr",
+            "replacement",
+            "--wait",
+            "0",
+            "--hold",
+            "30",
+            expected={3},
+            env=env,
+        )
+        self.assertIn("cleanup quarantine", refused.stdout + refused.stderr)
+
     def test_land_lock_quarantines_a_killed_supervisor_and_refuses_overlap(
         self,
     ) -> None:
@@ -505,7 +542,7 @@ class OperationalBoundsTest(unittest.TestCase):
 
             quarantined = self.run_bounded("land-lock", "status", env=env)
             self.assertIn("QUARANTINED (cleanup active)", quarantined.stdout)
-            self.assertIn("phase=published", quarantined.stdout)
+            self.assertIn("phase=active", quarantined.stdout)
             self.assertIn("owner_process=dead:", quarantined.stdout)
             refused = self.run_bounded(
                 "land-lock",
@@ -544,7 +581,7 @@ class OperationalBoundsTest(unittest.TestCase):
             child_pid = None
             uncensused = self.run_bounded("land-lock", "status", env=env)
             self.assertIn(
-                "QUARANTINED (published domain lacks final census)",
+                "QUARANTINED (active domain lacks final census)",
                 uncensused.stdout,
             )
             # Leader/group absence is necessary but not sufficient after the
