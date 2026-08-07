@@ -711,6 +711,34 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("forged", result.stdout)
         self.assertIn("fixture plant deleted cleanly", result.stdout)
 
+    def test_merge_gate_provisions_complete_receipt_verifier_closure(
+        self,
+    ) -> None:
+        result = subprocess.run(
+            [str(ROOT / "ci-hub/validation/test_verifier_dep_closure.sh")],
+            cwd=ROOT,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            # This test runs the complete semantic verifier suite through each
+            # workflow copy. First-use rust-script compilation is legitimately
+            # slower than the normal single-command operational bound.
+            timeout=180,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"provisioning bracket failed\nstdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}",
+        )
+        self.assertIn(
+            "legitimate receipts accepted; missing/tampered fixtures refused",
+            result.stdout,
+        )
+        self.assertIn("PASS negative: lone-file provisioning", result.stdout)
+        self.assertIn("2 step copies", result.stdout)
+
     def test_merge_gate_selector_includes_exact_head_dispatch(self) -> None:
         """Plant the run shape PR statusCheckRollup omitted for PR #1219."""
         sha = "a" * 40

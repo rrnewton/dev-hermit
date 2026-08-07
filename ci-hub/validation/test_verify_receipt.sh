@@ -2,11 +2,24 @@
 set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-verifier=$script_dir/verify_receipt.sh
+# Overrides let provisioning tests drive this complete semantic suite through
+# the exact verifier tree they materialized. The default remains the in-tree
+# authority used by normal parent validation.
+verifier=${VERIFY_RECEIPT:-$script_dir/verify_receipt.sh}
 publisher=$script_dir/publish_receipt.py
-receipt_digest=$script_dir/../ci-hub
+receipt_digest=${RECEIPT_DIGEST:-$script_dir/../ci-hub}
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
+
+[[ -x $verifier ]] || {
+    printf 'FAIL: verifier under test is not executable: %s\n' "$verifier" >&2
+    exit 1
+}
+[[ -x $receipt_digest ]] || {
+    printf 'FAIL: receipt-digest authority under test is not executable: %s\n' \
+        "$receipt_digest" >&2
+    exit 1
+}
 
 sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 receipt_commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
