@@ -97,19 +97,60 @@ attribute_capture() {
 raise_alarm() {
   # $1=workload $2=verdict $3=one-line detail $4=capture_dir(optional)
   overall_alarm=1
+
+  # A P0 alarm that cannot describe itself is worse than no alarm: it sets the
+  # exit status without leaving anything to triage. Refuse loudly instead.
+  if [ $# -lt 3 ] || [ -z "${1:-}" ] || [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+    log "🔴 raise_alarm INVOCATION ERROR: need workload, verdict and detail; got $# arg(s): '${1:-}' '${2:-}' '${3:-}'"
+    return 2
+  fi
+
   local marker="$ROOT/ignored/ci-hub/stress-alarm-$(TZ=UTC date +%Y%m%dT%H%M%SZ)-$$.json"
   mkdir -p "$(dirname "$marker")"
   local attr; attr="$(attribute_capture "${4:-}" "$marker")"
   local detail="$3"; [ -n "$attr" ] && detail="$3 | ATTRIBUTION: $attr"
-  printf '{"ts":"%s","repo":"%s","sha":"%s","workload":"%s","verdict":"%s","detail":"%s","attribution":"%s","severity":"P0"}\n' \
-    "$(ts)" "$REPO" "$SHA" "$1" "$2" "$detail" "$attr" > "$marker" 2>/dev/null
+
+  # The marker IS the durable record, so its write is verified rather than
+  # silenced. stderr previously went to /dev/null, which turned a failed write
+  # into a P0 that left no evidence at all.
+  if ! printf '{"ts":"%s","repo":"%s","sha":"%s","workload":"%s","verdict":"%s","detail":"%s","attribution":"%s","severity":"P0"}\n' \
+      "$(ts)" "$REPO" "$SHA" "$1" "$2" "$detail" "$attr" > "$marker"; then
+    log "🔴 P0 ALARM RECORD FAILED: could not write $marker — the alarm below has NO durable record"
+  elif command -v python3 >/dev/null 2>&1 && ! python3 -c 'import json,sys;json.load(open(sys.argv[1]))' "$marker" 2>/dev/null; then
+    # An unescaped quote in workload/detail can emit invalid JSON. Say so; a
+    # record no consumer can parse is not a record.
+    log "🔴 P0 ALARM RECORD IS NOT VALID JSON: $marker — likely an unescaped quote in workload/detail"
+  else
+    log "P0 alarm record persisted: $marker"
+  fi
+
   log "🔴 P0 ALARM [$2] $1 — $detail (marker: $marker)"
   [ -n "${STRESS_NO_ESCALATE:-}" ] && return 0
-  # Best-effort external escalation (durable store record is the primary signal).
-  command -v tg >/dev/null 2>&1 && \
-    tg note "$ALARM_TASK" "P0 NIGHTLY-STRESS RED [$2] $REPO@${SHA:0:12} workload=$1 — $detail. Flaky-is-red: determinism of outcome violated. Triage immediately." >/dev/null 2>&1 || true
-  [ -x "$ROOT/scripts/status-log.rs" ] && \
-    "$ROOT/scripts/status-log.rs" --append "nightly-stress P0 RED [$2] $1 @${SHA:0:12}" >/dev/null 2>&1 || true
+
+  # External escalation is acknowledged, not fire-and-forget. Previously this
+  # was `>/dev/null 2>&1 || true`, so a failed escalation was indistinguishable
+  # from a delivered one.
+  if command -v tg >/dev/null 2>&1; then
+    local tg_err; tg_err="$(tg note "$ALARM_TASK" "P0 NIGHTLY-STRESS RED [$2] $REPO@${SHA:0:12} workload=$1 — $detail. Flaky-is-red: determinism of outcome violated. Triage immediately." 2>&1)"
+    if [ $? -eq 0 ]; then
+      log "P0 alarm escalated to TaskGraph task $ALARM_TASK"
+    else
+      log "🔴 P0 ALARM ESCALATION FAILED: tg note $ALARM_TASK rc!=0 — $tg_err (durable record still at $marker)"
+    fi
+  else
+    log "🔴 P0 ALARM NOT ESCALATED: tg not on PATH (durable record still at $marker)"
+  fi
+
+  # NOTE: this deliberately does NOT call scripts/status-log.rs. It used to,
+  # as `status-log.rs --append "<text>"`, but there has never been an --append
+  # flag: the script exits 2 on an unknown argument, and the call was wrapped in
+  # `>/dev/null 2>&1 || true`, so every P0 escalation through it was silently
+  # discarded. status-log.rs is also the wrong sink by design — it appends
+  # COORDINATOR HOURLY STATUS rows and now requires a workstream->worker mapping
+  # validated against the live TaskGraph, a --repos denominator and the hourly
+  # counts. A stress alarm has none of those, and forcing one in would pollute
+  # the hourly series. The durable marker above plus the TaskGraph note are the
+  # two real channels.
 }
 
 # --- per-workload burst + record ---------------------------------------------
