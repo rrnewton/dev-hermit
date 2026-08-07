@@ -34,14 +34,16 @@ need it?
      [hermit#1849](https://github.com/rrnewton/hermit/issues/1849) and **FIXED**
      in [hermit#1851](https://github.com/rrnewton/hermit/pull/1851); `which` and
      `hello` now clear `unpackPhase` with no workaround.
-   - R3b, a **scheduler deadlock**: `handle_epoll_pwait` injected a blocking
-     `epoll_pwait(timeout=-1)` and waited for it while holding the scheduler
-     turn, so the only task that could satisfy the wait never ran. Filed as
-     [hermit#1850](https://github.com/rrnewton/hermit/issues/1850) and **FIXED**
-     in [hermit#1864](https://github.com/rrnewton/hermit/pull/1864); reproducer
-     goes from `rc=124` at 90 s to `rc=0` at 2 s. My first diagnosis of this
-     ("pipe EOF not delivered") was **wrong and is retracted in place** — see
-     R3b, including the invalid `/proc` evidence that produced it.
+   - R3b, **one pattern with three instances**: *a handler that lets the guest
+     execute an indefinitely-blocking syscall while holding the scheduler turn
+     deadlocks when the only task that can unblock it is queued behind.*
+     `epoll_pwait` (fixed, [#1864](https://github.com/rrnewton/hermit/pull/1864),
+     `rc=124` at 90 s → `rc=0` at 2 s); `read` on a pipe misclassified as a
+     regular file because `openat` typed it by **pathname** (fixed, patch on
+     [#1850](https://github.com/rrnewton/hermit/issues/1850)); and `openat` on a
+     **FIFO** blocking at `wait_for_partner` (**still open** — this is what keeps
+     N=0). My first diagnosis ("pipe EOF not delivered") was **wrong and is
+     retracted in place**, along with the invalid `/proc` evidence behind it.
 5. **Both blockers are now fixed, and a real package got much further.** With
    #1851 and #1864, `nixpkgs.lensfun` — the one real on-machine
    nondeterministic package found — completed configure, build and install
@@ -535,35 +537,63 @@ still block, and says so in the code.
 past cmake configure. With the fix it completed configure, build **and install**
 and reached `fixupPhase`.
 
-**Still open — measured, not assumed.** I re-tested the `fixupPhase` case with
-#1864 applied. `lensfun` now clears configure, build **and install**, then hangs
-in `fixupPhase`:
+**The pattern, named.** Three instances were found, with three *different*
+proximate causes. That is why fixing them one at a time is the wrong shape:
+
+> **A Detcore handler that lets the guest execute an indefinitely-blocking
+> syscall while holding the scheduler turn deadlocks whenever the only task that
+> can unblock it is queued behind.**
+
+| # | syscall | why it blocked while holding the turn | status |
+|---|---|---|---|
+| 1 | `epoll_pwait` | **no nonblocking path exists.** `handle_epoll_wait` has one; `epoll_pwait` had none — and glibc routes `epoll_wait(2)` to `epoll_pwait`, so nothing reached the correct handler | fixed, [#1864](https://github.com/rrnewton/hermit/pull/1864) |
+| 2 | `read` on a pipe | **a nonblocking path exists but was not taken.** `handle_read` dispatches on `FdType`; `handle_openat` classified by *pathname string*, so `/dev/fd/63` — bash process substitution, a PIPE — became `FdType::Regular` and took the blocking branch | fixed (patch on [#1850](https://github.com/rrnewton/hermit/issues/1850); commit blocked, see below) |
+| 3 | `openat` on a **FIFO** | **no nonblocking path exists.** Opening a FIFO blocks in the kernel at `wait_for_partner` until the other end is opened | **OPEN — this is what still keeps N=0** |
+
+Instance 2 is the same proxy trap as everything else here: *a pathname is a proxy
+for a file's type; the authority is the kernel's `S_IFMT`.* Detcore already
+classifies correctly on the SaBRe fallback path
+(`discover_fd_from_current_process`, via `S_IFIFO`/`S_IFSOCK`); `openat` had
+simply never been brought in line. Before the fix, the string `Pipe` appears
+**zero times** in 30 MB of debug log.
+
+The audit criterion is enumerable, and worth more than three individual fixes:
+**every syscall that can block indefinitely must either yield the turn or be
+modeled in the `BlockedPool`.** Detcore already marks many with `(MAYHANG)`
+comments; the gap is the ones that can block and are not marked, plus the ones
+routed correctly only when upstream metadata happens to be right.
+
+**Where instance 3 stops, exactly — so the next person starts here.** Reproducer
+is `nix/nondet-demo.nix` with `fixupPhase` enabled (~1 s of real build), under
+the seam, with #1864 and the instance-2 patch applied:
 
 ```
-nix-store            do_sys_poll
- └─ hermit (super)   anon_pipe_read
-     └─ hermit       epoll_wait          TIME=00:00:13
-         └─ bash     anon_pipe_read  sysc=0 (read)      <- fixupPhase `while read`
-             └─ find state=t  ptrace_stop  sysc=257 (openat)   <- FROZEN child
+bash  state=t  ptrace_stop  sysc=56 (clone)
+ ├─ bash 950152  state=S  wchan=wait_for_partner  sysc=257 (openat)  <- HOLDS THE TURN
+ └─ bash 950156  state=t  ptrace_stop             sysc=257 (openat)  <- QUEUED (the partner)
+
+COMMIT turn 2261, dettid 107 using resources {Path(".../tmp.XXXXXXXX/elf"): R}
+[sched-step3] queue len 3
+[tool] (tid 107) beginning inject of syscall: openat
+<end of log>
 ```
 
-`find … -print0`, the pipe's writer, is alive and ptrace-stopped at `openat`,
-never resumed; zero CPU across the guest tree, re-sampled 20 s apart. Same
-*class* (a task waits on one that never gets a turn), different entry point:
-`handle_read` already routes `FdType::Pipe` through
-`execute_nonblockable_fd_syscall`, so the #1864 explanation does not
-straightforwardly apply. The anomaly to chase is the frozen `openat` in the
-child — which is also where the cmake case's frozen grandchild sat.
+- **Stopped task**: dtid 107, blocked in `openat` on a FIFO at `wait_for_partner`.
+- **Held turn**: 2261, committed to dtid 107.
+- **Queued task**: dtid 109, inbound `openat` on the same FIFO — the partner.
+- **Settling check**: `hermit --log=debug --log-file=…`; confirm turn 2262 is
+  never committed and dtid 109 never gets one.
 
-Two untested hypotheses, recorded as next steps rather than findings: (a) the
-pipe's `DetFd` is misclassified so the read takes the blocking
-`record_or_replay` path; (b) a resume/registration gap for a freshly `exec`ed
-grandchild stopped at its first `openat`. `hermit --log=debug` settles it the
-same way it settled the cmake case — check whether the scheduler ever commits a
-turn to the `find` dettid.
+**Commit blocked, not abandoned.** `ci/run-reverie-pin-check.sh` blocks every
+commit fleet-wide: `main` pins reverie `6144323c` while reverie main has moved to
+`038e9939`. Bumping the pin inside an unrelated change would bury a pin advance
+in a product commit, and bypassing the hook is not this task's call — so the
+instance-2 diff is posted on #1850 and kept at
+`worktrees/nix-repro176/openat-fd-type-from-fstat.patch`
+(sha256 `00b126023c2d8da9fe9ff6cf93bc2fcf2015fdc6ac19819366c99ee09c71b6c2`).
 
-**So N is still 0 real packages reproduced**, but the remaining distance is one
-bug, not a category.
+**So N is still 0** — but the distance is now one known bug with an exact
+stopping point, not a category.
 
 ### R4. Cost, and what does get through
 
