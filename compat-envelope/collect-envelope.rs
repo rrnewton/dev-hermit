@@ -175,14 +175,28 @@ fn profile_flags(lane: &str, bucket: &str, backend: &str, mode: &str) -> String 
     .to_string()
 }
 
-/// Determinism-weakening options carried with the verdict they condition.
-/// Keep this in the same canonical vocabulary/order as test_harness.sh.
-fn relaxation_set(lane: &str) -> String {
-    if lane == "portable" {
-        serde_json::json!(["no-virtualize-cpuid", "max-timeslice=disabled"]).to_string()
-    } else {
-        "[]".to_string()
+const UNKNOWN_RELAXATION_SET: &str = "[\"UNKNOWN-RELAXATION\"]";
+
+/// Consume the condition receipt emitted by the harness for this exact cell.
+/// `lane=portable` is only correlated state: backend/test-specific paths can
+/// omit one or both portable defaults, so reconstructing from the lane invents
+/// evidence. Missing, malformed, or duplicate receipts fail closed as unknown.
+fn relaxation_set_from_harness(record: &Value) -> String {
+    let Some(items) = record.get("relaxations").and_then(Value::as_array) else {
+        return UNKNOWN_RELAXATION_SET.to_string();
+    };
+    let mut values = Vec::with_capacity(items.len());
+    let mut seen = BTreeSet::new();
+    for item in items {
+        let Some(value) = item.as_str().filter(|value| !value.is_empty()) else {
+            return UNKNOWN_RELAXATION_SET.to_string();
+        };
+        if !seen.insert(value) {
+            return UNKNOWN_RELAXATION_SET.to_string();
+        }
+        values.push(value);
     }
+    serde_json::to_string(&values).unwrap_or_else(|_| UNKNOWN_RELAXATION_SET.to_string())
 }
 
 fn main() {
@@ -362,18 +376,29 @@ fn main() {
         for c in group {
             let hr = outcomes.get(&(c.test.clone(), c.mode.clone()));
             let executed = hr.is_some();
-            let (outcome, duration_ms, reason) = if !available {
+            let (outcome, duration_ms, reason, relaxation_set) = if !available {
                 (
                     "unavailable".to_string(),
                     0i64,
                     unavailable_reason
                         .clone()
                         .unwrap_or_else(|| "backend unavailable (reason not captured)".to_string()),
+                    UNKNOWN_RELAXATION_SET.to_string(),
                 )
             } else {
                 match hr {
-                    Some(r) => (r.outcome.clone(), r.duration_ms, r.reason.clone()),
-                    None => ("skip".to_string(), 0i64, "no harness record".to_string()),
+                    Some(r) => (
+                        r.outcome.clone(),
+                        r.duration_ms,
+                        r.reason.clone(),
+                        r.relaxation_set.clone(),
+                    ),
+                    None => (
+                        "skip".to_string(),
+                        0i64,
+                        "no harness record".to_string(),
+                        UNKNOWN_RELAXATION_SET.to_string(),
+                    ),
                 }
             };
             let pass = outcome == "pass";
@@ -402,7 +427,6 @@ fn main() {
             // It is deliberately NOT `0`: `0` asserts observed nondeterminism,
             // which a single run cannot establish either.
             let ran_two_run_comparison = c.mode == "verify";
-            let relaxation_set = relaxation_set(&lane);
             let deterministic = if !available || outcome == "skip" {
                 None
             } else if !pass {
@@ -614,6 +638,7 @@ struct HarnessResult {
     outcome: String,
     duration_ms: i64,
     reason: String,
+    relaxation_set: String,
 }
 
 /// Enumerate the authoritative plan. Regression = enabled ci cells
@@ -708,6 +733,7 @@ fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -
                 outcome: v.get("outcome").and_then(Value::as_str).unwrap_or("").to_lowercase(),
                 duration_ms: v.get("duration_ms").and_then(Value::as_i64).unwrap_or(0),
                 reason: v.get("reason").and_then(Value::as_str).unwrap_or("").to_string(),
+                relaxation_set: relaxation_set_from_harness(&v),
             });
         }
     }
@@ -1046,8 +1072,32 @@ fn self_check() -> i32 {
         println!("SELF-CHECK FAIL: parser does not discriminate zero from nonzero");
         failures += 1;
     }
+    let relaxation_cases = [
+        (serde_json::json!({"relaxations": []}), "[]"),
+        (
+            serde_json::json!({"relaxations": ["max-timeslice=disabled"]}),
+            "[\"max-timeslice=disabled\"]",
+        ),
+        (serde_json::json!({}), UNKNOWN_RELAXATION_SET),
+        (
+            serde_json::json!({"relaxations": ["no-rcb-time", "no-rcb-time"]}),
+            UNKNOWN_RELAXATION_SET,
+        ),
+    ];
+    for (record, expected) in &relaxation_cases {
+        let got = relaxation_set_from_harness(record);
+        if got != *expected {
+            println!("SELF-CHECK FAIL relaxation receipt: expected {expected} got {got}");
+            failures += 1;
+        } else {
+            println!("self-check ok  relaxation receipt {got}");
+        }
+    }
     if failures == 0 {
-        println!("self-check: {} cases, all discriminating", cases.len());
+        println!(
+            "self-check: {} cases, all discriminating",
+            cases.len() + relaxation_cases.len()
+        );
         0
     } else {
         println!("self-check: {failures} FAILED");
