@@ -49,9 +49,38 @@ relying on.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, Mapping
+
+# COMPLETENESS IS COVERAGE, NOT A COUNT.
+#
+# The first version of this module decided GREEN from a positive executed-test
+# COUNT. That is the REFUTED completeness signal: a count cannot distinguish
+# "ran fewer tests" from "covered fewer nodes". Commit ee303899 carries 8 PASS
+# rows at executed=427 that are NOT full greens -- 4 executed test nodes of 19
+# planned, 15 absent.
+#
+# Reading that field here was caught by the executed-test-count consumer
+# registry test under ci-hub/tests/, whose classification rule is explicit: a
+# completeness or green/qualified key IS the bug, and must be rewritten against
+# coverage.* rather than added to the allowlist. So this module no longer names
+# that field anywhere -- deliberately, since the registry is a literal grep and
+# a file that merely mentions the field still reads as a consumer.
+#
+# The completeness axis DELEGATES to the shared predicate one directory up
+# rather than restating it. A local copy is exactly the drift that predicate
+# exists to remove, and the tree already carries one such copy
+# (anchor_select.py::_coverage_satisfied); this module does not add a second.
+#
+# Two coverage axes, different questions, both checked below:
+#   coverage.*     per-node: did every planned test node actually execute?
+#   full_coverage  profile scope: was this the FULL profile, not a partial
+#                  `*-only` profile whose pass reads like a full green?
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from qualifying_receipt import coverage_satisfied  # noqa: E402
 
 
 class Completion(Enum):
@@ -77,10 +106,13 @@ class ProductSignal(Enum):
     """At least one genuine product failure was counted."""
 
     GREEN = "green"
-    """Ran a nonzero number of tests, counted zero failures."""
+    """Zero failures AND per-node coverage satisfied: every planned test node
+    actually executed. Not "some tests ran" — that is the refuted count."""
 
     NONE = "none"
-    """Established nothing: no failures counted AND no tests executed."""
+    """Established nothing: no failures counted, and coverage does not show a
+    complete run. An uncounted or partially-covered receipt is UNVERIFIED, which
+    is deliberately NOT the same as green."""
 
 
 class RetryClass(Enum):
@@ -140,14 +172,15 @@ def classify(row: Mapping[str, Any]) -> Outcome:
 
     # --- axis 2: what it saw. Independent of whether it finished. ---
     failures = _int(row, "failures")
-    executed = row.get("executed_tests")
     if failures > 0:
         product = ProductSignal.RED
-    elif isinstance(executed, int) and executed > 0:
+    elif coverage_satisfied(row.get("coverage")):
         product = ProductSignal.GREEN
     else:
-        # Zero executed tests, or an unknown count. `None` is NOT zero, but it
-        # is also not evidence, and this function is fail-closed.
+        # No failures, but coverage does not demonstrate a complete run: absent
+        # or zero-executed nodes, no planned test node, or no coverage at all.
+        # `coverage_satisfied` is fail-closed on a missing/partial object, which
+        # is what we want -- absence of evidence is not a green.
         product = ProductSignal.NONE
 
     # --- retry class ---
@@ -178,10 +211,14 @@ def classify(row: Mapping[str, Any]) -> Outcome:
     elif product is ProductSignal.RED:
         reason = "completed run counted a product failure"
     elif product is ProductSignal.NONE:
-        reason = "completed but executed no tests; establishes nothing"
+        reason = (
+            "completed with no failures, but per-node coverage does not show a "
+            "complete run (absent/zero-executed nodes, or no coverage reported); "
+            "establishes nothing"
+        )
     elif not certifies:
-        reason = "completed green but coverage is not full; cannot certify"
+        reason = "coverage satisfied but not the full profile; cannot certify"
     else:
-        reason = "completed, full coverage, nonzero tests, zero failures"
+        reason = "completed, full profile, per-node coverage satisfied, zero failures"
 
     return Outcome(completion, product, retry, certifies, reason)

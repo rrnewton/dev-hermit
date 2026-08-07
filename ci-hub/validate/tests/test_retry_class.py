@@ -41,9 +41,17 @@ REAL_INTERRUPTED_NO_RED = {  # stored `no_result` today — the correct one
     "reclassified_reason": None,
 }
 
+# Per-node coverage is the completeness authority. The count is retained in these
+# fixtures ON PURPOSE: the real rows carry it, and keeping it here proves the
+# classifier no longer keys on it (see test_a_big_count_without_coverage_is_not_green).
+SATISFIED_COVERAGE = {
+    "planned_test_nodes": 19, "zero_executed_nodes": [], "absent_nodes": [],
+}
+
 CLEAN_GREEN = {
     "interruption_signal": None, "exit_code": 0, "failures": 0,
     "executed_tests": 740, "full_coverage": True, "result": "pass",
+    "coverage": dict(SATISFIED_COVERAGE),
 }
 
 
@@ -65,7 +73,13 @@ def test_interrupted_run_that_saw_a_red_keeps_BOTH_facts():
 def test_interrupted_run_without_a_red_is_not_a_product_red():
     o = classify(REAL_INTERRUPTED_NO_RED)
     assert o.completion is Completion.INTERRUPTED
-    assert o.product is ProductSignal.GREEN  # it did execute 463 tests, 0 failures
+    # NOT green. This row executed 463 tests with 0 failures, and the first
+    # version of the classifier called that GREEN on the count alone. It carries
+    # no per-node coverage, so it never demonstrated a complete run -- an
+    # interrupted run that stopped early is exactly the case a count cannot see.
+    # NONE is the honest answer; the point preserved below is that it is still
+    # distinguishable from the interrupted-with-a-red row.
+    assert o.product is ProductSignal.NONE
     assert o.certifies is False, "interrupted runs never certify, even looking green"
     assert o.retry is RetryClass.TRANSIENT
 
@@ -94,6 +108,7 @@ def test_killed_by_signal_is_contention_not_product_red():
 
 
 def test_zero_executed_tests_is_no_result_not_green():
+    """Still true, but now for the RIGHT reason: no coverage, not a zero count."""
     o = classify({"failures": 0, "executed_tests": 0, "full_coverage": True,
                   "result": "pass"})
     assert o.product is ProductSignal.NONE
@@ -102,18 +117,53 @@ def test_zero_executed_tests_is_no_result_not_green():
 
 
 def test_unknown_executed_count_cannot_certify():
-    """`None` is not zero, but it is not evidence either. Fail closed."""
+    """An absent count is not evidence -- and neither is an absent coverage."""
     o = classify({"failures": 0, "executed_tests": None, "full_coverage": True,
                   "result": "pass"})
     assert o.product is ProductSignal.NONE
     assert o.certifies is False
 
 
-def test_partial_coverage_cannot_certify():
+def test_a_big_count_without_coverage_is_not_green():
+    """THE anti-regression for the refuted signal, in both directions.
+
+    This is the ee303899 shape: a large executed-test count on a run that did
+    NOT cover its planned nodes. The count alone previously made this GREEN and
+    certifying. It must now be NONE, and the ONLY thing separating this row from
+    the certifying one is the coverage object -- proving the classifier keys on
+    coverage and not on the count.
+    """
+    counted_but_incomplete = {
+        "failures": 0, "executed_tests": 427, "full_coverage": True,
+        "result": "pass",
+        "coverage": {"planned_test_nodes": 19, "zero_executed_nodes": [],
+                     "absent_nodes": [f"n{i}" for i in range(15)]},
+    }
+    o = classify(counted_but_incomplete)
+    assert o.product is ProductSignal.NONE, "a count must not manufacture a green"
+    assert o.certifies is False
+
+    # Same row, same count, coverage satisfied -> certifies. The count never moved.
+    ok = classify(dict(counted_but_incomplete, coverage=dict(SATISFIED_COVERAGE)))
+    assert ok.product is ProductSignal.GREEN and ok.certifies is True
+
+    # And the count is genuinely ignored: drop it entirely, keep coverage.
+    no_count = dict(counted_but_incomplete, coverage=dict(SATISFIED_COVERAGE))
+    del no_count["executed_tests"]
+    assert classify(no_count).certifies is True, "coverage alone must suffice"
+
+
+def test_partial_profile_cannot_certify_even_with_per_node_coverage():
+    """The two coverage axes are independent; each must block on its own.
+
+    Per-node coverage is satisfied here, so the PRODUCT signal is green -- but
+    the run covered a partial `*-only` profile, whose pass reads identically to
+    a full green. That alone must stop certification.
+    """
     o = classify(dict(CLEAN_GREEN, full_coverage=False))
     assert o.product is ProductSignal.GREEN
     assert o.certifies is False
-    assert "coverage" in o.reason
+    assert "profile" in o.reason
 
 
 def test_empty_row_certifies_nothing():
@@ -144,7 +194,13 @@ def test_clean_full_green_certifies():
 def test_certification_needs_every_clause_so_each_one_bites():
     """Flip one clause at a time; each flip alone must destroy the green."""
     assert classify(CLEAN_GREEN).certifies is True
-    for field, bad in (("full_coverage", False), ("executed_tests", 0),
+    for field, bad in (("full_coverage", False),
+                       ("coverage", None),
+                       ("coverage", {"planned_test_nodes": 0,
+                                     "zero_executed_nodes": [], "absent_nodes": []}),
+                       ("coverage", dict(SATISFIED_COVERAGE, absent_nodes=["n1"])),
+                       ("coverage", dict(SATISFIED_COVERAGE,
+                                         zero_executed_nodes=["n2"])),
                        ("failures", 1), ("interruption_signal", "TERM"),
                        ("killed_by_bound", 1), ("killed_by_signal", 1),
                        ("result", None)):
