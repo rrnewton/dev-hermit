@@ -92,6 +92,52 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("red=1", output)
         self.assertIn("pending=1", output)
 
+    def test_pull_request_gate_exposes_setup_only_no_result(self) -> None:
+        status = SimpleNamespace(
+            open=1,
+            red=0,
+            green=0,
+            pending=1,
+            real_reds=0,
+            setup_only_no_result_checks=1,
+            outage_suspected=False,
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            return_value=status,
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("setup_only_no_result_checks=1", output)
+        self.assertIn("setup_only_no_result=1", output)
+
+    def test_pull_request_gate_exposes_prerequisite_no_result(self) -> None:
+        status = SimpleNamespace(
+            open=1,
+            red=0,
+            green=0,
+            pending=1,
+            real_reds=0,
+            setup_only_no_result_checks=1,
+            prerequisite_no_result_checks=1,
+            outage_suspected=False,
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            return_value=status,
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("prerequisite_no_result_checks=1", output)
+        self.assertIn("prerequisite_no_result=1", output)
+
     def test_pull_request_one_repo_unavailable_is_degraded_not_lost(self) -> None:
         # A slow/blocked repo must not discard the other repo's real data: the
         # answer is DEGRADED (partial), distinct from "PRs are red".
@@ -338,6 +384,50 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("actually_active=1", output)
         self.assertIn("stale=1", output)
         self.assertIn("detail=STALE stale", output)
+
+    def test_memory_gate_accepts_absent_optional_store_when_skills_are_clean(self) -> None:
+        """A stock Codex/CI host has no Claude memory directory by design."""
+        lint = (
+            0,
+            "active skills: 41  mapped memories: 0  in-sync: 0  "
+            "problems: 0  warnings: 1\n",
+            "",
+        )
+        scan = (
+            0,
+            "state=ok\nsummary=41 authoritative repository skills clean; "
+            "0 optional local finding(s)\ncontradictions=0\ndrift=0\n",
+            "",
+        )
+        with mock.patch.object(
+            operational_health,
+            "_run_tool",
+            side_effect=[lint, scan],
+        ):
+            result, output = self.capture(operational_health.memory_skill_sync_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("problems=0", output)
+        self.assertIn("contradictions=0", output)
+
+    def test_memory_gate_still_refuses_repository_skill_contradictions(self) -> None:
+        lint = (0, "problems: 0\n", "")
+        scan = (
+            1,
+            "state=contradiction\nsummary=one repository contradiction\n"
+            "contradictions=1\ndrift=0\nACTION: reconcile repository skill\n",
+            "",
+        )
+        with mock.patch.object(
+            operational_health,
+            "_run_tool",
+            side_effect=[lint, scan],
+        ):
+            result, output = self.capture(operational_health.memory_skill_sync_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=contradiction", output)
+        self.assertIn("contradictions=1", output)
+        self.assertIn("ACTION: reconcile repository skill", output)
 
 
 if __name__ == "__main__":

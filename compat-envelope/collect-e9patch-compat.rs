@@ -57,6 +57,8 @@ const MODE: &str = "verify";
 const FREESTANDING_FLAGS: &[&str] =
     &["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"];
 const L2_NEEDLE: &str = "Determinism verified";
+const PINNED_GUEST_ENV_ARGS: &[&str] =
+    &["--base-env", "minimal", "-e", "LC_ALL=C", "-e", "TZ=UTC"];
 
 fn die(msg: &str) -> ! {
     eprintln!("collect-e9patch-compat: {msg}");
@@ -240,6 +242,12 @@ fn hermit_argv(hermit: &Path, e9: bool, verify: bool, guest: &Path) -> Vec<Strin
     }
     v.push("run".into());
     v.push("--strict".into());
+    // `--base-env host` (the default) makes the ambient collector environment
+    // part of the guest's initial stack. That invalidates comparisons across
+    // invocations as soon as they include a stack-derived observable. Use the
+    // same fixed guest environment as the other scorecard collectors instead:
+    // Hermit's minimal PATH/HOSTNAME/HOME plus explicit locale and timezone.
+    v.extend(PINNED_GUEST_ENV_ARGS.iter().map(|arg| (*arg).to_string()));
     if verify {
         v.push("--verify".into());
     }
@@ -249,6 +257,81 @@ fn hermit_argv(hermit: &Path, e9: bool, verify: bool, guest: &Path) -> Vec<Strin
     v.push("--".into());
     v.push(guest.to_string_lossy().into_owned());
     v
+}
+
+#[cfg(test)]
+mod guest_env_pin_tests {
+    use super::*;
+
+    fn projected_env_args(argv: &[String]) -> Option<Vec<String>> {
+        let separator = argv.iter().position(|arg| arg == "--")?;
+        let mut projected = Vec::new();
+        let mut index = 0;
+        while index < separator {
+            match argv[index].as_str() {
+                "--base-env" | "-e" | "--env" => {
+                    if index + 1 >= separator {
+                        return None;
+                    }
+                    projected.push(argv[index].clone());
+                    projected.push(argv[index + 1].clone());
+                    index += 2;
+                }
+                arg if arg.starts_with("--base-env=")
+                    || arg.starts_with("--env=")
+                    || (arg.starts_with("-e") && arg.len() > 2) =>
+                {
+                    projected.push(arg.to_string());
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+        }
+        Some(projected)
+    }
+
+    fn has_exact_pin(argv: &[String]) -> bool {
+        projected_env_args(argv)
+            == Some(PINNED_GUEST_ENV_ARGS.iter().map(|arg| (*arg).to_string()).collect())
+    }
+
+    fn actual_argv() -> Vec<String> {
+        hermit_argv(Path::new("/hermit"), true, true, Path::new("/guest"))
+    }
+
+    #[test]
+    fn every_arm_and_level_carries_the_exact_pin_before_the_guest() {
+        for e9 in [false, true] {
+            for verify in [false, true] {
+                let argv = hermit_argv(Path::new("/hermit"), e9, verify, Path::new("/guest"));
+                assert!(has_exact_pin(&argv), "missing pin in {argv:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mutated_value_is_refused() {
+        let mut argv = actual_argv();
+        *argv.iter_mut().find(|arg| arg.as_str() == "TZ=UTC").unwrap() = "TZ=localtime".into();
+        assert!(!has_exact_pin(&argv));
+    }
+
+    #[test]
+    fn an_omitted_entry_is_refused() {
+        let mut argv = actual_argv();
+        let index = argv.iter().position(|arg| arg == "LC_ALL=C").unwrap();
+        argv.drain(index - 1..=index);
+        assert!(!has_exact_pin(&argv));
+    }
+
+    #[test]
+    fn reordered_entries_are_refused() {
+        let mut argv = actual_argv();
+        let lc = argv.iter().position(|arg| arg == "LC_ALL=C").unwrap();
+        let tz = argv.iter().position(|arg| arg == "TZ=UTC").unwrap();
+        argv.swap(lc, tz);
+        assert!(!has_exact_pin(&argv));
+    }
 }
 
 /// L1/L2 measurement for one arm (golden or e9) of one guest.

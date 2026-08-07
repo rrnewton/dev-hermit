@@ -6,7 +6,7 @@ mirrors it). Per the task caveat, the owner places/edits canonical product-repo
 skills; this file is the proposed content plus its provenance.
 
 Companion (already landed in the parent): coordinator/orchestrator behavior lives
-in `dev-hermit/.claude/skills/validate-orchestrator-discipline.md` (core-memory
+in `dev-hermit/.claude/skills/validate-orchestrator-discipline/SKILL.md` (core-memory
 `validate-orchestrator-discipline`). **No symlink sharing** between the parent
 skill dir and Hermit's skill dir — the two cross-reference by explicit link only.
 
@@ -23,7 +23,7 @@ FALSE, it is marked so the skill does not re-assert a myth.
 > ones it does NOT. Read before asserting what `validate.sh` / the CI DAG runner
 > guarantees, before adding a gate, or before explaining a green/red result.
 > Coordinator/orchestrator behavior is a SEPARATE skill:
-> `dev-hermit/.claude/skills/validate-orchestrator-discipline.md` (no symlink
+> `dev-hermit/.claude/skills/validate-orchestrator-discipline/SKILL.md` (no symlink
 > share; explicit cross-link).
 
 ### 1. Commit anchoring — records the SHA; does NOT gate on a clean tree

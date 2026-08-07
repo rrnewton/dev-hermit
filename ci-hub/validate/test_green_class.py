@@ -67,6 +67,13 @@ class DefaultAndHard(unittest.TestCase):
         klass, _ = G.derive_class(row(validated_head_sha=A))
         self.assertEqual(klass, G.HARD)
 
+    def test_explicit_null_is_not_the_legacy_absent_default(self):
+        for field in ("validated_head_sha", "inherited_from", "green_class"):
+            with self.subTest(field=field):
+                klass, reason = G.derive_class(row(**{field: None}))
+                self.assertEqual(klass, G.REFUSED)
+                self.assertIn("explicitly null", reason)
+
     def test_hard_is_accepted_for_landing_by_default(self):
         v = G.classify_row(row(), PREDICATE)
         self.assertTrue(v["accepted_for_landing"])

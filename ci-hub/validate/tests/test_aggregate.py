@@ -16,9 +16,20 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import aggregate as agg
+
+
+class DiscoveryIsolationTest(unittest.TestCase):
+    def test_explicit_tmpdir_set_excludes_machine_global_tmp(self) -> None:
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            configured = os.pathsep.join((first, second, first))
+            with mock.patch.dict(
+                os.environ, {"CI_HUB_AGGREGATE_TMPDIRS": configured}
+            ):
+                self.assertEqual(agg.tmpdirs(), [first, second])
 
 
 def parse(body: str, name: str = "hermit-validate.test.log") -> dict:

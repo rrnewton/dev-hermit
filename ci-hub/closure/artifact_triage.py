@@ -45,7 +45,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-ROOT = Path("/home/newton/work/dev-hermit")
+ROOT = Path(__file__).resolve().parents[2]
 DB = Path.home() / ".tg" / "hermit.db"
 
 EPHEMERAL = ("/tmp/", "scratch/", "ignored/")

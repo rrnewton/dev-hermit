@@ -40,10 +40,11 @@ BROKEN_AGENT_STATES = frozenset(
 ACTIVE_AGENT_STATES = frozenset(("active", "busy", "in_progress", "running", "working"))
 DEFAULT_STUCK_AFTER_SECS = 60 * 60
 DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS = 10 * 60
-# Per-repo wall-clock budget for the auto-invoked PR-health gate. tick-hub's
-# SubprocessGateRunner hard-kills any gate at 30s, so the gate MUST resolve well
-# under that: two repos queried serially at 12s each is ~24s worst case. Staying
-# under the guillotine is what lets pr_status emit its own structured
+# Per-repo wall-clock budget for the auto-invoked PR-health gate, including its
+# bounded exact-job dereferences. tick-hub's SubprocessGateRunner hard-kills any
+# gate at 30s, so the gate MUST resolve well under that: two repos queried
+# serially at 12s each is ~24s worst case. Staying under the guillotine lets
+# pr_status emit its own structured
 # degraded/unavailable result (distinguishing "GitHub was slow" from "ci-hub is
 # broken") instead of the gate timing out into a bare, undifferentiated failure.
 DEFAULT_PR_GATE_TIMEOUT_SECS = float(
@@ -207,6 +208,8 @@ def pull_request_gate() -> int:
                 "pending": 0,
                 "green": 0,
                 "real_reds": 0,
+                "setup_only_no_result_checks": 0,
+                "prerequisite_no_result_checks": 0,
                 "outage": "no",
                 "degraded": "yes",
                 "summary": f"all repos unavailable ({reasons})",
@@ -215,8 +218,16 @@ def pull_request_gate() -> int:
         return 1
 
     counts = {
-        state: sum(getattr(status, state) for status in statuses)
-        for state in ("open", "green", "red", "pending", "real_reds")
+        state: sum(getattr(status, state, 0) for status in statuses)
+        for state in (
+            "open",
+            "green",
+            "red",
+            "pending",
+            "real_reds",
+            "setup_only_no_result_checks",
+            "prerequisite_no_result_checks",
+        )
     }
     outage = any(status.outage_suspected for status in statuses)
     unhealthy = counts["real_reds"] > 0 or outage
@@ -233,6 +244,8 @@ def pull_request_gate() -> int:
     summary = (
         f"open={counts['open']},red={counts['red']},"
         f"pending={counts['pending']},real={counts['real_reds']},"
+        f"setup_only_no_result={counts['setup_only_no_result_checks']},"
+        f"prerequisite_no_result={counts['prerequisite_no_result_checks']},"
         f"outage={'yes' if outage else 'no'}"
     )
     if degraded:
@@ -245,6 +258,8 @@ def pull_request_gate() -> int:
             "pending": counts["pending"],
             "green": counts["green"],
             "real_reds": counts["real_reds"],
+            "setup_only_no_result_checks": counts["setup_only_no_result_checks"],
+            "prerequisite_no_result_checks": counts["prerequisite_no_result_checks"],
             "outage": "yes" if outage else "no",
             "degraded": "yes" if degraded else "no",
             "summary": summary,
@@ -817,12 +832,11 @@ def _scan_fields(stdout: str) -> dict[str, str]:
 
 
 def memory_skill_sync_gate() -> int:
-    """Schedule the memory<->skill sync checks so being in-sync is enforced, not luck.
+    """Check authoritative repository skills; local memories are advisory mirrors.
 
-    Runs the authoritative structural linter (lint-memory-skill-sync.rs) AND the
-    report-only contradiction scanner (memory-skill-contradiction-scan.rs), and
-    emits combined tick-hub fields. Fires (non-zero) on any structural problem or
-    contradiction. Report-only: neither tool edits memories or skills.
+    The structural linter validates versioned skills. The scanner gates only
+    contradictions in those skills; local-memory absence or drift never makes
+    machine-local state authoritative. Both tools are report-only.
     """
     lint_rc, lint_out, lint_err = _run_tool([str(MEMORY_SKILL_LINTER), "--quiet"])
     scan_rc, scan_out, scan_err = _run_tool([str(MEMORY_SKILL_SCANNER), "--gate"])
@@ -851,7 +865,6 @@ def memory_skill_sync_gate() -> int:
 
     scan = _scan_fields(scan_out)
     contradictions = int(scan.get("contradictions", "0") or "0")
-    scan_drift = int(scan.get("drift", "0") or "0")
 
     healthy = lint_rc == 0 and scan_rc == 0 and problems == 0 and contradictions == 0
     if healthy:
@@ -864,11 +877,9 @@ def memory_skill_sync_gate() -> int:
         state = "drift"
 
     summary = (
-        f"structural problems={problems}, contradictions={contradictions}, "
-        f"scanner-drift={scan_drift}; "
-        "run ./scripts/memory-skill-contradiction-scan.rs for the per-file proposal "
-        "(REPORT-ONLY: coordinator applies; sessionForget is 1-based positional, "
-        "delete DESCENDING)"
+        f"repository structural problems={problems}, "
+        f"repository contradictions={contradictions}; "
+        "versioned skills are authoritative and optional local-memory drift is advisory"
     )
 
     # Build a single-line `detail` proposal from the tools' human output. It must
