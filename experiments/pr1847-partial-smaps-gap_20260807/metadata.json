@@ -1,0 +1,16 @@
+{
+  "task": "pr1847-did-not-deliver-the-predicted-baseline",
+  "agent": "hermit-w2", "date": "2026-08-07", "host": "devbig014",
+  "fix_build": "077833ad65955b30309d40ac3105a135779c0dce (PR #1847 head, OPEN draft, not on main)",
+  "prefix_build": "86842f741",
+  "predicted_vs_actual": {
+    "notsc_stack_matching": {"predicted": "410/410", "actual": "410/410", "gap": 0},
+    "maps_reproducer_differing": {"predicted": "0/56", "actual": "0/56", "gap": 0}
+  },
+  "real_finding": "fix is PARTIAL: /proc/self/smaps is not covered",
+  "surfaces_post_fix": {"maps": "0/56", "smaps": "14/1456", "numa_maps": "0/55"},
+  "consequence": "smaps-reading guest on the FIX build: liteinst 402/417 matching, first differing ordinal 402, contiguous tail; ptrace 51/51",
+  "cause": "detcore/src/procfs.rs:592-594 needs_maps_inodes() == (kind == ProcfsKind::Maps); dispatch :668 Smaps => sanitize_smaps(&contents) without maps_inodes",
+  "untested": ["/proc/<pid>/map_files/"],
+  "incidental_defect": "liteinst multi-process shell guests fail: ENOTSUPP 'notifier did not acknowledge terminal cleanup for LiteInst tracee 3'"
+}
