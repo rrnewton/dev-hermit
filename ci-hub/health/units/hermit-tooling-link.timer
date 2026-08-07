@@ -1,0 +1,20 @@
+# Cadence rationale: the job costs wall=0.25s / cpu=0.23s / 7.7MB steady-state
+# (measured 2026-08-07, 3 managed paths), so a 15-minute period is ~0.03% of one
+# core. It is deliberately SLOWER than the 5-minute health tick: this publishes
+# landed tooling, which changes only when parent main advances, so a tighter
+# loop would buy nothing.
+[Unit]
+Description=Periodically refresh the landed parent-tooling link
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/main-tooling-link.rs
+
+[Timer]
+# Run shortly after boot so a restart republishes links without waiting a period.
+OnBootSec=3min
+OnUnitActiveSec=15min
+# Catch up one missed run after downtime instead of silently skipping.
+Persistent=true
+AccuracySec=30s
+Unit=hermit-tooling-link.service
+
+[Install]
+WantedBy=timers.target
