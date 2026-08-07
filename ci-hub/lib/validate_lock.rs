@@ -2300,24 +2300,57 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, target: &str) -> Child
                 "validate-lock: supervisor received signal {signal} while running {target}; \
                  terminating the payload subtree and censusing it before releasing the box."
             );
-            terminate_child_group(child, target);
+            // Name the SIGNAL as the cause. Reusing the deadline phrase here is
+            // what made the durable log contradict itself mid-record.
+            terminate_child_group(child, target, &signalled_cause(signal));
             return ChildOutcome::Signalled { pgid, signal };
         }
         if Instant::now() >= deadline {
             let pgid = child.id();
-            terminate_child_group(child, target);
+            terminate_child_group(child, target, TERMINATION_CAUSE_DEADLINE);
             return ChildOutcome::TimedOut { pgid };
         }
         thread::sleep(Duration::from_millis(CHILD_POLL_MILLIS));
     }
 }
 
+/// The reason the payload subtree is being torn down, so the durable log names
+/// the cause it actually observed.
+///
+/// This function is shared by the deadline path and the supervisor-signal path,
+/// and it used to hardcode "child-deadline reached" for both. A postmortem
+/// reading that line after an ordinary `systemctl stop` (KillMode=control-group,
+/// SIGTERM to the supervisor) concluded the payload had overrun its deadline when
+/// nothing of the kind happened -- the surrounding lines said "received signal
+/// 15" and "supervisor was signalled", so the record contradicted itself in the
+/// middle. The cause is now passed in rather than assumed.
+///
+/// `DEADLINE`'s text is deliberately BYTE-IDENTICAL to the old message, so any
+/// log reader keying on that phrase keeps working for the case where it was
+/// always true.
+const TERMINATION_CAUSE_DEADLINE: &str = "child-deadline reached";
+
 /// SIGTERM then (after a grace period) SIGKILL the child's process group and reap
 /// the direct child. `signal_group` is reused from landing_lock.
-fn terminate_child_group(child: &mut Child, target: &str) {
+///
+/// `cause` names why the teardown is happening; it does NOT affect what the
+/// teardown does. Exit codes are unchanged and are decided by the caller's
+/// `ChildOutcome` (deadline = 124, signal = 128 + signal).
+/// The teardown notice, as a pure function so both phrasings are testable
+/// without spawning or signalling anything.
+fn termination_notice(cause: &str, target: &str, group: &str) -> String {
+    format!("validate-lock: {cause} for {target}; SIGTERM process group {group}")
+}
+
+/// The cause phrase for a supervisor that was signalled, naming the signal.
+fn signalled_cause(signal: i32) -> String {
+    format!("supervisor signalled ({signal})")
+}
+
+fn terminate_child_group(child: &mut Child, target: &str, cause: &str) {
     let pgid = child.id();
     let group = format!("-{pgid}");
-    eprintln!("validate-lock: child-deadline reached for {target}; SIGTERM process group {group}");
+    eprintln!("{}", termination_notice(cause, target, &group));
     signal_group(libc::SIGTERM, pgid);
     let grace = Instant::now() + Duration::from_secs(CHILD_TERM_GRACE_SECONDS);
     while Instant::now() < grace {
@@ -2344,6 +2377,58 @@ fn terminate_child_group(child: &mut Child, target: &str) {
 
 #[cfg(test)]
 mod tests {
+
+    // ---------------------------------------------------------------------
+    // Teardown cause attribution. The bug was NOT that the log was missing --
+    // it was that the log CONFIDENTLY NAMED THE WRONG CAUSE, so a postmortem
+    // read a deadline breach off a record whose neighbouring lines said the
+    // supervisor had been signalled. Both phrasings are asserted, because a
+    // fix that made every line say "terminated" would erase the deadline
+    // signal instead of correcting the signal one.
+    #[test]
+    fn signal_teardown_does_not_claim_a_deadline() {
+        let notice = termination_notice(&signalled_cause(15), "4c70658e", "-3475200");
+        assert!(
+            notice.contains("supervisor signalled (15)"),
+            "signal path must name the signal: {notice}"
+        );
+        assert!(
+            !notice.contains("deadline"),
+            "signal path must NOT claim a deadline: {notice}"
+        );
+    }
+
+    #[test]
+    fn deadline_teardown_still_says_deadline() {
+        let notice = termination_notice(TERMINATION_CAUSE_DEADLINE, "4c70658e", "-3475200");
+        assert!(notice.contains("child-deadline reached"), "{notice}");
+        assert!(!notice.contains("signalled"), "{notice}");
+    }
+
+    #[test]
+    fn deadline_wording_is_byte_identical_to_the_historical_message() {
+        // Log readers key on this exact phrase for the case where it was always
+        // true; changing it would break them while fixing nothing.
+        assert_eq!(
+            termination_notice(TERMINATION_CAUSE_DEADLINE, "abc123", "-42"),
+            "validate-lock: child-deadline reached for abc123; SIGTERM process group -42"
+        );
+    }
+
+    #[test]
+    fn the_two_causes_are_distinguishable() {
+        // The whole point: a reader must be able to tell them apart.
+        let a = termination_notice(TERMINATION_CAUSE_DEADLINE, "t", "-1");
+        let b = termination_notice(&signalled_cause(9), "t", "-1");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn the_signal_number_is_carried_not_generic() {
+        assert!(signalled_cause(9).contains('9'));
+        assert!(signalled_cause(15).contains("15"));
+        assert_ne!(signalled_cause(9), signalled_cause(15));
+    }
     use super::*;
     use crate::landing_lock::{exact_process_liveness, signal_exact_process, ProcessIdentity};
     use std::os::unix::process::ExitStatusExt;
