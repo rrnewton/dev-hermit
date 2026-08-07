@@ -62,7 +62,16 @@ BITWISE_CAPABLE = {"canonical"}          # allowlist: unknown policy => no bitwi
 #   counter            a syscall counter compared across >=2 reps (weakest)
 #   gap                no positive claim
 KNOWN_TIERS = {"bitwise", "stripped", "stripped-uncounted", "guest", "counter", "gap"}
-COUNTLESS_TIERS = {"guest", "counter", "stripped-uncounted", "gap"}
+COUNTLESS_TIERS = {"guest", "counter", "stripped-uncounted"}
+# `gap` means "no positive claim". A row cannot simultaneously be a gap and a
+# determinism positive; accepting that combination let a cell assert green while
+# declaring it had nothing to assert.
+NON_POSITIVE_TIERS = {"gap"}
+# Comparators any tier may name. Previously only `bitwise` had an allowlist, so a
+# stripped-tier row could cite any string at all and still pass -- the same
+# unknown-policy hole, one rung down.
+KNOWN_COMPARATORS = {"stripped", "canonical", "syscall-count-across-reps",
+                     "unavailable:no-verify-json"}
 
 
 def parse_counts(raw):
@@ -108,6 +117,12 @@ for i, r in enumerate(rows, start=2):
                "that earned it (historical rows carry tier=stripped-uncounted)")
     elif tier not in KNOWN_TIERS:
         reject(f"unknown tier {tier!r} (known: {sorted(KNOWN_TIERS)})")
+    elif tier in NON_POSITIVE_TIERS:
+        reject(f"tier={tier} declares no positive claim, so deterministic=1 "
+               f"contradicts it")
+    elif compare not in KNOWN_COMPARATORS:
+        reject(f"comparator {compare!r} is not a known comparison policy "
+               f"(known: {sorted(KNOWN_COMPARATORS)})")
     elif tier == "bitwise":
         if compare not in BITWISE_CAPABLE:
             reject(f"comparator {compare!r} is not bitwise-capable "

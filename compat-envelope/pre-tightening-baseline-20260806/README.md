@@ -19,6 +19,13 @@
 
 ---
 
+> **Independently replicated.** A second agent swept the same matrix
+> concurrently at hermit `1fadc037` (one commit later) and at a different
+> concurrency width; the two runs agree within **±1 cell of 205 per backend**.
+> That bounds the measurement noise, so a before/after delta of |Δ| ≤ 1 per
+> backend is not evidence of anything. See
+> [`cross-check-w14.md`](cross-check-w14.md).
+
 ## 1. What this is, in one paragraph
 
 A single-sweep, single-host, single-SHA measurement of the full compat-envelope
