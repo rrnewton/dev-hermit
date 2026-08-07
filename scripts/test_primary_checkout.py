@@ -42,6 +42,112 @@ def git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _runner_like_env(with_identity: bool) -> dict[str, str]:
+    """A hosted runner's git identity conditions, reproduced ON a developer box.
+
+    Clearing config is NOT enough, and assuming it is, is the trap. With nothing
+    configured git still GUESSES `user@hostname`; that guess SUCCEEDS on a dev
+    box and is what a hosted runner rejects. `user.useConfigOnly` forbids the
+    guess, which is what actually reproduces the runner locally.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in _GIT_IDENTITY and key != "EMAIL"
+    }
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "user.useConfigOnly"
+    env["GIT_CONFIG_VALUE_0"] = "true"
+    if with_identity:
+        env.update(_GIT_IDENTITY)
+    return env
+
+
+class GitFixtureIdentityControlTests(unittest.TestCase):
+    """Prove `_GIT_IDENTITY` is load-bearing rather than decorative.
+
+    None of the suites below can show this. On a developer box git auto-detects
+    an identity, so deleting `_GIT_IDENTITY` outright would leave every one of
+    them GREEN locally and take the parent-tooling shard red again on the next
+    fresh runner -- which is exactly how this broke: 111 tests, 6 errors, all
+    `git commit` -> exit 128, while every local run said OK.
+
+    So this is a two-sided bracket. The negative case proves the identity really
+    is absent before the positive case takes credit for supplying it.
+    """
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp.name) / "repo"
+        self.repo.mkdir()
+        subprocess.run(
+            ("git", "init", "-q", "--initial-branch=main", str(self.repo)),
+            check=True,
+            capture_output=True,
+        )
+        (self.repo / "probe.txt").write_text("x\n")
+        subprocess.run(
+            ("git", "-C", str(self.repo), "add", "probe.txt"),
+            check=True,
+            capture_output=True,
+            env=_runner_like_env(with_identity=True),
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _commit(self, *, with_identity: bool) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ("git", "-C", str(self.repo), "commit", "-m", "probe"),
+            text=True,
+            capture_output=True,
+            env=_runner_like_env(with_identity=with_identity),
+        )
+
+    def test_without_the_fixture_identity_a_commit_fails_as_it_does_on_ci(self):
+        """NEGATIVE CONTROL. If this ever passes, the identity has stopped being
+        load-bearing and every commit in this file is silently relying on
+        ambient host config again -- the original fake-green."""
+        result = self._commit(with_identity=False)
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            "a commit succeeded with no fixture identity, so ambient host "
+            "config leaked in and the CI condition is no longer reproduced",
+        )
+        stderr = (result.stderr or "").lower()
+        self.assertTrue(
+            "tell me who you are" in stderr or "auto-detect" in stderr,
+            f"expected git's missing-identity refusal, got: {result.stderr!r}",
+        )
+
+    def test_the_git_helper_supplies_the_identity_under_runner_conditions(self):
+        """POSITIVE, through the REAL `git()` helper.
+
+        Deliberately not a hand-built env: this is what pins the WIRING. The
+        process environment is replaced with the runner-like one the negative
+        case just proved is bare, so the commit can only succeed if `git()`
+        itself still injects `_GIT_IDENTITY`. Drop that `env=` and this fails.
+        """
+        bare = _runner_like_env(with_identity=False)
+        with unittest.mock.patch.dict(os.environ, bare, clear=True):
+            git(self.repo, "commit", "-m", "probe")
+            expected = (
+                f"{_GIT_IDENTITY['GIT_AUTHOR_NAME']} "
+                f"<{_GIT_IDENTITY['GIT_AUTHOR_EMAIL']}>"
+            )
+            # Author AND committer: git sources them separately, so asserting
+            # one would leave the other free to come from the host.
+            for fmt in ("%an <%ae>", "%cn <%ce>"):
+                self.assertEqual(
+                    git(self.repo, "log", "-1", f"--format={fmt}"),
+                    expected,
+                    f"{fmt} was not the fixture identity",
+                )
+
+
 class _ParentWorkspaceFixture(unittest.TestCase):
     """A miniature dev-hermit parent: three product gitlinks, one Reverie pin.
 
