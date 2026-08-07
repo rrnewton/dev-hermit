@@ -1,0 +1,15 @@
+{
+  "question": "Why does the threaded guest score 1/38 on cross-backend heap parity while heap_exercising scores 6/6, and is threaded heap SELF-determinism actually failing?",
+  "hermit_sha": "8eb032382922aedaf71c541a00116c57f64baac5",
+  "hermit_branch": "w15/normalize-detlog-memory-domain",
+  "hermit_base": "4be8edcd2f947746b5d9d30c81a35202f36a46d4",
+  "reverie_pin": "038e993926e45514264d30367b70df9b6ac3b9b8",
+  "instrument_note": "Requires the size= domain field from hermit PR #1875; without it DOMAIN and CONTENT divergence cannot be separated.",
+  "host": "devbig, x86_64, Linux",
+  "toolchain": "cc -O2 -g -std=c11 -Wall -Wextra -Werror -pthread; hermit debug build",
+  "command": "hermit --log=info --backend=<ptrace|kvm> run --strict --detlog-heap [--detlog-stack] -- <guest>",
+  "relaxations": "none; --strict active",
+  "runs_per_cell": 2,
+  "prior_artifact": "ignored/self-determinism-multiguest-20260807/README.md at hermit 590fcc9e",
+  "seed": "n/a (no randomized input)"
+}

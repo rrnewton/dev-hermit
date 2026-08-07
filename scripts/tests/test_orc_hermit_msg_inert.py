@@ -186,6 +186,61 @@ class TestInertDeliveryNegativeBracket(InertPaneTestCase):
             [record["status"] for record in self.log_records()], ["failed"]
         )
 
+    def test_a_draft_orc_already_consumed_is_a_delivery_not_a_failure(self):
+        """The twin of the case above, and the one that used to double-send.
+
+        Both panes present an EMPTY composer after typing. They differ only in
+        whether the message is findable in the transcript. Reading the empty box
+        alone as non-delivery is what made the 2026-08-07T03:00Z hourly wake
+        report `relay-rc=1` and release its hour: the caller then treats the
+        hour as undelivered and a later run sends the whole status a second
+        time. An empty composer is ambiguous; the transcript disambiguates it.
+        """
+        message = "this was taken before the relay pressed Enter"
+        seed = self.tmp / "seed.txt"
+        seed.write_text(message, encoding="utf-8")
+        self.start_pane("--ignore-input", "--seed-transcript", str(seed))
+
+        result = self.relay(message)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Enter was NOT pressed, so the fake pane recorded no submission -- the
+        # relay must not "deliver" something Orc already holds.
+        self.assertEqual(self.delivered(), [])
+        records = self.log_records()
+        self.assertEqual([record["status"] for record in records], ["sent"])
+        self.assertTrue(records[0]["echo"])
+        # NOTE ON WHAT THIS DOES AND DOES NOT COVER. Here the consumed message
+        # is still on the visible screen, so the PRE-EXISTING "probe visible"
+        # branch already returns success -- this test pins that behaviour so it
+        # cannot regress, but it does NOT exercise the scrollback branch added
+        # for the scrolled-off case. That branch is isolated in
+        # test_orc_hermit_msg.py::VerifyInjectedConsumptionTests, because
+        # driving a real pane into "consumed AND scrolled out of view" through
+        # tmux history is timing-dependent and would make this suite flaky.
+        self.assertIn(records[0]["ack"], ("composer-drained+echo", "consumed-before-submit+echo"))
+
+    def test_the_two_empty_composer_outcomes_are_not_conflated(self):
+        """Same empty box, opposite verdicts, decided only by the transcript."""
+        message = "identical text, different pane state"
+        seed = self.tmp / "seed2.txt"
+        seed.write_text(message, encoding="utf-8")
+
+        # Consumed: transcript carries it -> success, no submission.
+        self.start_pane("--ignore-input", "--seed-transcript", str(seed))
+        consumed = self.relay(message)
+        self.assertEqual(consumed.returncode, 0, consumed.stderr)
+        self.assertEqual(self.delivered(), [])
+
+        # Not consumed: nothing anywhere -> still a hard failure. The new path
+        # must not have turned a genuine non-delivery into a false success.
+        self.tearDown()
+        self.setUp()
+        self.start_pane("--ignore-input")
+        lost = self.relay(message)
+        self.assertNotEqual(lost.returncode, 0)
+        self.assertEqual(self.delivered(), [])
+        self.assertEqual([r["status"] for r in self.log_records()], ["failed"])
+
     def test_an_occupied_composer_is_refused_without_delivering(self):
         self.start_pane()
         subprocess.run(

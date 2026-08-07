@@ -1,0 +1,16 @@
+rung	backend	verdict	Y_depth	Z_total	note
+true	ptrace(golden self-check)	PASS	118	118	double-run identical
+true	sabre	DIVERGE	0	118	    - ptrace   INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0     + sabre    INFO detcore: DETLOG USER RAND: seedin
+true	dbi	DIVERGE	3	118	    - ptrace    COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_0
+echo	ptrace(golden self-check)	PASS	309	309	double-run identical
+echo	sabre	DIVERGE	0	309	    - ptrace   INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0     + sabre    INFO detcore: DETLOG USER RAND: seedin
+echo	dbi	DIVERGE	3	309	    - ptrace    COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_0
+coreutil-cat	ptrace(golden self-check)	PASS	326	326	double-run identical
+coreutil-cat	sabre	DIVERGE	0	326	    - ptrace   INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0     + sabre    INFO detcore: DETLOG USER RAND: seedin
+coreutil-cat	dbi	DIVERGE	3	326	    - ptrace    COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_0
+coreutil-wc	ptrace(golden self-check)	PASS	316	316	double-run identical
+coreutil-wc	sabre	DIVERGE	0	316	    - ptrace   INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0     + sabre    INFO detcore: DETLOG USER RAND: seedin
+coreutil-wc	dbi	DIVERGE	3	316	    - ptrace    COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_0
+fork-exec-pipeline	ptrace(golden self-check)	PASS	603	603	double-run identical
+fork-exec-pipeline	sabre	DIVERGE	0	603	    - ptrace   INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0     + sabre    INFO detcore: DETLOG USER RAND: seedin
+fork-exec-pipeline	dbi	DIVERGE	3	603	    - ptrace    COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_0

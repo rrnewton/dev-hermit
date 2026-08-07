@@ -196,9 +196,10 @@ def fetch_verdict(failures: list[FetchFailure]) -> tuple[int, str, str]:
 
 # --- Green-time integral (owner headline metric) -----------------------------
 # Instantaneous state answers "is main green right NOW?"; the owner is explicit
-# that what we actually optimize is the INTEGRAL — "what fraction of main
-# wall-clock time has authoritative CI been green?" A check that measures only
-# the point sample cannot tell us whether we are improving. That integral is
+# that what we actually optimize is the INTEGRAL — "what fraction of conclusive
+# authoritative-run wall-clock has been green?" A check that measures only the
+# point sample cannot tell us whether we are improving. NO-RESULT and gap time
+# travel beside the figure but do not enter its denominator. That integral is
 # already derived (never estimated) by ci-hub/history/query.py from the LOCAL run
 # store (no GitHub call, so it is cheap enough for every tick and immune to the
 # gh-fetch timeout path above). We surface it here so the AUTO-INVOKED tick
@@ -219,7 +220,8 @@ def _load_history_query():
     return mod
 
 
-def green_time_field(repo: str, since: str | None = None) -> str:
+def green_time_field(repo: str, since: str | None = None, *,
+                     persist: bool = False) -> str:
     """Compact 'green-time' string for the tick / report. Never raises.
 
     Degrades to a STATED 'UNAVAILABLE (<why>)' — a thin/absent history store or an
@@ -231,14 +233,32 @@ def green_time_field(repo: str, since: str | None = None) -> str:
     except Exception as exc:  # history module unavailable
         return f"UNAVAILABLE (history query import failed: {exc})"
     try:
-        res = q.green_time(q.parent_root(), repo, since, None)
+        parent = q.parent_root()
+        res = q.green_time(parent, repo, since, None)
     except Exception as exc:  # store missing/corrupt/unreadable
         return f"UNAVAILABLE (green_time failed: {exc})"
+    log_note = ""
+    if persist:
+        try:
+            log_path = q.append_green_time_log(parent, res, None)
+            log_note = f"; log={log_path}"
+        except Exception as exc:
+            # The metric remains usable, but a missing durable observation must
+            # be visible in the captured tick field rather than silently lost.
+            log_note = f"; log=ERROR({exc})"
     if res.get("green_pct") is None:
-        return f"UNAVAILABLE ({res.get('note', 'no data')})"
-    return (f"{res['green_pct']}% green over {res['total_hours']}h "
-            f"(green {res['green_hours']}h, n={res['samples']} authoritative "
-            f"runs, current={res['current_state']})")
+        return (f"UNAVAILABLE ({res.get('note', 'no data')}; window="
+                f"{res.get('window_start', 'n/a')}.."
+                f"{res.get('window_end_utc', 'n/a')}; denominator="
+                f"{res.get('authoritative_run_hours', 0)} "
+                f"authoritative-run h{log_note})")
+    return (f"{res['green_pct']}% green = {res['green_hours']} green h / "
+            f"{res['authoritative_run_hours']} authoritative-run h; window "
+            f"{res['window_start']}..{res['window_end_utc']} "
+            f"({res['window_hours']} wall h); excluded NO-RESULT "
+            f"{res['no_result_hours']}h + gap {res['gap_hours']}h; "
+            f"n={res['samples']} commits; current={res['current_state']}"
+            f"{log_note}")
 
 
 def _now() -> datetime:
@@ -878,9 +898,9 @@ def report_repo(repo: str, gh_cmd: str, limit: int, sample: int,
                   f"(id {g.green_id})")
 
     # (8) GREEN-TIME INTEGRAL — the headline metric: not "is main green now?" but
-    # "what fraction of main wall-clock time has it been green?". Derived from the
-    # local history store (ci-hub/history), so it reflects ingest freshness, not a
-    # live GitHub read.
+    # "what fraction of conclusive authoritative-run wall-clock has it been
+    # green?". Derived from the local history store (ci-hub/history), so it
+    # reflects ingest freshness, not a live GitHub read.
     print(f"  main green-time (integral, authoritative workflow, from local "
           f"history store): {green_time_field(repo)}")
 
@@ -968,7 +988,8 @@ def _field(value: object) -> str:
 
 def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None,
                  sink: list[FetchFailure] | None = None,
-                 per_call_timeout: float = DEFAULT_GH_CALL_TIMEOUT
+                 per_call_timeout: float = DEFAULT_GH_CALL_TIMEOUT,
+                 persist_green_time: bool = False,
                  ) -> tuple[int, dict[str, object]]:
     """Return (exit_code, fields) for the ops tick. Cheap: no jobs-API sampling.
 
@@ -979,6 +1000,10 @@ def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
     constraint. Every emitted number carries its basis in `summary`.
     """
     now = now or _now()
+    # Derives from the local history store, so record it even when the live
+    # GitHub queue query below is unavailable. Otherwise an egress outage would
+    # create a hole in the very trend meant to expose health over time.
+    green_time = green_time_field(repo, persist=persist_green_time)
     runs = fetch_runs(repo, gh_cmd, limit, sink=sink, timeout=per_call_timeout)
     # Same admin gate as the human report: only fetch the runner inventory where
     # we administer runners, so a non-administered repo never emits a false 403.
@@ -987,7 +1012,7 @@ def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
     rh = analyze_runners(runner_api)
     if runs is None:
         return 1, {"state": "unknown", "summary": "gh-run-list-failed",
-                   "repo": repo}
+                   "repo": repo, "green_time": green_time}
 
     queues = analyze_queue(runs, now=now)
     greens = analyze_last_green(runs)
@@ -1040,7 +1065,7 @@ def compute_gate(repo: str, gh_cmd: str, limit: int, now: datetime | None = None
         # Headline INTEGRAL, reported alongside the instantaneous queue state so a
         # tick shows both "green right now?" and "green over time?". Derived from
         # the local history store; does NOT affect the gate exit code.
-        "green_time": green_time_field(repo),
+        "green_time": green_time,
         "summary": (f"depth<= {max_depth}, age<= {humanize_secs(max_age)}, "
                     f"reasons=[{'; '.join(reasons) or 'none'}] "
                     f"(basis: last {len(runs)} runs; queue age=now-createdAt)"),
@@ -1055,7 +1080,8 @@ def gate(repos: list[str], gh_cmd: str, limit: int,
     failures: list[FetchFailure] = []
     for repo in repos:
         code, fields = compute_gate(repo, gh_cmd, limit, sink=failures,
-                                    per_call_timeout=per_call_timeout)
+                                    per_call_timeout=per_call_timeout,
+                                    persist_green_time=True)
         rc = rc or code
         if len(repos) > 1:
             agg[repo] = fields["state"]

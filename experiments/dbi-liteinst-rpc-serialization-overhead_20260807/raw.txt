@@ -1,0 +1,33 @@
+Running as unit: run-p1034762-i79900765.scope; invocation ID: dbe1be1157f143b4aaef7e7c56709a89
+[run-on-k-free-cores] K=1 confined to cores [1] (least-busy free; affinity inherits to the whole tree)
+meta,hermit_sha,75506005d873a76f62be00b1d82696188651047a
+meta,reverie_pinned_sha,0ae0c01b5e4c9fbf85c97adc66c2740f280727df
+meta,reverie_live_main_sha,6144323c5dab8b521278fce206f8774360c2b05f
+meta,request_type,(detcore_model::time::DetTime, detcore_model::futex::MmId, detcore::tool_global::GlobalRequest)
+meta,response_type,(core::option::Option<detcore_model::time::LogicalTime>, detcore::tool_global::GlobalResponse)
+meta,request_bytes,74
+meta,response_bytes,13
+meta,warmups,100000
+meta,iterations_per_rep,1000000
+meta,reps,9
+sample,direct_clone,13.432043
+sample,bincode_roundtrip,244.590152
+sample,bincode_roundtrip,240.446979
+sample,direct_clone,13.093555
+sample,direct_clone,13.435317
+sample,bincode_roundtrip,239.132976
+sample,bincode_roundtrip,240.717205
+sample,direct_clone,13.852454
+sample,direct_clone,13.644482
+sample,bincode_roundtrip,239.652356
+sample,bincode_roundtrip,237.108476
+sample,direct_clone,13.084280
+sample,direct_clone,13.097039
+sample,bincode_roundtrip,237.546914
+sample,bincode_roundtrip,239.158084
+sample,direct_clone,13.252993
+sample,direct_clone,13.415989
+sample,bincode_roundtrip,240.317204
+summary,direct_clone,n=9,median_ns=13.415989,p25_ns=13.097039,p75_ns=13.435317,min_ns=13.084280,max_ns=13.852454
+summary,bincode_roundtrip,n=9,median_ns=239.652356,p25_ns=239.132976,p75_ns=240.446979,min_ns=237.108476,max_ns=244.590152
+summary,paired_delta,n=9,median_ns=226.007874,p25_ns=225.697659,p75_ns=226.901215

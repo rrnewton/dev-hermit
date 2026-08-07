@@ -8,7 +8,7 @@ CLEAN is the only non-alarm; 29/30 raises P0). What nothing watched was the case
 where **no result arrives at all**. That is not hypothetical:
 
 * The only live schedule was a USER CRONTAB (`30 4 * * *`). On 2026-08-06
-  `crontab -l` reports "no crontab for newton" — the schedule is GONE. It lived
+  `crontab -l` reports no crontab for the coordinator user — the schedule is GONE. It lived
   in unversioned, machine-local state, so it could vanish with no commit, no
   review, and no alarm. It did, and nothing noticed for two nights.
 * The GitHub `super` lane (`validation-levels.yml`, weekly) fired exactly twice

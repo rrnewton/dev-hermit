@@ -1,0 +1,147 @@
+{
+  "dbi": {
+    "heap": {
+      "CAND_NOT_ENGAGED": 1,
+      "CAND_NO_RESULT": 129,
+      "CAND_RUN_FAIL": 21,
+      "DIVERGE": 1,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 4,
+      "REF_CONTROL_NO_RESULT": 4,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 15
+    },
+    "info_all_on": {
+      "CAND_NOT_ENGAGED": 1,
+      "CAND_RUN_FAIL": 15,
+      "DIVERGE": 130,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 21,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 8
+    },
+    "stack": {
+      "CAND_NOT_ENGAGED": 1,
+      "CAND_NO_RESULT": 1,
+      "CAND_RUN_FAIL": 17,
+      "DIVERGE": 133,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 14,
+      "REF_CONTROL_NO_RESULT": 1,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 8
+    }
+  },
+  "e9patch": {
+    "heap": {
+      "CAND_NOT_ENGAGED": 165,
+      "CAND_RUN_FAIL": 1,
+      "DIVERGE": 1,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 4,
+      "REF_CONTROL_NO_RESULT": 4,
+      "REF_RUN_FAIL": 3
+    },
+    "info_all_on": {
+      "CAND_NOT_ENGAGED": 149,
+      "CAND_RUN_FAIL": 1,
+      "DIVERGE": 4,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 21,
+      "REF_RUN_FAIL": 3
+    },
+    "stack": {
+      "CAND_NOT_ENGAGED": 156,
+      "CAND_RUN_FAIL": 1,
+      "DIVERGE": 3,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 14,
+      "REF_CONTROL_NO_RESULT": 1,
+      "REF_RUN_FAIL": 3
+    }
+  },
+  "kvm": {
+    "heap": {
+      "CAND_NO_RESULT": 116,
+      "CAND_RUN_FAIL": 45,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 4,
+      "REF_CONTROL_NO_RESULT": 4,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 6
+    },
+    "info_all_on": {
+      "CAND_RUN_FAIL": 39,
+      "DIVERGE": 111,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 21,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 4
+    },
+    "stack": {
+      "CAND_NO_RESULT": 115,
+      "CAND_RUN_FAIL": 41,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 14,
+      "REF_CONTROL_NO_RESULT": 1,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 4
+    }
+  },
+  "liteinst": {
+    "heap": {
+      "CAND_RUN_FAIL": 54,
+      "DIVERGE": 111,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 4,
+      "REF_CONTROL_NO_RESULT": 4,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 2
+    },
+    "info_all_on": {
+      "CAND_RUN_FAIL": 47,
+      "DIVERGE": 106,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 21,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 1
+    },
+    "stack": {
+      "CAND_RUN_FAIL": 46,
+      "DIVERGE": 112,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 14,
+      "REF_CONTROL_NO_RESULT": 1,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 2
+    }
+  },
+  "sabre": {
+    "heap": {
+      "CAND_RUN_FAIL": 21,
+      "DIVERGE": 132,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 4,
+      "REF_CONTROL_NO_RESULT": 4,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 14
+    },
+    "info_all_on": {
+      "CAND_RUN_FAIL": 21,
+      "DIVERGE": 127,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 21,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 6
+    },
+    "stack": {
+      "CAND_RUN_FAIL": 21,
+      "DIVERGE": 132,
+      "FIXTURE_MISSING": 1,
+      "REF_CONTROL_DIVERGE": 14,
+      "REF_CONTROL_NO_RESULT": 1,
+      "REF_RUN_FAIL": 3,
+      "STDOUT_DIVERGE": 7
+    }
+  }
+}

@@ -69,7 +69,7 @@ class StartUnitEnvTest(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
         self.lu = self.root / "ignored/lu-parity/usr/lib64"
-        self.base_env = {"HOME": "/home/agent", "PATH": "/usr/bin"}
+        self.base_env = {"HOME": "/home/test", "PATH": "/usr/bin"}
 
     def plant_libunwind(self, *, shared_ptrace: bool = True) -> None:
         """Plant the in-repo libunwind tree.
@@ -197,7 +197,7 @@ class StartUnitEnvTest(unittest.TestCase):
     def test_home_and_path_still_propagate(self) -> None:
         self.plant_libunwind()
         env = setenvs(build(self.root, dict(self.base_env)))
-        self.assertEqual(env["HOME"], "/home/agent")
+        self.assertEqual(env["HOME"], "/home/test")
         self.assertEqual(env["PATH"], "/usr/bin")
         self.assertEqual(env["CI_HUB_VALIDATE_PRODUCER"], "systemd-user-v1")
 
