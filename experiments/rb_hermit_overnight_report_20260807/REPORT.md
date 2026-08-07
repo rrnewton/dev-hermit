@@ -171,10 +171,20 @@ build four times from one prepared tree in four different root paths, `native N1
 per-package control, `hermit A vs B` as the arm. Each package is its own control, so it is
 meaningful at small M.
 
-> **34 of 34 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — out of **36
-> attempted**, with all 36 native controls firing. **[C]**
+> **52 of 52 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — out of **58
+> attempted**, with all 58 native controls firing. **[C]**
+> *Snapshot; seven slower packages were still building at the stop. Regenerate from `results.csv`
+> via `regen_readme.py` rather than quoting these as final.*
 > Wrap: `hermit run --strict --no-rcb-time`. Every "hermit identical" cell has a native control
 > that diverged, so none is vacuous.
+
+**Failure shape across everything attempted: exactly ONE unexplained Hermit-side failure.**
+`ack-grep` builds natively but fails under Hermit with `make[1]: /work/build/0: Command not found`
+— an `ExtUtils::MakeMaker` Makefile expanded a command variable to the literal `0`. Undiagnosed,
+and importantly **not** explained by the id-mapping asymmetry that accounts for `bsdmainutils`, so
+it is a genuine Hermit/Perl interaction lead rather than a known-benign difference. Everything else
+that failed is package-side (`socat` does not build in this Wheezy reconstruction at all) or
+harness-side (`less`, `bc` hit a resumability gap).
 
 Six attempts yielded no verdict and are named so the denominator is auditable: `socat` does not
 build in this Wheezy reconstruction at all; `less` and `bc` hit a harness resumability gap;
@@ -189,7 +199,7 @@ but **no cross-executor claim is supported either.**
 **An earlier figure of 13/13 in this report was inflated by a defect in the lane's own
 `summarize.sh`**, which counted every arm against the native denominator, silently crediting a
 package still building in one arm to another. The lane found and fixed it; each arm now reports its
-own completed denominator and the table is regenerated from `results.csv`. The 34/34 above is the
+own completed denominator and the table is regenerated from `results.csv`. The 52/52 above is the
 corrected figure.
 
 **The 29/29 replaced an earlier 7/13, and that correction is itself a result.** Both arms are
@@ -241,7 +251,7 @@ bitwise-identical 68,896-byte `.deb` (`55306cc9…`, `cmp` = 0) at L1. Unblocked
 the minimized regression went from a 120 s timeout after 432,359 repeated interceptions to passing
 in 0.01 s. **[C]**
 
-**Denominator discipline: 34/34 controlled wins of 36 attempted, and 34/8,688 against the paper's target set.** The default arm (no `--no-rcb-time`) is 28/34 and remains labelled confounded.
+**Denominator discipline: 52/52 controlled wins of 58 attempted, and 52/8,688 against the paper's target set.** The default arm (no `--no-rcb-time`) is 46/52 and remains labelled confounded.
 The harness records **no** per-package durations, deliberately: any duration printed by a build
 under Hermit is virtual time, so **no overhead or slowdown factor may be derived from this
 experiment.** This
