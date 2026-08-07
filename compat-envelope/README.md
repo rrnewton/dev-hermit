@@ -5,6 +5,13 @@ dev-hermit workspace. It measures, in machine-readable form, how each Hermit /
 Reverie execution backend compares to the golden **ptrace** reference across the
 e2e test corpus, and renders the owner's scorecard table from that data.
 
+> **Looking for the numbers, not the machinery?** Read
+> [`SCORECARD-CURRENT.md`](SCORECARD-CURRENT.md) — the current rendering of all
+> four CSVs with every column, denominator, and certification limit stated
+> inline. It is the entry point; this file documents the system that produces
+> it. `SCORECARD.md` and `REPORT.md` are earlier (2026-08-04) narrative
+> analyses, superseded for current numbers.
+
 It replaces the retired free-text
 [`ai_docs/deprecated/progress_report_template.md`](../ai_docs/deprecated/progress_report_template.md)
 (fake-cell risk): every number here is produced by actually running a cell, and
@@ -41,6 +48,8 @@ A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-gre
 | `hermit/tests/backend-parity/run_matrix.py` | Runs the focused ptrace/DBI/KVM contracts and appends live `backend-parity` rows directly to this outer `scorecard.csv`; no generated matrix is tracked in the inner Hermit repository. |
 | `expansion-dag.rs` | Generates the **expansion-mode** safe-ci-dag-runner DAG: one boxed step per cell with per-cell wall-time + memory budgets, plus a dated evidence run dir. |
 | `render-scorecard.rs` | Reads a scorecard CSV and renders the owner's table (`--json` / `--tsv` also). Shared by all collectors. |
+| `render-current-scorecard.sh` | Renders **all four** CSVs in one pass, in the order published in `SCORECARD-CURRENT.md`, plus the provenance block and the `verify_compare` certification-tier distribution. Re-run and diff to detect doc drift. |
+| `SCORECARD-CURRENT.md` | The published, human-readable rendering: current tables + schema + interpretation + provenance + known limitations. Start here. |
 | `scorecard.csv` | Hermit Detcore-envelope results (schema below). |
 | `reverie-scorecard.csv` | Reverie B1.5 Guest/Tool-boundary results (same schema). |
 | `e9patch-scorecard.csv` | e9patch preprocessing-invariance results over the ptrace backend (same schema). |
