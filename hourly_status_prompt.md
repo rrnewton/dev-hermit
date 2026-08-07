@@ -70,10 +70,38 @@ fixing, not that the flag needs working around.
   --mapping-json '{"<major-goal>/<sub-goal>":{"agent":"<agent>","task":"<task-id>","cwd":"<slot-or-cwd>"}}' \
   --awaiting-landing-json '{"<major-goal>/<sub-goal>":{"agent":"<agent>","task":"<implemented-task-id>","cwd":"<slot-or-cwd>"}}' \
   --status-file <file containing the exact delivered text> \
+  --covers-hour <YYYY-MM-DDTHH the report DESCRIBES> \
+  --expect-sha256 <sha256 of the API response text> \
+  --expect-bytes <byte count of the API response text> \
   --repos <owner/name>[,<owner/name>...] \
   --open-prs <N> --genuine-reds <N> --fleet-count <N> \
-  [--ready-prs <N>]
+  [--ready-prs <N>] \
+  [--recovery-for <YYYY-MM-DDTHH>]
 ```
+
+`--expect-sha256` and `--expect-bytes` come from the **send response**, not from
+the file you happen to have on disk. They are what binds the logged text to the
+delivered one: on a mismatch the script REFUSES the append rather than recording
+a status that is not the one the owner received. Take both from the API record:
+
+```
+messageName / space / thread / text   <- the sendGchat response
+sha256 = sha256 of that response's exact `text` field
+bytes  = its byte length
+```
+
+If they disagree with your status file, the file is wrong — most often by one
+trailing newline, because every editor and heredoc terminates the last line and
+the sent message did not. `status-log.rs` strips at most one trailing terminator
+so a normal file still matches; a *second* newline, or any edit after sending,
+will and should be refused.
+
+`--covers-hour` is the UTC hour the narrative and counts DESCRIBE, which is not
+always the hour you are writing in. Pass the hour from the header. If you are
+writing late — recovering an hour whose scheduled delivery was missed — you must
+ALSO pass `--recovery-for <same hour>`; the script refuses a cross-hour write
+that does not declare itself. One entry once carried 9 p.m. counts, a 10:28 p.m.
+mapping and a 10:28 p.m. timestamp with nothing in the row to tell them apart.
 
 `--repos` is REQUIRED and names the repository set every count below was taken
 over — it is the denominator, and the script refuses without it. Name the repos
@@ -110,25 +138,40 @@ landed, the same append was worse: the claim degraded to a synthetic
 `pending@epoch0`, aged into `ReclaimStale`, and RE-SENT an hour that had already
 gone out.)
 
-Record the outcome in the claim's documented `detail` field, rewriting the whole
-object atomically — write a sibling temp file, then rename over the original:
+**Record the acknowledgement with the driver, not by hand.** The relay owns the
+claim schema and rewrites it atomically for you:
 
-```python
-import json, os
-p = "<claim path from the header>"
-d = json.load(open(p))                      # fails loudly if already corrupt
-d["detail"] = "delivered"                   # or: "skipped: <reason>"
-tmp = p + ".tmp"
-open(tmp, "w").write(json.dumps(d) + "\n")
-os.replace(tmp, p)                          # atomic
+```
+./scripts/hourly-status-relay.rs \
+  --ack-hour <this hour> \
+  --ack-message-name <spaces/<space>/messages/<id> from the send response> \
+  --ack-space <spaces/<space>> \
+  --ack-thread <spaces/<space>/threads/<id>> \
+  --ack-text-file <file holding the EXACT delivered text>
 ```
 
-**Never change `state`.** It is the dedupe authority: `decide()` treats exactly
-`"delivered"` as "this hour is closed forever". Any other value — including a
-more descriptive one like `"gchat_delivered"` — makes the hour read as
-undelivered, age out, and send a second owner status. Put richer delivery
-evidence in ADDITIONAL fields (`delivery_state`, `gchat_message_name`,
-`status_text_sha256`, …) and leave `state` alone.
+All five are required together, and the digest is computed from
+`--ack-text-file` rather than taken on your word. The three identifiers must
+name ONE conversation — the space has to prefix both the message and the thread
+— so three well-shaped unrelated strings are refused. This is the same canonical
+text rule `status-log.rs` uses, so the claim's `gchat_text_sha256` and the log's
+`status_text_sha256` come out equal; an auditor compares exactly those two.
+
+**Do not hand-edit the claim.** It is JSON and the dedupe authority; the typed
+rewrite above is atomic and validated, a Python snippet is neither.
+
+**What the states mean now.** The driver writes `wake_accepted` when the relay
+typed the wake into your pane — that is stage one and it is NOT a delivery.
+Only `--ack-hour` promotes the hour to `gchat_delivered`, which is what closes
+it. An hour left at `wake_accepted` is re-woken (bounded, three attempts) and
+then reported as `gchat-ack-missing`: an unmet obligation, deliberately not a
+success. So running the ack is not bookkeeping you can skip — it is the only
+thing that tells the system the owner actually received the status.
+
+(`delivered` is the pre-split legacy state. It still dedupes, so historical
+hours stay closed, but nothing writes it any more. Earlier revisions of this
+prompt said never to set `gchat_delivered`; that advice predates the two-stage
+split and is now exactly backwards.)
 
 Afterwards the claim must still parse and still dedupe. Confirm with a dry run,
 which writes nothing:
@@ -137,6 +180,7 @@ which writes nothing:
 ./scripts/hourly-status-relay.rs --hour <this hour> --dry-run
 ```
 
-It must print `outcome=duplicate-hour ... claimed=no-op`. If it prints
-`outcome=corrupt-claim`, the rewrite was not valid JSON — fix the file rather
-than leaving the hour wedged.
+After a successful ack it must print `outcome=duplicate-hour ... claimed=no-op`.
+If you have woken but not yet acked, `outcome=awaiting-gchat-ack ... delivered=no`
+is correct and means the ack above is still owed. `outcome=corrupt-claim` means
+the file is not valid JSON — fix it rather than leaving the hour wedged.

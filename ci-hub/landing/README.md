@@ -164,7 +164,7 @@ The land sequence itself lives here too, not only in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires the owner-authorized exact-head local-or-hosted authority before and after rebase, derives `locally-validated` only for a qualifying local receipt, polls merge-gate, rechecks the same authority at the final mutation boundary, performs a head-matched rebase merge, then verifies ancestry |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union\|--no-rebase]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires the owner-authorized exact-head local-or-hosted authority before and after rebase, derives `locally-validated` only for a qualifying local receipt, polls merge-gate, rechecks the same authority at the final mutation boundary, performs a head-matched rebase merge, then verifies ancestry |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
 `land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
@@ -196,6 +196,42 @@ never wedges a land:
    zero-executed, partial, or contradictory evidence refuses the landing before
    any merge call. The merge itself uses `--match-head-commit` so a concurrent
    push cannot inherit that authorization.
+
+### `--no-rebase`: a rebase can only downgrade an already-authorized head
+
+**Opt-in; the default path is unchanged, and it is mutually exclusive with
+`--union` (which is itself a rewrite driver).** Step 2 normally rebases the
+branch onto fresh `origin/main` and force-pushes. That rewrites the head, so
+step 4 re-derives the exact-head authority at a *new* SHA and every green earned
+at the old SHA is orphaned — a rebase can never upgrade an authorized head, only
+downgrade it to NO_RESULT.
+
+It is also unnecessary on `rrnewton/hermit`. Re-verify rather than trust:
+
+```bash
+with-proxy gh api repos/rrnewton/hermit/rulesets --jq '.[]|"\(.id)\t\(.name)"'
+```
+
+The `main check gating (admin-bypassable)` ruleset's `required_status_checks`
+rule carries `strict_required_status_checks_policy: false` (observed
+2026-08-07), so main does **not** require a branch to be up to date; and
+`gh pr merge --rebase` replays the commits onto the current tip server-side
+anyway.
+
+```bash
+ci-hub/landing/land-pr.sh 1711 fixture/pid-tid-virtualization-identity --no-rebase
+```
+
+`--no-rebase` removes a **mutation**, never a **check**: the land-lock, the
+step-1b and step-4 exact-head authority, the merge-gate poll, the final-boundary
+authority plus receipt dereference, `--match-head-commit`, obligation arming,
+and the post-merge `mergeCommit.oid` ancestry proof all still run. Use it when a
+head already holds a qualifying exact-head green and main has since moved.
+Prefer the default rebase when the branch genuinely needs to be updated (real
+conflicts, or a base below a gate floor — that needs a rebase *and* a fresh
+validate, not this flag). Compare `rrnewton/hermit#1812`: an unconditional
+rebase-and-force-push in the union driver amended main's tip onto two PR
+branches and landed #1188/#1209 as semantic no-ops.
 
 ### Deployment obligation: `hermit-merge-gate-authority-deployment`
 

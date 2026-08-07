@@ -8,9 +8,10 @@
 #
 # Sequence (while holding the land-lock):
 #   fetch fresh main -> exact-head local-OR-hosted authority -> rebase
-#   (union|plain) + push -> recheck the exact pushed head -> derive the optional
-#   locally-validated cache only for a local receipt -> bounded merge-gate poll
-#   -> gh pr merge --rebase (NEVER --admin) -> ancestry-verify.
+#   (union|plain, SKIPPED by --no-rebase) + push -> recheck the exact pushed head
+#   -> derive the optional locally-validated cache only for a local receipt ->
+#   bounded merge-gate poll -> gh pr merge --rebase (NEVER --admin)
+#   -> ancestry-verify.
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
 #   1. Trinary gate poll: PASSED lands, FAILED stops, and NO_RESULT blocks while
@@ -26,11 +27,15 @@
 # `land-lock run` wrapper releases the lock so the next FIFO waiter proceeds.
 #
 # Usage:
-#   ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union] [--agent NAME]
+#   ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union|--no-rebase] [--agent NAME]
 #                             [--gate-deadline SECS] [--child-deadline SECS]
 #                             [--foreground]
 #   --union          use the additive manifest union-rebase (union-rebase.sh);
 #                    default is a plain `git rebase origin/main`.
+#   --no-rebase      OPT-IN. Skip step 2 (the local rebase + force-push) and
+#                    merge the already-authorized head as it stands. Mutually
+#                    exclusive with --union. Rationale + how to re-verify it:
+#                    see the step-2 comment. Default behaviour is UNCHANGED.
 #   --agent NAME     lock holder + PR-comment role tag (default: hermit-lander).
 #   --gate-deadline  bound on the merge-gate poll (default 1080).
 #   --child-deadline hard ceiling for the whole land subtree (default: twice the
@@ -53,7 +58,7 @@ set -uo pipefail
 # this repo legitimately sets either for the lander.
 unset CI_HUB_VALIDATE_STATUS_BIN CI_HUB_VALIDATE_LEDGER
 
-PR=""; BR=""; UNION=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
+PR=""; BR=""; UNION=0; NO_REBASE=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
 AGENT="hermit-lander"
 MODEL="${LANDER_MODEL:-opus-4.8}"
 # Measured 2026-08-04 over 11 successful pull_request demo-hot-path runs created
@@ -64,6 +69,7 @@ CHILD_DEADLINE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --union) UNION=1 ;;
+    --no-rebase) NO_REBASE=1 ;;
     --agent) AGENT="$2"; shift ;;
     --gate-deadline) GATE_DEADLINE="$2"; shift ;;
     --child-deadline) CHILD_DEADLINE="$2"; shift ;;
@@ -77,7 +83,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$PR" ] || [ -z "$BR" ]; then
-  echo "usage: land-pr.sh <PR> <BRANCH> [--union] [--agent NAME] [--gate-deadline S] [--child-deadline S]" >&2
+  echo "usage: land-pr.sh <PR> <BRANCH> [--union|--no-rebase] [--agent NAME] [--gate-deadline S] [--child-deadline S]" >&2
+  exit 2
+fi
+# --union IS a rebase driver (union-rebase.sh rewrites and pushes the branch), so
+# asking for both is incoherent rather than merely redundant. Refuse instead of
+# silently picking one: a lander that thinks it skipped the rewrite while the
+# union driver performed it is exactly the failure this flag exists to prevent.
+if [ "$UNION" -eq 1 ] && [ "$NO_REBASE" -eq 1 ]; then
+  echo "land-pr: --union and --no-rebase are mutually exclusive (--union rebases by definition)" >&2
   exit 2
 fi
 case "$GATE_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: gate deadline must be positive seconds" >&2; exit 2 ;; esac
@@ -90,8 +104,8 @@ if [ "$CHILD_DEADLINE" -le "$GATE_DEADLINE" ]; then
   exit 2
 fi
 if [ -n "${CI_HUB_DOCS_PARSE_ONLY:-}" ]; then
-  printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s agent=%s\n' \
-    "$PR" "$BR" "$UNION" "$AGENT"
+  printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s no_rebase=%s agent=%s\n' \
+    "$PR" "$BR" "$UNION" "$NO_REBASE" "$AGENT"
   exit 0
 fi
 
@@ -125,6 +139,7 @@ if [ "$INNER" -eq 0 ] && [ "$DETACHED_CHILD" -eq 0 ] && [ "$FOREGROUND" -eq 0 ];
   detached_args=(--_detached "$PR" "$BR" --agent "$AGENT" \
     --gate-deadline "$GATE_DEADLINE" --child-deadline "$CHILD_DEADLINE")
   [ "$UNION" -eq 1 ] && detached_args+=(--union)
+  [ "$NO_REBASE" -eq 1 ] && detached_args+=(--no-rebase)
   printf 'DETACHED LAND START pr=%s branch=%s agent=%s started_at=%s\n' \
     "$PR" "$BR" "$AGENT" "$stamp" >"$log"
   nohup setsid "$0" "${detached_args[@]}" </dev/null >>"$log" 2>&1 &
@@ -145,6 +160,7 @@ if [ "$INNER" -eq 0 ]; then
     --session "${ORC_AGENT_SESSION_ID:-${HOSTNAME:-unknown}:$$}"
   args=(--_inner "$PR" "$BR" --agent "$AGENT" --gate-deadline "$GATE_DEADLINE")
   [ "$UNION" -eq 1 ] && args+=(--union)
+  [ "$NO_REBASE" -eq 1 ] && args+=(--no-rebase)
   # Persist the exact-SHA verification obligation intent before the bounded
   # child can merge. If this process dies after the merge, the ORC recovery
   # watcher observes the merged SHA and arms both verifiers.
@@ -195,7 +211,39 @@ case "$VRC" in
 esac
 
 # 2. rebase onto latest main + push
-if [ "$UNION" -eq 1 ]; then
+#
+# --no-rebase (OPT-IN; the default path below is byte-for-byte unchanged) skips
+# this whole step and merges the head that step 1b already authorized.
+#
+# WHY that is safe -- re-verify this rather than trusting the comment:
+#   with-proxy gh api repos/rrnewton/hermit/rulesets --jq '.[]|"\(.id)\t\(.name)"'
+#   with-proxy gh api repos/rrnewton/hermit/rulesets/<id-of-"main check gating"> \
+#     --jq '.rules[]|select(.type=="required_status_checks")
+#           |.parameters.strict_required_status_checks_policy'
+# Observed 2026-08-07: `false`. A false strict policy means main does NOT require
+# a PR branch to be up to date, so being behind main is not a merge blocker; and
+# `gh pr merge --rebase` in step 6 replays the PR commits onto the current tip
+# server-side regardless. The local rebase therefore produces nothing the merge
+# needs.
+#
+# What it DOES produce is a rewritten head. Step 2 force-pushes, step 4 then
+# re-derives the exact-head authority at the NEW sha, and every exact-head green
+# earned at the old sha is orphaned -- a rebase can only ever downgrade an
+# already-authorized head to NO_RESULT. Measured 2026-08-07 on #1705/#1711/#1678:
+# all three held a qualifying `AUTHORITY=hosted` green (~30 min of hosted CI
+# each) that an unconditional rebase would have voided the moment another team
+# advanced main. See also rrnewton/hermit#1812, where an unconditional
+# rebase-and-force-push in the union driver amended main's tip onto two PR
+# branches and landed #1188/#1209 as semantic no-ops.
+#
+# This flag removes a MUTATION, never a CHECK. Still executed on this path: the
+# land-lock (outer `land-lock run`), the step-1b exact-head authority, the step-4
+# recheck at the head actually being merged, the merge-gate poll, the step-5b
+# final-boundary authority + receipt dereference, `--match-head-commit`,
+# obligation arming, and the post-merge mergeCommit.oid ancestry proof.
+if [ "$NO_REBASE" -eq 1 ]; then
+  say "no-rebase: skipping the local rebase + force-push; merging the authorized head as it stands"
+elif [ "$UNION" -eq 1 ]; then
   ulog="/tmp/land-$PR-union.log"
   "$SCRIPT_DIR/union-rebase.sh" "$WT" "$BR" --push >"$ulog" 2>&1
   RES=$(grep -E '^RESULT' "$ulog" | tail -1)
@@ -215,10 +263,17 @@ else
   git -C "$WT" checkout -q --detach origin/main 2>/dev/null || true
 fi
 
-# 3. record pushed head
+# 3. record the head that will actually be merged. Re-fetched from the remote in
+# every mode, so this also catches a concurrent push by someone else -- under
+# --no-rebase nothing was pushed by us, but the remote is still the source of
+# truth and step 4 re-authorizes whatever it finds.
 with-proxy git -C "$WT" fetch -q origin "$BR"
 HEAD=$(git -C "$WT" rev-parse "origin/$BR")
-say "pushed head=$HEAD"
+if [ "$NO_REBASE" -eq 1 ]; then
+  say "unrebased head=$HEAD (expected to equal the authorized head $ORIG)"
+else
+  say "pushed head=$HEAD"
+fi
 
 # 4. The pushed exact head needs a fresh positive from either registered
 # authority. A rebase that changed the SHA cannot inherit the old authorization.
