@@ -340,7 +340,15 @@ fn main() {
             // compare-mode flag, so hermit runs the Stripped policy, whose own
             // --verify-json reports bitwise_parity:false. `bitwise` is therefore
             // NOT emittable here and is not merely unset -- it is unreachable.
-            let tier = if verify_compare.is_empty() { "" } else { "stripped" };
+            // `stripped-uncounted`, NOT `stripped`. This harness does not read
+            // --verify-json, so it has no compared-message count to report -- and the
+            // wired verifier requires a count from anything claiming `stripped`,
+            // because a log comparison that cannot say how much it compared could have
+            // compared nothing. Emitting `stripped` here produced rows this very
+            // producer's own verifier refused. The uncounted tier states the comparator
+            // that ran and admits the missing count in its name, which is exactly what
+            // the historical rows carry, so fresh and migrated rows agree.
+            let tier = if verify_compare.is_empty() { "" } else { "stripped-uncounted" };
             // Blank, not "0": this harness does not read --verify-json, so it has
             // no parity boolean and no message counts to report. Blank means "not
             // recorded"; a 0 would assert a measurement that was never taken.

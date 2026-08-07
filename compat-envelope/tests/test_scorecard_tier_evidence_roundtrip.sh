@@ -145,6 +145,51 @@ PYX
 "$envelope/check-determinism-earned.sh" "$tmp/blank_tier.csv" >/dev/null 2>&1
 [ $? -eq 1 ]; check "blank-tier deterministic=1 is REFUSED (legacy bypass removed)" $?
 
+echo "case COLLECTOR-CONTRACT — a FRESH collector row must pass its own production verifier"
+# THE BUG: collect-envelope emitted tier=stripped while recording no counts, but the
+# wired verifier requires a count from anything claiming `stripped` (a log compare
+# that cannot say how much it compared could have compared nothing). So the producer
+# generated rows its own verifier refused -- green locally, red in production.
+grep -q 'stripped-uncounted' "$envelope/collect-envelope.rs"
+check "collect-envelope emits the uncounted tier, not bare stripped" $?
+printf '%s\n' "$CANONICAL" > "$tmp/fresh.csv"
+python3 - "$tmp/fresh.csv" <<'PYX'
+import csv, sys
+hdr = open(sys.argv[1]).read().strip().split(",")
+row = {c: "" for c in hdr}
+row.update(run_id="fresh", test_id="x/y", backend="ptrace", test_mode="verify",
+           outcome="pass", deterministic="1", verify_compare="stripped",
+           tier="stripped-uncounted", bitwise_parity="", compared_log_messages="")
+with open(sys.argv[1], "a", newline="") as f:
+    csv.DictWriter(f, fieldnames=hdr).writerow(row)
+PYX
+"$envelope/check-determinism-earned.sh" "$tmp/fresh.csv" >/dev/null 2>&1
+check "a fresh stripped collector row is ACCEPTED by the wired verifier" $?
+
+echo "case NON-POSITIVE-TIER — tier=gap cannot carry a determinism positive"
+plant() { # $1 name, $2.. python kwargs
+  python3 - "$tmp/$1.csv" "$envelope/scorecard.csv" "$2" <<'PYX'
+import csv, sys, json
+out, src, kw = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+base = list(csv.DictReader(open(src))); rows = [dict(r) for r in base]
+for r in [x for x in rows if x.get("deterministic") == "1"][:3]:
+    r.update(kw)
+with open(out, "w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(base[0].keys())); w.writeheader(); w.writerows(rows)
+PYX
+}
+plant gap '{"tier":"gap"}'
+"$envelope/check-determinism-earned.sh" "$tmp/gap.csv" >/dev/null 2>&1
+[ $? -eq 1 ]; check "deterministic=1 with tier=gap is REFUSED" $?
+
+echo "case COMPARATOR-ALLOWLIST — an unknown policy is refused at every tier, not just bitwise"
+plant unkcmp '{"tier":"stripped","verify_compare":"mystery","compared_log_messages":"9|9"}'
+"$envelope/check-determinism-earned.sh" "$tmp/unkcmp.csv" >/dev/null 2>&1
+[ $? -eq 1 ]; check "unknown comparator at tier=stripped is REFUSED" $?
+plant unkcmp2 '{"tier":"stripped-uncounted","verify_compare":"mystery"}'
+"$envelope/check-determinism-earned.sh" "$tmp/unkcmp2.csv" >/dev/null 2>&1
+[ $? -eq 1 ]; check "unknown comparator at tier=stripped-uncounted is REFUSED" $?
+
 echo
 if [ "$FAILURES" -ne 0 ]; then echo "FAIL ($FAILURES assertions)"; exit 1; fi
 echo "PASS"
