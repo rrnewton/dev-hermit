@@ -115,11 +115,25 @@ instrumentation:
 | `reverie_ptrace::vdso: 3 patched __vdso_*` | 6 | **instrumentation** — same 3 symbols, *identical addresses*, reversed emission order |
 | `reverie_ptrace::timer: Setting precise_ip ... CpuId{...}` | 4 | **instrumentation** — per-CPU enumeration order |
 | `reverie_ptrace::task: beginning inject of ... execveat` | 1 | **instrumentation** |
-| `detcore: DETLOG (pre/post) registers ... rbx 0xe9ff0800` vs `rbx 0x5ff0800` | 2 | **guest nondeterminism** — uninitialised `rbx` at first syscall; never guest-visible |
+| `detcore: DETLOG (pre/post) registers ... rbx 0xe9ff0800` vs `rbx 0x5ff0800` | 2 | **probe-induced** — CPUID leaf-1 EBX (host APIC id) in a guest register, caused by the probe's own `--no-virtualize-cpuid`. *Corrected: first published as "guest nondeterminism — uninitialised rbx". See below.* |
 | `detcore::tool_global: Nondeterministic realtime elapsed: 97.70384ms` vs `15.436131ms` | 1 | **instrumentation** — hermit literally names it "Nondeterministic" |
 
+> **Correction to the table above.** The `rbx` row was first published as
+> *"guest nondeterminism — uninitialised `rbx` at first syscall"*. That was wrong.
+> It is **probe-induced**: the value is CPUID leaf-1 EBX (the host APIC id) reaching
+> a guest register because the backend-parity probe passes `--no-virtualize-cpuid`.
+> Re-measured, counting divergent `DETLOG (pre|post) registers` lines over two runs,
+> 3 reps per arm: **with** the flag 0, 2, 2; **without** it 0, 0, 0. Removing the flag
+> eliminates it. (A parallel investigation reports 6/6 with and 0/3 without; the
+> direction agrees, the rate does not, and 3 reps is too few for a rate.)
+>
+> This makes the conclusion **stronger**, not weaker: with `rbx` reclassified, the
+> clean control has **no genuine guest-nondeterminism class at all**. Every one of
+> the five classes is either hermit's own instrumentation or an artefact of the
+> probe's own flag.
+
 So flipping the matrix to `--verify-strict` as-is would turn green cells red for hermit's own DEBUG
-emission order, not for guest nondeterminism. **The root cause is that no INFO-tier exact comparator
+emission order and its own probe flag, not for guest nondeterminism. **The root cause is that no INFO-tier exact comparator
 exists:** hermit exposes only `stripped` (too weak — erases numbers) and `canonical/full_trace`
 (too strong — includes the three instrumentation classes above).
 
@@ -127,6 +141,15 @@ exists:** hermit exposes only `stripped` (too weak — erases numbers) and `cano
 
 `ctrl` = divergent/compared lines for the positive control (0 = tier is sound).
 `caught` = planted defects detected, out of 5.
+
+> **Correction — what "5/5" does and does not mean.** These counts are for the
+> tier **as a whole** (log + stdout + exit), which is what the harness compares.
+> The **DETLOG channel alone catches 4 of 5**: `mut_stdout`'s planted defect is
+> invisible in the DETLOG at *every* strictness, because the DETLOG records a
+> `write()` pointer and length, never the buffer contents, and `counter=1` and
+> `counter=2` are the same length. It is caught only by the separate stdout
+> compare. A guest writing differing same-length bytes to a **file** would be
+> caught by nothing — a producer-side hole no comparator strictness closes.
 
 | tier | ptrace (72 cells) | liteinst (136) | dbi (8) | kvm (130) |
 |---|---|---|---|---|
