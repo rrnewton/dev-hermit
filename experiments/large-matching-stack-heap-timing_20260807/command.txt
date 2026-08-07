@@ -1,0 +1,3 @@
+Working directory: worktrees/w26/hermit
+
+/usr/bin/time -o ignored/large-matching-stack-heap-20260807/time.txt -f 'wall_seconds=%e\nuser_seconds=%U\nsys_seconds=%S\ncpu_percent=%P\nmax_rss_kb=%M\nexit_status=%x' timeout --kill-after=10s 180s env LC_ALL=C TZ=UTC target/release/hermit --log=info run --backend ptrace --strict --verify --verify-allow both --verify-strict --verify-json=ignored/large-matching-stack-heap-20260807/verdict.json --base-env=minimal -e LC_ALL=C -e TZ=UTC --max-timeslice=disabled --no-virtualize-cpuid --detlog-stack --detlog-heap --tmp=ignored/large-matching-stack-heap-20260807/guest-tmp -- ignored/e2e/build/195614a4c208cb993483372a925f219458d6940e/c-programs-prodcons-determinism/fixtures/program

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "run_id": "large-matching-stack-heap-20260807T094113Z",
+  "measurement_type": "single-large-matching-full-comparison-cost",
+  "run_utc": "2026-08-07T09:41:13Z",
+  "host": {
+    "short_hostname": "devbig014",
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64 GNU/Linux"
+  },
+  "sources": {
+    "repository": "rrnewton/dev-hermit",
+    "repository_sha": "9149592a29e615080d1890083c98567621e30290",
+    "publication_base_sha": "4eb80d7c520cf8a118b0abe637650784abed9458",
+    "hermit_sha": "195614a4c208cb993483372a925f219458d6940e",
+    "hermit_product_base_sha": "723d19ad5d10d40705ba10040f5a5e8edd9699b5",
+    "hermit_main_at_measurement": "294e89bfeeebeb0aa4f00bde4b0e1053350d6a5e",
+    "reverie_sha": "038e993926e45514264d30367b70df9b6ac3b9b8",
+    "strict_verdict_blob_sha": "52ece2e8c833f6881dc9d17cef335f85f3e63ce5",
+    "hermit_worktree_dirty": false
+  },
+  "producer": {
+    "script": "command.txt",
+    "script_sha256": "6d1c01431e3f1512b24bdd38d012b2e79f0f72e16ab83a345339081dde5b9fb6",
+    "working_directory": "worktrees/w26/hermit",
+    "tool_versions": {
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+      "cc": "gcc 11.5.0 20240719 (Red Hat 11.5.0-15)",
+      "time": "GNU Time 1.9"
+    }
+  },
+  "inputs": {
+    "guest_id": "c-programs/prodcons-determinism",
+    "guest_source": "tests/c/prodcons_determinism.c",
+    "guest_source_sha256": "d29b3a7dfff52bd0eb55533ffbb11c5bc46e33f5857e21b621b80573ba23fb29",
+    "guest_binary_sha256": "b781adc2f7bacb27aafdb17e8fa5ff7c032ee35e47020f84b80347022b353509",
+    "hermit_binary_sha256": "3277b92f17f53a839ee92fee58d893d3dd561d4311b396de5ba85478aa654834",
+    "published_baseline_duration_ms": 10925,
+    "large_threshold_ms": 5000
+  },
+  "protocol": {
+    "backend": "ptrace",
+    "warmups": 0,
+    "measured_repetitions": 1,
+    "launch_attempts": 2,
+    "qualifying_trials": 1,
+    "setup_failures": 1,
+    "timeout_seconds": 180,
+    "seeds": [],
+    "execution_order": [
+      "sandboxed setup attempt",
+      "qualifying timed attempt",
+      "supporting capture run 1",
+      "supporting capture run 2",
+      "dimension comparison"
+    ],
+    "correctness_gate": "exit 0; matched canonical product verdict; verified and bitwise; nonzero equal INFO, stack, and heap denominators; zero stack/heap differences"
+  },
+  "results": {
+    "wall_seconds": 2.90,
+    "user_seconds": 2.25,
+    "system_seconds": 0.88,
+    "cpu_seconds": 3.13,
+    "max_rss_kb": 22784,
+    "info_records": "19907|19907",
+    "stack_records": "4584|4584",
+    "stack_differing": 0,
+    "heap_records": "4547|4547",
+    "heap_differing": 0,
+    "extrapolated_346_wall_seconds": 1003.4,
+    "extrapolated_346_cpu_seconds": 1082.98,
+    "decision": "no tiering needed"
+  },
+  "raw_artifacts": {
+    "tracked": false,
+    "local_directory": "worktrees/w26/hermit/ignored/large-matching-stack-heap-20260807",
+    "product_verdict_sha256": "a9d5d704db2714e26cdc1af29ab66824f6647c2af210719c2e0cfbecf8cf9a14",
+    "time_receipt_sha256": "8bba6f6f3748714f575dd60894a48c939bcf5e6d8e435d06d654f9e1b11cba41",
+    "run1_log_sha256": "31aea0ea9407b15e21f2a678c778d9312c160eb23584d45ddaea23f670d0a09d",
+    "run2_log_sha256": "09694636163fc6c7a1bc01322787348f5906ba1b0ea77a25d3937f038af03780",
+    "setup_failure_verdict_sha256": "cbd2e05784aa6f50e4816ccaea4c5e5547f99e3f8b4dc078bbaba996e60e40a7"
+  },
+  "tracked_artifact_sha256": {
+    "command.txt": "6d1c01431e3f1512b24bdd38d012b2e79f0f72e16ab83a345339081dde5b9fb6",
+    "results.csv": "65cb34bd3afa0ece7aebef1d54b8048d8f0090752a339303e1b0c835a454d102",
+    "README.md": "028b23c1fff2d227e119fb504cdfe1cdf7c8670ae432f1af1c044ccafc772066"
+  },
+  "limitations": [
+    "n=1 qualifying trial",
+    "one ptrace guest on one host",
+    "no randomized order and no uncertainty interval",
+    "the 346-cell extrapolation is linear and is not a measured distribution or worst-case bound",
+    "no candidate-backend performance claim"
+  ]
+}
