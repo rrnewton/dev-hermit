@@ -1,0 +1,29 @@
+{
+  "experiment": "e9patch-detlog-parity-on-exercising-guests",
+  "date_utc": "2026-08-07",
+  "agent": "hermit-w7",
+  "question": "The reach-matrix task established that e9patch MAPS sites on inline-syscall guests but explicitly left open whether patched execution then AGREES with ptrace. This measures that.",
+  "binary": {
+    "path": "worktrees/w7/hermit/target/release/hermit",
+    "self_reported_version": "hermit 0.2.0 (2026-08-07, g723d19ad5d10)",
+    "dirty": false,
+    "sha256": "878d7a33b4cf6e243e131c4b23bd1386770abd8117120653f47887f415816407",
+    "commit": "723d19ad5d10d40705ba10040f5a5e8edd9699b5",
+    "commit_status": "hermit origin/main, freshly fetched, 0 commits after",
+    "reverie_pin": "038e993926e45514264d30367b70df9b6ac3b9b8"
+  },
+  "host": {"hostname": "devbig014", "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443", "gcc": "gcc (GCC) 11.5.0"},
+  "guests": {
+    "provenance": "RE-AUTHORED here. The reach-matrix artifact (experiments/patching-backend-reach-matrix_20260806) records the three shapes but its guest SOURCES were never checked in -- origin/research/patching-backend-reach-matrix carries only README.md, metadata.json and results.csv -- so that matrix is not reproducible as published. Sources for these are in guests/.",
+    "compiled_with": ["gcc -O0", "gcc -O0 -static -nostdlib -nostartfiles (static guest)"]
+  },
+  "runs": {"total": 540, "per_cell": 30, "cells": 18, "nonzero_rc": 30, "nonzero_rc_explanation": "all 30 are liteinst x static_nolibc_syscall_sites, the documented LD_PRELOAD-vs-static limitation, recorded NOT-APPLICABLE"},
+  "command": "hermit --log=info --backend=<be> run --strict --base-env=minimal -- <guest>, stderr filtered with grep -o 'DETLOG .*'",
+  "no_memory_hash_flags": "no --detlog-stack / --detlog-heap; DETLOG measured as its own stream, nothing transfers to stack or heap",
+  "relaxations": "none",
+  "related": [
+    "experiments/detlog-parity-matrix_20260807 (the 7-guest matrix where e9patch is not-exercised)",
+    "experiments/detlog-parity-matrix_20260807/dbi-root-cause (why dbi is withheld here too)",
+    "experiments/patching-backend-reach-matrix_20260806 (the reach precedent, guests not checked in)"
+  ]
+}

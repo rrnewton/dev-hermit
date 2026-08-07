@@ -1,0 +1,19 @@
+guest,e9patch_mapped_sites,backend,Z,E,selfdet_classes_over_30_runs,prefix_depth_hex,coverage_hex_pct,tier,note
+inline_syscall_sites,2,ptrace,78,78,1,78,100.0,byte-identical,SELF-REFERENCE row -- the golden against itself
+inline_syscall_sites,2,e9patch,78,90,1,5,92.3,diverges,FIRST REAL e9patch parity number: exercised and it does NOT agree
+inline_syscall_sites,,kvm,78,78,1,9,84.6,diverges,
+inline_syscall_sites,,dbi,78,78,30,,,self-nondeterministic,parity withheld; dtid is the raw host pid
+inline_syscall_sites,,sabre,78,61,1,4,12.8,diverges,emits FEWER records than the golden
+inline_syscall_sites,,liteinst,78,822,1,10,52.6,diverges,
+mixed_inline_and_libc_syscalls,1,ptrace,86,86,1,86,100.0,byte-identical,SELF-REFERENCE row
+mixed_inline_and_libc_syscalls,1,e9patch,86,98,1,5,88.4,diverges,
+mixed_inline_and_libc_syscalls,,kvm,86,86,1,9,86.0,diverges,
+mixed_inline_and_libc_syscalls,,dbi,86,84,30,,,self-nondeterministic,parity withheld
+mixed_inline_and_libc_syscalls,,sabre,86,69,1,4,9.3,diverges,
+mixed_inline_and_libc_syscalls,,liteinst,86,828,1,10,48.8,diverges,
+static_nolibc_syscall_sites,2,ptrace,15,15,1,15,100.0,byte-identical,SELF-REFERENCE row
+static_nolibc_syscall_sites,2,e9patch,15,31,1,4,66.7,diverges,
+static_nolibc_syscall_sites,,kvm,15,15,1,15,100.0,hex-identical,FIRST perfect KVM cell -- freestanding guest maps no shared objects
+static_nolibc_syscall_sites,,dbi,15,15,30,,,self-nondeterministic,parity withheld
+static_nolibc_syscall_sites,,sabre,15,15,1,5,66.7,diverges,
+static_nolibc_syscall_sites,,liteinst,15,4,1,,,not-applicable,"LiteInst is an LD_PRELOAD path and a static -nostdlib binary has no dynamic loader: 'tracee reached guarded executable entry 0x401053 before the required preload handshake completed'. 26.7% would be a false datum."
