@@ -162,6 +162,19 @@ artifact by me today. Each is a place a false claim could originate.
    repo is expressed as agreement-with-ptrace, so if ptrace is wrong about something, that error is
    invisible to the entire parity apparatus and will read as five backends agreeing. This is the
    single largest unexamined assumption in the program.
+
+   **UPGRADED 2026-08-07 FROM ASSUMED TO MEASURED — a concrete instance now exists.** ptrace cannot
+   intercept `RDRAND`/`RDSEED`: neither is a syscall, and the sole mitigation is CPUID feature-bit
+   masking (`detcore/src/cpuid.rs:39-40`, whose comment states the intent is "to prevent
+   non-determinism"). The mask IS applied — CPUID.1:ECX bit30 goes SET → CLEARED under hermit — but
+   it is **advisory**: the instruction still executes, returns CF=1, and yields a different value
+   every run. Measured **6/6 distinct in default mode and 4/4 distinct under `--strict`**, while
+   `cpuid` and `rdtsc` were byte-identical in the same probe. Worse, a guest that consumes the value
+   without printing it has **byte-identical stdout** while exactly **1 of 15 heap records** differs,
+   so a stdout-based oracle scores it green. **Consequence: no backend can be measured against
+   ptrace on this dimension, and a backend that CORRECTLY determinizes RDRAND would score as
+   diverging from the reference.** See task
+   `rdrand-rdseed-is-a-reference-backend-hole-not-just-a-kvm-one`.
 2. **ptrace detlog `0/141 differing`** — not sourced.
 3. **Falsifiability `8/8 old → 8/8 strict, DROP=0`** — not sourced. Note this sits in tension with
    the separately-recorded re-baseline of **1,837 raw → 0 qualified**
