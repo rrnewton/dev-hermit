@@ -1,0 +1,18 @@
+seed,rc,seconds,uaf_reported,note
+0,0,103,no,slowest observed; truncated by the former 30s default
+1,0,15,no,
+2,0,27,no,
+3,0,6,no,fastest observed
+4,0,6,no,
+5,0,8,no,
+6,0,11,no,
+7,0,7,no,
+8,0,20,no,
+9,134,19,yes,first crashing seed; ASAN abort
+10,0,10,no,
+11,0,11,no,
+12,0,13,no,
+13,134,24,yes,ASAN abort
+14,0,7,yes,UAF reported on a thread but process exited 0
+15,0,13,no,
+47,0,8,no,the previously cached seed; does NOT crash a rebuilt fixture

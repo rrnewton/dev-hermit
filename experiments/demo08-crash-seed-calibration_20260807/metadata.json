@@ -1,0 +1,12 @@
+{
+  "question": "Why does the P0 demo gate report 'no ASAN UAF found in seeds 0-63', and is the cached crash seed valid for a rebuilt fixture?",
+  "host": "devbig176, 176-core AMD EPYC 9D64, CentOS Stream 9, Linux 6.16.1",
+  "hermit_binary": "worktrees/coord176/hermit/target/release/hermit",
+  "fixture": "btrfs-progs v7.1 @ 4ab0e80be9e3bb1db2e6038e6d4316d35fb7ba8b + demos/fixtures/demo08-convert-main-v7.1.patch, gcc 11.5.0, ASAN",
+  "fixture_sha256": "c81d933d90c40152b1e6edd3f450c33a268ee53779ce1e303b0a8bb312ecea4d",
+  "command": "hermit --log=error run --chaos --sched-seed <s> --no-virtualize-cpuid -- buggy/btrfs-convert pop-tiny.img",
+  "timeout_per_seed_s": 150,
+  "note": "Seeds 0-15 run bare (no hermit-box-run) concurrently; seed 47 run under hermit-box-run. Runtimes are wall-clock under concurrency of 16 and are indicative, not isolated benchmarks.",
+  "fix_commit": "6c7c0997042c4be0844d5e2c4688a8e9f1875cf6",
+  "issue": "rrnewton/hermit#1877"
+}
