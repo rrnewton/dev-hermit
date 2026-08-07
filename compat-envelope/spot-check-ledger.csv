@@ -1,0 +1,42 @@
+test_id,test_mode,backend,duration_ms,spot_check_utc,hermit_sha,result,detail
+applications/timed-progress-bar,verify,dbi,5586,,,,no spot-check on record
+bin-c/robust-futex-test,verify,kvm,60004,,,,no spot-check on record
+c-programs/clone,verify,liteinst,5102,,,,no spot-check on record
+c-programs/dbi-copied-tiocgpgrp,verify,liteinst,5093,,,,no spot-check on record
+c-programs/dbi-pid-virtualization,verify,kvm,60006,,,,no spot-check on record
+c-programs/dbi-pid-virtualization,verify,liteinst,5125,,,,no spot-check on record
+c-programs/dbi-wait-lifecycle,verify,liteinst,5066,,,,no spot-check on record
+c-programs/fp-reduction-nondeterminism,verify,kvm,60005,,,,no spot-check on record
+c-programs/get-robust-list-child,verify,liteinst,5051,,,,no spot-check on record
+c-programs/nanosleep-par,verify,liteinst,5002,,,,no spot-check on record
+c-programs/nanosleep-threads-simple,verify,dbi,102056,,,,no spot-check on record
+c-programs/pidfd-waitid-child,verify,liteinst,5006,,,,no spot-check on record
+c-programs/prodcons-determinism,verify,e9patch,10089,,,,no spot-check on record
+c-programs/prodcons-determinism,verify,ptrace,10925,2026-08-07T08:01:13Z,gf89c69766371-dirty,PASS,"stack+heap --verify, no substantive differences"
+c-programs/pselect6-simulation,verify,dbi,103801,,,,no spot-check on record
+c-programs/ptrace-attach-eperm,verify,liteinst,5073,,,,no spot-check on record
+c-programs/ptrace-seize-eperm,verify,liteinst,5013,,,,no spot-check on record
+c-programs/record-replay-file-state,verify,liteinst,5077,,,,no spot-check on record
+c-programs/resource-determinism,verify,e9patch,8133,,,,no spot-check on record
+c-programs/resource-determinism,verify,liteinst,5219,,,,no spot-check on record
+c-programs/resource-determinism,verify,ptrace,8667,,,,"guest build failed; no evidence, stays NEVER"
+c-programs/sigmask-preemption,verify,e9patch,9980,,,,no spot-check on record
+c-programs/sigmask-preemption,verify,ptrace,10790,2026-08-07T08:01:17Z,gf89c69766371-dirty,PASS,"stack+heap --verify, no substantive differences"
+c-programs/sysinfo-uptime,verify,dbi,6500,,,,no spot-check on record
+c-programs/sysinfo-uptime,verify,e9patch,5798,,,,no spot-check on record
+c-programs/sysinfo-uptime,verify,ptrace,6343,2026-08-07T08:01:20Z,gf89c69766371-dirty,PASS,"stack+heap --verify, no substantive differences"
+data-handling/archive-roundtrip,verify,kvm,5842,,,,no spot-check on record
+data-handling/shell-pipeline,verify,kvm,60007,,,,no spot-check on record
+determinism-stress-c/fork-tree,verify,kvm,12164,,,,no spot-check on record
+determinism-stress-c/mmap-fork-shared,verify,kvm,60005,,,,no spot-check on record
+determinism-stress-c/signal-order,verify,kvm,60005,,,,no spot-check on record
+determinism-stress-c/thread-stress,verify,kvm,60004,,,,no spot-check on record
+determinism-stress/process-chains,verify,kvm,8840,,,,no spot-check on record
+determinism-stress/thread-contention,verify,kvm,60007,,,,no spot-check on record
+language-runtimes/bash-loop-pipe-time,verify,e9patch,5160,,,,no spot-check on record
+language-runtimes/bash-loop-pipe-time,verify,kvm,60005,,,,no spot-check on record
+language-runtimes/bash-loop-pipe-time,verify,ptrace,5297,,,,no spot-check on record
+language-runtimes/python-io-subprocess-time,verify,e9patch,54266,,,,no spot-check on record
+language-runtimes/python-io-subprocess-time,verify,kvm,60004,,,,no spot-check on record
+language-runtimes/python-io-subprocess-time,verify,ptrace,54898,,,,no spot-check on record
+language-runtimes/python-random,verify,dbi,5619,,,,no spot-check on record
