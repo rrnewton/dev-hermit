@@ -32,6 +32,12 @@
 //! metrics. Retrofitting existing emitters is deliberately a separate task so
 //! two agents do not edit the same files.
 
+// Allowed at MODULE scope, not at each call site: this type is deliberately published ahead
+// of its consumers so new measurement code can adopt it, and the retrofit of existing
+// emitters is a separate task. Without this, every ci-hub invocation prints a dead-code
+// warning to every agent on the box.
+#![allow(dead_code)]
+
 use std::fmt;
 
 /// A measured quantity that carries what it measured against.

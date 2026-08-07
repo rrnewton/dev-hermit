@@ -51,6 +51,17 @@ def parse_args() -> argparse.Namespace:
     # Named --db because that is the flag the relay parses out of
     # `pane_start_command` to decide which coordinator it is looking at.
     parser.add_argument("--db", default="faketest")
+    parser.add_argument(
+        "--seed-transcript",
+        type=Path,
+        default=None,
+        help=(
+            "Render this text as an already-consumed [user] turn before any "
+            "input arrives. With --ignore-input this models the pane state a "
+            "relay sees when Orc took the draft before the relay looked: an "
+            "EMPTY composer with the message present in the transcript."
+        ),
+    )
     parser.add_argument("--session-name", default="faketest")
     parser.add_argument(
         "--state",
@@ -84,6 +95,8 @@ class FakeOrcPane:
         self.args = args
         self.draft = ""
         self.transcript: list[str] = []
+        if getattr(args, "seed_transcript", None) is not None:
+            self.transcript.append(args.seed_transcript.read_text(encoding="utf-8"))
         self.pending: list[str] = []
 
     def render(self) -> str:

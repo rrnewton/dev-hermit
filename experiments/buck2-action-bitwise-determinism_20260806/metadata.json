@@ -1,0 +1,26 @@
+{
+  "experiment": "buck2-action-bitwise-determinism",
+  "date_utc": "2026-08-07T02:55:52Z",
+  "question": "Can buck2 build actions be run twice and compared for bitwise determinism, and does Hermit determinize the irreproducible ones?",
+  "host": "devbig176",
+  "kernel": "6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba",
+  "cores": 176,
+  "buck2_version": "4b1af7328ff43271e1a3f23d7587680dbbb23c77",
+  "buck2_path": "/usr/local/bin/buck2 -> /usr/local/bin/buck",
+  "fbsource_root": "/data/users/newton/fbsource",
+  "fbsource_commit": "32733b967bba",
+  "hermit_repo": "rrnewton/hermit",
+  "hermit_sha": "bbd6a75ca91ca7842782b44e224cf82db53cbd23",
+  "hermit_branch": "manifest-guest-args-channel",
+  "hermit_build": "cargo build -p hermit --features e9patch (debug profile)",
+  "hermit_binary": "target/debug/hermit",
+  "reverie_sha": "28f84b13437ed50fa4cdcfbc1370d99e0a7f7f7c",
+  "prior_art": {
+    "author_unixname": "saclark",
+    "author": "Sarah Clark",
+    "program": "Summer 2022 SWE internship, Hermetic Infra, mentored by Ryan Newton",
+    "code_still_in_tree": "fbcode/hermetic_infra/reproducible_builds/",
+    "note": "Identifiers are Meta-internal; see README.md for the retrievable list. No internal source is reproduced in this directory."
+  },
+  "disk_note": "/home/newton and /data/users/newton are the same filesystem (/dev/nvme0n1p4); buck-out consumes the same pool."
+}

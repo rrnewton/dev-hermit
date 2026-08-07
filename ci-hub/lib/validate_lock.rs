@@ -2177,12 +2177,23 @@ fn census_disposition(
 
 /// How a supervised `run` child ended.
 enum ChildOutcome {
-    Exited { status: ExitStatus, pgid: u32 },
-    TimedOut { pgid: u32 },
+    Exited {
+        status: ExitStatus,
+        pgid: u32,
+    },
+    TimedOut {
+        pgid: u32,
+    },
     /// The SUPERVISOR was signalled (systemd stopping the unit TERMs the whole
     /// control group, so this is the common death path — not an exotic one).
-    Signalled { pgid: u32, signal: i32 },
-    Uncertain { pgid: u32, reason: String },
+    Signalled {
+        pgid: u32,
+        signal: i32,
+    },
+    Uncertain {
+        pgid: u32,
+        reason: String,
+    },
 }
 
 impl ChildOutcome {
@@ -2590,7 +2601,7 @@ wait
             .run(
                 RunArgs {
                     agent: "stubborn-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-stubborn".into(),
                     no_wait: false,
                     wait: 0,
@@ -2901,7 +2912,10 @@ while :; do sleep 60; done
         let publish_probe = identity_path.clone();
         let flagger = thread::spawn(move || {
             for _ in 0..600 {
-                if fs::metadata(&publish_probe).map(|m| m.len() > 0).unwrap_or(false) {
+                if fs::metadata(&publish_probe)
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
+                {
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
@@ -3009,7 +3023,10 @@ while :; do sleep 60; done
         let _ = fs::remove_file(&stub);
 
         let code = result.expect("an ordinary child exit must complete cleanup");
-        assert_eq!(code, 7, "an unsignalled run must report the child's own code");
+        assert_eq!(
+            code, 7,
+            "an unsignalled run must report the child's own code"
+        );
         assert_ne!(
             code,
             128 + libc::SIGTERM,
@@ -3043,7 +3060,7 @@ wait
             .run(
                 RunArgs {
                     agent: "escaped-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-escaped".into(),
                     no_wait: false,
                     wait: 0,
@@ -3165,15 +3182,11 @@ wait
         let ready = root.join("supervisor-ready");
         let marker = root.join("payload-started");
         let target = "hard-death";
-        crate::landing_lock::install_run_hard_death_hook(
-            &format!("validate:{target}"),
-            point,
-            ready,
-        );
+        crate::landing_lock::install_run_hard_death_hook(&format!("bench:{target}"), point, ready);
         let result = ValidateLock { paths }.run(
             RunArgs {
                 agent: "hard-death-validate".into(),
-                kind: Kind::Validate,
+                kind: Kind::Bench,
                 target: target.into(),
                 no_wait: false,
                 wait: 0,
@@ -3288,12 +3301,12 @@ wait
             };
             let marker = paths.lock.parent().unwrap().join("payload-started");
             let target = format!("crash-{index}");
-            crate::landing_lock::install_run_crash_hook(&format!("validate:{target}"), point);
+            crate::landing_lock::install_run_crash_hook(&format!("bench:{target}"), point);
             let error = lock
                 .run(
                     RunArgs {
                         agent: "crash-validate".into(),
-                        kind: Kind::Validate,
+                        kind: Kind::Bench,
                         target: target.clone(),
                         no_wait: false,
                         wait: 0,
@@ -3416,7 +3429,7 @@ exit 0
             .run(
                 RunArgs {
                     agent: "normal-exit-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "normal-exit".into(),
                     no_wait: false,
                     wait: 0,

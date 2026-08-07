@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # INERT both-sided bracket of the landing eligibility predicate.
 #
-# `local-validation-eligibility.sh` is the predicate that decides whether a PR's
-# local-validate record authorizes landing. The GitHub `locally-validated` label
-# is a CACHE of that result; the ledger is the truth (#231/#243). This test
-# exercises the predicate DIRECTLY against synthetic ledger fixtures in a temp
-# dir: no PR is read, no label is written, no merge is attempted, and no
-# authorization artifact is ever planted on live state.
+# `local-validation-eligibility.sh` exposes the local-receipt predicate used by
+# the exact-head local-or-hosted landing authority. The GitHub
+# `locally-validated` label is a CACHE of that result; the ledger is the truth
+# (#231/#243). This test exercises the local predicate DIRECTLY against synthetic
+# ledger fixtures in a temp dir, then audits the production combiner and lander:
+# no PR is read, no label is written, no merge is attempted, and no authorization
+# artifact is ever planted on live state.
 #
 # Both legs are required, and the second is the one usually skipped:
 #   NEGATIVE  an unbacked / stale-SHA / tampered / known-failing record is
@@ -25,6 +26,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$script_dir/../.." && pwd)
 helper=$script_dir/local-validation-eligibility.sh
 lander=$script_dir/land-pr.sh
+authority=$script_dir/exact-head-validation-authority.sh
 tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 ledger=$tmp/ledger.jsonl
@@ -50,12 +52,18 @@ LAST_STATUS=
 # A fully qualifying schema-5 clean full-coverage PASS row for $1.
 pass_row() {
   jq -cn --arg c "$1" '{
-    schema_version: 5, commit: $c, commit_anchored: true, tree_dirty: false,
-    profile: "full", selection_mode: "full", result: "pass",
-    executed_tests: 42, filtered_tests: 0, failures: 0,
+    schema_version: 5, repo: "hermit", commit: $c,
+    tree: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    commit_anchored: true, tree_dirty: false,
+    profile: "full", selection_mode: "full", result: "pass", raw_result: "pass",
+    exit_code: 0, checks: 1, failures: 0, gates_run: 1, gates_expected: 1,
+    gates: [{name: "fixture", result: "pass", exit_code: 0}],
+    executed_tests: 42, filtered_tests: 0,
     coverage: {planned_test_nodes: 1, executed_test_nodes: 1,
                zero_executed_nodes: [], absent_nodes: []},
-    finished_at: "2026-08-04T00:00:00Z", host: "fixture", real_seconds: 600
+    started_at: "2026-08-03T23:59:59Z", finished_at: "2026-08-04T00:00:00Z",
+    host: "fixture", slot: "fixture-slot", log_file: "/durable/fixture.log",
+    real_seconds: 600
   }'
 }
 
@@ -218,24 +226,35 @@ audit() { # audit <description> <ok|bad>
   else printf 'BAD  AUDIT %s\n' "$1"; audit_fail=1; fi
 }
 
-# 1. Both lander call sites invoke the helper and capture its exit code.
-mapfile -t elig_lines < <(grep -n 'local-validation-eligibility\.sh"' "$lander" || true)
-if [ "${#elig_lines[@]}" -ge 2 ]; then
-  uncaptured=0
-  for line in "${elig_lines[@]}"; do
-    grep -q 'VRC=\$?' <<<"$line" || uncaptured=1
-  done
-  if [ "$uncaptured" -eq 0 ]; then
-    audit "land-pr.sh: ${#elig_lines[@]} helper call sites, all capture rc" ok
-  else
-    audit "land-pr.sh: a helper call site discards its exit code" bad
-  fi
+# 1. All three mutation boundaries invoke the owner-authorized combiner: before
+# rebase, after push, and immediately before merge. The first two capture VRC;
+# the final receipt-bound call captures receipt_rc.
+mapfile -t authority_lines < <(grep -n 'exact-head-validation-authority\.sh"' "$lander" || true)
+if [ "${#authority_lines[@]}" -eq 3 ] &&
+   [ "$(grep -c 'VRC=\$?' "$lander")" -ge 2 ] &&
+   grep -Fq 'receipt_rc=$?' "$lander"; then
+  audit "land-pr.sh: 3 exact-head authority boundaries capture their rc" ok
 else
-  audit "land-pr.sh: expected >=2 helper call sites, found ${#elig_lines[@]}" bad
+  audit "land-pr.sh: expected 3 captured exact-head authority boundaries, found ${#authority_lines[@]}" bad
+fi
+
+# The combiner independently dereferences semantic local and hosted status. It
+# must not reintroduce the legacy label-shaped helper as an authority.
+if grep -Fq 'local-validation-eligibility.sh' "$authority"; then
+  audit "exact-head authority calls the legacy label helper" bad
+elif grep -Fq 'validate-status' "$authority" && grep -Fq 'hosted-status' "$authority"; then
+  audit "exact-head authority dereferences both semantic status verifiers" ok
+else
+  audit "exact-head authority lost a semantic status verifier" bad
 fi
 
 # 2. The lander refuses on each non-zero code rather than only on rc 3/4.
-for pat in 'known-failing' 'no clean full-validate PASS record' 'could not evaluate exact-head validation evidence'; do
+for pat in \
+  'exact-head authority reported a genuine red' \
+  'neither exact-head authority produced green' \
+  'could not evaluate exact-head validation authority' \
+  'has no accepted exact-head validation authority' \
+  'exact-head validation authority REFUSED'; do
   if grep -Fq "$pat" "$lander"; then
     audit "land-pr.sh abandons on: $pat" ok
   else
@@ -266,7 +285,7 @@ fi
 # `|| true` is load-bearing: under `set -euo pipefail` a non-matching grep would
 # abort the script here, and a guard that crashes is not a guard that fired.
 unset_line=$( { grep -n '^unset CI_HUB_VALIDATE_STATUS_BIN CI_HUB_VALIDATE_LEDGER$' "$lander" || true; } | head -1 | cut -d: -f1)
-first_read=$( { grep -n 'local-validation-eligibility\.sh"\|scan-finalize\.sh' "$lander" || true; } | head -1 | cut -d: -f1)
+first_read=$( { grep -n 'exact-head-validation-authority\.sh"\|scan-finalize\.sh' "$lander" || true; } | head -1 | cut -d: -f1)
 if [ -n "$unset_line" ] && [ -n "$first_read" ] && [ "$unset_line" -lt "$first_read" ]; then
   audit "land-pr.sh clears both validate env overrides (line $unset_line) before first read (line $first_read)" ok
 else
@@ -310,4 +329,4 @@ if [ "$fail" -ne 0 ] || [ "$audit_fail" -ne 0 ] ||
   echo "FAIL: local-validation eligibility bracket" >&2
   exit 1
 fi
-echo "PASS: eligibility predicate refuses every unbacked/stale/tampered/failing head and still admits a ledger-backed one; no merge path outside land-pr.sh"
+echo "PASS: local eligibility refuses every unbacked/stale/tampered/failing head and still admits a ledger-backed one; lander uses the exact-head OR authority; no merge path outside land-pr.sh"

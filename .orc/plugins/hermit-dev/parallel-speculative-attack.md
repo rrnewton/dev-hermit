@@ -34,7 +34,7 @@ path and improve its diagnosis instead.
 
 Before assigning implementation agents, load the workspace
 `research-planning-persona` skill at
-`~/work/dev-hermit/.llms/skills/research-planning-persona.md` and run its
+`~/work/dev-hermit/.llms/skills/research-planning-persona/SKILL.md` and run its
 evidence-first `Classify -> Localize -> Generate -> Score -> Emit` pipeline. For
 non-determinism work, retain the same structure while substituting the relevant
 architecture and evidence.

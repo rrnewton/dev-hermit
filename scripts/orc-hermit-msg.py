@@ -31,6 +31,8 @@ import hashlib
 import json
 import os
 import re
+import socket as pysocket
+import http.client
 import secrets
 import shlex
 import subprocess
@@ -161,9 +163,18 @@ class DeliveryAck:
     composer_state: str | None
     echo: bool
     pending: int | None
+    #: Orc consumed the draft BEFORE this relay pressed Enter, so no Enter was
+    #: sent. Evidence is the message found in the transcript with an empty
+    #: composer -- the same evidence `submit_and_acknowledge` already trusts,
+    #: read one step earlier. Recorded distinctly because "we submitted it" and
+    #: "it was already taken" are different facts, and a reader must not have to
+    #: infer which happened.
+    consumed_without_submit: bool = False
 
     @property
     def evidence(self) -> str:
+        if self.consumed_without_submit:
+            return "consumed-before-submit+echo"
         return "composer-drained+echo" if self.echo else "composer-drained"
 
 
@@ -688,7 +699,13 @@ def clear_composer(socket: Path, pane_id: str) -> bool:
     return False
 
 
-def verify_injected(socket: Path, pane_id: str, probe: str) -> None:
+#: What `verify_injected` observed. The distinction is load-bearing: one of
+#: these still needs Enter, the other must NOT get one.
+INJECTED_IN_COMPOSER = "in-composer"
+INJECTED_ALREADY_CONSUMED = "already-consumed"
+
+
+def verify_injected(socket: Path, pane_id: str, probe: str) -> str:
     """Confirm the keystrokes reached the input box, before pressing Enter.
 
     This is the check that turns a blind rc=0 into a real result: every tmux
@@ -706,9 +723,24 @@ def verify_injected(socket: Path, pane_id: str, probe: str) -> None:
         screen = capture_pane(socket, pane_id)
         composer = parse_composer(screen)
         if (composer is not None and not composer.is_empty) or probe in squash(screen):
-            return
+            return INJECTED_IN_COMPOSER
         if attempt + 1 < INJECT_ATTEMPTS:
             time.sleep(INJECT_RETRY_SLEEP)
+
+    # AN EMPTY COMPOSER IS AMBIGUOUS, and reading it as failure is how a relay
+    # delivers TWICE. It means either the keystrokes never landed, or they
+    # landed and Orc already consumed the draft before this loop looked --
+    # exactly what happens when the coordinator is idle and takes the turn
+    # immediately. The visible screen cannot tell those apart once the turn has
+    # scrolled the message out of view, so before declaring non-delivery, look
+    # where `submit_and_acknowledge` already looks for consumption evidence: the
+    # scrollback. Finding the message there with an empty composer is Orc having
+    # taken ownership, which is delivery -- and pressing Enter or reporting
+    # failure at that point would either inject a stray newline into the
+    # coordinator's turn or make the caller send the whole message again.
+    transcript = capture_pane(socket, pane_id, scrollback=TRANSCRIPT_SCROLLBACK_LINES)
+    if probe in squash(transcript):
+        return INJECTED_ALREADY_CONSUMED
 
     cleared = clear_composer(socket, pane_id)
     raise OrcMessageError(
@@ -769,12 +801,164 @@ def submit_and_acknowledge(
     )
 
 
+# ------------------------------------------------- supported API path -----
+#
+# The tmux path infers delivery from what a TUI drew. Every failure mode in this
+# file's history follows from that: keystrokes tmux accepted but the app did
+# not, an empty composer that could mean either "never arrived" or "already
+# taken", a layout the parser stopped recognising. On 2026-08-07 the coordinator
+# pane stopped rendering a composer entirely and the hourly wake could not be
+# delivered at all, correctly refusing rather than typing blind.
+#
+# Orc exposes a supported alternative: an authenticated per-session Unix socket
+# speaking HTTP. `POST /api/message` is the ingestion route (verified read-only:
+# GET returns 405 with `allow: POST`), and its RESPONSE is the acknowledgement.
+# That is a typed reply from the process that will consume the message, not a
+# picture of a terminal, so there is no rendering to misread.
+API_MESSAGE_PATH = "/api/message"
+API_TIMEOUT_SECONDS = 15.0
+#: Response fields that carry Orc's own identifier for the accepted message.
+API_ACK_ID_KEYS = ("message_id", "id", "request_id", "queue_id")
+
+
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection over a Unix socket. stdlib only, so tests can bind a real
+    receiver on a temp socket instead of mocking the transport away."""
+
+    def __init__(self, unix_socket: str, timeout: float = API_TIMEOUT_SECONDS):
+        super().__init__("localhost", timeout=timeout)
+        self._unix_socket = unix_socket
+
+    def connect(self) -> None:
+        sock = pysocket.socket(pysocket.AF_UNIX, pysocket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._unix_socket)
+        self.sock = sock
+
+
+@dataclass(frozen=True)
+class ApiAck:
+    """Orc's own acknowledgement of one submitted message."""
+
+    status: int
+    ack_id: str | None
+    body: str
+
+    @property
+    def evidence(self) -> str:
+        return f"api-accepted:{self.ack_id}" if self.ack_id else "api-accepted"
+
+
+def deliver_via_api(api_socket: Path, message: str) -> ApiAck:
+    """POST the message once and require an acknowledgement.
+
+    Sent EXACTLY ONCE and never retried. A retry after an ambiguous outcome is
+    how a relay delivers twice, and an HTTP request whose response was lost may
+    still have been processed -- the same rule the Enter key follows on the tmux
+    path, for the same reason.
+    """
+    if not api_socket.exists():
+        raise OrcMessageError(
+            f"no Orc receiver at {api_socket}: the session socket does not exist, so there "
+            "is nothing to accept the message. NOT falling back to typing -- a missing "
+            "receiver is a refusal, not a reason to guess."
+        )
+    payload = json.dumps({"message": message}).encode("utf-8")
+    connection = _UnixHTTPConnection(str(api_socket))
+    try:
+        connection.request(
+            "POST",
+            API_MESSAGE_PATH,
+            body=payload,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(payload))},
+        )
+        response = connection.getresponse()
+        status = response.status
+        body = response.read().decode("utf-8", errors="replace")
+    except OSError as error:
+        raise OrcMessageError(
+            f"the Orc receiver at {api_socket} did not answer: {error}. Nothing is resent: "
+            "an unanswered POST may still have been processed, and a retry here is how a "
+            "relay delivers twice."
+        ) from error
+    finally:
+        with contextlib.suppress(Exception):
+            connection.close()
+
+    if not 200 <= status < 300:
+        raise OrcMessageError(
+            f"the Orc receiver at {api_socket} refused the message with HTTP {status}: "
+            f"{body[:300]!r}. Nothing was delivered."
+        )
+    return ApiAck(status=status, ack_id=_api_ack_id(body), body=body)
+
+
+def _api_ack_id(body: str) -> str | None:
+    """Orc's identifier for the accepted message, when it supplies one.
+
+    Absence is NOT failure: a 2xx is already the acknowledgement. The id is
+    recorded when present so an outcome can be dereferenced later rather than
+    merely asserted.
+    """
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    for container in (parsed, parsed.get("data"), parsed.get("result")):
+        if isinstance(container, dict):
+            for key in API_ACK_ID_KEYS:
+                value = container.get(key)
+                if isinstance(value, (str, int)) and str(value):
+                    return str(value)
+    return None
+
+
+def resolve_api_socket(explicit: Path | None, orc_command: Path, orc_db: str) -> Path | None:
+    """Locate the coordinator's session socket, or None when there is none."""
+    if explicit is not None:
+        return explicit
+    try:
+        output = subprocess.run(
+            [str(orc_command), "curl", "--list", "--json"],
+            capture_output=True, text=True, timeout=API_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if output.returncode != 0:
+        return None
+    try:
+        entries = json.loads(output.stdout or "[]")
+    except ValueError:
+        return None
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if orc_db and entry.get("name") not in (orc_db, None):
+            continue
+        candidate = entry.get("uds_socket") or entry.get("UDS_SOCKET")
+        if candidate:
+            return Path(candidate)
+    return None
+
+
 def send_message(socket: Path, pane_id: str, message: str) -> DeliveryAck:
     """Deliver the message and return what was observed about its acceptance."""
     composer = wait_for_ready_composer(socket, pane_id)
     probe = message_probe(message)
     inject_message(socket, pane_id, message)
-    verify_injected(socket, pane_id, probe)
+    if verify_injected(socket, pane_id, probe) == INJECTED_ALREADY_CONSUMED:
+        # Enter is deliberately NOT sent. There is nothing in the box to submit,
+        # and a stray Enter lands in whatever the coordinator is doing next.
+        return DeliveryAck(
+            composer_state=composer.state,
+            echo=True,
+            pending=parse_pending(capture_pane(socket, pane_id)),
+            consumed_without_submit=True,
+        )
     return submit_and_acknowledge(socket, pane_id, probe, composer.state)
 
 
@@ -847,6 +1031,8 @@ def log_delivery(
     message_file: Path | None,
     error: str | None = None,
     ack: DeliveryAck | None = None,
+    transport: str = "tmux",
+    api_ack: "ApiAck | None" = None,
 ) -> None:
     # A bare "sent" does not say what was verified, and this log is the only
     # durable record of a relay. Every `sent` therefore carries the evidence it
@@ -858,6 +1044,15 @@ def log_delivery(
         "status": status,
         "target": f"{session}:{window}",
     }
+    record["transport"] = transport
+    if api_ack is not None:
+        # The endpoint's own reply, so an outcome can be dereferenced later
+        # rather than asserted: status is the acknowledgement, ack_id names it.
+        record["ack"] = api_ack.evidence
+        record["api_status"] = api_ack.status
+        if api_ack.ack_id:
+            record["ack_id"] = api_ack.ack_id
+
     if ack is not None:
         record["ack"] = ack.evidence
         record["echo"] = ack.echo
@@ -892,6 +1087,26 @@ def locked(lock_path: Path) -> TextIO:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--transport",
+        choices=("tmux", "api", "auto"),
+        default="tmux",
+        help=(
+            "How to reach the coordinator. `api` POSTs to Orc's supported "
+            "/api/message endpoint over its authenticated session socket and "
+            "binds success to the HTTP acknowledgement. `tmux` types into the "
+            "composer (the historical path). `auto` prefers api when a receiver "
+            "resolves and falls back to tmux otherwise -- never both, so a "
+            "message is submitted exactly once. Default stays tmux until the "
+            "api path has one live validation; see the task note."
+        ),
+    )
+    parser.add_argument(
+        "--api-socket",
+        type=Path,
+        default=None,
+        help="Explicit Orc session socket. Skips discovery; used by the inert tests.",
+    )
     parser.add_argument("message", nargs="?", help="message to submit")
     parser.add_argument(
         "--message-file",
@@ -943,12 +1158,72 @@ def parse_args() -> argparse.Namespace:
         "agent windows run claude/codex, never `orc`, so naming one matches "
         "no coordinator. Use a TaskGraph note for agent-to-agent handoff",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="mark this invocation as a self-test. Refuses before sending "
+        "anything unless --socket names an inert fixture server, so a test "
+        "cannot reach a human. Two probes have already leaked to the owner",
+    )
     args = parser.parse_args()
     if args.message_file is not None and args.message is not None:
         parser.error("message and --message-file are mutually exclusive")
     if args.message_file is None and args.message is None and not args.dry_run:
         parser.error("provide a message or use --message-file")
+    if args.self_test:
+        refusal = self_test_destination_refusal(args.socket)
+        if refusal:
+            parser.error(refusal)
     return args
+
+
+LIVE_SOCKET_DIR = DEFAULT_RUNTIME_DIR / "orc-tmux"
+
+
+def self_test_destination_refusal(socket: "Path | None") -> str | None:
+    """Reason a self-test must not run against this socket, or None if inert.
+
+    A self-test that can reach a person is a production side effect. This has
+    happened twice: `RELAY SELF-TEST from hermit-w12...` and a socket-fallback
+    probe both landed in front of the owner. So the destination is checked
+    BEFORE anything is composed or typed, and the check is structural rather
+    than a convention someone has to remember.
+
+    Inert means: an explicitly named socket that is not the live coordinator
+    server and does not live in the runtime directory where real orc servers
+    are published. Everything else refuses.
+
+    Note what is deliberately NOT accepted as sufficient: --dry-run. Dry-run
+    only promises not to type, and it still resolves and touches the live
+    coordinator pane. A self-test should be incapable of delivery by
+    construction, not merely well-behaved on the happy path -- the earlier leak
+    came precisely from a probe that was expected not to deliver.
+    """
+    if socket is None:
+        return (
+            "--self-test requires an explicit --socket naming an inert fixture "
+            "server. Without one the default socket is the LIVE coordinator, "
+            "and a self-test that reaches a human is a production side effect "
+            f"(default: {DEFAULT_SOCKET})"
+        )
+    resolved = Path(socket)
+    if resolved == DEFAULT_SOCKET:
+        return (
+            f"--self-test refuses the live coordinator socket {resolved}. Name a "
+            "fixture server instead; a self-test must be structurally incapable "
+            "of delivering to a person"
+        )
+    try:
+        inside_live_dir = LIVE_SOCKET_DIR in resolved.parents
+    except (OSError, ValueError):
+        inside_live_dir = False
+    if inside_live_dir:
+        return (
+            f"--self-test refuses {resolved}: it is under {LIVE_SOCKET_DIR}, where "
+            "real orc servers are published, so it may be a live user-facing "
+            "destination. Use a fixture socket outside that directory"
+        )
+    return None
 
 
 def main() -> int:
@@ -965,6 +1240,43 @@ def main() -> int:
             message = args.message
         if message is not None:
             validate_message(message)
+        # ---- supported API path, chosen before any tmux work ----
+        if args.transport in ("api", "auto"):
+            api_socket = resolve_api_socket(args.api_socket, args.orc_command, args.orc_db)
+            if api_socket is None:
+                if args.transport == "api":
+                    fail(
+                        "no Orc session socket resolved and --transport api was requested; "
+                        "nothing was delivered. Pass --api-socket, or use --transport auto "
+                        "to fall back to the tmux composer."
+                    )
+            else:
+                if args.dry_run:
+                    print(
+                        f"orc-hermit-msg: dry-run: receiver={api_socket} "
+                        f"transport=api endpoint={API_MESSAGE_PATH} (nothing sent)"
+                    )
+                    return 0
+                if message is None:
+                    fail("no message to deliver")
+                ack = deliver_via_api(api_socket, message)
+                log_delivery(
+                    args.log_file,
+                    "sent",
+                    session=session,
+                    window=window,
+                    pane_id=None,
+                    message=message,
+                    message_file=args.message_file,
+                    transport="api",
+                    api_ack=ack,
+                )
+                print(
+                    f"orc-hermit-msg: delivered via {API_MESSAGE_PATH} to {api_socket} "
+                    f"[ack={ack.evidence} http={ack.status}]"
+                )
+                return 0
+
         socket = resolve_socket(
             args.socket if args.socket is not None else DEFAULT_SOCKET,
             allow_fallback=args.socket is None,

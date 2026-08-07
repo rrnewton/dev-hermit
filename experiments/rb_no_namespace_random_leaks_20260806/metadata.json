@@ -1,0 +1,96 @@
+{
+  "experiment": "rb_no_namespace_random_leaks_20260806",
+  "date_utc": "2026-08-06",
+  "agent": "claude-coord-176",
+  "question": "Which of the randomness sources named by nix-hermit-execbuilder-prototype_20260729 actually leak under `hermit run --no-namespace`, by what mechanism, and is --no-namespace required for the Nix execBuilder seam at all?",
+  "headline": "`hermit run --tmp=/tmp` (an existing flag) determinizes all five measured sources AND keeps guest writes visible on the host, under both host /tmp and paths outside it. --no-namespace was never required: the obstacle was Hermit's private /tmp tmpfs, not the mount namespace. AT_RANDOM and /proc/sys/kernel/random/uuid were already determinized in every mode. getpid() is the sole primitive leak of --no-namespace, and bash $RANDOM is its intermittent observable consequence. No Hermit code change is required.",
+  "host": {
+    "short_hostname": "devbig176",
+    "kernel": "6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba",
+    "cores": 176,
+    "note": "AMD; ARCH_SET_CPUID returns ENODEV (no CPUID faulting) and PMU validation reports AmdSpecLockMapShouldBeDisabled. Neither affects these probes: none reads CPUID or RDTSC, and all modes are measured on the same host."
+  },
+  "repos": {
+    "hermit": {
+      "sha": "2c16d95d76eef833d7c554f89d96f6cbb6e1be94",
+      "branch": "sabre-static-elf-no-detcore-fail-closed",
+      "base": "4c70658e785834737cbe1524f77330c781a6f5ea",
+      "delta_vs_base": "one commit, confined to `run_sabre` in hermit-cli/src/lib.rs (SaBRe backend). Unreachable from the ptrace backend used for every measurement here, so it cannot affect these results.",
+      "hermit_version_string": "hermit 0.2.0 (2026-08-07, g2c16d95d76ee)"
+    },
+    "reverie": {
+      "sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+      "modified": false
+    }
+  },
+  "toolchain": {
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "cc": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "bash": "GNU bash, version 5.1.8(1)-release (x86_64-redhat-linux-gnu)"
+  },
+  "method": {
+    "runs_per_randomness_cell": 10,
+    "runs_per_write_cell": 1,
+    "recorded_quantity": "number of DISTINCT values observed across the N runs of one (source, mode) cell",
+    "verdict_rule": "distinct == 1 => determinized; distinct > 1 => LEAK; write probes report visible / DISCARDED",
+    "backend": "ptrace",
+    "log_level": "default",
+    "relaxations": "none beyond the mode under test; the mode IS the variable",
+    "positive_control": "the `native` mode must report LEAK on all five randomness sources, proving each probe can detect variation; it does (10 distinct / 10 runs on every source)",
+    "usability_control": "the two write probes make a mode's verdict meaningful: a mode that determinizes but discards the build directory does not solve the problem",
+    "guest_env": "LC_ALL=C TZ=UTC exported by the harness"
+  },
+  "modes": [
+    "native",
+    "hermit-default-namespace",
+    "hermit-tmp-host",
+    "hermit-no-namespace"
+  ],
+  "sources": [
+    "at_random",
+    "gettimeofday",
+    "getpid",
+    "bash_random",
+    "procfs_uuid",
+    "write_visible_tmp",
+    "write_visible_out"
+  ],
+  "command": "cd harness && cc -O2 -o probes probes.c && N=10 HERMIT_BIN=<hermit> ./run-matrix.sh",
+  "recommendation": "Nix execBuilder wrapper should use `hermit run --tmp=/tmp` instead of `setarch -R hermit run --no-namespace`. setarch -R is unnecessary because the full-namespace mode pins ASLR itself.",
+  "supersedes_claims": [
+    {
+      "source": "experiments/nix-hermit-execbuilder-prototype_20260729/README.md",
+      "claim": "default (full namespace) mode does not persist writes to $out; 'private mnt ns discards them'",
+      "verdict": "REFUTED — writes outside /tmp are visible on the host under the default mode. Only /tmp is discarded, because Hermit mounts a private tmpfs there; with `sandbox = false` Nix's build directory lives under /tmp, which is what actually vanished."
+    },
+    {
+      "source": "experiments/nix-hermit-execbuilder-prototype_20260729/README.md",
+      "claim": "AT_RANDOM-seeded userspace PRNGs are not virtualized under --no-namespace; bash $RANDOM differs because it derives from AT_RANDOM",
+      "verdict": "REFUTED — AT_RANDOM is byte-identical across 10 runs in every mode measured"
+    },
+    {
+      "source": "experiments/nix-hermit-execbuilder-prototype_20260729/README.md",
+      "claim": "/proc/sys/kernel/random/uuid is read straight from the host kernel RNG under --no-namespace",
+      "verdict": "REFUTED — identical across 10 runs; Hermit intercepts the path via ProcfsKind::RandomUuid"
+    },
+    {
+      "source": "experiments/rb_nix_minimum_hermit_dose_20260730/README.md",
+      "claim": "the procfs UUID probe is determinized under --no-namespace",
+      "verdict": "CONFIRMED, and shown not to depend on rootless podman — it reproduces on the bare host"
+    },
+    {
+      "source": "experiments/rb_nix_minimum_hermit_dose_20260730/README.md",
+      "claim": "bash seeds $RANDOM from the real host getpid()",
+      "verdict": "PARTIALLY CONFIRMED — getpid is measured to be the only varying seed input, but the bash-internal seed path is NOT verified; a reimplementation of bash 5.1's documented seedrand/intrand32 did not reproduce the observed triples"
+    }
+  ],
+  "limitations": [
+    "The bash-internal path from getpid() to $RANDOM is inferred by elimination, not confirmed against this bash build's source or a debugger.",
+    "Only the ptrace backend was measured. KVM, DBI, SaBRe, LiteInst and e9patch were not exercised.",
+    "Single host; run-to-run stability only. Cross-host reproducibility of the determinized values was not tested.",
+    "N=10 per randomness cell. A source varying with probability below ~10% per run could read as determinized; bash_random measured 3/10 in one block and 5/10 in another, showing that regime is real.",
+    "Write visibility is N=1 per mode: it is a deterministic filesystem property, not a sampled one.",
+    "No Nix build was run. The recommendation follows from the measured flag semantics, not from a green nixpkgs derivation; validating a real target is the Nix agent's seam.",
+    "`--tmp=/tmp` shares host /tmp, which re-admits host state as a build input. Hermit determinizes execution, not a mutable shared filesystem."
+  ]
+}

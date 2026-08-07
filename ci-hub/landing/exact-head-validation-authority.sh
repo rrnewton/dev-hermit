@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Owner-authorized exact-head landing authority: local OR hosted, with any
+# genuine red blocking. Labels and copied statuses are never inputs.
+set -uo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$script_dir/../.." && pwd)
+ci_hub=${CI_HUB_BIN:-$root/ci-hub/ci-hub}
+receipt_verifier=${VERIFY_RECEIPT_BIN:-$root/ci-hub/validation/verify_receipt.sh}
+repo=rrnewton/hermit
+sha=
+comments=
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --repo) repo=${2:-}; shift 2 ;;
+        --sha) sha=${2:-}; shift 2 ;;
+        --comments) comments=${2:-}; shift 2 ;;
+        -h|--help)
+            echo "usage: exact-head-validation-authority.sh --repo OWNER/REPO --sha 40_HEX [--comments FILE]"
+            exit 0
+            ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+if [[ ! $sha =~ ^[0-9a-f]{40}$ ]] || [[ ! $repo =~ ^[^/]+/[^/]+$ ]]; then
+    echo "exact-head authority requires --repo OWNER/REPO and lowercase 40-hex --sha" >&2
+    exit 2
+fi
+if [[ -n $comments && ! -r $comments ]]; then
+    echo "exact-head authority comments file is unreadable: $comments" >&2
+    exit 2
+fi
+
+local_report=$(mktemp)
+hosted_report=$(mktemp)
+trap 'rm -f -- "$local_report" "$hosted_report"' EXIT
+
+local_rc=0
+"$ci_hub" validate-status --sha "$sha" --repo "$repo" --json \
+    >"$local_report" 2>/dev/null || local_rc=$?
+local_state=no_result
+if [[ $local_rc -eq 0 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
+    .repo == $repo and .sha == $sha and .verdict == "VALIDATED"
+    and .exit_code == 0 and (.qualifying_count | type == "number" and . > 0)
+    and (.newest_qualifying.sha == $sha)
+' "$local_report" >/dev/null 2>&1; then
+    local_state=green
+elif [[ $local_rc -eq 3 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
+    .repo == $repo and .sha == $sha and .verdict == "FAILED" and .exit_code == 3
+' "$local_report" >/dev/null 2>&1; then
+    local_state=red
+fi
+
+# At the final mutation boundary, a local green must additionally dereference
+# its immutable receipt comment. Hosted authority needs no local receipt.
+if [[ $local_state == green && -n $comments ]]; then
+    receipt_rc=0
+    "$receipt_verifier" --repo "$repo" --sha "$sha" --comments "$comments" \
+        >/dev/null 2>&1 || receipt_rc=$?
+    if [[ $receipt_rc -ne 0 ]]; then
+        local_state=no_result
+    fi
+fi
+
+hosted_rc=0
+"$ci_hub" hosted-status --repo "$repo" --sha "$sha" --json \
+    >"$hosted_report" 2>/dev/null || hosted_rc=$?
+hosted_state=no_result
+if [[ $hosted_rc -eq 0 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
+    .required_positive_count as $required |
+    .authority == "github-actions-exact-head-jobs"
+    and .repo == $repo and .sha == $sha and .state == "green"
+    and ($required | type == "number" and . > 0)
+    and .positive_count == $required
+    and (.jobs | type == "array" and length == $required)
+    and all(.jobs[]; .state == "green" and .job_id > 0 and .run_id > 0)
+' "$hosted_report" >/dev/null 2>&1; then
+    hosted_state=green
+elif [[ $hosted_rc -eq 3 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
+    .authority == "github-actions-exact-head-jobs"
+    and .repo == $repo and .sha == $sha and .state == "red"
+    and any(.jobs[]; .state == "red" and .job_id > 0 and .run_id > 0)
+' "$hosted_report" >/dev/null 2>&1; then
+    hosted_state=red
+fi
+
+if [[ $local_state == red || $hosted_state == red ]]; then
+    printf 'AUTHORITY=refused LOCAL=%s HOSTED=%s SHA=%s\n' \
+        "$local_state" "$hosted_state" "$sha"
+    exit 3
+fi
+if [[ $local_state == green || $hosted_state == green ]]; then
+    if [[ $local_state == green && $hosted_state == green ]]; then
+        authority=local+hosted
+    elif [[ $local_state == green ]]; then
+        authority=local
+    else
+        authority=hosted
+    fi
+    printf 'AUTHORITY=%s LOCAL=%s HOSTED=%s SHA=%s\n' \
+        "$authority" "$local_state" "$hosted_state" "$sha"
+    exit 0
+fi
+printf 'AUTHORITY=no_result LOCAL=%s HOSTED=%s SHA=%s\n' \
+    "$local_state" "$hosted_state" "$sha"
+exit 4

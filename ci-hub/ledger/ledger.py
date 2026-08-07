@@ -1,0 +1,504 @@
+#!/usr/bin/env python3
+"""Deterministic global union and green/timeline/bisect queries over the
+per-team/machine validation ledger.
+
+Schema: `ai_docs/validate-ledger-team-machine-schema_20260807.md`; the section
+references below (§2, §5, §7 …) point at it, and
+`ci-hub/ledger/tests/test_ledger_invariants.py` is the executable spec.
+
+THE SHARDS ARE THE AUTHORITY; THIS MODULE IS A VIEW.
+Every function here reads append-only shard files and derives something. Nothing
+rewrites a shard, and nothing here is a place to store a fact — if a derived
+answer and a shard disagree, the shard is right and the derivation is wrong.
+That is why `fold` never mutates its inputs and why `run.correct` keeps the
+superseded event rather than replacing it.
+
+TWO SEPARATE CONCERNS, DELIBERATELY NOT FUSED:
+
+* `fold` computes the materialized view. It applies every enrichment it is
+  given, last-writer-wins per field, because the view must reflect the shard
+  contents exactly as they are.
+* `validate_event` judges whether an event SHOULD have been written. It is the
+  thing that refuses an enrich which overwrites a set value.
+
+Fusing them would mean a policy-violating line silently changes the view (if
+fold enforced nothing) or vanishes from it (if fold dropped violations) — and a
+line that exists in the shard but not in the view is exactly the data loss the
+append-only design exists to prevent. So a bad line is VISIBLE in the view and
+FLAGGED by the linter.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any, Callable, Iterable, Sequence
+
+ENVELOPE_VERSION = "validate-ledger/v1"
+
+#: Envelope keys every event must carry (§2).
+ENVELOPE_KEYS = (
+    "schema", "event_id", "event_type", "emitted_at", "team", "host", "run_id",
+    "producer",
+)
+
+#: Outcomes that are not a verdict about the commit (§10). A run that did not
+#: produce a result must never be read as a failure — that is how a flaky
+#: infrastructure hiccup gets recorded as a product regression.
+NON_VERDICT_OUTCOMES = frozenset({"no_result", "timeout", "incomplete"})
+
+#: Provenance that cannot establish green (§6). Reconstructed rows were inferred
+#: after the fact rather than observed, so they may assert a pass nobody saw.
+NON_GREEN_SOURCES = frozenset({"reconstructed"})
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Built rather than written literally so this module does not itself contain the
+# owner-path needle it rejects (check-portability greps tracked files).
+_OWNER_PATH_NEEDLE = "/" + "home" + "/"
+
+
+class LedgerError(Exception):
+    """Base for every ledger fault."""
+
+
+class MalformedEvent(LedgerError):
+    """A line is not a complete, parseable event.
+
+    Raised rather than skipped: a silently dropped line is indistinguishable
+    from a line that was never written, which turns data loss into a clean bill
+    of health (§7 lint 4).
+    """
+
+
+class ConflictingEventId(LedgerError):
+    """One event_id carries two different bodies.
+
+    Never resolved by last-writer-wins: the ids are supposed to be unique, so a
+    conflict means two producers disagree about history and a human must say
+    which is right (§5.2).
+    """
+
+
+# --------------------------------------------------------------------- paths
+
+
+def shard_path(team: str, host: str, when: Any) -> str:
+    """`ledger/<team>/<host>/<YYYY>-<MM>.jsonl` (§1)."""
+    return f"ledger/{team}/{host}/{_month_of(when)}.jsonl"
+
+
+def _month_of(when: Any) -> str:
+    """Accept a `YYYY-MM`, an ISO timestamp, or anything with year/month."""
+    if hasattr(when, "year") and hasattr(when, "month"):
+        return f"{when.year:04d}-{when.month:02d}"
+    text = str(when)
+    if len(text) >= 7 and text[4] == "-":
+        return text[:7]
+    raise ValueError(f"cannot derive a YYYY-MM shard month from {when!r}")
+
+
+def _shard_month(path: Any) -> str | None:
+    stem = Path(str(path)).stem
+    return stem if re.fullmatch(r"\d{4}-\d{2}", stem) else None
+
+
+def _shard_host(path: Any) -> str | None:
+    parts = Path(str(path)).parts
+    return parts[-2] if len(parts) >= 2 else None
+
+
+# --------------------------------------------------------------------- parse
+
+
+def parse_line(text: str) -> dict:
+    """Parse one JSONL line into an event, or raise `MalformedEvent`."""
+    try:
+        event = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise MalformedEvent(f"line is not valid JSON: {exc}") from exc
+    if not isinstance(event, dict):
+        raise MalformedEvent(f"line is not a JSON object: {type(event).__name__}")
+    return event
+
+
+def read_shard(path: Any) -> list[dict]:
+    """Read one shard. A final line without its newline is TRUNCATED.
+
+    A writer that died mid-append leaves a partial object; JSON would often
+    still reject it, but not always (a cut inside a string can stay parseable),
+    so the missing terminator is treated as the signal rather than relying on
+    the parser to notice.
+    """
+    text = Path(path).read_text()
+    if text and not text.endswith("\n"):
+        raise MalformedEvent(
+            f"{path}: final line has no newline terminator — the shard is "
+            f"truncated (a writer died mid-append); refusing to parse it as whole"
+        )
+    return [parse_line(line) for line in text.splitlines() if line.strip()]
+
+
+# --------------------------------------------------------------------- union
+
+
+def _event_key(event: dict) -> tuple[str, str]:
+    """The total order (§5.3): emitted_at, then event_id as the tiebreak.
+
+    Event ids are ULIDs, so the tiebreak is itself time-ordered; two events in
+    the same second still get a stable, reproducible order.
+    """
+    return (str(event.get("emitted_at", "")), str(event.get("event_id", "")))
+
+
+def union_events(events: Iterable[dict]) -> list[dict]:
+    """Deterministically merge already-parsed events (§5).
+
+    Order-independent by construction: the result is sorted by the total order,
+    so shard order, file order and line order cannot influence the output.
+    """
+    by_id: dict[str, dict] = {}
+    for event in events:
+        event_id = str(event.get("event_id", ""))
+        seen = by_id.get(event_id)
+        if seen is None:
+            by_id[event_id] = event
+            continue
+        if _canonical(seen) != _canonical(event):
+            raise ConflictingEventId(
+                f"event_id {event_id!r} appears twice with different bodies; "
+                f"refusing last-writer-wins (§5.2)"
+            )
+        # Identical duplicate: the same event reached us by two paths. Collapse.
+    return sorted(by_id.values(), key=_event_key)
+
+
+def union(paths: Sequence[Any]) -> list[dict]:
+    """Read every shard and merge deterministically (§5)."""
+    events: list[dict] = []
+    for path in paths:
+        events.extend(read_shard(path))
+    return union_events(events)
+
+
+def _canonical(event: dict) -> str:
+    return json.dumps(event, sort_keys=True)
+
+
+# ---------------------------------------------------------------------- fold
+
+
+def fold(events: Iterable[dict]) -> dict[str, dict]:
+    """Materialize current run facts, keyed by run_id (§3, §9).
+
+    `run_id` repeats by design — it is the join key, not a uniqueness key, so an
+    enrichment chain of any depth collapses onto the one run it describes. The
+    real ledger contains an eleven-row chain, so depth is never assumed to be 1.
+
+    Unknown keys are carried through untouched (§8): a reader that drops a field
+    it does not recognise silently destroys data written by a newer producer.
+    """
+    runs: dict[str, dict] = {}
+    for event in sorted(events, key=_event_key):
+        run_id = str(event.get("run_id", event.get("event_id", "")))
+        etype = event.get("event_type", "run.result")
+        current = runs.setdefault(run_id, {})
+        if etype == "run.result":
+            for key, value in event.items():
+                if key not in ENVELOPE_KEYS or key in ("run_id", "host", "team"):
+                    current.setdefault(key, value)
+                else:
+                    current.setdefault(key, value)
+        elif etype == "run.enrich":
+            # Apply unconditionally, last-writer-wins. Whether the enrich was
+            # ALLOWED to set that field is validate_event's judgement, not the
+            # view's; see the module docstring.
+            for key, value in _payload(event).items():
+                if value is not None:
+                    current[key] = value
+        elif etype == "run.correct":
+            for key, value in _payload(event).items():
+                current[key] = value
+        else:
+            for key, value in _payload(event).items():
+                current.setdefault(key, value)
+    return runs
+
+
+def _payload(event: dict) -> dict:
+    """The non-envelope, non-reference fields an event carries."""
+    skip = set(ENVELOPE_KEYS) | {"enriches", "supersedes", "reason"}
+    return {k: v for k, v in event.items() if k not in skip}
+
+
+def timeline(events: Iterable[dict], run_id: str) -> list[dict]:
+    """Every event about one run, in order — including superseded values (§10).
+
+    Returns the events THEMSELVES, not the folded view, because the question the
+    timeline answers is "what did we believe, and when". A correction that
+    erased the value it replaced would make that unanswerable.
+    """
+    return [e for e in sorted(events, key=_event_key)
+            if str(e.get("run_id", "")) == str(run_id)]
+
+
+# ------------------------------------------------------------------- queries
+
+
+def _latest_run_per_commit(runs: dict[str, dict]) -> dict[str, dict]:
+    """The LATEST run for each commit (§10).
+
+    Not "any run": an earlier pass followed by a later fail means the commit is
+    not green. Taking any-pass would let a stale success outrank fresh evidence.
+    """
+    latest: dict[str, dict] = {}
+    for run in runs.values():
+        commit = run.get("commit")
+        if not commit:
+            continue
+        seen = latest.get(commit)
+        if seen is None or str(run.get("emitted_at", "")) >= str(seen.get("emitted_at", "")):
+            latest[commit] = run
+    return latest
+
+
+def _is_green_run(run: dict, host_pred: Callable[[str], bool] | None) -> bool:
+    """A green must carry what it verified: outcome, provenance, host class."""
+    if run.get("outcome") != "pass":
+        return False
+    source = (run.get("producer") or {}).get("source")
+    if source in NON_GREEN_SOURCES:
+        return False
+    if host_pred is not None and not host_pred(str(run.get("host", ""))):
+        return False
+    return True
+
+
+def green(runs: dict[str, dict], host_pred: Callable[[str], bool] | None = None) -> str | None:
+    """Newest commit whose LATEST run is an observed pass, else None (§10)."""
+    candidates = [
+        run for run in _latest_run_per_commit(runs).values()
+        if _is_green_run(run, host_pred)
+    ]
+    if not candidates:
+        return None
+    newest = max(candidates, key=lambda r: str(r.get("emitted_at", "")))
+    return newest.get("commit")
+
+
+def newest_green(runs: dict[str, dict], host_pred=None) -> str | None:
+    """Alias for :func:`green`, named for the CLI query it backs."""
+    return green(runs, host_pred)
+
+
+def bisect_verdict(runs: dict[str, dict], commit: str) -> str:
+    """`pass` | `fail` | `unknown` | `nodata` for one commit (§10).
+
+    `nodata` and `unknown` are deliberately distinct: "we never tested this
+    commit" and "we tested it and learned nothing" lead a bisect to different
+    next moves, and collapsing either into `fail` would blame a commit for an
+    infrastructure failure.
+    """
+    run = _latest_run_per_commit(runs).get(commit)
+    if run is None:
+        return "nodata"
+    outcome = run.get("outcome")
+    if outcome in NON_VERDICT_OUTCOMES:
+        return "unknown"
+    if outcome == "pass":
+        return "pass"
+    if outcome == "fail":
+        return "fail"
+    return "unknown"
+
+
+def commit_gaps(runs: dict[str, dict], commits: Sequence[str]) -> list[str]:
+    """Which of `commits` have no run at all — the bisect-fill worklist."""
+    have = set(_latest_run_per_commit(runs))
+    return [c for c in commits if c not in have]
+
+
+# ------------------------------------------------------------------ validate
+
+
+def validate_event(
+    event: dict,
+    shard: Any = None,
+    *,
+    prior: dict | None = None,
+    known_ids: set[str] | None = None,
+) -> list[str]:
+    """Return the §7 violation codes for one event; empty means clean.
+
+    Returns codes rather than raising so a linter can report every problem with
+    a line at once instead of stopping at the first.
+    """
+    codes: list[str] = []
+
+    if event.get("schema") != ENVELOPE_VERSION:
+        codes.append("unknown-envelope-version")
+
+    host = str(event.get("host", ""))
+    if "." in host:
+        codes.append("fqdn-host")
+
+    if shard is not None:
+        shard_host = _shard_host(shard)
+        if shard_host and host and host != shard_host:
+            codes.append("host-path-mismatch")
+        month = _shard_month(shard)
+        emitted = str(event.get("emitted_at", ""))
+        if month and emitted[:7] and emitted[:7] != month:
+            # A past month's shard is frozen; a late line belongs in the shard
+            # for the month it was emitted in, or its ordering becomes a lie.
+            codes.append("frozen-shard-append")
+
+    if "cwd" in event:
+        codes.append("raw-cwd-forbidden")
+
+    if _contains_owner_path(event):
+        codes.append("owner-path")
+
+    reference = event.get("enriches") or event.get("supersedes")
+    if reference is not None and known_ids is not None and reference not in known_ids:
+        codes.append("unresolvable-reference")
+
+    if event.get("event_type") == "run.enrich" and prior is not None:
+        for key, value in _payload(event).items():
+            if value is None:
+                continue
+            existing = prior.get(key)
+            if existing is not None and existing != value:
+                codes.append("enrich-overwrites-set-value")
+                break
+
+    return codes
+
+
+def _contains_owner_path(value: Any) -> bool:
+    """An owner home path ANYWHERE in the event, at any nesting depth (§4.2)."""
+    if isinstance(value, str):
+        return _OWNER_PATH_NEEDLE in value
+    if isinstance(value, dict):
+        return any(_contains_owner_path(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_owner_path(v) for v in value)
+    return False
+
+
+# --------------------------------------------------------------- append-only
+
+
+def verify_append_only(old_text: str, new_text: str) -> list[str]:
+    """Compare two versions of a shard; empty means a legal pure append (§3).
+
+    Line-wise rather than diff-wise: the only legal transition is "the old lines
+    are still there, byte for byte, followed by new ones".
+    """
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+    codes: list[str] = []
+    if len(new_lines) < len(old_lines):
+        codes.append("deleted-line")
+    for index, old_line in enumerate(old_lines):
+        if index >= len(new_lines):
+            if "deleted-line" not in codes:
+                codes.append("deleted-line")
+            break
+        if new_lines[index] != old_line:
+            codes.append("rewritten-line")
+            break
+    return codes
+
+
+def append_events(path: Any, events: Iterable[dict]) -> int:
+    """Append whole lines to a shard, atomically per line.
+
+    Concurrency: each event is serialized first and written with a single
+    `os.write` in `O_APPEND` mode, so two producers on one shard interleave
+    whole LINES and never tear one. Buffered text writes would not give that —
+    a flush can land mid-object.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payloads = [(json.dumps(e, sort_keys=True) + "\n").encode() for e in events]
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        for payload in payloads:
+            os.write(fd, payload)
+    finally:
+        os.close(fd)
+    return len(payloads)
+
+
+# ------------------------------------------------------------------- legacy
+
+
+_LEGACY_GROUP_KEYS = ("host", "started_at", "finished_at", "commit")
+
+
+def migrate_legacy(rows: Sequence[dict], *, team: str) -> list[dict]:
+    """One event per legacy row — nothing collapsed, nothing invented (§9).
+
+    Rows sharing (host, started_at, finished_at, commit) are one run: the first
+    becomes `run.result`, every later one becomes `run.enrich`. Never
+    `run.correct`, because the real corpus was measured exhaustively and 0 of 37
+    multi-row groups change an already-set value; emitting corrections would
+    assert a conflict that does not exist.
+
+    The source row is carried verbatim on the event so the migration is exactly
+    reversible (`replay_legacy`). Reversibility is the property that makes the
+    migration safe to run before anyone trusts the new format.
+    """
+    groups: dict[tuple, list[int]] = {}
+    for index, row in enumerate(rows):
+        groups.setdefault(tuple(row.get(k) for k in _LEGACY_GROUP_KEYS), []).append(index)
+
+    events: list[dict] = [None] * len(rows)  # type: ignore[list-item]
+    for group_index, (_key, members) in enumerate(sorted(groups.items(), key=lambda kv: kv[1][0])):
+        run_id = f"legacy-{group_index:06d}"
+        previous_id = None
+        for position, row_index in enumerate(members):
+            row = rows[row_index]
+            event_id = f"{run_id}-{position:03d}"
+            event = {
+                "schema": ENVELOPE_VERSION,
+                "event_id": event_id,
+                "event_type": "run.result" if position == 0 else "run.enrich",
+                "emitted_at": _legacy_emitted_at(row, position),
+                "team": team,
+                "host": row.get("host"),
+                "run_id": run_id,
+                "producer": {"source": "imported", "tool": "ci-hub/ledger/migrate_legacy",
+                             "tool_version": "1"},
+                "commit": row.get("commit"),
+                "outcome": row.get("result"),
+                "legacy_row": row,
+                "legacy_index": row_index,
+            }
+            if position:
+                event["enriches"] = previous_id
+            previous_id = event_id
+            events[row_index] = event
+    return events
+
+
+def _legacy_emitted_at(row: dict, position: int) -> str:
+    """Order enrichments after the result they enrich.
+
+    Legacy rows carry no emission time, only the run's own start/finish. Reusing
+    finished_at for every member would make the chain order ambiguous under the
+    (emitted_at, event_id) total order, so the position is folded into the id
+    and the timestamp is kept stable.
+    """
+    return str(row.get("finished_at") or row.get("started_at") or "")
+
+
+def replay_legacy(events: Sequence[dict]) -> list[dict]:
+    """Reconstruct the original legacy rows exactly (§9, reversibility)."""
+    ordered = sorted(
+        (e for e in events if "legacy_row" in e),
+        key=lambda e: e.get("legacy_index", 0),
+    )
+    return [e["legacy_row"] for e in ordered]

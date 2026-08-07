@@ -4,7 +4,7 @@
 # hermit repo, which needs a slot and a PR, and egress is 403.
 #
 # WHY THIS FILE EXISTS AT ALL. The nightly stress lane's only live schedule was a
-# USER CRONTAB. On 2026-08-06 `crontab -l` reports "no crontab for newton" — it
+# USER CRONTAB. On 2026-08-06 `crontab -l` reports no crontab for the coordinator user — it
 # is gone. A schedule kept in unversioned machine-local state can vanish with no
 # commit, no review, and no alarm, and this one did; nothing noticed for two
 # nights. Putting the schedule in a tracked workflow is the actual fix for "it

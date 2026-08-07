@@ -92,6 +92,52 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("red=1", output)
         self.assertIn("pending=1", output)
 
+    def test_pull_request_gate_exposes_setup_only_no_result(self) -> None:
+        status = SimpleNamespace(
+            open=1,
+            red=0,
+            green=0,
+            pending=1,
+            real_reds=0,
+            setup_only_no_result_checks=1,
+            outage_suspected=False,
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            return_value=status,
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("setup_only_no_result_checks=1", output)
+        self.assertIn("setup_only_no_result=1", output)
+
+    def test_pull_request_gate_exposes_prerequisite_no_result(self) -> None:
+        status = SimpleNamespace(
+            open=1,
+            red=0,
+            green=0,
+            pending=1,
+            real_reds=0,
+            setup_only_no_result_checks=1,
+            prerequisite_no_result_checks=1,
+            outage_suspected=False,
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            return_value=status,
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("prerequisite_no_result_checks=1", output)
+        self.assertIn("prerequisite_no_result=1", output)
+
     def test_pull_request_one_repo_unavailable_is_degraded_not_lost(self) -> None:
         # A slow/blocked repo must not discard the other repo's real data: the
         # answer is DEGRADED (partial), distinct from "PRs are red".
@@ -432,6 +478,161 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertIn("stale=1", output)
         self.assertIn("detail=STALE stale", output)
 
+    def test_memory_gate_accepts_absent_optional_store_when_skills_are_clean(self) -> None:
+        """A stock Codex/CI host has no Claude memory directory by design."""
+        lint = (
+            0,
+            "active skills: 41  mapped memories: 0  in-sync: 0  "
+            "problems: 0  warnings: 1\n",
+            "",
+        )
+        scan = (
+            0,
+            "state=ok\nsummary=41 authoritative repository skills clean; "
+            "0 optional local finding(s)\ncontradictions=0\ndrift=0\n",
+            "",
+        )
+        with mock.patch.object(
+            operational_health,
+            "_run_tool",
+            side_effect=[lint, scan],
+        ):
+            result, output = self.capture(operational_health.memory_skill_sync_gate)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("problems=0", output)
+        self.assertIn("contradictions=0", output)
+
+    def test_memory_gate_still_refuses_repository_skill_contradictions(self) -> None:
+        lint = (0, "problems: 0\n", "")
+        scan = (
+            1,
+            "state=contradiction\nsummary=one repository contradiction\n"
+            "contradictions=1\ndrift=0\nACTION: reconcile repository skill\n",
+            "",
+        )
+        with mock.patch.object(
+            operational_health,
+            "_run_tool",
+            side_effect=[lint, scan],
+        ):
+            result, output = self.capture(operational_health.memory_skill_sync_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=contradiction", output)
+        self.assertIn("contradictions=1", output)
+        self.assertIn("ACTION: reconcile repository skill", output)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CloseOnImplementedLifecycleTest(unittest.TestCase):
+    """The close-on-implemented lifecycle, asserted as code behaviour.
+
+    Under this lifecycle an implemented task is CLOSED immediately and the
+    landing debt is enumerated from CLOSED+implemented records by
+    `drain-implemented-to-landed`. Before this, `awaiting_land` was derived
+    from the IN_PROGRESS set, which reports ~zero once the lifecycle is
+    followed -- the landing debt became invisible exactly when the policy
+    started working.
+    """
+
+    @staticmethod
+    def _task(tid, *, status="IN_PROGRESS", owner="", tags=()):
+        return operational_health.TaskRecord(
+            id=tid, title=tid, owner=owner, tags=tuple(tags), status=status
+        )
+
+    def fixture(self):
+        """active-ready, implemented-unlanded, backlog, blocked, stale."""
+        return [
+            self._task("active-ready", owner="agent-a"),
+            self._task("stale-unowned", owner=""),
+            self._task("implemented-unlanded", status="CLOSED",
+                       tags=("implemented",)),
+            self._task("implemented-unlanded-2", status="CLOSED",
+                       tags=("determinism", "implemented")),
+            self._task("backlog-item", status="BACKLOG"),
+            self._task("blocked-item", status="OPEN"),
+        ]
+
+    def report(self):
+        agents = [operational_health.AgentRecord(
+            name="agent-a", status="running", current_task="active-ready")]
+        return operational_health.reconcile_active_work(self.fixture(), agents)
+
+    def test_only_live_in_progress_work_reaches_the_actionable_queue(self):
+        r = self.report()
+        # BACKLOG/OPEN/CLOSED rows must not be treated as the live queue.
+        self.assertEqual([t.id for t in r.in_progress],
+                         ["active-ready", "stale-unowned"])
+        self.assertEqual([t.id for t in r.owned_active], ["active-ready"])
+        self.assertEqual([t.id for t in r.stale], ["stale-unowned"])
+
+    def test_landing_monitor_still_sees_the_implemented_set(self):
+        r = self.report()
+        # THE REGRESSION THIS GUARDS: keyed off status, this would be empty.
+        self.assertEqual(
+            [t.id for t in r.awaiting_land],
+            ["implemented-unlanded", "implemented-unlanded-2"],
+        )
+        self.assertEqual(r.counts()["awaiting_land"], 2)
+
+    def test_closed_implemented_work_is_never_dispatchable(self):
+        """Negative mutation: the landing debt must not leak into any set an
+        idle agent could be assigned from, nor into the closure-candidate
+        sets."""
+        r = self.report()
+        debt = {"implemented-unlanded", "implemented-unlanded-2"}
+        for name in ("in_progress", "owned_active", "actually_active",
+                     "stale", "orphaned"):
+            leaked = debt & {t.id for t in getattr(r, name)}
+            self.assertEqual(leaked, set(), f"landing debt leaked into {name}")
+
+    def test_implemented_but_not_closed_is_reported_as_a_deviation(self):
+        """An implemented row left nonterminal is invisible to the drain
+        tracker while still occupying the live queue, so it is surfaced as a
+        violation rather than silently absorbed."""
+        tasks = self.fixture() + [
+            self._task("implemented-but-open", status="IN_PROGRESS",
+                       tags=("implemented",))
+        ]
+        r = operational_health.reconcile_active_work(tasks, [])
+        self.assertEqual([t.id for t in r.lifecycle_violations],
+                         ["implemented-but-open"])
+        # It still counts as landing debt (tag-first), and still must not be
+        # dispatchable as active work.
+        self.assertIn("implemented-but-open", {t.id for t in r.awaiting_land})
+        self.assertNotIn("implemented-but-open", {t.id for t in r.owned_active})
+        self.assertNotIn("implemented-but-open", {t.id for t in r.stale})
+
+    def test_conformant_graph_reports_zero_violations(self):
+        """Positive control: the violation detector is not inert -- it fires
+        above and reports zero here, on the same code path."""
+        r = self.report()
+        self.assertEqual(r.counts()["lifecycle_violations"], 0)
+
+    def test_query_selects_both_populations(self):
+        """The SQL must fetch IN_PROGRESS *and* implemented-at-any-status;
+        fetching only IN_PROGRESS is what made the debt invisible."""
+        src = Path(operational_health.__file__).read_text()
+        self.assertIn("WHERE status = 'IN_PROGRESS'", src)
+        self.assertIn("json_each(tasks.tags)", src)
+        self.assertIn("json_each.value = 'implemented'", src)
+
+    def test_awaiting_land_detail_is_bounded_and_states_its_residue(self):
+        """The debt is now the full CLOSED+implemented population, so the
+        detail line must not enumerate it -- and must not silently truncate."""
+        tasks = [
+            self._task(f"impl-{i:02d}", status="CLOSED", tags=("implemented",))
+            for i in range(12)
+        ]
+        r = operational_health.reconcile_active_work(tasks, [])
+        detail = operational_health._active_work_detail(r)
+        shown = [d for d in detail if d.startswith("AWAITING-LAND impl-")]
+        self.assertEqual(len(shown), 5)
+        self.assertTrue(
+            any("+7 more" in d for d in detail),
+            f"residue must be stated explicitly, got: {detail}",
+        )

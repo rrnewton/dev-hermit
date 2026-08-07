@@ -377,6 +377,52 @@ def _node_lines(log_text: str, node: str) -> list[str]:
     return out
 
 
+# === The structured fault marker: the TYPED signal, not prose ===
+#
+# A substring of a human-readable sentence is a PROXY for "this failure is a host
+# provisioning gap". Nothing binds a guest's wording to this classifier's
+# expectation, so two independently-correct edits can combine into a regression:
+# rewording a guest's reason from "lua5.4 not found" to the more accurate "no Lua
+# interpreter on PATH (tried: lua5.4, lua)" removed the substring `not found` and
+# silently flipped that cell from `host-environment` to `code`. The producer-side
+# improvement DEFEATED the consumer-side fix.
+#
+# The contract, which producers emit and this module reads:
+#
+#     FAULT <class>: <detail>
+#
+# on its own line within the failing node's stream, where <class> is exactly one
+# of the fault classes below. The detail is free text FOR HUMANS ONLY — nothing
+# here parses it, so rewording the detail can never change a class. That is the
+# whole point: the class travels as a typed token, the prose travels beside it.
+#
+# TRUST BOUNDARY, stated rather than glossed: the marker's authority comes from
+# the HARNESS emitting it. This module cannot distinguish a harness-emitted
+# marker from one a guest printed on stdout. That is acceptable because the
+# marker only ever appears in a log the harness produced, and a guest that forges
+# one is a producer-side integrity problem, not a classification problem — but it
+# is a real boundary and it should not be widened by teaching more producers to
+# emit markers from untrusted output.
+_FAULT_CLASSES = ("host-environment", "infrastructure", "code")
+_FAULT_MARKER_RE = re.compile(
+    r"^FAULT\s+(" + "|".join(_FAULT_CLASSES) + r")\s*:\s*(.*)$"
+)
+
+
+def _fault_marker_for(log_text: str, node: str) -> tuple[str, str] | None:
+    """The structured ``FAULT <class>: <detail>`` marker for ``node``, or None.
+
+    Returns ``(class, detail)``. First marker wins, so a producer cannot change a
+    verdict by appending a second one. Absence is the normal case for every log
+    written before the marker existed, which is why the prose path below is
+    retained as a legacy fallback rather than deleted."""
+    for line in _node_lines(log_text, node):
+        match = _FAULT_MARKER_RE.match(line.strip())
+        if match:
+            return match.group(1), match.group(2).strip()
+    return None
+
+
 def _infra_signature_for(log_text: str, node: str) -> str | None:
     """The first infrastructure signature seen on ``node``'s own lines, or None.
     Case-insensitive; returns the canonical signature string (not the raw line)."""
@@ -462,7 +508,19 @@ def classify_failed_substeps(
         group = node.split(".", 1)[0] if "." in node else ""
         signature = _infra_signature_for(log_text, node)
         host_env = _host_env_signature_for(log_text, node)
-        if signature:
+        marker = _fault_marker_for(log_text, node)
+        if marker is not None:
+            # TYPED SIGNAL WINS. The class is read from the token, so any reword
+            # of the human detail — or of any other prose in the node's stream —
+            # leaves the class untouched. The prose signatures below are still
+            # computed and still reported, because they are evidence; they just
+            # no longer DECIDE.
+            fault = marker[0]
+            if fault == "host-environment" and not host_env:
+                host_env = marker[1] or "FAULT marker"
+            elif fault == "infrastructure" and not signature:
+                signature = marker[1] or "FAULT marker"
+        elif signature:
             fault = "infrastructure"
         elif host_env:
             fault = "host-environment"

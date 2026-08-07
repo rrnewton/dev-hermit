@@ -1,0 +1,28 @@
+# Publish landed parent tooling into the shared primary WITHOUT touching its
+# working tree. Runs scripts/main-tooling-link.rs, which only ever creates a
+# symlink for a managed path that is ABSENT; an existing or primary-owned file
+# is refused and left byte-identical.
+#
+# WHY A DEDICATED UNIT rather than a hook in the health tick: the 5-minute tick
+# is driven by ~/.local/bin/hermit-health-tick.sh, which is NOT in any
+# repository -- putting a landed-tooling guarantee behind an unversioned file
+# would defeat the point. Hooking versioned ci-hub/bin/health-tick instead would
+# change what EVERY health tick does fleet-wide. A separate versioned unit keeps
+# the blast radius to this one job.
+[Unit]
+Description=Refresh the landed parent-tooling store and relink absent managed paths
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/main-tooling-link.rs
+
+[Service]
+Type=oneshot
+Environment=HOME=/home/newton
+Environment=PATH=/home/newton/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/newton/work/dev-hermit
+# refresh materialises origin/main into the store; link publishes symlinks for
+# absent managed paths only. Both are idempotent (measured: repeat run exits 0
+# and leaves disposition AlreadyLinked/matches=true).
+ExecStart=/bin/sh -c 'rust-script scripts/main-tooling-link.rs refresh && rust-script scripts/main-tooling-link.rs link'
+# `verify` exits 1 on drift. That is a real signal, not a unit failure: drift
+# means a managed path is primary-owned, which the tool is designed to respect.
+SuccessExitStatus=0 1
+TimeoutStartSec=120
