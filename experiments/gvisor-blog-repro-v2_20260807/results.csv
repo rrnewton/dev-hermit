@@ -1,0 +1,46 @@
+experiment,arm,metric,value,unit,reps,note
+instrumentation,native,ns_per_syscall,145,ns,5,
+instrumentation,native,x_native,1,ratio,5,vs same-host native at K=1
+instrumentation,runsc-kvm,ns_per_syscall,940,ns,5,
+instrumentation,runsc-kvm,x_native,6.48,ratio,5,vs same-host native at K=1
+instrumentation,hermit-dbi,ns_per_syscall,1570,ns,5,
+instrumentation,hermit-dbi,x_native,10.8,ratio,5,vs same-host native at K=1
+instrumentation,runsc-systrap,ns_per_syscall,6235,ns,5,
+instrumentation,runsc-systrap,x_native,43,ratio,5,vs same-host native at K=1
+instrumentation,runsc-ptrace,ns_per_syscall,9320,ns,5,
+instrumentation,runsc-ptrace,x_native,64.3,ratio,5,vs same-host native at K=1
+instrumentation,hermit-e9patch,ns_per_syscall,39615,ns,5,
+instrumentation,hermit-e9patch,x_native,273,ratio,5,vs same-host native at K=1
+instrumentation,hermit-ptrace,ns_per_syscall,39695,ns,5,
+instrumentation,hermit-ptrace,x_native,274,ratio,5,vs same-host native at K=1
+instrumentation,hermit-sabre,ns_per_syscall,56660,ns,5,
+instrumentation,hermit-sabre,x_native,391,ratio,5,vs same-host native at K=1
+instrumentation,hermit-liteinst,ns_per_syscall,89680,ns,5,
+instrumentation,hermit-liteinst,x_native,618,ratio,5,vs same-host native at K=1
+instrumentation,hermit-kvm,ns_per_syscall,,ns,0,NO-RESULT: 2/2 runs TIMEOUT-300s
+sequentialization,hermit-dbi,guest_s_1core,0.407,s,5,helper cost subtracted
+sequentialization,hermit-dbi,guest_s_4core,0.458,s,5,helper cost subtracted
+sequentialization,hermit-dbi,k1_over_k4,0.889,ratio,5,
+sequentialization,hermit-e9patch,guest_s_1core,8.685,s,5,helper cost subtracted
+sequentialization,hermit-e9patch,guest_s_4core,8.407,s,5,helper cost subtracted
+sequentialization,hermit-e9patch,k1_over_k4,1.03,ratio,5,
+sequentialization,hermit-ptrace,guest_s_1core,8.241,s,5,helper cost subtracted
+sequentialization,hermit-ptrace,guest_s_4core,8.586,s,5,helper cost subtracted
+sequentialization,hermit-ptrace,k1_over_k4,0.96,ratio,5,
+sequentialization,hermit-sabre,guest_s_1core,12.960,s,5,helper cost subtracted
+sequentialization,hermit-sabre,guest_s_4core,13.282,s,5,helper cost subtracted
+sequentialization,hermit-sabre,k1_over_k4,0.976,ratio,5,
+sequentialization,native,guest_s_1core,0.102,s,5,helper cost subtracted
+sequentialization,native,guest_s_4core,0.020,s,5,helper cost subtracted
+sequentialization,native,k1_over_k4,5.1,ratio,5,noise-dominated: guest time below the 0.029s calibration spread
+sequentialization,runsc-kvm,guest_s_1core,0.556,s,5,helper cost subtracted
+sequentialization,runsc-kvm,guest_s_4core,0.333,s,5,helper cost subtracted
+sequentialization,runsc-kvm,k1_over_k4,1.67,ratio,5,
+sequentialization,runsc-ptrace,guest_s_1core,2.305,s,5,helper cost subtracted
+sequentialization,runsc-ptrace,guest_s_4core,0.946,s,5,helper cost subtracted
+sequentialization,runsc-ptrace,k1_over_k4,2.44,ratio,5,
+sequentialization,runsc-systrap,guest_s_1core,1.081,s,5,helper cost subtracted
+sequentialization,runsc-systrap,guest_s_4core,0.361,s,5,helper cost subtracted
+sequentialization,runsc-systrap,k1_over_k4,2.99,ratio,5,
+sequentialization,hermit-kvm,k1_over_k4,,ratio,0,NO-RESULT: 2/2 runs TIMEOUT-300s
+sequentialization,hermit-liteinst,k1_over_k4,,ratio,0,NO-RESULT: 2/2 runs TIMEOUT-300s
