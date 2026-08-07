@@ -351,7 +351,7 @@ fn canonical_exact(root: &Path, relative: &Path) -> Result<PathBuf, String> {
 /// Reuse the repository's canonical state/ACTIVE/branch reconciler. Exact
 /// physical-path binding remains local below because that verifier deliberately
 /// checks checkout state, not destructive-target identity.
-fn verify_registry(root: &Path) -> Result<(), String> {
+fn verify_registry_with_scope(root: &Path, slot: Option<&str>) -> Result<(), String> {
     let checker = root.join("scripts/check-worktree-registry.rs");
     if !checker.is_file() {
         return Err(format!(
@@ -360,8 +360,12 @@ fn verify_registry(root: &Path) -> Result<(), String> {
         ));
     }
     let root_arg = root.to_string_lossy().into_owned();
-    let output = Command::new(&checker)
-        .args(["--root", &root_arg])
+    let mut command = Command::new(&checker);
+    command.args(["--root", &root_arg]);
+    if let Some(slot) = slot {
+        command.args(["--slot", slot]);
+    }
+    let output = command
         .output()
         .map_err(|error| format!("could not run {}: {error}", checker.display()))?;
     if !output.status.success() {
@@ -372,6 +376,18 @@ fn verify_registry(root: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn verify_registry(root: &Path) -> Result<(), String> {
+    verify_registry_with_scope(root, None)
+}
+
+/// Verify only the release target. Other live agents may legitimately move
+/// their branches while this operation holds the registry writer lock; their
+/// rows remain visible to the unfiltered advisory report but cannot veto this
+/// slot's release.
+fn verify_registry_slot(root: &Path, slot: &str) -> Result<(), String> {
+    verify_registry_with_scope(root, Some(slot))
 }
 
 /// Bind cleanup to each exact state-recorded canonical product path and the
@@ -1728,7 +1744,7 @@ fn final_removal_boundary(
     expected_repositories: &[RepoSnapshot],
     allow_dirty: bool,
 ) -> Result<(), String> {
-    verify_registry(root)?;
+    verify_registry_slot(root, slot)?;
     let current_state = load_state(root);
     let current_slot = current_state["slots"]
         .get(slot)
@@ -4242,7 +4258,7 @@ fn main() {
             verify_absent_slot_recovery(&root, &slot).unwrap_or_else(|error| {
                 die(&format!("terminal registry recovery failed: {error}"))
             });
-            verify_registry(&root).unwrap_or_else(|error| {
+            verify_registry_slot(&root, &slot).unwrap_or_else(|error| {
                 die(&format!(
                     "terminal registry recovery verification failed: {error}"
                 ))
@@ -4454,7 +4470,7 @@ fn main() {
                 }
             }
         }
-        verify_registry(&root)
+        verify_registry_slot(&root, &slot)
             .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
         let clean_targets = clean_targets_from_state(&root, &state, &slot)
             .unwrap_or_else(|error| die(&format!("clean preflight failed: {error}")));
@@ -4555,7 +4571,7 @@ fn main() {
                 journal_clear_crash_marker.as_deref(),
             )
             .unwrap_or_else(|error| die(&format!("release journal recovery interrupted: {error}")));
-            verify_registry(&root).unwrap_or_else(|error| {
+            verify_registry_slot(&root, &slot).unwrap_or_else(|error| {
                 die(&format!(
                     "post-recovery registry verification failed: {error}"
                 ))

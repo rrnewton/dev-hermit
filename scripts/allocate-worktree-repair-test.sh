@@ -102,6 +102,48 @@ grep -Fq 'DRIFT slot=drift70 hermit recorded=stale-unpushed-70 actual=physical-7
 grep -Fq 'DRIFT slot=ok71' "$root/pre.out" \
   && { echo "FAIL: correct control ok71 was flagged before repair" >&2; exit 1; }
 
+# LOCAL ALLOCATION POSITIVE: a new target is independent of drift70. The
+# allocator must succeed and merely report the global drift afterward.
+(cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-fresh --slot fresh73 --task task-fresh --product hermit \
+    --start-point main) >"$root/fresh-allocate.out" 2>&1 \
+  || { echo 'FAIL: unrelated drift vetoed fresh allocation' >&2; cat "$root/fresh-allocate.out" >&2; exit 1; }
+[[ -d "$root/worktrees/fresh73/hermit" ]] \
+  || { echo 'FAIL: fresh target was not created' >&2; exit 1; }
+jq -e '.slots.fresh73.agents[0].name == "agent-fresh"' \
+  "$root/worktree-state.json" >/dev/null \
+  || { echo 'FAIL: fresh target was not registered to requester' >&2; exit 1; }
+grep -Fq 'advisory, allocation already succeeded' "$root/fresh-allocate.out" \
+  || { echo 'FAIL: unrelated global drift was not retained as a report' >&2; cat "$root/fresh-allocate.out" >&2; exit 1; }
+
+# LOCAL ALLOCATION NEGATIVES: an occupied new target and a drifting existing
+# target must still refuse before changing state.
+mkdir -p "$root/worktrees/occupied74"
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-occupied --slot occupied74 --task task-occupied \
+    --product hermit --start-point main) >"$root/occupied-allocate.out" 2>&1; then
+  echo 'FAIL: occupied target was accepted' >&2; exit 1
+fi
+grep -Fq 'target slot occupied74 is unregistered but path' "$root/occupied-allocate.out" \
+  || { echo 'FAIL: occupied target refusal was not explicit' >&2; cat "$root/occupied-allocate.out" >&2; exit 1; }
+rmdir "$root/worktrees/occupied74"
+
+git -C "$root/worktrees/fresh73/hermit" switch -q -c moved-fresh73
+fresh_state_hash=$(sha256sum "$root/worktree-state.json")
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" \
+    --agent agent-fresh --slot fresh73 --task task-fresh --product hermit) \
+    >"$root/drifting-target.out" 2>&1; then
+  echo 'FAIL: drifting target was accepted' >&2; exit 1
+fi
+grep -Fq 'target slot fresh73 registry preflight failed:' "$root/drifting-target.out" \
+  || { echo 'FAIL: target drift refusal was not explicit' >&2; cat "$root/drifting-target.out" >&2; exit 1; }
+grep -Fq 'DRIFT slot=fresh73 hermit recorded=detached actual=moved-fresh73' \
+  "$root/drifting-target.out" \
+  || { echo 'FAIL: target drift evidence was missing' >&2; cat "$root/drifting-target.out" >&2; exit 1; }
+[[ $(sha256sum "$root/worktree-state.json") == "$fresh_state_hash" ]] \
+  || { echo 'FAIL: refused target drift mutated registry state' >&2; exit 1; }
+git -C "$root/worktrees/fresh73/hermit" switch -q --detach
+
 # --- POSITIVE: run the reconciler; it must FIRE and drive drift to zero.
 (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair) >"$root/repair.out" 2>&1 \
   || { echo "FAIL: --repair exited nonzero" >&2; cat "$root/repair.out" >&2; exit 1; }
@@ -111,7 +153,7 @@ grep -Fq "reconcile drift70/hermit: 'stale-unpushed-70' -> 'physical-70'" "$root
 # Verifier is now clean (mechanism actually fixed the recorded cells).
 "$root/scripts/check-worktree-registry.rs" --root "$root" >"$root/post.out" 2>&1 \
   || { echo "FAIL: drift remains after repair" >&2; cat "$root/post.out" >&2; exit 1; }
-grep -Fq 'PASS rows=2 correct_rows=2 drift_rows=0 product_cells=6 drift_cells=0' "$root/post.out" \
+grep -Fq 'PASS rows=3 correct_rows=3 drift_rows=0 product_cells=9 drift_cells=0' "$root/post.out" \
   || { echo "FAIL: post-repair verifier not fully clean" >&2; cat "$root/post.out" >&2; exit 1; }
 
 # ACTIVE.md managed row now reflects the physical branch...
@@ -264,4 +306,4 @@ grep -Fq 'slot ok71 has an unfinished release transaction' "$root/releasing-adop
 [[ $(sha256sum "$root/worktree-state.json") == "$journal_hash" ]] \
   || { echo 'FAIL: refused re-adoption mutated the release journal' >&2; exit 1; }
 
-echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved and parent-ascent/path-alias residue skipped/refused; CONTROL: 1/1 correct row untouched; release journal isolated from repair/re-adoption; human content preserved; idempotent)"
+echo "allocate-worktree-repair-test: PASS (fresh allocation succeeds with unrelated drift; occupied/drifting targets refuse; repair reconciles 1 planted drift -> 0; destructive/path/journal negatives preserved)"
