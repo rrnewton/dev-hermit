@@ -138,11 +138,40 @@ export function looksWorking(text) {
   return WORKING_PATTERNS.some((p) => p.test(raw));
 }
 
+/// A question form only counts when it is the TRAILING content of its line.
+///
+/// THE BUG THIS FIXES, caught on a live pane 2026-08-07. The footer fix stopped
+/// the detector matching the pane FOOTER, but it still matched the pane's own
+/// PROSE: an agent writing *about* prompt handling had the line
+///
+///     - (y/n) → key=y · [y/N] → key=y
+///
+/// in its scrollback, and `QUESTION_FORMS.some(p => p.test(wholePane))` fired on
+/// it, so the detector resolved send=true key=y against a WORKING agent. That is
+/// the original defect one level up: first it matched the footer's vocabulary,
+/// then it matched its own.
+///
+/// The discriminator is grammatical, not lexical. A prompt AWAITS AN ANSWER, so
+/// its question form ends the line; prose mentions the form and keeps going.
+/// Trailing punctuation and a caret are allowed, arbitrary content is not.
+const TRAILING_SLACK = /^[\s?.:>)\]]*$/;
+
+function questionFormEndsALine(text) {
+  for (const rawLine of String(text).split("\n")) {
+    const line = rawLine.trimEnd();
+    for (const pattern of QUESTION_FORMS) {
+      const m = line.match(pattern);
+      if (m && TRAILING_SLACK.test(line.slice(m.index + m[0].length))) return true;
+    }
+  }
+  return false;
+}
+
 /// Positive prompt evidence, evaluated on FOOTER-STRIPPED text.
 export function hasPositivePromptEvidence(strippedText) {
   const t = String(strippedText ?? "");
   if (looksLikeNumberedMenu(t)) return "numbered";
-  if (QUESTION_FORMS.some((p) => p.test(t))) return "question";
+  if (questionFormEndsALine(t)) return "question";
   return null;
 }
 

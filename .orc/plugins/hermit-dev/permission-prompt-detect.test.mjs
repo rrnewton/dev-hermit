@@ -221,8 +221,52 @@ check(
 
 // ---------------------------------------------------------------------------
 
-const negatives = 7;
-const positives = 3;
+// --- CAPTURED LIVE 2026-08-07 from orc-hermit:4.1, a WORKING agent ----------
+// THE SECOND-ORDER BUG. The footer fix stopped the detector matching the pane
+// FOOTER; this pane shows it still matched the pane's own PROSE. The agent was
+// writing *about* prompt handling, so its scrollback contained the literal
+// forms, and the whole-text `QUESTION_FORMS.some(...)` fired -> send=true key=y
+// against an agent that was working. First it matched the footer's vocabulary,
+// then it matched its own.
+//
+// The discriminator is grammatical: a prompt AWAITS AN ANSWER so its question
+// form ends the line; prose mentions the form and keeps going.
+const CAPTURED_PROSE_ABOUT_PROMPTS = `
+● The predicate maps each form to a key:
+  - (y/n) → key=y · [y/N] → key=y
+  - a numbered menu → key=1
+✻ Baked for 3s
+`;
+check(
+  "prose ABOUT (y/n) in a working pane is not a prompt (live regression)",
+  decide({ pane: CAPTURED_PROSE_ABOUT_PROMPTS, status: "unknown", priorSends: 0 }),
+  { send: false, reason: "no-prompt-evidence" },
+);
+check(
+  "a question form mid-line with content after it is prose, not a prompt",
+  hasPositivePromptEvidence("the (y/n) form is what we match on"),
+  null,
+);
+// POSITIVE CONTROL for the same rule: the guard must not eat real prompts whose
+// form carries trailing punctuation or a caret.
+check(
+  "real prompt, form ends the line",
+  hasPositivePromptEvidence("Allow this command to run? (y/n)"),
+  "question",
+);
+check(
+  "real prompt, bare Allow-this-tool with trailing ?",
+  hasPositivePromptEvidence("Allow this tool?"),
+  "question",
+);
+check(
+  "real prompt, trailing caret after the form",
+  hasPositivePromptEvidence("Overwrite the file? [y/N] >"),
+  "question",
+);
+
+const negatives = 9;
+const positives = 6;
 console.log(
   `permission-prompt-detect: ${pass} passed, ${fail} failed ` +
     `(${negatives} negative-direction fixtures, ${positives} positive-direction, ` +
