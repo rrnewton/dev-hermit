@@ -107,9 +107,26 @@ def coverage_satisfied(cov: Any) -> bool:
     one test-bearing DAG node AND no planned test node was inert or absent. The
     NAMES travel with the receipt so this is re-derived without re-reading a log
     (Proxy Binding). Mirrors the Rust `coverage_satisfied`."""
+    # `planned_test_nodes` is checked with isinstance BEFORE the comparison. The
+    # bare `cov.get("planned_test_nodes", 0) > 0` RAISED TypeError on a null or
+    # string value (`None > 0` and `"3" > 0` are both errors in Python 3), so a
+    # malformed receipt crashed this predicate instead of being refused by it.
+    # Rust refuses the same input at the parse boundary because the field is
+    # typed `u64`; this makes Python refuse it too, rather than the two mirrors
+    # disagreeing on malformed input in a THIRD way.
+    #
+    # `== []` on the two lists is deliberate and must not be relaxed to a
+    # truthiness test: a MISSING or null list means the producer did not report
+    # it, which is unknown, and unknown is refused. See the note on
+    # `zero_executed_nodes` in ci-hub/lib/records.rs — an omitted field once
+    # deserialized to `[]` on the Rust side and read as "no inert nodes", i.e. a
+    # pass. That is the bug this spelling prevents.
+    planned = cov.get("planned_test_nodes") if isinstance(cov, dict) else None
     return (
         isinstance(cov, dict)
-        and cov.get("planned_test_nodes", 0) > 0
+        and isinstance(planned, int)
+        and not isinstance(planned, bool)
+        and planned > 0
         and cov.get("zero_executed_nodes") == []
         and cov.get("absent_nodes") == []
     )
