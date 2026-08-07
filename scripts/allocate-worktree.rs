@@ -32,6 +32,11 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{exit, Command};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Commits behind origin/main past which the base-distance notice fires. Small
+/// on purpose: main moves fast here and the damage from a stale base is silent,
+/// so the notice should appear well before the tree is badly out of date.
+const BASE_DISTANCE_NOTICE: u64 = 20;
+
 /// Workspace homeostasis caps. Disk is the primary advisory (expressed in GB);
 /// the slot count is a secondary advisory against the active-worktree policy
 /// limit. Override the disk cap with HERMIT_WORKTREE_GB_CAP.
@@ -298,6 +303,55 @@ fn homeostasis_check(root: &Path) {
     let gb = bytes as f64 / 1e9;
 
     let mut warnings: Vec<String> = Vec::new();
+
+    // BASE DISTANCE. A new slot is cut from the primary's HEAD (see
+    // --start-point, whose default is primary HEAD), so it inherits the
+    // primary's staleness exactly. That failure mode is QUIET: a stale edit
+    // applies cleanly and reverts landed work while looking like ordinary
+    // cleanup, and an ancestry check against a diverged local main answers the
+    // "did it land?" question WRONGLY. Surfacing the number here is what lets an
+    // agent see its base distance without having to think to ask.
+    //
+    // This deliberately does NOT fetch: allocation must not block on the network
+    // (the proxy is intermittent here). So the distance is measured against the
+    // origin/main ref AS LAST FETCHED, and the ref's own identity is printed --
+    // otherwise a stale ref would report a reassuring 0 and be indistinguishable
+    // from an up-to-date tree, which is the same false-zero this warning exists
+    // to prevent.
+    if let (true, tip, _) = git(root, &["rev-parse", "--short", "origin/main"]) {
+        let behind = git(root, &["rev-list", "--count", "HEAD..origin/main"])
+            .1
+            .trim()
+            .parse::<u64>()
+            .unwrap_or(0);
+        let ahead = git(root, &["rev-list", "--count", "origin/main..HEAD"])
+            .1
+            .trim()
+            .parse::<u64>()
+            .unwrap_or(0);
+        if behind > BASE_DISTANCE_NOTICE {
+            let diverged = if ahead > 0 {
+                format!(
+                    " and {ahead} AHEAD, i.e. DIVERGED and not fast-forwardable -- \
+                     reconciling that is a coordinator/owner decision, not yours"
+                )
+            } else {
+                String::new()
+            };
+            warnings.push(format!(
+                "STALE BASE: this primary is {behind} commit(s) behind \
+                 origin/main ({tip}, as last fetched -- this check does not \
+                 fetch){diverged}.\n     \
+                 A slot cut from it starts {behind} behind too, and an ancestry \
+                 check against local main will report a landed commit as NOT \
+                 landed.\n     \
+                 Base on fresh origin instead:\n     \
+                 with-proxy git -C {root} fetch origin main && \
+                 scripts/allocate-worktree.rs --start-point origin/main ...",
+                root = root.display()
+            ));
+        }
+    }
 
     if gb > cap_gb as f64 {
         warnings.push(format!(
