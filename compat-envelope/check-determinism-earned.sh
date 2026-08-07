@@ -70,8 +70,18 @@ NON_POSITIVE_TIERS = {"gap"}
 # Comparators any tier may name. Previously only `bitwise` had an allowlist, so a
 # stripped-tier row could cite any string at all and still pass -- the same
 # unknown-policy hole, one rung down.
-KNOWN_COMPARATORS = {"stripped", "canonical", "syscall-count-across-reps",
-                     "unavailable:no-verify-json"}
+KNOWN_COMPARATORS = {"stripped", "canonical", "syscall-count-across-reps"}
+# Comparators that record the ABSENCE of a verdict. These are legitimate values --
+# a producer that could not obtain a typed verdict must say so rather than leave the
+# field blank, because blank cannot distinguish "no verdict existed" from "a verdict
+# existed and was stripped". But they can never AUTHORISE a positive: absence of a
+# verdict is a no-result, never a pass.
+#
+# This was the last fail-open path. The sentinel had been added to the allowlist
+# above so that rows carrying it would parse, which also made it a valid basis for
+# deterministic=1 at every tier -- exactly defeating the tightening it was
+# introduced to support. Refused ahead of the tier logic so no tier can readmit it.
+NO_VERDICT_COMPARATORS = {"unavailable:no-verify-json"}
 
 
 def parse_counts(raw):
@@ -108,6 +118,11 @@ for i, r in enumerate(rows, start=2):
 
     def reject(why):
         overtiered.append((i, compare, tier or "<blank>", f"{tid} :: {why}"))
+
+    if compare in NO_VERDICT_COMPARATORS:
+        reject(f"comparator {compare!r} records that NO verdict was obtained; "
+               f"a no-result can never authorise deterministic=1")
+        continue
 
     # THE LEGACY BYPASS IS GONE. Previously a deterministic=1 row with a BLANK tier
     # skipped every tier check, so a positive with an unknown comparator and no counts
