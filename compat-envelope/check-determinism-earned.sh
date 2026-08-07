@@ -34,11 +34,36 @@ if not rows:
 
 TWO_RUN = {"verify"}     # the only mode that executes and compares a second run
 
-# A row may only claim the `bitwise` tier if its own record earned it: the
-# comparator was NOT the stripped one AND bitwise_parity is set. Without this a
-# producer could write tier=bitwise beside verify_compare=stripped -- exactly the
-# over-tiering that made all 346 greens read as DETLOG-bitwise.
-STRIPPED_COMPARATORS = {"stripped"}
+# THE ACCEPTANCE RULE, and it is deliberately TIER-AWARE.
+#
+# An earlier cut refused `tier=bitwise` only when the comparator was literally
+# "stripped". That is a not-equal test, not an allowlist: an unrecognised
+# comparator name sailed through, as did bitwise claims with missing or 0|0
+# counts. All three were planted and all three returned PASS.
+#
+# But a blanket "nonzero counts always" rule is wrong in the other direction:
+# the `guest` tier compares stdout+exit and deliberately does NOT compare the log
+# stream, so absent counts there are CORRECT rather than missing. Requiring them
+# would refuse the 130 legitimate KVM guest-visible rows. So each tier states
+# exactly what evidence it needs.
+BITWISE_CAPABLE = {"canonical"}          # allowlist: unknown policy => no bitwise
+LOG_COMPARING_TIERS = {"bitwise", "stripped"}   # these compared a log; counts required
+KNOWN_TIERS = {"bitwise", "stripped", "guest", "gap"}
+
+
+def parse_counts(raw):
+    """Return (left, right) or None when the field is absent/malformed."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if "|" not in text:
+        return None
+    left, _, right = text.partition("|")
+    try:
+        return int(left), int(right)
+    except ValueError:
+        return None
+
 
 unearned, unlabelled, overtiered = [], [], []
 for i, r in enumerate(rows, start=2):
@@ -47,14 +72,43 @@ for i, r in enumerate(rows, start=2):
     mode = r.get("test_mode", "")
     compare = (r.get("verify_compare") or "").strip()
     tier = (r.get("tier") or "").strip()
+    parity = (r.get("bitwise_parity") or "").strip()
+    counts = parse_counts(r.get("compared_log_messages"))
+    tid = r.get("test_id", "")
+
     if mode not in TWO_RUN:
-        unearned.append((i, mode, r.get("test_id", "")))
-    elif not compare:
-        unlabelled.append((i, mode, r.get("test_id", "")))
-    if tier == "bitwise" and (
-        compare in STRIPPED_COMPARATORS or (r.get("bitwise_parity") or "").strip() != "1"
-    ):
-        overtiered.append((i, compare, tier, r.get("test_id", "")))
+        unearned.append((i, mode, tid))
+        continue
+    if not compare:
+        unlabelled.append((i, mode, tid))
+        continue
+
+    def reject(why):
+        overtiered.append((i, compare, tier or "<blank>", f"{tid} :: {why}"))
+
+    if tier and tier not in KNOWN_TIERS:
+        reject(f"unknown tier {tier!r}")
+    elif tier == "bitwise":
+        if compare not in BITWISE_CAPABLE:
+            reject(f"comparator {compare!r} is not bitwise-capable "
+                   f"(allowlist: {sorted(BITWISE_CAPABLE)})")
+        elif parity != "1":
+            reject(f"bitwise_parity={parity!r}, must be '1'")
+        elif counts is None:
+            reject("compared_log_messages missing or malformed")
+        elif counts[0] <= 0 or counts[1] <= 0:
+            reject(f"compared_log_messages={counts[0]}|{counts[1]} — an empty "
+                   f"comparison matches trivially")
+    elif tier == "stripped":
+        # The log WAS compared, so it must say over how many messages.
+        if counts is None:
+            reject("tier=stripped compared a log but has no compared_log_messages")
+        elif counts[0] <= 0 or counts[1] <= 0:
+            reject(f"tier=stripped with empty comparison {counts[0]}|{counts[1]}")
+    # tier == "guest": no log compared, absent counts are correct.
+    # tier == "" on a legacy row: caught by `unlabelled` only if compare is blank;
+    # a pre-migration row carrying verify_compare but no tier is historical and is
+    # reported separately below rather than failed.
 
 by_mode = collections.Counter(r["test_mode"] for r in rows if r.get("deterministic") == "1")
 blank    = sum(1 for r in rows if not (r.get("deterministic") or "").strip())
@@ -77,8 +131,8 @@ if unlabelled:
 if overtiered:
     rc = 1
     print(f"\nOVER-TIERED determinism claims: {len(overtiered)} "
-          f"(tier=bitwise on a stripped comparison or without bitwise_parity=1 — "
-          f"a bitwise claim must rest on a bitwise comparison)", file=sys.stderr)
+          f"(a tier claim whose own record does not support it: non-allowlisted "
+          f"comparator, bitwise_parity!=1, or missing/zero/malformed counts)", file=sys.stderr)
     for line, compare, tier, tid in overtiered[:10]:
         print(f"  line {line}: verify_compare={compare!r} tier={tier!r} test={tid}",
               file=sys.stderr)
