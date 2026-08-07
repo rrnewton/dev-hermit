@@ -4,7 +4,7 @@
   "agent": "claude-coord-176 (impl, claude-opus-5)",
   "question": "For a Debian source package whose build demonstrably depends on the root path it is built in, does Hermit make the build independent of that path?",
   "design": "Prepare once, then build four times from the same prepared source in four DIFFERENT root paths: native in N1 and N2, hermit in A and B. Compare N1-vs-N2 and A-vs-B. The native pair is a per-package internal control establishing that the package really is root-sensitive, so a matching hermit pair is evidence about Hermit rather than about an already-reproducible package.",
-  "answer": "57/57 packages diverge natively across two build roots (the control fired on every one). 49/49 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.",
+  "answer": "58/58 packages diverge natively across two build roots (the control fired on every one). 52/52 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.",
   "scope_warning": "13 packages with all four builds complete, selected as small fast-building members of the 8,688-name ASPLOS'20 target set. This is NOT a random sample and must not be reported as a percentage of that set. Selection is convenience-biased toward small packages.",
   "hermit": {
     "repo": "rrnewton/hermit",
@@ -60,13 +60,13 @@
     "Parallelise prepare beyond a single proxy bridge; it is the sole throughput limit."
   ],
   "results_summary": {
-    "native_control_measured": 57,
-    "native_two_root_diverges": "57/57",
-    "default_hermit_arm_measured": 49,
-    "default_hermit_identical": "43/49 (CONFOUNDED)",
-    "corrected_arm_measured": 49,
-    "corrected_arm_identical": "49/49",
-    "controlled_win": "49/49",
+    "native_control_measured": 58,
+    "native_two_root_diverges": "58/58",
+    "default_hermit_arm_measured": 52,
+    "default_hermit_identical": "46/52 (CONFOUNDED)",
+    "corrected_arm_measured": 52,
+    "corrected_arm_identical": "52/52",
+    "controlled_win": "52/52",
     "pending_at_stop": [
       "groff",
       "mtools",
@@ -77,7 +77,8 @@
       "bsdmainutils (hermit build failed)"
     ],
     "derivation": "computed by ./summarize.sh from results.csv; each arm counted against its own completed denominator",
-    "regenerate": "./regen_readme.py (table+headline) and ./summarize.sh (totals)"
+    "regenerate": "./regen_readme.py (table+headline) and ./summarize.sh (totals)",
+    "note": "stragglers may still be appending to results.csv; regenerate with ./regen_readme.py"
   },
   "timing_units_caveat": "This experiment records no per-package durations, deliberately. Any duration printed by a build running under Hermit is VIRTUAL time (Hermit virtualizes the clock; a guest-side $SECONDS or `time` does not measure host wall clock). Approximate durations quoted in README.md are host wall-clock observed from outside the guest. Do not derive an overhead or slowdown factor from this experiment.",
   "confounder": "This host's PMU fails validation (AmdSpecLockMapShouldBeDisabled). Hermit derives virtual time from retired-conditional-branch counts, so without --no-rcb-time Hermit's own clock is a nondeterminism source. The default arm's six failures (figlet, grep, indent, nano, time, wdiff) all become IDENTICAL with --no-rcb-time and none of the seven passes changes -- the signature of a measurement artifact, not six product gaps. --no-rcb-time is REQUIRED for determinism measurement on this class of host.",
@@ -126,8 +127,17 @@
       "path": "debian_reproducible_builds_2026/ignored (prepared-root cache)",
       "total_gib": 20.4,
       "exclusive_gib": 10.04,
-      "note": "35 unpacked Wheezy roots with build-deps; worth keeping, it makes re-runs cheap"
+      "note": "35 unpacked Wheezy roots with build-deps; worth keeping, it makes re-runs cheap",
+      "exclusive_gib_now": 14.2,
+      "growth": "~0.64 GiB exclusive per newly prepared package; this, not the run roots, is this lane's real disk growth"
     },
-    "policy": "tworoot.sh reclaims each package's six run roots inside the per-package loop once its hashes are in results.csv, bounding peak footprint by packages in flight. KEEP_ROOTS=1 retains them for check_path_embedding.sh."
+    "policy": "tworoot.sh reclaims each package's six run roots inside the per-package loop once its hashes are in results.csv, bounding peak footprint by packages in flight. KEEP_ROOTS=1 retains them for check_path_embedding.sh.",
+    "measured_under_load": {
+      "in_flight_packages": 11,
+      "ignored_total_gib": 18.43,
+      "ignored_exclusive_gib": 0.29,
+      "single_in_flight_package": "2.04 GiB total / 0.00 GiB exclusive",
+      "conclusion": "eager in-loop reclamation bounds real footprint to well under a gigabyte"
+    }
   }
 }
