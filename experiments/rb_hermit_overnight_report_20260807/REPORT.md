@@ -69,6 +69,29 @@ landed (`6c7c0997`), bracketed with three planted negatives and two positives; m
 `demo08-crash-seed-calibration_20260807`. **A P0 merge gate whose green depends on a 7-day-LRU
 cache entry is the defect behind the defect.**
 
+**Postscript, 06:30 PDT — the gate is green and the outage is cleared.** Four commits, each made
+possible by the previous one: `6c7c0997` (bind the seed to its fixture; count executed seeds),
+`be0d7ab9` (probe cgroup boxing), `a67674ff` (probe with the *same argv* the calibration uses),
+`72ba0236` (teach both `.crash-seed` readers the new format). #1843, #1678 and #1851 now report
+`Demo suite: SUCCESS`. **Two of those four commits fixed defects I had just introduced, and both
+were the same class as the original**: `be0d7ab9`'s probe stood in for a call shape it was not
+making, and `6c7c0997` changed a record's format without updating its readers. They are recorded in
+the commit messages rather than amended away. The single most useful fact to survive: **CI's fixture
+calibrates to seed 47 — the historically cached value — while this box's fixture calibrates to 9.**
+The cached seed was never wrong for CI; it was wrong for any *other* build of the fixture, and
+nothing recorded which build it belonged to.
+
+**A second stable main-red, fixed: #1910.** `cat /proc/net/sockstat` under Hermit returned
+`Illegal seek`, and `sockstat_determinism.rs` had been red on `main` across three Reverie pins
+(`294e89bfeeeb`, `590fcc9e`, `4c70658e`) — so it predated every landing it was blamed for, and two
+revert recommendations were sitting in the obligation store against correct commits. `snapshot_procfs`
+injects a rewind `lseek` for its own benefit and propagated its failure to the guest, so a file Linux
+reads fine became unreadable. Measured natively: `lseek` on `/proc/net/sockstat` **does** return
+ESPIPE while `read` returns data — `/proc/net/*` are single-release seq_files. **This also refutes my
+own first framing of the bug**, which called it "ESPIPE on a seekable file"; I had not tested the
+seek natively. *A stable main-red is more dangerous than a flaky one: every subsequent commit
+inherits it, and each draws a revert recommendation that reverting cannot fix.*
+
 **The methodological through-line.** Nearly every significant finding tonight came from refusing to
 let a status word stand in for the thing it claimed: `UNIONED` that preserved nothing, a scorecard
 describing a build that no longer exists, a hosted green that went stale when a pin moved beneath
