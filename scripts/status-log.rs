@@ -46,6 +46,14 @@ Required:
                          This is the only permitted meaning of `open_prs`.
   --genuine-reds N       Current number of genuine-red PRs.
   --fleet-count N        Current active fleet size.
+  --covers-hour HOUR     The UTC hour bucket YYYY-MM-DDTHH that the narrative and
+                         the counts DESCRIBE. Required: it is not the write time,
+                         and one recovered entry once carried 9 p.m. counts, a
+                         10:28 p.m. mapping and a 10:28 p.m. timestamp with
+                         nothing in the row to tell them apart. For an ordinary
+                         report this is the hour you are reporting on; a write
+                         from a LATER hour is retroactive and must also pass
+                         --recovery-for.
 
 Status input:
   --status-file PATH     Read the full status text from PATH.
@@ -74,6 +82,12 @@ Other:
                          Read task states from a JSON file instead of querying
                          TaskGraph: {"task-id":{"status":"IN_PROGRESS",
                          "tags":["implemented"]}}. For tests and offline use.
+  --recovery-for HOUR    Mark this entry as the retroactive recovery of a missed
+                         scheduled hour, naming that hour. Must equal
+                         --covers-hour. Required when the write happens in a
+                         later hour than the one covered, so a late entry
+                         declares itself instead of being inferred by comparing
+                         two timestamps.
   --ready-prs N          OPTIONAL, and a DISTINCT field. The ready/non-draft
                          subset. Recorded as `ready_prs`, never as `open_prs`.
   --open-prs-basis B     Assert the basis of --open-prs. The only accepted
@@ -105,7 +119,14 @@ const BASIS_READY: &str = "ready-non-draft";
 const COUNT_SEMANTICS_SCHEMA: u64 = 2;
 /// Schema 3 adds the per-worker `cwd` field, one-workstream-per-agent, and the
 /// separate `awaiting_landing_to_worker` field.
-const SCHEMA_VERSION: u64 = 3;
+/// Schema 4 adds the coverage fields below: `covers_hour`, `written_at`,
+/// `mapping_observed_at`, and the optional `recovery_for`.
+const SCHEMA_VERSION: u64 = 4;
+
+/// Entries from this schema on state WHICH HOUR they describe. Below it, the
+/// only time in the record is the write time, so the covered hour is unknowable
+/// from the row -- see `covers_hour` below for the row that proved it.
+const COVERAGE_SCHEMA: u64 = 4;
 
 /// The tag that marks a task complete-and-awaiting-landing. Such a task is a
 /// LANDING obligation, not activity, and must never be reported as in-flight
@@ -176,6 +197,8 @@ struct Args {
     genuine_reds: Option<u64>,
     fleet_count: Option<u64>,
     status_file: Option<PathBuf>,
+    covers_hour: Option<String>,
+    recovery_for: Option<String>,
     expect_sha256: Option<String>,
     expect_bytes: Option<usize>,
     log_file: Option<PathBuf>,
@@ -630,6 +653,28 @@ fn validate_open_prs_basis(basis: &str) -> Result<(), String> {
 /// Describe one logged entry's count denominator. Entries written before
 /// schema 2 carry no semantics, so they are labelled unknown rather than being
 /// assumed to mean whatever the current field name means.
+/// Which hour a row describes, for `--describe-log`. Rows below
+/// `COVERAGE_SCHEMA` carry only a write time, so their covered hour is genuinely
+/// unknown -- reported as such rather than guessed from `timestamp`, because
+/// guessing is what filed a 9 p.m. report under 10 p.m. in the first place.
+fn describe_coverage(entry: &Value) -> String {
+    let schema = entry
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if schema < COVERAGE_SCHEMA {
+        return format!("covers=unknown pre-schema-{COVERAGE_SCHEMA}-entry");
+    }
+    let covers = entry
+        .get("covers_hour")
+        .and_then(Value::as_str)
+        .unwrap_or("<absent>");
+    match entry.get("recovery_for").and_then(Value::as_str) {
+        Some(hour) => format!("covers={covers} kind=recovery recovery_for={hour}"),
+        None => format!("covers={covers} kind=current"),
+    }
+}
+
 fn describe_entry(index: usize, entry: &Value) -> String {
     let timestamp = entry
         .get("timestamp")
@@ -656,11 +701,15 @@ fn describe_entry(index: usize, entry: &Value) -> String {
                         .join("+")
                 })
                 .unwrap_or_else(|| "<no-repos>".to_string());
-            format!("{index} {timestamp} open_prs={open_prs} basis={basis} repos={repos}")
+            format!(
+                "{index} {timestamp} open_prs={open_prs} basis={basis} repos={repos} {}",
+                describe_coverage(entry)
+            )
         }
         None => format!(
             "{index} {timestamp} open_prs={open_prs} basis=unknown repos=unknown \
-             denominator=unknown pre-schema-{COUNT_SEMANTICS_SCHEMA}-entry"
+             denominator=unknown pre-schema-{COUNT_SEMANTICS_SCHEMA}-entry {}",
+            describe_coverage(entry)
         ),
     }
 }
@@ -711,6 +760,14 @@ fn parse_args() -> Args {
                 parsed.fleet_count = Some(parse_count(&arg, take_value(&arg, &mut args)))
             }
             "--status-file" => parsed.status_file = Some(take_value(&arg, &mut args).into()),
+            "--covers-hour" => {
+                let raw = take_value(&arg, &mut args);
+                parsed.covers_hour = Some(parse_hour_bucket("--covers-hour", &raw));
+            }
+            "--recovery-for" => {
+                let raw = take_value(&arg, &mut args);
+                parsed.recovery_for = Some(parse_hour_bucket("--recovery-for", &raw));
+            }
             "--expect-sha256" => parsed.expect_sha256 = Some(take_value(&arg, &mut args)),
             "--expect-bytes" => {
                 let raw = take_value(&arg, &mut args);
@@ -741,6 +798,57 @@ fn repository_root() -> PathBuf {
             die("could not locate the dev-hermit repository root");
         }
     }
+}
+
+/// WHICH HOUR DOES THIS ROW DESCRIBE?
+///
+/// Measured ambiguity, entry `2026-08-07T02:28:13Z`: its narrative opens
+/// "## 9 p.m. hourly status — recovered delivery", its counts are the 9 p.m.
+/// (T01) counts, its `workstream_to_worker` holds the 15 workstreams that were
+/// live at 02:28, and its only timestamp is the 02:28 WRITE time. One row, three
+/// time bases, and nothing in the schema said so. A reader bucketing by
+/// `timestamp` files a 9 p.m. report under 10 p.m.; a reader trusting the
+/// mapping believes those 15 workstreams were live at 9 p.m. Neither is
+/// recoverable from the row.
+///
+/// So schema 4 states all three explicitly:
+///   `covers_hour`         the UTC hour the narrative and counts describe.
+///   `written_at`          when the row was appended.
+///   `mapping_observed_at` when the mapping was sampled. Always the write time:
+///                         a past mapping cannot be reconstructed, and pretending
+///                         otherwise is the exact conflation above.
+///   `recovery_for`        present only on a retroactive entry, naming the hour
+///                         whose scheduled delivery was missed.
+fn parse_hour_bucket(flag: &str, value: &str) -> String {
+    let bytes = value.as_bytes();
+    let shaped = bytes.len() == 13
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
+        && bytes[10] == b'T'
+        && bytes[11..13].iter().all(u8::is_ascii_digit);
+    if !shaped {
+        die(&format!(
+            "{flag} must be a UTC hour bucket YYYY-MM-DDTHH, e.g. 2026-08-07T01; got {value:?}"
+        ));
+    }
+    let month: u32 = value[5..7].parse().unwrap_or(0);
+    let day: u32 = value[8..10].parse().unwrap_or(0);
+    let hour: u32 = value[11..13].parse().unwrap_or(99);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 {
+        die(&format!("{flag}: {value:?} is not a real UTC hour"));
+    }
+    value.to_string()
+}
+
+/// The hour bucket of an ISO-8601 `YYYY-MM-DDTHH:MM:SSZ` write timestamp.
+fn hour_of_timestamp(timestamp: &str) -> String {
+    if timestamp.len() < 13 {
+        die(&format!("unparseable write timestamp {timestamp:?}"));
+    }
+    timestamp[..13].to_string()
 }
 
 fn timestamp_from_date() -> String {
@@ -1029,9 +1137,51 @@ fn main() {
             "repos": repos,
         },
     });
+    // ---- coverage: which hour does this row describe, and when was it written ----
+    let written_at = timestamp_from_date();
+    let write_hour = hour_of_timestamp(&written_at);
+    let covers_hour = args
+        .covers_hour
+        .clone()
+        .unwrap_or_else(|| die("missing --covers-hour (the UTC hour this report DESCRIBES, which is not necessarily the hour it is written in)"));
+    // An hour that has not happened cannot have been observed.
+    if covers_hour.as_str() > write_hour.as_str() {
+        die(&format!(
+            "--covers-hour {covers_hour} is in the future relative to the write time \
+             {written_at} (hour {write_hour}); an hour that has not elapsed cannot be reported"
+        ));
+    }
+    if let Some(recovery_for) = &args.recovery_for {
+        // One entry recovers one hour, and it is the hour it covers. Allowing
+        // them to differ would reintroduce the two-time-bases ambiguity inside
+        // a single field pair.
+        if recovery_for != &covers_hour {
+            die(&format!(
+                "--recovery-for {recovery_for} must equal --covers-hour {covers_hour}: an \
+                 entry recovers the hour it covers"
+            ));
+        }
+    } else if write_hour != covers_hour {
+        // THE REGRESSION GUARD. This is exactly the 2026-08-07T02:28 row: 9 p.m.
+        // content written in the 10 p.m. hour with nothing marking it late.
+        die(&format!(
+            "writing in hour {write_hour} an entry that covers {covers_hour} is a RETROACTIVE \
+             entry and must say so: pass --recovery-for {covers_hour}. A late report that does \
+             not declare itself is indistinguishable from a current one."
+        ));
+    }
+
     let mut entry = json!({
         "schema_version": SCHEMA_VERSION,
-        "timestamp": timestamp_from_date(),
+        "timestamp": written_at,
+        // Explicit names for the three time bases this row mixes. `timestamp` is
+        // retained unchanged for existing consumers and equals `written_at`.
+        "written_at": written_at,
+        "covers_hour": covers_hour,
+        // ALWAYS the write time. A mapping is sampled live and cannot be
+        // reconstructed for a past hour; saying so is the difference between a
+        // known limitation and a silent falsehood.
+        "mapping_observed_at": written_at,
         "workstream_to_worker": rows_to_json(&active),
         "open_prs": open_prs,
         "genuine_reds": genuine_reds,
@@ -1052,6 +1202,9 @@ fn main() {
             "includes_drafts": false,
             "repos": repos,
         });
+    }
+    if let Some(recovery_for) = &args.recovery_for {
+        entry["recovery_for"] = json!(recovery_for);
     }
     // Recorded, but in its OWN field so it can never be mistaken for activity.
     if !awaiting.is_empty() {
@@ -1566,9 +1719,17 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         let line = describe_entry(8, &new);
         assert!(line.contains(BASIS_TOTAL_OPEN), "{line}");
         assert!(line.contains("rrnewton/hermit+rrnewton/reverie"), "{line}");
+        // Assert the DENOMINATOR specifically, not the bare word: this row is a
+        // schema-2 entry, so its COVERED HOUR is legitimately unknown and saying
+        // so is correct. A substring check for "unknown" conflates two different
+        // unknowns and would have to be relaxed every time a field is added.
         assert!(
-            !line.contains("unknown"),
-            "a scoped row must not read unknown: {line}"
+            !line.contains("denominator=unknown"),
+            "a scoped row must not read denominator=unknown: {line}"
+        );
+        assert!(
+            line.contains("covers=unknown pre-schema-4-entry"),
+            "a pre-coverage row must say its covered hour is unknown: {line}"
         );
     }
 
@@ -1664,6 +1825,99 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         let canonical = canonical_status_text(file_form);
         assert_eq!(canonical, api_text);
         assert_eq!(sha256_hex(canonical.as_bytes()), sha256_hex(api_text.as_bytes()));
+    }
+
+    // ================ covers_hour / recovery_for semantics ================
+    // The row that forced this: 2026-08-07T02:28:13Z carried 9 p.m. narrative and
+    // 9 p.m. counts, a mapping sampled at 10:28 p.m., and a 10:28 p.m. timestamp.
+    // Three time bases, one row, nothing in the schema distinguishing them.
+
+    #[test]
+    fn hour_bucket_parsing_accepts_real_hours_and_refuses_the_rest() {
+        assert_eq!(parse_hour_bucket("--covers-hour", "2026-08-07T01"), "2026-08-07T01");
+        assert_eq!(parse_hour_bucket("--covers-hour", "2026-12-31T23"), "2026-12-31T23");
+        assert_eq!(parse_hour_bucket("--covers-hour", "2026-01-01T00"), "2026-01-01T00");
+    }
+
+    #[test]
+    fn hour_of_timestamp_truncates_to_the_bucket() {
+        assert_eq!(hour_of_timestamp("2026-08-07T02:28:13Z"), "2026-08-07T02");
+        assert_eq!(hour_of_timestamp("2026-08-07T01:00:00Z"), "2026-08-07T01");
+        // The exact pair from the defect: written in T02, covering T01.
+        assert_ne!(
+            hour_of_timestamp("2026-08-07T02:28:13Z"),
+            "2026-08-07T01",
+            "if these compared equal the retroactive guard could never fire"
+        );
+    }
+
+    #[test]
+    fn describe_reports_current_recovery_and_legacy_coverage_distinctly() {
+        // CURRENT: covered hour equals the write hour, no recovery marker.
+        let current = json!({
+            "schema_version": SCHEMA_VERSION,
+            "timestamp": "2026-08-07T03:00:11Z",
+            "written_at": "2026-08-07T03:00:11Z",
+            "covers_hour": "2026-08-07T03",
+            "open_prs": 4,
+            "count_semantics": {"open_prs": {"basis": BASIS_TOTAL_OPEN, "repos": ["rrnewton/hermit"]}},
+        });
+        let line = describe_entry(1, &current);
+        assert!(line.contains("covers=2026-08-07T03"), "{line}");
+        assert!(line.contains("kind=current"), "{line}");
+        assert!(!line.contains("recovery_for"), "{line}");
+
+        // RECOVERY: the real shape of the 02:28 row, now self-describing.
+        let recovery = json!({
+            "schema_version": SCHEMA_VERSION,
+            "timestamp": "2026-08-07T02:28:13Z",
+            "written_at": "2026-08-07T02:28:13Z",
+            "covers_hour": "2026-08-07T01",
+            "recovery_for": "2026-08-07T01",
+            "mapping_observed_at": "2026-08-07T02:28:13Z",
+            "open_prs": 10,
+            "count_semantics": {"open_prs": {"basis": BASIS_TOTAL_OPEN, "repos": ["rrnewton/hermit"]}},
+        });
+        let line = describe_entry(2, &recovery);
+        assert!(line.contains("covers=2026-08-07T01"), "{line}");
+        assert!(line.contains("kind=recovery"), "{line}");
+        assert!(line.contains("recovery_for=2026-08-07T01"), "{line}");
+        // And it is NOT filed under its write hour, which was the whole defect.
+        assert!(!line.contains("covers=2026-08-07T02"), "{line}");
+
+        // LEGACY: a pre-coverage row must read unknown, never be back-inferred
+        // from `timestamp` -- that inference is what mis-filed the 9 p.m. report.
+        let legacy = json!({
+            "timestamp": "2026-08-07T02:28:13Z",
+            "open_prs": 10,
+        });
+        let line = describe_entry(3, &legacy);
+        assert!(line.contains("covers=unknown"), "{line}");
+        assert!(!line.contains("covers=2026-08-07T02"), "must not guess: {line}");
+    }
+
+    #[test]
+    fn legacy_rows_still_parse_and_are_not_rewritten() {
+        // Every historical shape must survive describe_entry without panicking:
+        // the log is append-only and these rows are already on disk.
+        for legacy in [
+            json!({"timestamp": "2026-08-06T15:05:12Z", "open_prs": 3}),
+            json!({"schema_version": 2, "timestamp": "2026-08-07T01:00:36Z", "open_prs": 5,
+                   "count_semantics": {"open_prs": {"basis": BASIS_TOTAL_OPEN, "repos": ["rrnewton/hermit"]}}}),
+            json!({"schema_version": 3, "timestamp": "2026-08-07T02:14:31Z", "open_prs": 8,
+                   "count_semantics": {"open_prs": {"basis": BASIS_TOTAL_OPEN, "repos": ["rrnewton/hermit"]}}}),
+            json!({"timestamp": "2026-08-07T02:28:13Z"}),
+        ] {
+            let line = describe_entry(0, &legacy);
+            assert!(
+                line.contains("covers=unknown pre-schema-4-entry"),
+                "every pre-schema-{COVERAGE_SCHEMA} row reads unknown: {line}"
+            );
+        }
+        // Schema 3 is BELOW the coverage schema, so it is legacy for coverage
+        // purposes even though it is current for the mapping rules.
+        assert!(COUNT_SEMANTICS_SCHEMA < COVERAGE_SCHEMA);
+        assert_eq!(SCHEMA_VERSION, COVERAGE_SCHEMA);
     }
 
 }
