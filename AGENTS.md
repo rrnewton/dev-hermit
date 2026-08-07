@@ -291,6 +291,36 @@ the exact blocker and any partial committed SHA; never tag `implemented` or clos
 **Stale-premise tasks** are tagged `implemented` with a note explaining the stale premise and evidence SHA; the
 coordinator closes after verifying it.
 
+## TaskGraph Label Taxonomy (strict, two axes)
+
+**Status answers "who must act next". Labels answer "what work is this" and "what stage is it in".**
+Keeping them apart is what stops progress being encoded in status — the mistake that produced the rows held
+at `in_progress` purely because a PR had not merged. Every **nonterminal** task carries **exactly one**
+label from each axis:
+
+- **Workstream (exactly one):** `release:0.3` · `strictness` · `main-health` · `backend:<name>` ·
+  `operations` · `owner-decision`. `backend:<name>` is a family (`backend:kvm`, `backend:dbi`, …) and counts
+  as one; adding a backend needs no policy edit.
+- **Lifecycle (exactly one):** `active-implementation` · `research` · `review` · `landing` · `awaiting-land` ·
+  `stale-premise` · `subsumed` · `duplicate`.
+
+The directive lists these fourteen as one set; they are **two orthogonal axes** and must be validated
+independently. Enforced as a single axis, every correctly-labelled task would read as "conflicting", because
+a task is always both some workstream and some stage.
+
+P0/P1 views sort by workstream before priority — `release:0.3`, then `main-health`, then `strictness` —
+so release and main-health surface above equally-prioritised background work. Other workstreams sort last;
+that is ordering, not an error. Any other tag (`source:gchat`, `integrity`, `mechanism:*`, …) is free-form
+and is ignored by both axes.
+
+**Enforcement:** `python3 ci-hub/taskgraph/label_taxonomy.py` reports the two axes against the full
+nonterminal denominator and exits nonzero on violations. It reads every row inside **one transaction** and
+requires the cursor walk and the aggregate to agree, refusing to report a number when they do not — the
+graph moves about a task a minute under a sprint, and a count taken across two statements cannot reconcile.
+`--gate p01` (the default) fails only on P0/P1 while reporting the tail: measured 2026-08-07, only 8 of 415
+nonterminal tasks carry both axes, so gating everything on day one would be red for weeks and get muted.
+Move to `--gate all` once the backlog is labelled.
+
 ## Bot-Created GitHub Issue Policy
 
 Bot-created issues go on the `rrnewton` forks **ONLY**. **NEVER create an issue on `facebookexperimental/hermit`
