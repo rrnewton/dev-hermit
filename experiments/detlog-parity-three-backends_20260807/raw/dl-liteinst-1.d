@@ -1,0 +1,1245 @@
+DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0
+DETLOG USER RAND: seeding PRNG for root thread with seed 0
+DETLOG CHAOSRAND: seeding chaos scheduler with seed 0
+DETLOG [post_exec, dtid 3] init auxv AT_RANDOM value to [162, 205, 24, 211, 0, 83, 122, 92, 176, 131, 220, 72, 219, 250, 14, 242]
+DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(NULL) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #2: brk(NULL) = Ok(4214784)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffeb70) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #3: arch_prctl(12289, 0x7fffffffeb70) = Err(Errno(EINVAL))
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 8192, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #4: mmap(NULL, 8192, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = Ok(140737353850880)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7ffff7fba750 -> "/home/newton/work/dev-hermit/ignored/land-1624/hermit/target/release/libreverie_liteinst.so", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #5: openat(-100, 0x7ffff7fba750 -> "/home/newton/work/dev-hermit/ignored/land-1624/hermit/target/release/libreverie_liteinst.so", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffd368, 832) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #6: read(3, 0x7fffffffd368, 832) = Ok(832)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: fstat(3, 0x7fffffffd200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #7: fstat(3, 0x7fffffffd200) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 68404442, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #8: mmap(NULL, 68404442, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = Ok(140737284931584)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3e5d000, 610304, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 376832) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #9: mmap(0x7ffff3e5d000, 610304, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 376832) = Ok(140737285312512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3ef2000, 28672, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 983040) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #10: mmap(0x7ffff3ef2000, 28672, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 983040) = Ok(140737285922816)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3ef9000, 33566720, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 1007616) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #11: mmap(0x7ffff3ef9000, 33566720, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 1007616) = Ok(140737285951488)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff5efc000, 33817818, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #12: mmap(0x7ffff5efc000, 33817818, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = Ok(140737319518208)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #13: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: access(0x7ffff7ff2e50 -> "/etc/ld.so.preload", Mode(S_IROTH)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #14: access(0x7ffff7ff2e50 -> "/etc/ld.so.preload", Mode(S_IROTH)) = Err(Errno(ENOENT))
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7ffff7ff1266 -> "/etc/ld.so.cache", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #15: openat(-100, 0x7ffff7ff1266 -> "/etc/ld.so.cache", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: fstat(3, 0x7fffffffdd80) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #16: fstat(3, 0x7fffffffdd80) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 28247, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #17: mmap(NULL, 28247, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE), 3, 0) = Ok(140737353822208)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #18: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7ffff7fbad20 -> "/lib64/libc.so.6", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #19: openat(-100, 0x7ffff7fbad20 -> "/lib64/libc.so.6", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffdee8, 832) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #20: read(3, 0x7fffffffdee8, 832) = Ok(832)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: pread64(3, 0x7fffffffdae0, 784, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #21: pread64(3, 0x7fffffffdae0, 784, 64) = Ok(784)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: pread64(3, 0x7fffffffdaa0, 48, 848) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #22: pread64(3, 0x7fffffffdaa0, 48, 848) = Ok(48)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: pread64(3, 0x7fffffffda50, 68, 896) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #23: pread64(3, 0x7fffffffda50, 68, 896) = Ok(68)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: fstat(3, 0x7fffffffdd80) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #24: fstat(3, 0x7fffffffdd80) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: pread64(3, 0x7fffffffd9d0, 784, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #25: pread64(3, 0x7fffffffd9d0, 784, 64) = Ok(784)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 2138064, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #26: mmap(NULL, 2138064, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = Ok(140737280737280)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3a29000, 1527808, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 167936) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #27: mmap(0x7ffff3a29000, 1527808, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 167936) = Ok(140737280905216)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3b9e000, 364544, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 1695744) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #28: mmap(0x7ffff3b9e000, 364544, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 1695744) = Ok(140737282433024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3bf7000, 24576, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 2056192) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #29: mmap(0x7ffff3bf7000, 24576, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 2056192) = Ok(140737282797568)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3bfd000, 53200, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #30: mmap(0x7ffff3bfd000, 53200, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = Ok(140737282822144)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #31: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7ffff7fbb220 -> "/lib64/libgcc_s.so.1", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #32: openat(-100, 0x7ffff7fbb220 -> "/lib64/libgcc_s.so.1", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffdec8, 832) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #33: read(3, 0x7fffffffdec8, 832) = Ok(832)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: fstat(3, 0x7fffffffdd60) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #34: fstat(3, 0x7fffffffdd60) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 115144, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #35: mmap(NULL, 115144, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_DENYWRITE), 3, 0) = Ok(140737353703424)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff7f99000, 81920, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 12288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #36: mmap(0x7ffff7f99000, 81920, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 12288) = Ok(140737353715712)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff7fad000, 16384, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 94208) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #37: mmap(0x7ffff7fad000, 16384, ProtFlags(PROT_READ), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 94208) = Ok(140737353797632)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff7fb1000, 4096, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 106496) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #38: mmap(0x7ffff7fb1000, 4096, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_DENYWRITE), 3, 106496) = Ok(140737353814016)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff7fb2000, 456, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #39: mmap(0x7ffff7fb2000, 456, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_FIXED | MAP_ANON), -1, 0) = Ok(140737353818112)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #40: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 8192, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #41: mmap(NULL, 8192, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = Ok(140737353695232)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(ARCH_SET_FS, 140737353698880) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #42: arch_prctl(ARCH_SET_FS, 140737353698880) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: set_tid_address(0x7ffff7f95110) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #43: set_tid_address(0x7ffff7f95110) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: set_robust_list(0x7ffff7f95120, 24) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #44: set_robust_list(0x7ffff7f95120, 24) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: rseq(140737353701344, 32, 0, 1392848979, 0, 248) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #45: rseq(140737353701344, 32, 0, 1392848979, 0, 248) = Err(Errno(ENOSYS))
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mprotect(0x7ffff3bf7000, 16384, ProtFlags(PROT_READ)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #46: mprotect(0x7ffff3bf7000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mprotect(0x7ffff7fb1000, 4096, ProtFlags(PROT_READ)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #47: mprotect(0x7ffff7fb1000, 4096, ProtFlags(PROT_READ)) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mprotect(0x7ffff3ef2000, 28672, ProtFlags(PROT_READ)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #48: mprotect(0x7ffff3ef2000, 28672, ProtFlags(PROT_READ)) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mprotect(0x403000, 4096, ProtFlags(PROT_READ)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #49: mprotect(0x403000, 4096, ProtFlags(PROT_READ)) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mprotect(0x7ffff7ffb000, 8192, ProtFlags(PROT_READ)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #50: mprotect(0x7ffff7ffb000, 8192, ProtFlags(PROT_READ)) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: prlimit64(0, 3, NULL, 0x7fffffffe8d0) = ?
+DETLOG prlimit64: pid=0, resource=3, mutation=false, old=8388608:18446744073709551615
+DETLOG [syscall][detcore, dtid 3] finish syscall #51: prlimit64(0, 3, NULL, 0x7fffffffe8d0) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: munmap(0x7ffff7fb3000, 28247) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #52: munmap(0x7ffff7fb3000, 28247) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getrandom(0x7ffff3c024f8, 8, 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #53: getrandom(0x7ffff3c024f8, 8, 1) = Ok(8)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(NULL) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #54: brk(NULL) = Ok(4214784)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(0x426000) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #55: brk(0x426000) = Ok(4349952)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: rt_sigaction(5, NULL, 0x7fffffffe4f0, 8) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #56: rt_sigaction(5, NULL, 0x7fffffffe4f0, 8) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: rt_sigaction(5, 0x7fffffffe450, NULL, 8) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #57: rt_sigaction(5, 0x7fffffffe450, NULL, 8) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 200704, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #58: mmap(NULL, 200704, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_PRIVATE | MAP_ANON), -1, 0) = Ok(140737353494528)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe5a0 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #59: openat(-100, 0x7fffffffe5a0 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe460) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #60: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe460 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe4a0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #61: read(3, 0x7fffffffe4a0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4052e0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #62: read(3, 0x4052e0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x405300, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #63: read(3, 0x405300, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x405340, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #64: read(3, 0x405340, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4053c0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #65: read(3, 0x4053c0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4054c0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #66: read(3, 0x4054c0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4056c0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #67: read(3, 0x4056c0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x405ac0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #68: read(3, 0x405ac0, 2048) = Ok(1445)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x406065, 603) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #69: read(3, 0x406065, 603) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #70: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #71: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #72: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #73: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4062f0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #74: read(3, 0x4062f0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x406310, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #75: read(3, 0x406310, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x406350, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #76: read(3, 0x406350, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4063d0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #77: read(3, 0x4063d0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4064d0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #78: read(3, 0x4064d0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4066d0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #79: read(3, 0x4066d0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x406ad0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #80: read(3, 0x406ad0, 2048) = Ok(1445)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x407075, 603) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #81: read(3, 0x407075, 603) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #82: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #83: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #84: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #85: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737284407296)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #86: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #87: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #88: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407c70, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #89: read(4, 0x407c70, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407c90, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #90: read(4, 0x407c90, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407cd0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #91: read(4, 0x407cd0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407d50, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #92: read(4, 0x407d50, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407e50, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #93: read(4, 0x407e50, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x4066d0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #94: read(4, 0x4066d0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x406ad0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #95: read(4, 0x406ad0, 2048) = Ok(1556)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x4070e4, 492) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #96: read(4, 0x4070e4, 492) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #97: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x380000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #98: mmap(0x380000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(3670016)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #99: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #100: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #101: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #102: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409a60, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #103: read(3, 0x409a60, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409a80, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #104: read(3, 0x409a80, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409ac0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #105: read(3, 0x409ac0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409b40, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #106: read(3, 0x409b40, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409c40, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #107: read(3, 0x409c40, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409e40, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #108: read(3, 0x409e40, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a240, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #109: read(3, 0x40a240, 2048) = Ok(1667)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a8c3, 381) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #110: read(3, 0x40a8c3, 381) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #111: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #112: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #113: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #114: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4065a0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #115: read(3, 0x4065a0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x406fd0, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #116: read(3, 0x406fd0, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x407010, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #117: read(3, 0x407010, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x406b10, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #118: read(3, 0x406b10, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #119: read(3, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #120: read(3, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #121: read(3, 0x408c20, 2048) = Ok(1667)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4092a3, 381) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #122: read(3, 0x4092a3, 381) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #123: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #124: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #125: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #126: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737283883008)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #127: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #128: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #129: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x406d40, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #130: read(4, 0x406d40, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x408460, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #131: read(4, 0x408460, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x4084a0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #132: read(4, 0x4084a0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x408520, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #133: read(4, 0x408520, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #134: read(4, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #135: read(4, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #136: read(4, 0x408c20, 2048) = Ok(1778)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409312, 270) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #137: read(4, 0x409312, 270) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #138: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x70f80000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #139: mmap(0x70f80000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(1895301120)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #140: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #141: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #142: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #143: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408440, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #144: read(3, 0x408440, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408460, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #145: read(3, 0x408460, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4084a0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #146: read(3, 0x4084a0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408520, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #147: read(3, 0x408520, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #148: read(3, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #149: read(3, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #150: read(3, 0x408c20, 2048) = Ok(1889)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409381, 159) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #151: read(3, 0x409381, 159) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #152: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #153: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #154: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #155: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40b110, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #156: read(3, 0x40b110, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40b5c0, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #157: read(3, 0x40b5c0, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40b600, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #158: read(3, 0x40b600, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409b40, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #159: read(3, 0x409b40, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409c40, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #160: read(3, 0x409c40, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409e40, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #161: read(3, 0x409e40, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a240, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #162: read(3, 0x40a240, 2048) = Ok(1889)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a9a1, 159) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #163: read(3, 0x40a9a1, 159) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #164: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #165: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #166: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #167: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737283358720)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #168: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #169: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #170: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409a60, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #171: read(4, 0x409a60, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409a80, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #172: read(4, 0x409a80, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409ac0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #173: read(4, 0x409ac0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409b40, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #174: read(4, 0x409b40, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409c40, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #175: read(4, 0x409c40, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x409e40, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #176: read(4, 0x409e40, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40a240, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #177: read(4, 0x40a240, 2048) = Ok(2000)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40aa10, 48) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #178: read(4, 0x40aa10, 48) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #179: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3980000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #180: mmap(0x7ffff3980000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(140737280212992)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #181: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #182: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #183: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #184: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409a60, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #185: read(3, 0x409a60, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409a80, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #186: read(3, 0x409a80, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409ac0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #187: read(3, 0x409ac0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409b40, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #188: read(3, 0x409b40, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409c40, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #189: read(3, 0x409c40, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409e40, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #190: read(3, 0x409e40, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a240, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #191: read(3, 0x40a240, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #192: read(3, 0x40cbd0, 4096) = Ok(63)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cc0f, 4033) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #193: read(3, 0x40cc0f, 4033) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #194: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #195: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #196: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #197: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4062f0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #198: read(3, 0x4062f0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409c90, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #199: read(3, 0x409c90, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x409cd0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #200: read(3, 0x409cd0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a0b0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #201: read(3, 0x40a0b0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a1b0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #202: read(3, 0x40a1b0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40a3b0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #203: read(3, 0x40a3b0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #204: read(3, 0x408c20, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #205: read(3, 0x40cbd0, 4096) = Ok(63)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cc0f, 4033) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #206: read(3, 0x40cc0f, 4033) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #207: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #208: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #209: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #210: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737279688704)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #211: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #212: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #213: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407bd0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #214: read(4, 0x407bd0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407bf0, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #215: read(4, 0x407bf0, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40a030, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #216: read(4, 0x40a030, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40a0b0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #217: read(4, 0x40a0b0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #218: read(4, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #219: read(4, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #220: read(4, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #221: read(4, 0x40cbd0, 4096) = Ok(174)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cc7e, 3922) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #222: read(4, 0x40cc7e, 3922) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #223: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3880000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #224: mmap(0x7ffff3880000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(140737279164416)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #225: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #226: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #227: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #228: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bbf0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #229: read(3, 0x40bbf0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc10, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #230: read(3, 0x40bc10, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #231: read(3, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #232: read(3, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #233: read(3, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #234: read(3, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #235: read(3, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #236: read(3, 0x40cbd0, 4096) = Ok(285)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cced, 3811) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #237: read(3, 0x40cced, 3811) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #238: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #239: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #240: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #241: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40deb0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #242: read(3, 0x40deb0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40ded0, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #243: read(3, 0x40ded0, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x4084a0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #244: read(3, 0x4084a0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408520, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #245: read(3, 0x408520, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #246: read(3, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #247: read(3, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #248: read(3, 0x408c20, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #249: read(3, 0x40cbd0, 4096) = Ok(285)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cced, 3811) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #250: read(3, 0x40cced, 3811) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #251: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #252: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #253: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #254: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737278640128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #255: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #256: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #257: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x406c60, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #258: read(4, 0x406c60, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x406c80, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #259: read(4, 0x406c80, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #260: read(4, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #261: read(4, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #262: read(4, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #263: read(4, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #264: read(4, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #265: read(4, 0x40cbd0, 4096) = Ok(396)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cd5c, 3700) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #266: read(4, 0x40cd5c, 3700) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #267: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3780000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #268: mmap(0x7ffff3780000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(140737278115840)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #269: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #270: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #271: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #272: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bbf0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #273: read(3, 0x40bbf0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc10, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #274: read(3, 0x40bc10, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #275: read(3, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #276: read(3, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #277: read(3, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #278: read(3, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #279: read(3, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #280: read(3, 0x40cbd0, 4096) = Ok(507)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cdcb, 3589) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #281: read(3, 0x40cdcb, 3589) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #282: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #283: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #284: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #285: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40e570, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #286: read(3, 0x40e570, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40e370, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #287: read(3, 0x40e370, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40e3b0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #288: read(3, 0x40e3b0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408520, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #289: read(3, 0x408520, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #290: read(3, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #291: read(3, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #292: read(3, 0x408c20, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #293: read(3, 0x40cbd0, 4096) = Ok(507)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cdcb, 3589) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #294: read(3, 0x40cdcb, 3589) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #295: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #296: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #297: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #298: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737277591552)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #299: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #300: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #301: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bbf0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #302: read(4, 0x40bbf0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bc10, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #303: read(4, 0x40bc10, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #304: read(4, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #305: read(4, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #306: read(4, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #307: read(4, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #308: read(4, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #309: read(4, 0x40cbd0, 4096) = Ok(618)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40ce3a, 3478) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #310: read(4, 0x40ce3a, 3478) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #311: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3680000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #312: mmap(0x7ffff3680000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(140737277067264)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #313: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #314: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #315: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #316: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bbf0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #317: read(3, 0x40bbf0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc10, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #318: read(3, 0x40bc10, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #319: read(3, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #320: read(3, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #321: read(3, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #322: read(3, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #323: read(3, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #324: read(3, 0x40cbd0, 4096) = Ok(729)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cea9, 3367) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #325: read(3, 0x40cea9, 3367) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #326: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #327: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #328: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #329: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40ed30, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #330: read(3, 0x40ed30, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40eb30, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #331: read(3, 0x40eb30, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40eb70, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #332: read(3, 0x40eb70, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408520, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #333: read(3, 0x408520, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #334: read(3, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #335: read(3, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #336: read(3, 0x408c20, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #337: read(3, 0x40cbd0, 4096) = Ok(729)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cea9, 3367) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #338: read(3, 0x40cea9, 3367) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #339: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #340: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #341: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #342: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737276542976)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #343: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #344: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #345: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40e2b0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #346: read(4, 0x40e2b0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40e2d0, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #347: read(4, 0x40e2d0, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40eb70, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #348: read(4, 0x40eb70, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #349: read(4, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #350: read(4, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #351: read(4, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #352: read(4, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #353: read(4, 0x40cbd0, 4096) = Ok(840)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cf18, 3256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #354: read(4, 0x40cf18, 3256) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #355: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0x7ffff3580000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #356: mmap(0x7ffff3580000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Ok(140737276018688)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #357: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #358: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #359: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #360: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40eb10, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #361: read(3, 0x40eb10, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40eb30, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #362: read(3, 0x40eb30, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #363: read(3, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #364: read(3, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #365: read(3, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #366: read(3, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #367: read(3, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #368: read(3, 0x40cbd0, 4096) = Ok(951)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cf87, 3145) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #369: read(3, 0x40cf87, 3145) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #370: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #371: openat(-100, 0x7fffffffe500 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #372: statx(3, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe3c0 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x7fffffffe400, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #373: read(3, 0x7fffffffe400, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40f2a0, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #374: read(3, 0x40f2a0, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40f0a0, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #375: read(3, 0x40f0a0, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40f0e0, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #376: read(3, 0x40f0e0, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40f160, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #377: read(3, 0x40f160, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408620, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #378: read(3, 0x408620, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408820, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #379: read(3, 0x408820, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x408c20, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #380: read(3, 0x408c20, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #381: read(3, 0x40cbd0, 4096) = Ok(951)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(3, 0x40cf87, 3145) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #382: read(3, 0x40cf87, 3145) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #383: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #384: memfd_create(0x7ffff3e1e92c -> "liteinst2-trampoline", 1) = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ftruncate(3, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #385: ftruncate(3, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #386: mmap(NULL, 524288, ProtFlags(PROT_READ | PROT_WRITE), MapFlags(MAP_SHARED), 3, 0) = Ok(140737275494400)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #387: openat(-100, 0x7fffffffe340 -> "/proc/self/maps", OFlag(O_CLOEXEC)) = Ok(4)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #388: statx(4, 0x7ffff3e1d214 -> "", AtFlags(AT_EMPTY_PATH), 4095, 0x7fffffffe200 -> {st_mode=SFlag(S_IFREG) | 0444, st_size=0, ...}) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x7fffffffe240, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #389: read(4, 0x7fffffffe240, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407b30, 32) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #390: read(4, 0x407b30, 32) = Ok(32)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x407b50, 64) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #391: read(4, 0x407b50, 64) = Ok(64)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bc50, 128) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #392: read(4, 0x40bc50, 128) = Ok(128)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bcd0, 256) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #393: read(4, 0x40bcd0, 256) = Ok(256)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bdd0, 512) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #394: read(4, 0x40bdd0, 512) = Ok(512)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40bfd0, 1024) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #395: read(4, 0x40bfd0, 1024) = Ok(1024)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40c3d0, 2048) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #396: read(4, 0x40c3d0, 2048) = Ok(2048)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cbd0, 4096) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #397: read(4, 0x40cbd0, 4096) = Ok(1062)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: read(4, 0x40cff6, 3034) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #398: read(4, 0x40cff6, 3034) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(4) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #399: close(4) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0xffffffffff580000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #400: mmap(0xffffffffff580000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Err(Errno(ENOMEM))
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: mmap(0xffffffffff601000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #401: mmap(0xffffffffff601000, 524288, ProtFlags(PROT_READ | PROT_EXEC), MapFlags(MAP_SHARED | MAP_FIXED_NOREPLACE), 3, 0) = Err(Errno(ENOMEM))
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: munmap(0x7ffff3500000, 524288) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #402: munmap(0x7ffff3500000, 524288) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: close(3) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #403: close(3) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #404: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #405: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #406: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #407: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #408: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #409: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #410: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: getpid() = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #411: getpid() = Ok(3)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: fstat(1, 0x7fffffffe1e0) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #412: fstat(1, 0x7fffffffe1e0) = Ok(0)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: ioctl(1, TCGETS, 0x7fffffffe140) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #413: ioctl(1, TCGETS, 0x7fffffffe140) = Err(Errno(ENOTTY))
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: write(1, 0x408420, 15) = ?
+DETLOG [syscall][detcore, dtid 3] finish syscall #414: write(1, 0x408420, 15) = Ok(15)
+DETLOG [memory][dtid 3] 0x7ffffffde000-0x7ffffffff000 MMPermissions(READ | WRITE | PRIVATE) 0 0:0 0 [stack]->H
+DETLOG [syscall][detcore, dtid 3] inbound syscall: exit_group(0) = ?

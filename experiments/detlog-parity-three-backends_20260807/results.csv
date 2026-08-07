@@ -1,0 +1,7 @@
+kind,subject,denominator_a,denominator_b,differing,common_prefix,prefix_over_a_pct,prefix_over_b_pct,identical,self_det_a,self_det_b,note
+self-determinism,ptrace,141,141,0,,,,True,PASS,,"run1 vs run2, whole stream"
+self-determinism,sabre,368,368,0,,,,True,PASS,,"run1 vs run2, whole stream"
+self-determinism,liteinst,1245,1245,0,,,,True,PASS,,"run1 vs run2, whole stream"
+cross-backend-parity,ptrace vs sabre,141,368,,4,2.8,1.1,False,PASS,PASS,denominators differ; both shown deliberately
+cross-backend-parity,ptrace vs liteinst,141,1245,,7,5.0,0.6,False,PASS,PASS,denominators differ; both shown deliberately
+cross-backend-parity,sabre vs liteinst,368,1245,,4,1.1,0.3,False,PASS,PASS,denominators differ; both shown deliberately
