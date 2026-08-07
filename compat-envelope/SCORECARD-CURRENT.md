@@ -26,6 +26,18 @@
 > which all still apply. Replace it when the collectors are re-run into those
 > CSVs.
 
+> ## Strict comparison-tier gate added 2026-08-06
+>
+> The four live CSVs now carry `comparison_tier` on every one of **2,284/2,284
+> rows**. Their distribution is **2,284 `legacy-unqualified`**, **0
+> `full-stdout-info-stack-heap`**, and **0
+> `stdout-info-stack-heap-spot-check`**. The 1,837 historical raw
+> `outcome=pass` rows therefore yield **0/1,837 qualified greens**. The tables
+> below remain the historical stdout/stripped rendering; the current renderer
+> refuses to emit them as strict green until a clean re-baseline records one of
+> the two qualifying tiers. Reproduce the distribution with
+> `compat-envelope/check-scorecard-tier.py`.
+
 **This file is the clear, human-readable rendering of the four scorecard CSVs
 that sit beside it.** It is the entry point: `README.md` documents the *system*,
 `SCORECARD.md` and `REPORT.md` are older narrative analyses written on 2026-08-04
@@ -57,10 +69,10 @@ Evidence binds to content, not to a branch. Quote the blob hash.
 
 | CSV | blob (content id) | rows (excl. header) | cols | last content commit |
 | --- | --- | ---: | ---: | --- |
-| `fullcorpus-scorecard.csv` | `f6dc9d202dfe5cb7e8b387b8fdf9585a0cda0d3a` | 1200 | 19 | `20b4a7d5d63b054f985951e5f35674a193dfbf2a` |
-| `scorecard.csv` | `939383c58b787d962ed971d70f09fa6e26efc387` | 618 | 20 | `20b4a7d5d63b054f985951e5f35674a193dfbf2a` |
-| `reverie-scorecard.csv` | `305ef8bfd71c3843e576a5fd7a7ce987cd5d76e2` | 12 | 19 | `20b4a7d5d63b054f985951e5f35674a193dfbf2a` |
-| `e9patch-scorecard.csv` | `8b0e2a60f3081f6599e6cfc2877c869f51573d86` | 454 | 19 | `20b4a7d5d63b054f985951e5f35674a193dfbf2a` |
+| `fullcorpus-scorecard.csv` | `d25e784e28b544240203fc02af522793297eb9cf` | 1200 | 33 | `0c38fb3773d0300c46b68fa48561c932b9dc524f` |
+| `scorecard.csv` | `1ef205fa71d1180aafb4720afd81d5c69aff23e7` | 618 | 33 | `0c38fb3773d0300c46b68fa48561c932b9dc524f` |
+| `reverie-scorecard.csv` | `0f46d77a991cc3c458f684551ccc1b09dfa6e24a` | 12 | 34 | `0c38fb3773d0300c46b68fa48561c932b9dc524f` |
+| `e9patch-scorecard.csv` | `0f94dff27fa394734d90a04fae12bcb519ccd031` | 454 | 36 | `0c38fb3773d0300c46b68fa48561c932b9dc524f` |
 
 `20b4a7d` = *"compat-envelope: name parity observables in CSV schema"*,
 2026-08-06 17:15:25 -0700.
@@ -345,14 +357,13 @@ of current `main`,** and the deltas are unmeasured until the collectors are
 re-run. All sweeps ran on one shared 316-core devbig under contention; the
 `duration_ms` / `max_rss_kb` columns are not benchmark-grade.
 
-### L6 — two CSV schemas are live at once
+### L6 — the common schema is tiered; producer-specific tails remain
 
-`scorecard.csv` has **20** columns (adds `verify_compare`);
-`fullcorpus-scorecard.csv`, `reverie-scorecard.csv`, and
-`e9patch-scorecard.csv` have **19**. Consumers that hard-code a single header
-tuple break on one or the other; a parent-side schema change here has already
-been observed to fail a Hermit-side consumer that pinned the 19-column form.
-Any new consumer must accept both, or state which CSV it reads.
+All four files now share the **33-column** core through `comparison_tier`.
+`reverie-scorecard.csv` adds `absence_reason` (34 columns), while
+`e9patch-scorecard.csv` adds `candidate_sites`, `mapped_sites`, and
+`reach_state` (36 columns). Consumers must bind fields by name, not ordinal;
+the producers project by target header for the same reason.
 
 ---
 
@@ -379,7 +390,8 @@ Any new consumer must accept both, or state which CSV it reads.
 | `output_hash` | the compared observable (guest-output SHA-256, or the syscall total) |
 | `duration_ms`, `max_rss_kb` | wall and peak RSS; `max_rss_kb` is blank outside the cgroup-boxed expansion path |
 | `reason` | free text for a non-pass |
-| `verify_compare` | **`scorecard.csv` only** — which comparator produced `deterministic`. Currently always `stripped` or blank (L1). |
+| `verify_compare` | which self-determinism comparator produced `deterministic`; migrated historical rows are `stripped` or blank |
+| `comparison_tier` | per-cell cross-backend standard: full stdout+INFO+stack+heap, stdout+INFO with stack/heap spot-check cadence, or an explicit non-green unqualified value |
 
 ### Rendered cell format
 
