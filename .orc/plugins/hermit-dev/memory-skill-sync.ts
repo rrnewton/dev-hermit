@@ -43,8 +43,20 @@
 //   2. Restart ORC so the new workflow + script register.
 //   3. Verify with:  orc.hermit-dev.status()  (unchanged) and that the workflow
 //      `hermit-dev-memory-skill-sync-v1` appears in the workflow list.
+//   4. Verify by TICK, not by presence: the workflow must be `alive` with
+//      `crash_error: null` after at least one interval, and the module must have
+//      survived a restart. "It appears in the list" is what let the sibling
+//      workflows crash-loop unnoticed.
 //   To DISABLE: remove the import and restart. No state is persisted beyond a KV
 //   de-dupe key, so removal is clean.
+//
+// POST-1.0 REDUCED-CONTEXT RULE (see the header of index.ts for the measured
+// evidence): the engine re-evaluates a workflow's module on every restart, under
+// a capability preset that does NOT publish orc.registerScript / exposeFunction /
+// registerStartup. An unguarded registration call at module scope therefore turns
+// the first restart into a permanent crash-loop. The registrations at the bottom
+// of this file are wrapped accordingly; keep any new side effect inside that
+// guarded function.
 // ============================================================================
 
 // `orc` is an ambient global in the plugin eval context (same as index.ts).
@@ -245,19 +257,38 @@ export async function memorySkillSyncHeartbeat(wf: any): Promise<void> {
 }
 
 // --- registration (runs only once this module is imported by index.ts) ---
-orc.registerScript(MEMORY_SKILL_LIST_SCRIPT_NAME, {
-  script: MEMORY_SKILL_LIST_COMMAND,
-  description:
-    "List file-based memory store (name<TAB>slug<TAB>core) for session-store cross-check",
-  timeoutSec: 60,
-});
+// Every side effect lives in here so the reduced-context guard below can skip it
+// wholesale on a workflow-restart re-evaluation. See the POST-1.0 note above.
+function registerMemorySkillSyncSurface(): void {
+  orc.registerScript(MEMORY_SKILL_LIST_SCRIPT_NAME, {
+    script: MEMORY_SKILL_LIST_COMMAND,
+    description:
+      "List file-based memory store (name<TAB>slug<TAB>core) for session-store cross-check",
+    timeoutSec: 60,
+  });
 
-orc.workflow(
-  memorySkillSyncHeartbeat,
-  "Cross-check the ORC session-memory store against the file-based store; " +
-    "hard-warn (report-only) on divergence",
-  {
-    name: MEMORY_SKILL_SYNC_WORKFLOW_NAME,
-    restartable: {} as any,
-  },
-);
+  orc.workflow(
+    memorySkillSyncHeartbeat,
+    "Cross-check the ORC session-memory store against the file-based store; " +
+      "hard-warn (report-only) on divergence",
+    {
+      name: MEMORY_SKILL_SYNC_WORKFLOW_NAME,
+      // Matches index.ts: back a restart off instead of burning three attempts
+      // in under a second and leaving the heartbeat silently dead.
+      restartable: { maxRestarts: 100, backoffMs: 5_000, maxBackoffMs: 120_000 },
+    },
+  );
+}
+
+// Swallow only the host's absent-name dispatch failure — that is the reduced
+// workflow-restart context, where this module is being re-evaluated purely to
+// resolve memorySkillSyncHeartbeat, which needs no registration. Anything else
+// is a real bug and is re-thrown.
+try {
+  registerMemorySkillSyncSurface();
+} catch (err) {
+  const message = String((err && (err as { message?: unknown }).message) || err);
+  if (message.indexOf("is not a function") === -1) {
+    throw err;
+  }
+}
