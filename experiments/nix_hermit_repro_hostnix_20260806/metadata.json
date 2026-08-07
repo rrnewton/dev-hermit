@@ -115,7 +115,7 @@
     "lila_eval26_multi_hash_outputs": 113,
     "lila_multi_hash_haskell_packages_rechecked_on_machine": 6,
     "lila_multi_hash_haskell_packages_reproducible_on_machine": 6,
-    "real_nixpkgs_package_built_end_to_end_under_wrap": "figlet-2.2.5 (autotools, with the TAR_OPTIONS workaround) reached fixupPhase"
+    "real_nixpkgs_package_built_end_to_end_under_wrap": "figlet-2.2.5 (autotools, with the TAR_OPTIONS workaround) unpacked, patched, configured, compiled and installed under the wrap, then hung in fixupPhase (see pipe-readiness-eof-not-delivered). Furthest a real nixpkgs package has been driven through this seam."
   },
   "workload_parameters": {
     "oracle": "canonical rebuild (build -> NAR hash -> nix-store --delete -> rebuild into the SAME $out), NOT nix --check",
@@ -213,15 +213,16 @@
       ]
     },
     {
-      "id": "cmake-epoll-hang",
-      "summary": "cmake's configure step hangs forever under `hermit run`. The cmake process blocks in epoll_wait(epfd=3, maxevents=1024, timeout=-1) on pipes to a compiler-probe child that has already exited, and never receives the readable/EOF event. /proc/<pid>/wchan = do_epoll_wait and ps TIME = 00:00:00 after 28 minutes, so it is a lost wakeup, not slowness.",
+      "id": "pipe-readiness-eof-not-delivered",
+      "summary": "Two measured hangs in guest pipe wakeup, each with ZERO accumulated CPU. (1) cmake configure blocks in epoll_wait(epfd=3, maxevents=1024, timeout=-1) on pipes to a compiler-probe child that has exited; /proc/<pid>/wchan = do_epoll_wait. (2) figlet's stdenv fixupPhase: the guest builder bash blocks in read(fd 0, buf, 1) on pipe:[329546543] (also held on saved fd 63) with NO children alive; wchan = anon_pipe_read, TIME 00:00:00 after 29 minutes.",
       "reproducer": "harness/cmake-hang-repro.sh (3-line CMakeLists.txt): native rc=0 wall=1s; hermit rc=124 wall=90s with no output",
       "modes_affected": [
         "--tmp=/tmp",
         "--no-namespace"
       ],
-      "measured_impact": "every cmake-based nixpkgs package is out of reach of the exec-builder seam, including lensfun, the one real on-machine-nondeterministic package found",
-      "suggested_fix": "audit detcore's epoll readiness delivery for pipe EOF when the writer exits"
+      "measured_impact": "Hang 1 puts every cmake-based nixpkgs package out of reach, including lensfun -- the one real on-machine-nondeterministic package found. Hang 2 blocks stdenv fixupPhase, which nearly every package runs. Together they are why N=0.",
+      "suggested_fix": "audit detcore's pipe readiness/EOF delivery for both epoll registration and blocking read when the writer exits",
+      "claim_strength": "The two hangs are measured from /proc on live processes. A SHARED root cause is a HYPOTHESIS, not established: one waits in epoll_wait and the other in a blocking read, and a bash `while read` holding the pipe on a saved fd has its own idioms. Defensible statement: hermit does not deliver pipe readiness/EOF to a guest reader after the writer exits, observed through two different waiting primitives."
     },
     {
       "id": "rcb-clock-jitter-on-degraded-pmu",
