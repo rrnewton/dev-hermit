@@ -1,0 +1,347 @@
+{
+  "schema": "hermit-release-acceptance-contract-v2",
+  "release": "0.3.0",
+  "verified_hermit_base_sha": "d53550510d1e7d13e84cc8af9bb90269e90b3f07",
+  "parent_contract_base_sha": "ec33089a26e0270464cf53092f13debf29243482",
+  "parent_status": "main unverified",
+  "tested_rc_sha_field": "tested_rc_sha",
+  "common_evidence_fields": ["subject.parent_sha", "subject.hermit_sha", "subject.reverie_sha", "authority.runner", "authority.runner_identity", "authority.signer", "authority.signer_identity", "artifact.path", "artifact.sha256"],
+  "decision": "GO only when all 26 criteria are PASS at one exact parent/hermit/reverie tuple",
+  "mutation_controls": {
+    "coverage": "all-criteria",
+    "positive": {"anchor": "scripts/test_release_0_3_acceptance.py::test_positive_full_set"},
+    "negative": {"anchor": "scripts/test_release_0_3_acceptance.py::test_each_criterion_missing"}
+  },
+  "runners": {
+    "release-evidence": {
+      "description": "Raw release evidence evaluated by the standalone tracked checker",
+      "identity": "tracked-command:scripts/release-0.3-acceptance.py",
+      "probe_paths": ["scripts/release-0.3-acceptance.py"]
+    },
+    "compat-envelope": {
+      "description": "Compat-envelope GitHub Actions producer and tier verifier",
+      "identity": "github-actions:rrnewton/dev-hermit/.github/workflows/compat-envelope.yml",
+      "probe_paths": [".github/workflows/compat-envelope.yml", "compat-envelope/tier_evidence.py"]
+    },
+    "manual-sequential-validation": {
+      "description": "A human-launched, single-job, cache-disabled full validate run in an exact clean Hermit slot",
+      "identity": "manual-command:CI_DAG_JOBS=1 ./validate.sh full --ignore-cache --no-label-pr --verbose",
+      "probe_paths": ["hermit/validate.sh"]
+    },
+    "parent-hosted": {
+      "description": "Raw exact-head artifacts for the registered four-job parent GitHub Actions authority",
+      "identity": "raw-github-job-artifact:rrnewton/dev-hermit@registered-parent-policy-v1",
+      "probe_paths": [".github/workflows/dev-hermit-ci.yml", ".github/workflows/portability.yml", ".github/workflows/demo-review-gate.yml"]
+    },
+    "hermit-hosted": {
+      "description": "Raw exact-head artifact for the registered Hermit portable job",
+      "identity": "raw-github-job-artifact:rrnewton/hermit@registered-policy-v3",
+      "probe_paths": ["hermit/.github/workflows/ci-portable.yml"]
+    }
+  },
+  "signers": {
+    "raw-artifact-sha256": {
+      "description": "Manifest-recorded provenance identity plus checker-recomputed byte-integrity digest; the digest alone never authenticates provenance",
+      "identity": "manifest-authority:scripts/release-0.3-acceptance.py+sha256-integrity",
+      "probe_paths": ["scripts/release-0.3-acceptance.py"]
+    },
+    "github-actions-jobs": {
+      "description": "Raw named-job artifact carrying run and job identities, not a copied check label",
+      "identity": "github-actions-app:rrnewton",
+      "probe_paths": [".github/workflows/dev-hermit-ci.yml"]
+    },
+    "human-owner-decision": {
+      "description": "A decision artifact authored by the named repository owner and committed on parent main",
+      "identity": "github-owner:rrnewton",
+      "probe_paths": ["AGENTS.md"]
+    }
+  },
+  "criteria": [
+    {
+      "id": "AC-STRICT-01",
+      "title": "Every strict scorecard cell satisfies its declared cost tier",
+      "evaluator": "scorecard_tiers",
+      "command": ["python3", "compat-envelope/tier_evidence.py", "--root", "compat-envelope"],
+      "fields": ["fields.cells"],
+      "denominator": {"field": "denominator.total", "unit": "scorecard cells", "minimum": 1},
+      "threshold": {"field": "fields.cells", "op": "all-tier-evidenced", "value": true},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "zero-executed, unbound, or diverged cell"}],
+      "producer": {"runner": "compat-envelope", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-STRICT-02",
+      "title": "Every backend claim records execution context and relaxation tier",
+      "evaluator": "generic",
+      "command": ["python3", "compat-envelope/check-scorecard-tier.py", "--root", "compat-envelope"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "scorecard cells", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "unqualified backend/log-level/relaxation claim"}],
+      "producer": {"runner": "compat-envelope", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-STRICT-03",
+      "title": "Exact-RC manual sequential full validation executes nonzero raw tests",
+      "evaluator": "manual_validate_log",
+      "command": ["bash", "-o", "pipefail", "-c", "CI_DAG_JOBS=1 ./validate.sh full --ignore-cache --no-label-pr --verbose 2>&1 | tee \"$RAW_LOG\"; status=${PIPESTATUS[0]}; printf '%s\\n' \"$status\" > \"$EXIT_FILE\"; exit \"$status\""],
+      "fields": ["artifact.path", "artifact.sha256", "exit_artifact.path", "exit_artifact.sha256", "parsed.commit", "parsed.selection", "parsed.validation_level", "parsed.final_summary", "parsed.pipeline_exit", "parsed.libtest_passed_sum"],
+      "denominator": {"field": "parsed.libtest_passed_sum", "unit": "raw libtest tests passed", "minimum": 1},
+      "threshold": {"field": "parsed.pipeline_exit", "op": "eq", "value": 0},
+      "forbidden": [{"field": "parsed.forbidden_markers", "op": "nonempty", "reason": "cache hit, interruption, or environmental block"}],
+      "producer": {"runner": "manual-sequential-validation", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-RUNNERUP-01",
+      "title": "Runner-up first-party backend exceeds half of the ptrace-green denominator",
+      "evaluator": "generic",
+      "command": ["compat-envelope/render-scorecard.rs", "--csv", "compat-envelope/scorecard.csv", "--json"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "ptrace-green cells", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "gt-half-denominator"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "wrong denominator, comparator, or backend eligibility"}],
+      "producer": {"runner": "compat-envelope", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-UX-01",
+      "title": "Documented clean-checkout commands build and run the first-party core",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "documented build commands", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "host mutation, warning, or undocumented fixup"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-UX-02",
+      "title": "Cold-build evidence states every isolation dimension",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "declared isolation dimensions", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "unstated warm prerequisite or cache"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-UX-03",
+      "title": "Every CLI backend either runs or refuses cleanly without an orphan",
+      "evaluator": "generic",
+      "command": ["hermit", "run", "--backend=${BACKEND}", "--strict", "--", "/bin/echo", "rc-probe"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "CLI backend selectors", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "crash, hang, orphan, or misleading help"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-PKG-00",
+      "title": "A human-owned distribution contract selects exactly one release path",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "owner decisions", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value": 1},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "missing, ambiguous, or unsigned distribution choice"}],
+      "producer": {"runner": "release-evidence", "signer": "human-owner-decision"}
+    },
+    {
+      "id": "AC-PKG-01",
+      "title": "The GitHub source release is complete and reproducible",
+      "evaluator": "generic",
+      "command": ["gh", "release", "view", "${RC_TAG}", "--repo", "rrnewton/hermit", "--json", "assets,tagName,url"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "required source-release checks", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "missing tag/notes/input or archive-only build failure"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-PKG-02",
+      "title": "Every publishable crate dry-runs in dependency order",
+      "evaluator": "generic",
+      "command": ["cargo", "publish", "--dry-run", "-p", "${CRATE}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "publishable crates", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "git dependency, foreign name, wrong order, or no-verify bypass"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-PKG-03",
+      "title": "First-party core excludes third-party payloads",
+      "evaluator": "generic",
+      "command": ["cargo", "tree", "--locked", "-p", "hermit", "--no-default-features"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "default dependency/archive entries", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "DynamoRIO, SaBRe, or e9patch in first-party core"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-PKG-04",
+      "title": "Every third-party payload carries licence and provenance",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "third-party payload groups", "minimum": 3},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "licence/provenance/size/version/ABI refusal missing"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-SYS-01",
+      "title": "Pinned syscall census is exhaustive and mutation-guarded",
+      "evaluator": "generic",
+      "command": ["cargo", "test", "-p", "hermit-detcore", "every_pinned_sysno_has_an_explicit_classification"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "pinned x86_64 syscall rows", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "missing, extra, duplicate, or wildcard-classified syscall"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-SYS-02",
+      "title": "Live Linux ABI gap is exhaustively tracked",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "live Linux common/64 rows", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "untracked live ABI row or unnamed kernel SHA"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-SYS-03",
+      "title": "Every determinized syscall is bound to a named handler",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "determinized syscall rows", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "wildcard, unsupported, or passthrough dispatch"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-SEMVER-01",
+      "title": "Version moves exactly once and the binary identifies the RC",
+      "evaluator": "generic",
+      "command": ["hermit", "--version"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "workspace crates and version surfaces", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "early/multiple bump, hardcoded version, dirty or wrong SHA"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-SEMVER-02",
+      "title": "SemVer justification is backed by a public-API diff",
+      "evaluator": "generic",
+      "command": ["cargo", "semver-checks", "check-release"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "publishable crates", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "unmeasured or unsigned breakage claim"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-UPSTREAM-01",
+      "title": "Upstream PR targets main at the exact RC head with registered checks",
+      "evaluator": "generic",
+      "command": ["gh", "pr", "view", "${PR}", "--repo", "facebookexperimental/hermit", "--json", "headRefOid,baseRefName,statusCheckRollup"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "upstream pull requests", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value": 1},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "wrong head/base, missing check, or unresolved prior import"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-FBS-00",
+      "title": "A human-owned fbsource import source point is selected",
+      "evaluator": "generic",
+      "command": ["python3", "scripts/release-0.3-acceptance.py", "--evidence", "${EVIDENCE}", "--parent-sha", "${PARENT_SHA}", "--hermit-sha", "${HERMIT_SHA}", "--reverie-sha", "${REVERIE_SHA}"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "owner import decisions", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value": 1},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "unsigned, ambiguous, or blind wholesale import"}],
+      "producer": {"runner": "release-evidence", "signer": "human-owner-decision"}
+    },
+    {
+      "id": "AC-FBS-01",
+      "title": "Reverie and Hermit import as two ordered standalone diffs",
+      "evaluator": "generic",
+      "command": ["buck2", "test", "fbcode//hermetic_infra/reverie/..."],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "ordered import diffs", "minimum": 2},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "combined or Hermit-first import"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-FBS-02",
+      "title": "Import preserves the source-file codemod mapping",
+      "evaluator": "generic",
+      "command": ["buck2", "build", "fbcode//hermetic_infra/reverie/...", "fbcode//hermetic_infra/hermit/..."],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "declared rename operations", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "mod.rs regression or unmapped collision"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-FBS-03",
+      "title": "Fbsource tests meet counted quiet-host baselines",
+      "evaluator": "generic",
+      "command": ["buck2", "test", "fbcode//hermetic_infra/reverie/...", "fbcode//hermetic_infra/hermit/..."],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "discovered fbsource tests", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "zero execution, failure, timeout, contention, or unexplained baseline gap"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-FBS-04",
+      "title": "OSS and fbsource binaries have matching strict observable behavior",
+      "evaluator": "generic",
+      "command": ["hermit_verify", "run", "--hermit-arg=--strict", "--", "/bin/bash", "-c", "for i in 1 2 3; do echo $i & done; wait"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "named matching-binary smoke cells", "minimum": 1},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "unidentified binary, single-thread-only set, zero execution, or divergence"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    },
+    {
+      "id": "AC-PRE-01",
+      "title": "Parent exact head has the complete registered four-job authority",
+      "evaluator": "hosted_set",
+      "command": ["gh", "run", "download", "${RUN_ID}", "--repo", "rrnewton/dev-hermit", "--name", "${RAW_NAMED_JOB_ARTIFACT}"],
+      "fields": ["artifact.path", "artifact.sha256", "raw.sha", "raw.required_positive_count", "raw.positive_count", "raw.jobs[].name", "raw.jobs[].run_id", "raw.jobs[].job_id", "raw.jobs[].status", "raw.jobs[].conclusion"],
+      "denominator": {"field": "raw.required_positive_count", "unit": "registered exact-head jobs", "minimum": 4},
+      "threshold": {"field": "raw.jobs", "op": "eq", "subject_sha": "parent_sha", "required_jobs": ["Parent tooling shard", "ci-hub bounded operations shard", "Reject owner-specific build paths", "Demo-touching commits require a green-demo attestation"]},
+      "forbidden": [{"field": "raw.state", "op": "eq", "value": "red", "reason": "registered parent job red"}],
+      "producer": {"runner": "parent-hosted", "signer": "github-actions-jobs"}
+    },
+    {
+      "id": "AC-PRE-02",
+      "title": "Hermit RC head has its complete registered hosted authority",
+      "evaluator": "hosted_set",
+      "command": ["gh", "run", "download", "${RUN_ID}", "--repo", "rrnewton/hermit", "--name", "${RAW_NAMED_JOB_ARTIFACT}"],
+      "fields": ["artifact.path", "artifact.sha256", "raw.sha", "raw.required_positive_count", "raw.positive_count", "raw.jobs[].name", "raw.jobs[].run_id", "raw.jobs[].job_id", "raw.jobs[].status", "raw.jobs[].conclusion"],
+      "denominator": {"field": "raw.required_positive_count", "unit": "registered exact-head jobs", "minimum": 1},
+      "threshold": {"field": "raw.jobs", "op": "eq", "subject_sha": "hermit_sha", "required_jobs": ["Regular tests (GitHub-managed portable)"]},
+      "forbidden": [{"field": "raw.state", "op": "eq", "value": "red", "reason": "registered Hermit job red"}],
+      "producer": {"runner": "hermit-hosted", "signer": "github-actions-jobs"}
+    },
+    {
+      "id": "AC-PRE-03",
+      "title": "Parent gitlinks resolve to the exact release tuple",
+      "evaluator": "generic",
+      "command": ["git", "ls-tree", "${PARENT_SHA}", "hermit", "reverie", "liteinst2", "agent-utils"],
+      "fields": ["denominator.total", "measure.passed", "measure.forbidden_count"],
+      "denominator": {"field": "denominator.total", "unit": "parent gitlinks", "minimum": 4},
+      "threshold": {"field": "measure.passed", "op": "eq", "value_field": "denominator.total"},
+      "forbidden": [{"field": "measure.forbidden_count", "op": "gt", "value": 0, "reason": "missing object, ancestor pin, or tuple mismatch"}],
+      "producer": {"runner": "release-evidence", "signer": "raw-artifact-sha256"}
+    }
+  ]
+}
