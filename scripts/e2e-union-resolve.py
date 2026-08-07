@@ -26,11 +26,20 @@ explicitly -- a row the PR touched is NEVER silently discarded:
                                                -> exit 3 (human).
   * theirs modified it but ours deleted it  -> exit 3 (human).
 
-Rows present in base and ours but absent from theirs (a PR DELETION) are kept:
-the union never drops a row on its own authority.
+The same five-way classification is applied to the JSON file's top-level fields
+beside the array (e.g. inventory's `schema`), so a PR's schema bump is not
+reverted; that mirrors the TOML preamble and TSV header checks.
+
+DELIBERATE EXCEPTION to "never silently discarded": a row present in base and
+ours but ABSENT from theirs -- a PR DELETION -- is KEPT, because the union never
+drops a row on its own authority. The consequence is that a PR which removes a
+row, or renames one (delete + add), has the removal silently reverted with a
+success status; `test_pr_deletion_never_drops_a_row` pins this as policy rather
+than accident. Prefer exit 3 here if that trade is ever revisited.
 
 Usage: e2e-union-resolve.py <relpath> <base> <ours> <theirs> <out>
-  <base>/<ours>/<theirs> are the three conflict stages (missing => empty).
+  <base>/<ours>/<theirs> are the three conflict stages. A missing OR EMPTY file
+  means "side absent"; the drivers materialize an absent stage as an empty file.
 Exit codes: 0 resolved, 3 non-additive conflict, 4 unmanaged file, 2 usage/parse.
 """
 import json
@@ -39,13 +48,23 @@ import sys
 
 
 def read(path):
+    """Return a side's text, or None when that side is absent.
+
+    An EMPTY file means absent, not "a file whose content is the empty string".
+    Both drivers materialize a missing conflict stage with `: >"$tmp/base"`
+    (union-rebase.sh), so treating "" as present made json.loads("") raise
+    JSONDecodeError and union_tsv do `None + "\\n"`. That is reachable today:
+    tests/backend-parity/matrix.tsv does not exist on hermit main, so every
+    side materialized for it is an empty file.
+    """
     if not path or path == "/dev/null":
         return None
     try:
         with open(path, "r") as f:
-            return f.read()
+            text = f.read()
     except FileNotFoundError:
         return None
+    return text if text.strip() else None
 
 
 # ---------------------------------------------------------------- TOML blocks
@@ -159,7 +178,21 @@ def union_json_by_key(base, ours, theirs, array_field, key_field):
         return json.dumps(x, sort_keys=True) == json.dumps(y, sort_keys=True)
 
     result = merge_keyed(ib, io, it, same, key_field)
+
+    # Top-level fields BESIDE the array (e.g. inventory's `schema: 2`, which
+    # hermit's ci/test_harness.sh hard-asserts) get the same 3-way treatment as
+    # the rows. Taking `dict(ours)` wholesale silently reverted a PR's schema
+    # bump with rc 0, which is the very shape this file exists to refuse -- and
+    # it was asymmetric: the TOML preamble and the TSV header already exit 3 on
+    # the analogous divergence.
+    def scalars(j):
+        return {k: v for k, v in (j or {}).items() if k != array_field}
+
     merged = dict(ref)
+    for field, value in merge_keyed(
+        scalars(jb), scalars(jo), scalars(jt), same, "field"
+    ).items():
+        merged[field] = value
     merged[array_field] = [result[k] for k in sorted(result)]
     return json.dumps(merged, indent=2, sort_keys=True) + "\n"
 
