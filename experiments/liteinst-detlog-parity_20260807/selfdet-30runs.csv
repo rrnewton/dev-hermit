@@ -1,0 +1,4 @@
+arm,backend,guest,flags,runs,detlog_records,distinct_outcome_classes,class_sizes,first_clock_read_ns,verdict
+base-0041130c,ptrace,detlog_syscalls,--strict --base-env=minimal,30,336,1,30,2241735,SELF-DETERMINISTIC
+base-0041130c,liteinst,detlog_syscalls,--strict --base-env=minimal,30,1072,2,17|13,26182050|26175330,SELF-NONDETERMINISTIC
+fix-077833ad,liteinst,detlog_syscalls,--strict --base-env=minimal,30,1072,1,30,26017120,SELF-DETERMINISTIC
