@@ -689,7 +689,18 @@ fn row(
     } else {
         ("", "", String::new())
     };
-    let bitwise_parity = if deterministic.is_some() { "0" } else { "" };
+    // BLANK, never "0". This collector compares a SYSCALL COUNT across reps
+    // (`verify_compare=syscall-count-across-reps`, `tier=counter`); it performs no
+    // bitwise log comparison at all. Emitting "0" would assert that a bitwise
+    // comparison ran and found a mismatch -- a measurement never taken -- and a
+    // recorded mismatch is as unreproducible as a recorded match when nothing
+    // recorded what it compared against. Blank means NOT RECORDED, which is the
+    // same rule collect-envelope.rs states at its own `bitwise_parity` assignment.
+    //
+    // This was reachable, not theoretical: every published reverie row carries
+    // deterministic=1, so the old expression would have written "0" on all of
+    // them. The file shows blank only because those rows predate this code.
+    let bitwise_parity = "";
     let par = parity.map(|b| if b { "1" } else { "0" }).unwrap_or("");
     let (parity_comparator, parity_tier) = if parity.is_some() {
         ("tool-count-sha256-exact-v1", "tool-count-exact")
