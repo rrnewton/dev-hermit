@@ -1,0 +1,8 @@
+leg,dimension,records,distinct_digests,heap_base,domain_sizes,self_deterministic,note
+ptrace,heap,19,14,0x4bd000,0x1000;0x22000,yes,reference leg
+e9patch,heap,17,12,0x20e9eb000,0x1000;0x22000,yes,candidate_sites=135 engagement witness
+ptrace,stack,21,,0x7ffffffdb000,,yes,
+e9patch,stack,125,,,,yes,+104 records; the additive preprocessing effect
+ptrace,heap_selfcheck,20,,,,yes,20/20 identical across two repeat runs
+e9patch,heap_selfcheck,18,,,,yes,18/18 identical across two repeat runs
+cross,heap_positional,17,,,,,EQUAL=0 DOMAIN=2 CONTENT=15 over the common prefix

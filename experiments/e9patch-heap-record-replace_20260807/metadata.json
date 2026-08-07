@@ -1,0 +1,13 @@
+{
+  "question": "Is the e9patch heap-record decrease a windowable preprocessing artifact or real divergence, and what does the same-position content REPLACE change?",
+  "answer": "REAL divergence, NOT windowable, but NOT a determinism defect. Both legs are perfectly self-deterministic; e9patch relocates the binary ~8.7GB, so heap-resident absolute pointers all differ (CONTENT at identical domains), and the rewritten instruction stream changes WHICH scheduler checkpoints sample the heap, which is why records can DECREASE.",
+  "hermit_binary": "worktrees/w15/hermit/target/release/hermit --features third-party-backends",
+  "hermit_branch": "w15/normalize-detlog-memory-domain @ 8eb032382922aedaf71c541a00116c57f64baac5",
+  "hermit_base": "origin/main 4be8edcd2f947746b5d9d30c81a35202f36a46d4",
+  "reverie_pin": "038e993926e45514264d30367b70df9b6ac3b9b8",
+  "instrument": "the size= domain field from hermit PR #1875; without it CONTENT and DOMAIN cannot be separated here",
+  "engagement_witness": "candidate_sites=135, preprocess_us=1088481 (NOT a silent ptrace fallback)",
+  "command": "hermit --log=info --backend=<ptrace|e9patch> run --strict --detlog-heap [--detlog-stack] -- heapguest",
+  "relaxations": "none",
+  "host": "shared devbig"
+}
