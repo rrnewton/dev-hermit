@@ -662,17 +662,68 @@ fn inspect_target_repositories(target: &Path) -> Result<Vec<RepoInspection>, Str
         .collect()
 }
 
+/// True when the `with-proxy` egress wrapper is executable on `PATH`.
+///
+/// `with-proxy` is a Meta-dev-box wrapper; it does NOT exist on GitHub-hosted
+/// runners, where the network is reachable directly. Spawning it
+/// unconditionally made every hosted run of the pre-recycle durability
+/// guardrail die with ENOENT ("could not run with-proxy git: No such file or
+/// directory") BEFORE inspecting a single repository — a portability failure
+/// reported as a durability failure. Probing `PATH` mirrors the convention
+/// already used across this repo (`command -v with-proxy` in
+/// `ci-hub/bin/agent-tool` and the workflows, `SUBMODULE_PROXY` in the
+/// Makefile). Resolved once: `PATH` does not change mid-run, and a stable
+/// answer keeps the guardrail's behaviour deterministic.
+fn with_proxy_available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let Some(path) = std::env::var_os("PATH") else {
+            return false;
+        };
+        std::env::split_paths(&path).any(|dir| {
+            let candidate = dir.join("with-proxy");
+            // Must be a regular executable file, not merely present.
+            fs::metadata(&candidate)
+                .map(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
+                .unwrap_or(false)
+        })
+    })
+}
+
+/// `git` for network-touching inspection, behind `with-proxy` when that wrapper
+/// exists. Falls back to invoking `git` directly rather than refusing: the
+/// inspection itself is unchanged, only the unavailable egress wrapper is
+/// dropped.
+fn proxied_git() -> Command {
+    if with_proxy_available() {
+        let mut command = Command::new("with-proxy");
+        command.arg("git");
+        command
+    } else {
+        Command::new("git")
+    }
+}
+
+/// How the current process actually invokes git, for honest error messages.
+fn proxied_git_label() -> &'static str {
+    if with_proxy_available() {
+        "with-proxy git"
+    } else {
+        "git"
+    }
+}
+
 fn proxy_git_inspect(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("with-proxy")
-        .arg("git")
+    let label = proxied_git_label();
+    let output = proxied_git()
         .arg("-C")
         .arg(path)
         .args(args)
         .output()
-        .map_err(|error| format!("could not run with-proxy git: {error}"))?;
+        .map_err(|error| format!("could not run {label}: {error}"))?;
     if !output.status.success() {
         return Err(format!(
-            "with-proxy git -C {} {} failed: {}",
+            "{label} -C {} {} failed: {}",
             path.display(),
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
@@ -777,8 +828,7 @@ fn push_branch(path: &Path) -> Result<bool, String> {
         return Ok(false);
     }
     let refspec = format!("HEAD:refs/heads/{branch}");
-    let out = Command::new("with-proxy")
-        .arg("git")
+    let out = proxied_git()
         .arg("-C")
         .arg(path)
         .args(["push", "origin", &refspec])
