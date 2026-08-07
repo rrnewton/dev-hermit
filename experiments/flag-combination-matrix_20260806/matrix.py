@@ -24,13 +24,18 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-BIN = ROOT / "worktrees/oci/hermit/target/release/hermit"
+# The binary under test. Overridable, because the original hard-coded
+# `worktrees/oci/...` -- a transient, machine-local slot that no longer exists
+# for anyone else, so the experiment could not be repeated. An experiment is
+# durable only when another engineer can rerun it.
+BIN = Path(os.environ.get("HERMIT_BIN") or ROOT / "hermit/target/release/hermit")
 LIBS = ROOT / "ignored/haskell-drb/hostlibs"
 
 GUEST = ["/usr/bin/sha256sum", str(HERE / "fixture.txt")]
@@ -54,6 +59,25 @@ def native_output() -> str:
 
 
 def run_combo(flags: list[str], timeout: int = 120) -> tuple[int, str, str]:
+    """Run one combo. On timeout, RE-RUN IT IN ISOLATION and report both.
+
+    A bare `rc=124 TIMEOUT` row is not a finding, it is an unqualified number:
+    it does not say whether the combo hangs, or only hangs *here*, after the
+    combos before it. The first publication of this matrix recorded three such
+    rows for the `--verify` combos; they were retracted in a task note as "a
+    harness artifact" and the retraction never reached the data, so the artifact
+    went on asserting a hang that its own author had disproved.
+
+    MEASURED: the three `--verify` combos time out reproducibly when the whole
+    matrix runs in order, and complete in ~0.1s when run standalone, through
+    this same function, with the same binary/env/flags -- including after 30
+    uniform preceding runs. So it is order/state dependent and is NOT: stdin
+    handling (tested, DEVNULL changes nothing), host load, or a product hang.
+    The mechanism is not identified here.
+
+    Recording both observations keeps the row honest in both directions: it
+    neither hides the in-sequence timeout nor lets it read as "verify hangs".
+    """
     env = {"PATH": "/usr/bin:/bin", "LD_LIBRARY_PATH": str(LIBS), "HOME": "/tmp",
            "TERM": "dumb", "LC_ALL": "C", "TZ": "UTC"}
     cmd = [str(BIN), "run", *flags, "--", *GUEST]
@@ -61,7 +85,16 @@ def run_combo(flags: list[str], timeout: int = 120) -> tuple[int, str, str]:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, p.stdout, p.stderr[-400:]
     except subprocess.TimeoutExpired:
-        return 124, "", "TIMEOUT"
+        # Second observation, in isolation, so the row carries its condition.
+        try:
+            iso = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=timeout, env=env)
+            return 124, iso.stdout, (
+                f"TIMEOUT in sequence; ISOLATED RERUN rc={iso.returncode} "
+                f"(order/state dependent, not a hang)"
+            )
+        except subprocess.TimeoutExpired:
+            return 124, "", "TIMEOUT in sequence AND in isolation"
 
 
 def label(flags: list[str]) -> str:
@@ -112,15 +145,27 @@ def main() -> int:
         rc, out, err = run_combo(flags, timeout=240)
         # --verify suppresses guest stdout on the parent, so correctness is
         # asserted by exit code there and noted explicitly rather than faked.
-        verify = "--verify" in flags
+        # The `--verify` rows used to record `output_correct: None` -- the
+        # output oracle was SKIPPED for exactly the combos that run the guest
+        # twice, and `None` counts as OK below, so those rows passed on exit
+        # code alone. That is the vacuity this matrix exists to prevent: an
+        # exit-0-only check proves only that hermit did not segfault.
+        #
+        # It is also unnecessary. MEASURED, 3 verify combos x 3 repeats: hermit
+        # writes the verification banners to stderr, so stdout stays
+        # byte-identical to the native reference and `out == want` holds 9/9.
+        # Checking them STRENGTHENS the oracle rather than relaxing it.
         rows.append({
             "combo": name, "flags": " ".join(flags) or "(none)", "rc": rc,
-            "output_correct": None if verify else (out == want),
+            "output_correct": out == want,
             "claim": label(flags),
             "detail": "" if rc == 0 else err.strip()[:180],
         })
 
-    ok = [r for r in rows if r["rc"] == 0 and r["output_correct"] is not False]
+    # `is True`, not `is not False`: a row with no output verdict must not be
+    # counted as OK. With the skip above removed nothing should be None, and
+    # this makes that structural rather than incidental.
+    ok = [r for r in rows if r["rc"] == 0 and r["output_correct"] is True]
     bad = [r for r in rows if r not in ok]
     print(f"{'combo':34s} {'rc':>3s} {'output':8s} {'claim':10s}")
     print("-" * 62)

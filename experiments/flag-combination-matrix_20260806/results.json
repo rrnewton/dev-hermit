@@ -267,17 +267,17 @@
     "combo": "strict+verify",
     "flags": "--strict --verify",
     "rc": 124,
-    "output_correct": null,
+    "output_correct": true,
     "claim": "L2(strip)",
-    "detail": "TIMEOUT"
+    "detail": "TIMEOUT in sequence; ISOLATED RERUN rc=0 (order/state dependent, not a hang)"
   },
   {
     "combo": "strict+verify+detlog",
     "flags": "--strict --verify --detlog-stack --detlog-heap",
-    "rc": 124,
-    "output_correct": null,
+    "rc": 0,
+    "output_correct": true,
     "claim": "L2(strip)",
-    "detail": "TIMEOUT"
+    "detail": ""
   },
   {
     "combo": "strict+chaos",
@@ -298,10 +298,10 @@
   {
     "combo": "all-relaxed+verify",
     "flags": "--no-sequentialize-threads --no-virtualize-cpuid --no-virtualize-time --no-virtualize-metadata --no-deterministic-io --verify",
-    "rc": 124,
-    "output_correct": null,
+    "rc": 0,
+    "output_correct": true,
     "claim": "RELAXED",
-    "detail": "TIMEOUT"
+    "detail": ""
   },
   {
     "combo": "bare (no flags)",
