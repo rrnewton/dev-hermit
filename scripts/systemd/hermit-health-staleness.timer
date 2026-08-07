@@ -1,0 +1,17 @@
+[Unit]
+Description=Check dev-hermit health-tick liveness every 10 minutes
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/hermit-health-staleness.sh
+
+[Timer]
+OnBootSec=8min
+# Re-arms off THIS timer's own last activation, not off hermit-health-tick. A
+# stopped tick therefore does not stop the alarm that watches it; the two share
+# no fate at the application layer.
+OnUnitActiveSec=10min
+# Run a missed check after suspend/downtime instead of silently skipping it.
+Persistent=true
+AccuracySec=1min
+Unit=hermit-health-staleness.service
+
+[Install]
+WantedBy=timers.target

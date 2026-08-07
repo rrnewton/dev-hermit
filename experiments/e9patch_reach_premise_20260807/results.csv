@@ -1,0 +1,158 @@
+population,guest,compile_flags,syscall_insn,cpuid_insn,other_insn,static_candidate_sites,banner_candidate_sites,banner_mapped_sites,reach_state,ran_under_hermit
+A-dedicated-freestanding,A-clock_gettime,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-compute,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-dup3_high,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-fcntl_cloexec,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-fd_lowest_free,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-fd_open_number,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-getpid_check,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-getrandom,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-loop_write,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-minimal_exit,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-mmap_anon,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-multi_site,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",3,0,0,3,3,3,e9patch-exercised,yes
+A-dedicated-freestanding,A-nanosleep,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-pipe_fds,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-proc_self_fd_count,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-readlink_exe,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-sigmask,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-uname,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-write_stdout,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+A-dedicated-freestanding,A-writev_multi,"-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",1,0,0,1,1,1,e9patch-exercised,yes
+B-shared-fullcorpus,B-acct_refusal_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-add_key_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-adjtimex_deterministic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-arch_prctl_determinism,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,1,0,1,1,1,e9patch-exercised,yes
+B-shared-fullcorpus,B-bpf_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-cachestat_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-clock_adjtime_deterministic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-copy_file_range_refusal_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-cpuid_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,2,0,2,2,2,e9patch-exercised,yes
+B-shared-fullcorpus,B-dbi_copied_tiocgpgrp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-dbi_execveat_unsupported,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-dbi_mmap_exec,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-dbi_pid_virtualization,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-dbi_self_sigqueue,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-dbi_unsupported_syscall,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-debuggee,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-fork_tree,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-futex_requeue_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-futex_waitv_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-futex_wake_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-getitimer_determinism_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-getpid,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-get_robust_list_child,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-get_robust_list_self,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-get_robust_list_thread,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-getsockopt_null,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ioctl_fioclex,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-kcmp_eperm,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-keyctl_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-keyctl_passthrough,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-listmount_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-liteinst_advanced,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-lsm_get_self_attr_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-lsm_list_modules_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-lsm_set_self_attr_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-madvise_determinism,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-map_shadow_stack_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-memfd_secret_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-meminfo_available_deterministic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-meminfo_cached_deterministic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-meminfo_free_deterministic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-memoryPress,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-mmap_determinism,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-mmap_fork_shared,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-name_to_handle_at_eopnotsupp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-name_to_handle_directory_eopnotsupp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-name_to_handle_empty_path_eopnotsupp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-name_to_handle_regular_eopnotsupp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-netlink_autobind_generic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-netlink_autobind_route,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-netlink_autobind_usersock,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-netns_cookie_tcp4,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-netns_cookie_tcp6,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-netns_cookie_udp4,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-perf_event_hardware_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-perf_event_open_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-perf_event_software_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-perf_event_watchpoint_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-periodic_setitimer_delivery,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pidfd_open_self,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pidfd_poll_self,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pidfd_waitid_child,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pid_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,0,0,vacuous-ptrace-passthrough,yes
+B-shared-fullcorpus,B-pid_tid,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pipe_chain,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pipe_prefill,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pmu_skid,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,11,0,11,11,11,e9patch-exercised,yes
+B-shared-fullcorpus,B-posix_timer_test,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ppoll_readv,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ppoll_simulation,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-prctl_dumpable,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-process_mrelease_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-process_vm_readv_refusal_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-process_vm_writev_refusal_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-proc_fd_link_aliases,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-procfs_positioned_probe,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-prodcons_determinism,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-producer_consumer,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pselect6_simulation,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pthread_lifecycle,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ptrace_attach_eperm,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ptrace_eperm,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ptrace_seize_eperm,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ptrace_traceme_eperm,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-pty_nr_count,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-qemu_hello,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-rcx_canonicalization,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",1,0,0,1,1,1,e9patch-exercised,yes
+B-shared-fullcorpus,B-record_replay_fd_close,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-record_replay_file_state,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-record_replay_lseek_seek_cur,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-record_replay_setsockopt,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-recvmsg_scm_rights_mmap,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-remap_file_pages_anonymous_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-remap_file_pages_memfd_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-remap_file_pages_tmpfile_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-request_key_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-robust_futex_test,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sched_setattr_batch,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sched_setattr_idle,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sched_setattr_other,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-scheduler_policy_queries,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sigmask_preemption,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_cookie_tcp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_cookie_udp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_cookie_unix,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_ioctl_timestamp,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_timestamp_edge_cases,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_timestamp_timespec,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-socket_timestamp_timeval,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-so_incoming_cpu_tcp4,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-so_incoming_cpu_tcp6,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-so_incoming_cpu_udp4,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-splice_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-statmount_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-syscall_file_io,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-syscall_file_metadata,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-syscall_quick_wins,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sysfs_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sysinfo,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-syslog_deterministic,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sysv_sem_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-sysv_shm_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-tcp_info_accept4,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-tcp_info_accept6,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-tcp_info_client4,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-tee_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-thread_contention,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-thread_self_procfs_handoff,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-thread_stress,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-uname,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-unix_autobind_dgram,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-unix_autobind_seqpacket,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-unix_autobind_stream,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-ustat_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-vmsplice_enosys,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-wait_on_child,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no
+B-shared-fullcorpus,B-writev_determinism,"cc -std=c11 -O2 -g -Wall -Wextra -Werror",0,0,0,0,,,vacuous-predicted-static,no

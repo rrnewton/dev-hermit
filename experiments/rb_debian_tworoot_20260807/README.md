@@ -96,6 +96,82 @@ bug.** Anything measuring Hermit determinism on this class of host must pass
 root, executor, artifact_sha256, hermit_sha256, utc)`, so every cell above
 dereferences to per-root artifact hashes and the exact binary that produced them.
 
+## Which mechanism is this measuring? (both, and they behave differently)
+
+Varying a build root can cause divergence two ways, and they have opposite
+expected outcomes under Hermit:
+
+1. **path-embedded** — the path lands in the output bytes. Hermit should *not*
+   fix this, and it would be wrong to: the guest asked where it was and got a
+   truthful answer that genuinely differs per root.
+2. **path-triggered** — the root change perturbs timing, entropy, allocation or
+   iteration order, which then leaks into the output. Hermit *should* fix this.
+
+The buck2 lane predicted that the 13/13 above is entirely mechanism 2, which
+implies **no package in the set embeds its build root in the compared output**.
+Checked, and the prediction holds — but for a stronger reason than luck.
+
+### The prediction, checked
+
+`./check_path_embedding.sh` unpacks both *native* `.deb` payloads for every
+package and greps for the two host root paths and for the differing component:
+
+```
+for tag in n1 n2; do ar x <root>/work/*.deb; tar xf data.tar.*; done
+grep -rlaF -- "<host root path>" .
+grep -rlaF -- "native-n1" . ; grep -rlaF -- "native-n2" .
+```
+
+**Result: 0 of 13 packages embed the build root path.** The check is not inert:
+on `hostname`'s payload the same grep finds `hostname` and correctly fails to
+find an absent control string.
+
+### Why it could not have gone the other way here
+
+The deeper reason is structural, and it bounds what this experiment measures.
+The build always runs *inside* the rootfs — `podman --rootfs`, or Hermit plus
+`chroot` — so the **guest-visible build directory is `/work/build` in all four
+roots**, verified from `etc/drb-source-dir` in each. Only the *host* path
+differs, and the build never sees it.
+
+So this experiment **holds the guest-visible path constant and varies the host
+root**: it isolates mechanism 2 by construction, and mechanism 1 is excluded
+rather than merely absent. The correct reading of the headline is therefore
+sharper than "Hermit made 13 packages reproducible":
+
+> **Hermit eliminated every path-*triggered* divergence in the set (13/13). The experiment says nothing about path-*embedded* divergence.**
+
+### Closing that gap: varying the guest-visible path
+
+`./guestpath_arm.sh` builds the same source at two guest paths of different
+length (`/work/build` vs
+`/work/build-with-a-substantially-longer-directory-name`):
+
+| package | native | hermit `--no-rcb-time` |
+|---|---|---|
+| hostname 3.11 | DIFFERS | DIFFERS |
+| tree 1.6.0-1 | DIFFERS | DIFFERS |
+| zip 3.0-6 | DIFFERS | DIFFERS |
+
+**Control** (`/tmp/samepath-control.sh` logic, same long path built twice under
+Hermit): `hostname`, `tree`, `zip` all **IDENTICAL**. So the short-vs-long
+difference is caused by the path itself, not by residual run-to-run
+nondeterminism — Hermit is deterministic at either path, and legitimately
+reports a different artifact for a different path.
+
+Both mechanisms are therefore reproduced in the same corpus, with the predicted
+opposite outcomes. The two-mechanism model is **confirmed**.
+
+### One loose end worth recording
+
+For `hostname` the mechanism-1 difference is **19 bytes, all in the ELF
+build-id** (`d977c152…` vs `5db02718…`); everything else in the package —
+including the `tar` listing and every mtime — is identical. The path string is
+*not* present in the stripped artifact, in either variant. So Debian's
+`dh_strip` removes the visible build path while a path-dependent fingerprint
+survives in the build-id. The exact propagation channel into that hash is not
+localized here; it is recorded as an observation, not an explanation.
+
 ## Scope and honesty about the denominator
 
 This is **13 packages**, selected as small, fast-building members of the
