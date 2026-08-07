@@ -1,0 +1,61 @@
+{
+  "_why": [
+    "One pinned REFERENCE GUEST per parity dimension. A cell measured on a guest",
+    "that cannot exercise its dimension produces an ambiguous zero that reads as",
+    "agreement; this file makes that structurally impossible instead of a thing",
+    "each agent must remember. Twice a dimension was measured on a guest that",
+    "could not exercise it.",
+    "",
+    "POPULATED OUTPUT IS NOT A VALID CONTROL, and the numbers below prove it:",
+    "/bin/true emits 31 [stack] hashes yet its [stack] mapping never grows (1",
+    "distinct range, span 0), and it had 0/31 cross-backend agreement. Every one",
+    "of the four guests here emits nonzero [heap] AND [stack] records, so",
+    "'count > 0' cannot discriminate an exercising guest from a bystander. The",
+    "discriminator is IDENTITY (source sha256) plus a per-dimension WITNESS."
+  ],
+  "_measured": {
+    "hermit": "ignored/prefix-build/target/release/hermit, self-reports gf89c69766371-dirty",
+    "date": "2026-08-07",
+    "command": "hermit --log=info --log-file=L run --backend ptrace --strict --detlog-heap --detlog-stack --base-env minimal -- GUEST",
+    "note": "Guests must NOT live under /tmp: hermit replaces guest /tmp and refuses with an explicit error.",
+    "table": {
+      "heap_fragment_reuse":  {"rc": 0, "heap_records": 24, "stack_records": 26, "distinct_stack_ranges": 1},
+      "stack_deep_recursion": {"rc": 0, "heap_records": 15, "stack_records": 17, "distinct_stack_ranges": 2},
+      "stdout_bytes":         {"rc": 0, "heap_records": 16, "stack_records": 18, "distinct_stack_ranges": 1},
+      "detlog_syscalls":      {"rc": 0, "heap_records": 143, "stack_records": 145, "distinct_stack_ranges": 1},
+      "/bin/true":            {"rc": 0, "heap_records": 0, "stack_records": 31, "distinct_stack_ranges": 1}
+    },
+    "corroboration": "heap_fragment_reuse reproduced 24 ptrace heap hashes and heap-sum=6358, independently matching task kvm-heap-parity-fails-differing-hash-counts-and-sequences."
+  },
+  "dimensions": {
+    "stdout": {
+      "source": "ci-hub/parity/guests/stdout_bytes.c",
+      "source_sha256": "2e913fab0d21ccb660bca99845766e4ba1baccab24f3a6268f7d9062fc96d6e6",
+      "why": "Writes 257 deterministic self-generated lines. /bin/true writes ZERO bytes, so a stdout comparison over it compares two empty strings and passes vacuously.",
+      "witness_stdout_regex": "^stdout-lines=257 stdout-final=16d173bdfcdae583$",
+      "disqualifies": ["a guest that writes no stdout of its own"]
+    },
+    "detlog": {
+      "source": "ci-hub/parity/guests/detlog_syscalls.c",
+      "source_sha256": "eb6f6966ef379a8dbac7dc55c6a8d2542ba3b259229bc373cda7678c6377717b",
+      "why": "Drives 32 iterations of clock_gettime/getpid/dup/close, all determinized by Detcore, so the INFO record stream has guest-caused records to align. /bin/true's records are loader traffic no guest code caused.",
+      "witness_stdout_regex": "^detlog-iters=32 detlog-ops=128$",
+      "disqualifies": ["a guest whose records are dominated by process setup"]
+    },
+    "stack": {
+      "source": "ci-hub/parity/guests/stack_deep_recursion.c",
+      "source_sha256": "b34a0c6ba1042fc6ccf05d7c07cf553ea044749ac10698c3b70f5eab71c956cf",
+      "why": "4096 frames of size-varying recursion (8..1032B) grow the [stack] mapping from 0x21000 to 0x209000 -- MEASURED 2 distinct ranges. /bin/true emits 31 stack hashes over 1 static range: populated, never exercised.",
+      "witness_stdout_regex": "^stack-depth=4096 stack-sum=4384982038416015348$",
+      "witness_requires_stack_growth": true,
+      "disqualifies": ["/bin/true and any guest whose [stack] mapping never grows, however many hashes it emits"]
+    },
+    "heap": {
+      "source": "ci-hub/parity/guests/heap_fragment_reuse.c",
+      "source_sha256": "4760311f36d52ef98c8dc43efdad475756d5f3c79205a4ce41a741fcedefec29",
+      "why": "malloc/fragment/reuse: 64 x 8KiB, free every other, realloc at 2x. Recovered byte-exact from the run that produced the first real heap-parity measurement; its recorded binary sha256 cde91b38... also matched.",
+      "witness_stdout_regex": "^heap-sum=6358$",
+      "disqualifies": ["/bin/true, which yields 0 heap records -- an ambiguous 0/0 that must never render green"]
+    }
+  }
+}
