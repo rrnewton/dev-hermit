@@ -146,6 +146,26 @@ class VerifiedCloseTest(unittest.TestCase):
         self.assertNotEqual([], unlanded.task_mutations)
         self.assertEqual([], unverifiable.task_mutations)
 
+    def test_parent_not_landed_is_refused_without_task_mutation(self):
+        """Parent tooling is direct-to-main, so no unlanded close is legitimate."""
+        runner = FakeRunner(code_state="not-landed")
+
+        rc = verified_close.main(
+            [
+                "parent-task",
+                "--code",
+                "b" * 40,
+                "--repo",
+                verified_close.PARENT_REPO,
+                "--source",
+                ".",
+            ],
+            run=runner,
+        )
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.task_mutations)
+
     def test_unlanded_closure_records_the_landing_state_in_the_note(self):
         """`closed` no longer implies landed, so the note must say which it was.
 

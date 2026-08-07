@@ -440,6 +440,40 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(payload["rc"], 1)
         self.assertEqual(payload["ancestry"], "not-ancestor")
 
+    def test_verify_landing_parent_sha_brackets_ancestry(self) -> None:
+        source = self.repo_source(protocol.PARENT_REPO, "parent-landing-source")
+        for is_ancestor, expected_rc, expected_state in (
+            (True, 0, "landed"),
+            (False, 1, "not-landed"),
+        ):
+            with self.subTest(is_ancestor=is_ancestor):
+                args = argparse.Namespace(
+                    source=source,
+                    reference=SHA,
+                    target="main",
+                    repo=protocol.PARENT_REPO,
+                    json=True,
+                    item=None,
+                    claimed_oid=None,
+                )
+                with (
+                    mock.patch.object(
+                        protocol, "_fetch_target", return_value="origin/main"
+                    ),
+                    mock.patch.object(protocol, "_resolve_raw_sha", return_value=SHA),
+                    mock.patch.object(
+                        protocol,
+                        "_is_target_ancestor",
+                        return_value=is_ancestor,
+                    ),
+                    redirect_stdout(io.StringIO()) as stdout,
+                ):
+                    rc = protocol.verify_landing(args)
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(expected_rc, rc)
+                self.assertEqual(expected_state, payload["state"])
+                self.assertEqual(SHA, payload["resolved_sha"])
+
     def test_verify_landing_pr_without_merge_commit_is_unverifiable(self) -> None:
         source = self.repo_source("rrnewton/hermit")
         args = argparse.Namespace(
@@ -958,9 +992,14 @@ class ProtocolTest(unittest.TestCase):
     def test_repo_source_defaults_by_repo_and_rejects_mismatch(self) -> None:
         hermit = self.repo_source("rrnewton/hermit", "mapped-hermit")
         reverie = self.repo_source("rrnewton/reverie", "mapped-reverie")
+        parent = self.repo_source(protocol.PARENT_REPO, "mapped-parent")
         with mock.patch.dict(
             protocol._DEFAULT_REPO_SOURCES,
-            {"rrnewton/hermit": hermit, "rrnewton/reverie": reverie},
+            {
+                "rrnewton/hermit": hermit,
+                "rrnewton/reverie": reverie,
+                protocol.PARENT_REPO: parent,
+            },
             clear=True,
         ):
             self.assertEqual(
@@ -971,10 +1010,22 @@ class ProtocolTest(unittest.TestCase):
                 protocol.resolve_repo_source("rrnewton/reverie", None),
                 reverie.resolve(),
             )
+            self.assertEqual(
+                protocol.resolve_repo_source(protocol.PARENT_REPO, None),
+                parent.resolve(),
+            )
             with self.assertRaisesRegex(
                 protocol.ProtocolError, "not required repository"
             ):
                 protocol.resolve_repo_source("rrnewton/reverie", hermit)
+            with self.assertRaisesRegex(
+                protocol.ProtocolError, "unsupported landing verification repository"
+            ):
+                protocol.resolve_repo_source("example/unsupported", hermit)
+
+        # Parent ancestry support must not create a zero-job hosted policy.
+        with self.assertRaisesRegex(protocol.ProtocolError, "unsupported post-land"):
+            protocol.verification_policy_for_repo(protocol.PARENT_REPO)
 
     def test_repo_source_accepts_intended_https_and_ssh_remote_forms(self) -> None:
         source = self.repo_source("rrnewton/hermit", "remote-forms")

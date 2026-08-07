@@ -31,6 +31,7 @@ from check_outcome import FAIL_CONCLUSIONS as _RED_CONCLUSIONS
 from nonzero_result import is_zero_test_green
 
 DEFAULT_REPO = "rrnewton/hermit"
+PARENT_REPO = "rrnewton/dev-hermit"
 DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
 DEFAULT_WORKFLOW_FILE = ".github/workflows/ci-portable.yml"
 PRIVILEGED_WORKFLOW = "CI (privileged)"
@@ -85,6 +86,7 @@ _VERSIONED_REPO_GITHUB_JOBS = {
 _DEFAULT_REPO_SOURCES = {
     DEFAULT_REPO: ROOT / "hermit",
     REVERIE_REPO: ROOT / "reverie",
+    PARENT_REPO: ROOT,
 }
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
@@ -1136,7 +1138,17 @@ def _github_repo_from_remote(remote: str) -> str | None:
 
 def resolve_repo_source(repo: str, source: Path | None) -> Path:
     """Resolve a repository-specific donor checkout and prove its origin binding."""
-    verification_policy_for_repo(repo)
+    # Landing ancestry is a narrower authority than post-land CI policy. Parent
+    # tooling lands directly to main and therefore needs ancestry verification,
+    # but it has no hosted/local verification obligation policy. Keeping these
+    # allowlists separate avoids manufacturing a zero-job policy that would make
+    # an unsupported parent obligation look green.
+    if repo not in _DEFAULT_REPO_SOURCES:
+        supported = ", ".join(sorted(_DEFAULT_REPO_SOURCES))
+        raise ProtocolError(
+            f"unsupported landing verification repository {repo!r}; "
+            f"supported repositories: {supported}"
+        )
     candidate = source if source is not None else _DEFAULT_REPO_SOURCES[repo]
     candidate = candidate.expanduser().resolve()
     if not candidate.is_dir():

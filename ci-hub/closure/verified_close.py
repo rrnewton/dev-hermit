@@ -162,6 +162,21 @@ def verify_code(
             "verified", "code", reference, resolved=f"{repo}@{resolved}", landing="landed"
         )
     if result.returncode == REFUSED and state == "not-landed":
+        # Parent tooling has no implemented-but-unlanded phase: the standing
+        # publication path is a serialized direct commit to parent main. Treating
+        # a real but non-ancestral parent object like an open product PR would
+        # recreate the gateway bypass this evidence mode exists to remove.
+        if repo == PARENT_REPO:
+            return Evidence(
+                "refused",
+                "code",
+                reference,
+                resolved=f"{repo}@{resolved}" if resolved else None,
+                reason=(
+                    f"parent code is not landed on {target}: {reason}; direct-to-main "
+                    "parent work must be an ancestor before closure"
+                ),
+            )
         # NOT-LANDED IS A VERIFIED STATE, NOT A FAILURE (2026-08-06). The
         # verifier dereferenced the reference and resolved a real commit; it
         # simply is not on target main yet. Under the close-on-implemented
