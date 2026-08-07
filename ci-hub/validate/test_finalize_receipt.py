@@ -19,9 +19,7 @@ MODULE = HERE / "finalize_receipt.py"
 
 
 def _satisfied(cov: dict) -> bool:
-    return (cov["planned_test_nodes"] > 0
-            and cov["zero_executed_nodes"] == []
-            and cov["absent_nodes"] == [])
+    return fr.qualifying_receipt.coverage_satisfied(cov)
 
 
 def _passing_node(tag: str, n: int) -> str:
@@ -224,6 +222,36 @@ def _countless_green_row(sha: str, log_path: str) -> dict:
         "executed_tests": None, "filtered_tests": None,
         "log_file": log_path, "real_seconds": 900,
     }
+
+
+def _qualifying_schema5_row(sha: str) -> dict:
+    row = _countless_green_row(sha, "/unused")
+    row.update(
+        schema_version=5,
+        executed_tests=6,
+        filtered_tests=0,
+        coverage={
+            "planned_test_nodes": 1,
+            "executed_test_nodes": 1,
+            "zero_executed_nodes": [],
+            "absent_nodes": [],
+        },
+    )
+    return row
+
+
+def test_schema5_idempotency_guard_uses_canonical_coverage_authority():
+    """Positive and absent-list controls bracket the finalizer consumer."""
+    row = _qualifying_schema5_row("9" * 40)
+    assert fr._has_satisfied_schema5(row) is True
+
+    omitted = json.loads(json.dumps(row))
+    del omitted["coverage"]["absent_nodes"]
+    assert fr._has_satisfied_schema5(omitted) is False
+
+    tampered = json.loads(json.dumps(row))
+    tampered["coverage"]["absent_nodes"] = ["test.missing"]
+    assert fr._has_satisfied_schema5(tampered) is False
 
 
 def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):

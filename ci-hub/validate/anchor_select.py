@@ -94,11 +94,12 @@ from pathlib import Path
 # copy is exactly how this file came to disagree with it. Mirrors the sys.path
 # pattern used by aggregate.py / finalize_receipt.py for the hyphenated dir.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from qualifying_receipt import coverage_satisfied  # noqa: E402
 
 HERE = Path(os.path.abspath(__file__)).parent
 CI_HUB = HERE.parent
 PARENT = CI_HUB.parent
+sys.path.insert(0, str(CI_HUB))
+import qualifying_receipt  # noqa: E402
 
 DEFAULT_CHECKOUT = PARENT / "hermit"
 DEFAULT_LEDGER = PARENT / "ignored" / "validate-run-ledger.jsonl"
@@ -143,71 +144,24 @@ def load_predicate(path: Path) -> dict:
 
 
 def _coverage_satisfied(row: dict) -> bool:
-    """Per-node coverage obligation: completeness is COVERAGE, not a count.
+    """Delegate the anchor parity probe to the canonical coverage authority.
 
-    DELEGATES to the canonical predicate. This was a private re-implementation
-    that DISAGREED with it, and the disagreement was fail-OPEN in the one place
-    that can least afford it: `_coverage_satisfied` gates whether a commit may
-    serve as an ANCHOR, so a receipt it wrongly calls covered becomes a green
-    that later incremental runs INHERIT.
-
-    The private copy tested the two name lists for truthiness
-    (`if cov.get("zero_executed_nodes"): return False`). A MISSING key is falsy,
-    so the check fell through and the receipt was called SATISFIED, where the
-    canonical `== []` refuses it — an unreported list is unknown, and unknown is
-    refused. Measured across six shapes the two agreed on 2 and diverged on 4,
-    and all four divergences were in the permissive direction.
-
-    Do not reintroduce a local copy. ci-hub/lib/records.rs records this same bug
-    being fixed on the Rust side while Python was strict; the permissive form
-    surviving here is the other half of that split brain.
+    This compatibility seam is exercised directly by the recurrence test; it
+    must never grow a local restatement of the coverage predicate.
     """
-    return coverage_satisfied(row.get("coverage"))
+    return qualifying_receipt.coverage_satisfied(row.get("coverage"))
 
 
 def row_qualifies(row: dict, predicate: dict) -> tuple[bool, str]:
-    """Apply the SHARED predicate to one ledger row.
+    """Delegate anchor eligibility to the canonical semantic authority.
 
-    Returns (qualifies, reason). The reason names the FIRST failing clause, so a
-    refusal is auditable rather than a bare False.
+    The shared authority also returns the first failing clause, so anchor
+    diagnostics cannot drift into a second certifier.
     """
-    require = predicate["require"]
-    counts_schema = predicate["counts_schema"]
-
-    if row.get("commit") in (None, "", "unknown"):
-        return False, "no-commit"
-    if row.get("commit_anchored") is not True:
-        return False, "commit_anchored"
-    if row.get("tree_dirty") is not False:
-        return False, "tree_dirty"
-    if row.get("profile") != require["profile"]:
-        return False, f"profile={row.get('profile')!r}"
-    # THE 1-HOP CLAUSE. A selective receipt covered a SUBSET; inheriting from it
-    # would chain one selection decision onto another.
-    if row.get("selection_mode") != require["selection_mode"]:
-        return False, f"selection_mode={row.get('selection_mode')!r}(1-hop)"
-    if row.get("result") != require["result"]:
-        return False, f"result={row.get('result')!r}"
-    failures = row.get("failures")
-    if failures is not None and failures > require["failures_max"]:
-        return False, f"failures={failures}"
-
-    executed = row.get("executed_tests")
-    # UNIVERSAL guard at every schema: a demonstrated zero-test run is a
-    # no-result wearing a success badge, never a green.
-    if executed == 0:
-        return False, "executed_tests==0"
-
-    schema = row.get("schema_version") or 0
-    if schema >= counts_schema:
-        if not isinstance(executed, int) or executed < require["executed_tests_min"]:
-            return False, "count-capable receipt missing executed_tests"
-        if predicate.get("coverage", {}).get("per_node") and not _coverage_satisfied(row):
-            return False, "count-capable receipt coverage unsatisfied"
-    else:
-        if not isinstance(executed, int) or executed < require["executed_tests_min"]:
-            return False, "pre-count receipt cannot prove nonzero execution"
-    return True, "qualifies"
+    sha = row.get("commit")
+    return qualifying_receipt.row_qualification(
+        row, sha if isinstance(sha, str) else "", predicate
+    )
 
 
 def load_ledger(path: Path) -> tuple[list[dict], int]:

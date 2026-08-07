@@ -43,6 +43,11 @@ import os
 import subprocess
 import sys
 
+# The finalizer is a Python consumer of the same semantic receipt authority as
+# history, publishing, and anchor selection. Do not restate schema-5 success.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import qualifying_receipt  # noqa: E402
+
 # ONE extractor, not a second regex copy that could drift: per-node counting
 # lives solely in the remediation `nonzero_result` module (also imported by
 # aggregate.py and protocol.py). Mirror aggregate.py's sys.path setup.
@@ -211,17 +216,16 @@ def _is_countless_clean_full_pass(rec: dict) -> bool:
 
 
 def _has_satisfied_schema5(rec: dict) -> bool:
-    """Idempotency guard: a sha already carrying a satisfied schema-5 row needs
-    no re-mint (re-running scan must not append duplicates)."""
+    """Idempotency guard backed by the canonical receipt authority.
+
+    Only an already-qualifying schema-5 row suppresses re-minting. Missing or
+    tampered conditions must not look like falsey empty-list success.
+    """
     if (rec.get("schema_version") or 0) < SCHEMA_VERSION:
         return False
-    cov = rec.get("coverage") or {}
-    return (
-        isinstance(rec.get("executed_tests"), int)
-        and rec["executed_tests"] > 0
-        and cov.get("planned_test_nodes", 0) > 0
-        and not cov.get("zero_executed_nodes")
-        and not cov.get("absent_nodes")
+    sha = rec.get("commit")
+    return isinstance(sha, str) and qualifying_receipt.row_qualifies(
+        rec, sha, qualifying_receipt.active()
     )
 
 
@@ -270,9 +274,7 @@ def scan_and_finalize(ledger_path: str, hermit_checkout: str,
 
         fields = build_coverage(log_text, planned)
         cov = fields["coverage"]
-        satisfied = (cov["planned_test_nodes"] > 0
-                     and not cov["zero_executed_nodes"]
-                     and not cov["absent_nodes"])
+        satisfied = qualifying_receipt.coverage_satisfied(cov)
         results.append({
             "sha": sha,
             "satisfied": satisfied,

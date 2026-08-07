@@ -197,7 +197,7 @@ pub struct HistoryRow {
 /// whether the node emitted any banner) and `[node] ✓ PASS/✗ FAIL` terminal lines
 /// (which nodes actually RAN), crossed against the PLANNED set of `test.*` DAG
 /// nodes in the lane manifests. The obligation is SATISFIED iff
-/// `planned_test_nodes > 0 && zero_executed_nodes.is_empty() && absent_nodes.is_empty()`.
+/// `planned_test_nodes > 0` and both failure lists were reported and empty.
 /// This is the per-node replacement for the blunt aggregate `filtered_tests == 0`
 /// predicate, which could not distinguish a full run's legitimate cross-shard
 /// filtering (~693 tests) from a narrowed-subset masquerade.

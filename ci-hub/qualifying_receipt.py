@@ -2,8 +2,10 @@
 """The SINGLE qualifying-receipt predicate for the Python consumers.
 
 Python twin of `ci-hub/lib/qualifying_receipt.rs`. "Does this ledger row qualify
-as a full green?" was answered by five independent inline certifiers across three
-languages; each was its own floor and each drifted (see task
+as a full green?" was answered by independent inline certifiers across three
+languages; the original sweep found five and follow-up review found two more in
+anchor selection and receipt finalization. Each was its own floor and drifted
+(see task
 `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`,
 source sweep `ai_docs/2026-08-04-floor-consumer-sweep.md`). The fix is ONE data
 artifact -- `ci-hub/validate/qualifying-receipt.json` -- that every consumer
@@ -32,8 +34,12 @@ import json
 import os
 import re
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import Any
+
+
+U64_MAX = (1 << 64) - 1
 
 PREDICATE_ENV = "QUALIFYING_RECEIPT_PREDICATE"
 # The canonical file lives beside this module's `validate/` sibling. The literal
@@ -102,59 +108,78 @@ def active() -> dict[str, Any]:
     return _ACTIVE
 
 
+class CoverageVerdict(Enum):
+    """Typed outcome of the per-node coverage obligation."""
+
+    SATISFIED = "satisfied"
+    UNSATISFIED = "unsatisfied"
+    UNAVAILABLE = "unavailable"
+
+
+def coverage_verdict(cov: Any) -> CoverageVerdict:
+    """Decide coverage from the receipt fields alone.
+
+    Both failure lists must be present as lists. An omitted or malformed list is
+    UNKNOWN (`UNAVAILABLE`), never an empty-list success. A reported nonempty
+    list is a distinct `UNSATISFIED` outcome. Mirrors the Rust
+    `coverage_verdict` authority.
+    """
+    if not isinstance(cov, dict):
+        return CoverageVerdict.UNAVAILABLE
+    planned = cov.get("planned_test_nodes")
+    zero_executed = cov.get("zero_executed_nodes")
+    absent = cov.get("absent_nodes")
+    if (
+        not isinstance(planned, int)
+        or isinstance(planned, bool)
+        or not 0 < planned <= U64_MAX
+        or not isinstance(zero_executed, list)
+        or not isinstance(absent, list)
+        or any(not isinstance(name, str) for name in zero_executed)
+        or any(not isinstance(name, str) for name in absent)
+    ):
+        return CoverageVerdict.UNAVAILABLE
+    if zero_executed or absent:
+        return CoverageVerdict.UNSATISFIED
+    return CoverageVerdict.SATISFIED
+
+
 def coverage_satisfied(cov: Any) -> bool:
-    """A per-node coverage obligation is SATISFIED iff the run planned at least
-    one test-bearing DAG node AND no planned test node was inert or absent. The
-    NAMES travel with the receipt so this is re-derived without re-reading a log
-    (Proxy Binding). Mirrors the Rust `coverage_satisfied`."""
-    # `planned_test_nodes` is checked with isinstance BEFORE the comparison. The
-    # bare `cov.get("planned_test_nodes", 0) > 0` RAISED TypeError on a null or
-    # string value (`None > 0` and `"3" > 0` are both errors in Python 3), so a
-    # malformed receipt crashed this predicate instead of being refused by it.
-    # Rust refuses the same input at the parse boundary because the field is
-    # typed `u64`; this makes Python refuse it too, rather than the two mirrors
-    # disagreeing on malformed input in a THIRD way.
-    #
-    # `== []` on the two lists is deliberate and must not be relaxed to a
-    # truthiness test: a MISSING or null list means the producer did not report
-    # it, which is unknown, and unknown is refused. See the note on
-    # `zero_executed_nodes` in ci-hub/lib/records.rs — an omitted field once
-    # deserialized to `[]` on the Rust side and read as "no inert nodes", i.e. a
-    # pass. That is the bug this spelling prevents.
-    planned = cov.get("planned_test_nodes") if isinstance(cov, dict) else None
-    return (
-        isinstance(cov, dict)
-        and isinstance(planned, int)
-        and not isinstance(planned, bool)
-        and planned > 0
-        and cov.get("zero_executed_nodes") == []
-        and cov.get("absent_nodes") == []
-    )
+    """True only for an explicitly reported, satisfied coverage obligation."""
+    return coverage_verdict(cov) is CoverageVerdict.SATISFIED
 
 
-def _row_qualifies_without_class(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
+def _row_qualification_without_class(
+    row: dict[str, Any], sha: str, pred: dict[str, Any]
+) -> tuple[bool, str]:
     """THE qualifying-receipt predicate, mirroring the Rust `row_qualifies`
     clause for clause. Completeness for a count-capable receipt is decided by
-    per-node COVERAGE, not the executed_tests count."""
+    per-node COVERAGE, not the executed_tests count. The reason names the first
+    failing clause so downstream consumers do not need a diagnostic copy."""
     req = pred["require"]
-    if not (
-        row.get("commit") == sha
-        and row.get("commit_anchored") is req["commit_anchored"]
-        and row.get("tree_dirty") is req["tree_dirty"]
-        and row.get("selection_mode") == req["selection_mode"]
-        and row.get("profile") == req["profile"]
-        and row.get("result") == req["result"]
-    ):
-        return False
+    if row.get("commit") in (None, "", "unknown"):
+        return False, "no-commit"
+    if row.get("commit") != sha:
+        return False, f"commit={row.get('commit')!r}"
+    if row.get("commit_anchored") is not req["commit_anchored"]:
+        return False, "commit_anchored"
+    if row.get("tree_dirty") is not req["tree_dirty"]:
+        return False, "tree_dirty"
+    if row.get("profile") != req["profile"]:
+        return False, f"profile={row.get('profile')!r}"
+    if row.get("selection_mode") != req["selection_mode"]:
+        return False, f"selection_mode={row.get('selection_mode')!r}(1-hop)"
+    if row.get("result") != req["result"]:
+        return False, f"result={row.get('result')!r}"
     # `pass` with a positive failure count is malformed; an absent count on a
     # pass row is treated as zero (old rows predate the field).
     if (row.get("failures") or 0) > req["failures_max"]:
-        return False
+        return False, f"failures={row.get('failures')}"
     # A demonstrated zero-test run is never a full green, at any schema.
     if row.get("executed_tests") == 0:
-        return False
+        return False, "executed_tests==0"
     if pred.get("gate_filtered_tests") and row.get("filtered_tests") != 0:
-        return False
+        return False, "filtered_tests!=0"
     schema = row.get("schema_version") or 0
     count_capable = schema >= pred["counts_schema"]
     counts_present = (
@@ -165,18 +190,27 @@ def _row_qualifies_without_class(row: dict[str, Any], sha: str, pred: dict[str, 
     executed_ok = isinstance(exec_val, int) and exec_val >= req["executed_tests_min"]
     cov = pred["coverage"]
     if count_capable:
-        coverage_ok = (
-            not cov["per_node"]
-            or schema < cov["applies_at_schema_min"]
-            or coverage_satisfied(row.get("coverage"))
-        )
-        return executed_ok and coverage_ok
+        if not executed_ok:
+            return False, "count-capable receipt missing executed_tests"
+        if cov["per_node"] and schema >= cov["applies_at_schema_min"]:
+            verdict = coverage_verdict(row.get("coverage"))
+            if verdict is not CoverageVerdict.SATISFIED:
+                return False, f"count-capable receipt coverage {verdict.value}"
+        return True, "qualifies"
     if counts_present:
         # Old-schema writer that carried counts but predates per-node coverage:
         # hold it to the strongest thing it can prove -- nonzero execution.
-        return executed_ok
+        if executed_ok:
+            return True, "qualifies"
     # Neither count present: an uncounted receipt is UNVERIFIED, not green.
-    return False
+    return False, "pre-count receipt cannot prove nonzero execution"
+
+
+def _row_qualifies_without_class(
+    row: dict[str, Any], sha: str, pred: dict[str, Any]
+) -> bool:
+    """Compatibility boolean wrapper around the canonical diagnostic result."""
+    return _row_qualification_without_class(row, sha, pred)[0]
 
 
 def green_class_of(row: dict[str, Any]) -> str:
@@ -184,7 +218,9 @@ def green_class_of(row: dict[str, Any]) -> str:
     return _green_class.derive_class(row)[0]
 
 
-def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
+def row_qualification(
+    row: dict[str, Any], sha: str, pred: dict[str, Any]
+) -> tuple[bool, str]:
     """THE qualifying-receipt predicate, plus the green-CLASS clause.
 
     The class clause is applied LAST and can only NARROW: a row that already
@@ -197,9 +233,18 @@ def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
     defaults to ["hard"], and a row with no `validated_head_sha` derives its class
     as hard (measured: 585/585 live ledger rows).
     """
-    if not _row_qualifies_without_class(row, sha, pred):
-        return False
-    return green_class_of(row) in _green_class.accepted_classes(pred)
+    value_ok, reason = _row_qualification_without_class(row, sha, pred)
+    if not value_ok:
+        return False, reason
+    green_class, class_reason = _green_class.derive_class(row)
+    if green_class not in _green_class.accepted_classes(pred):
+        return False, f"green_class={green_class!r}: {class_reason}"
+    return True, "qualifies"
+
+
+def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
+    """Boolean compatibility wrapper around :func:`row_qualification`."""
+    return row_qualification(row, sha, pred)[0]
 
 
 def main(argv: list[str] | None = None) -> int:

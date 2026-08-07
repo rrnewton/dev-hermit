@@ -3517,20 +3517,6 @@ fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
     Ok(0)
 }
 
-fn declared_coverage_satisfied(row: &HistoryRow) -> bool {
-    // MERGE NOTE (w9/reconcile-round2): this call site predates the typed
-    // coverage verdict. `zero_executed_nodes`/`absent_nodes` are now
-    // `Option<Vec<String>>`, where `None` means THE PRODUCER DID NOT REPORT
-    // THE LIST -- which is unknown, not empty. The old inline form would have
-    // read an unreported list as `.is_empty() == true`, i.e. as satisfied
-    // coverage: a fail-OPEN. Delegate to the single shared predicate instead of
-    // re-deriving it here, so there is one verifier for this authority.
-    // `coverage_satisfied` already subsumes the `planned_test_nodes > 0` check.
-    row.coverage
-        .as_ref()
-        .is_some_and(crate::qualifying_receipt::coverage_satisfied)
-}
-
 /// Return the complete evidence bundle iff this row alone proves a canonical
 /// Hermit full-validation receipt. This is the sole positive receipt predicate
 /// consumed by validate-status and label application.
@@ -3592,7 +3578,11 @@ fn qualify_canonical_receipt(row: &HistoryRow, sha: &str) -> Option<QualifyingRe
     }
 
     let coverage_basis = if row.coverage.is_some() {
-        if !declared_coverage_satisfied(row) {
+        if !row
+            .coverage
+            .as_ref()
+            .is_some_and(crate::qualifying_receipt::coverage_satisfied)
+        {
             return None;
         }
         "declared-per-node"

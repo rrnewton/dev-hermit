@@ -391,6 +391,28 @@ refresh_selected_identity "$tmp/schema5-absent-raw.json" "$tmp/schema5-absent.js
 verify_file "$tmp/schema5-absent.json" fail "schema5 absent node"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 2, executed_test_nodes: 2,
+      zero_executed_nodes: []
+    }' "$tmp/schema5-missing.json" >"$tmp/schema5-no-absent-list-raw.json"
+assert_mutated "$tmp/schema5-missing.json" \
+    "$tmp/schema5-no-absent-list-raw.json" \
+    "COVERAGE schema5 omitted absent_nodes list"
+refresh_selected_identity "$tmp/schema5-no-absent-list-raw.json" \
+    "$tmp/schema5-no-absent-list.json"
+verify_file "$tmp/schema5-no-absent-list.json" fail \
+    "schema5 omitted absent_nodes list"
+jq '.ledger_record.coverage = {
+      planned_test_nodes: 2, executed_test_nodes: 2,
+      absent_nodes: []
+    }' "$tmp/schema5-missing.json" >"$tmp/schema5-no-zero-list-raw.json"
+assert_mutated "$tmp/schema5-missing.json" \
+    "$tmp/schema5-no-zero-list-raw.json" \
+    "COVERAGE schema5 omitted zero_executed_nodes list"
+refresh_selected_identity "$tmp/schema5-no-zero-list-raw.json" \
+    "$tmp/schema5-no-zero-list.json"
+verify_file "$tmp/schema5-no-zero-list.json" fail \
+    "schema5 omitted zero_executed_nodes list"
+jq '.ledger_record.coverage = {
+      planned_test_nodes: 2, executed_test_nodes: 2,
       zero_executed_nodes: [], absent_nodes: []
     }' "$tmp/schema5-missing.json" >"$tmp/schema5-valid-raw.json"
 assert_mutated "$tmp/schema5-missing.json" "$tmp/schema5-valid-raw.json" "COVERAGE schema5 complete coverage (positive)"
@@ -416,4 +438,4 @@ if [[ $mutation_anchor_failures -ne 0 ]]; then
     exit 1
 fi
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and five incomplete schema5 controls refused; fixture plant deleted cleanly"

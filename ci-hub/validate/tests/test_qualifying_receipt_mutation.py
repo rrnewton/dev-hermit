@@ -2,7 +2,7 @@
 """MUTATION proof for the ONE shared qualifying-receipt predicate.
 
 Task `one-shared-qualifying-receipt-predicate-five-consumers-bypass-the-registry`.
-FIVE consumers used to each fail-close on their own inline schema check; the fix
+Several consumers used to each fail-close on their own inline schema check; the fix
 is ONE datum (`ci-hub/validate/qualifying-receipt.json`) that they all READ. The
 strong proof is the mutation the finding sweep used: change the shared datum and
 confirm EVERY consumer's answer MOVES. Any consumer whose answer does not move is
@@ -15,19 +15,21 @@ value across scenarios. For each scenario it asserts the whole panel agrees:
 
   * POSITIVE (live): a genuine schema-5 full green qualifies in EVERY consumer.
   * MUTATION (executed_tests_min 1 -> 999999): that same green is REJECTED by
-    EVERY consumer -> all five move together on one datum edit.
+    EVERY consumer -> all panel legs move together on one datum edit.
   * COVERAGE negative (live): the ee303899 shape (executed=427 but 15 absent
     nodes) is REFUSED by EVERY consumer -> the per-node coverage clause is
     present in all of them (the DRIFT-4 gap query.py used to have).
   * ZERO-exec negative (live): executed_tests==0 is refused by EVERY consumer.
 
-Consumers driven (five certifier sites, three languages):
+Consumers driven (seven certifier sites, six panel legs, three languages):
   - Rust `validate_status.rs`   via `ci-hub validate-status --ledger F --sha S`.
   - Rust `history_queries.rs`   routes through the SAME `assess()` ->
     `is_clean_full_pass` -> `row_qualifies` as the leg above; one predicate path,
     so the Rust leg covers both (its own unit tests exercise history_queries).
   - Python `query.py`           via its `_row_full_pass`.
   - Python `publish_receipt.py` via `selected_record` shared-policy consistency.
+  - Python `anchor_select.py`   via real ledger/ancestry anchor selection.
+  - Python `finalize_receipt.py` via its schema-5 idempotency consumer.
   - bash/jq `verify_receipt.sh` via its receipt gate (`--fixture-receipts`).
 """
 
@@ -50,6 +52,8 @@ PRODUCER_REGISTRY = CI_HUB / "validate" / "producer-definition.json"
 CI_HUB_RS = CI_HUB / "ci-hub.rs"
 QUERY_PY = CI_HUB / "history" / "query.py"
 PUBLISH_PY = CI_HUB / "validation" / "publish_receipt.py"
+ANCHOR_PY = CI_HUB / "validate" / "anchor_select.py"
+FINALIZE_PY = CI_HUB / "validate" / "finalize_receipt.py"
 VERIFY_SH = CI_HUB / "validation" / "verify_receipt.sh"
 
 SHA = "a" * 40
@@ -116,6 +120,27 @@ def _zero_exec_row(sha: str) -> dict:
     return row
 
 
+def _missing_coverage_list_row(sha: str, field: str) -> dict:
+    """A schema-5 row that omits one condition rather than reporting []."""
+    row = _green_row(sha)
+    del row["coverage"][field]
+    return row
+
+
+def _overflow_coverage_count_row(sha: str) -> dict:
+    """A Python integer that cannot deserialize into Rust's u64 authority."""
+    row = _green_row(sha)
+    row["coverage"]["planned_test_nodes"] = 1 << 64
+    return row
+
+
+def _malformed_coverage_list_row(sha: str, field: str) -> dict:
+    """A present failure list whose element cannot deserialize as a node name."""
+    row = _green_row(sha)
+    row["coverage"][field] = [7]
+    return row
+
+
 def _soft_rebase_only_row(sha: str) -> dict:
     """A fully shaped inherited receipt that the hard-only policy refuses."""
     row = _green_row(sha)
@@ -172,7 +197,7 @@ def _env(predicate: Path | None) -> dict:
 
 
 class QualifyingReceiptMutationTest(unittest.TestCase):
-    """One test method per scenario; each asserts the FULL five-consumer panel."""
+    """One test method per scenario; each asserts the full consumer panel."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -228,6 +253,85 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             f"    publish_receipt.selected_record(raw, sha={SHA!r}, expected_digest=digest, canonicalization=publish_receipt.RECEIPT_CANONICALIZATION); print('ACCEPT')\n"
             "except SystemExit:\n"
             "    print('REJECT')\n"
+        )
+        return self._python_accepts(driver, row, predicate)
+
+    def _anchor_accepts(self, row: dict, predicate: Path | None) -> bool:
+        # Exercise the actual anchor-selection consumer rather than calling its
+        # row helper directly: load a ledger, resolve a real local commit, prove
+        # ancestry, and require that the row survives into the selected anchor.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            ledger = root / "ledger.jsonl"
+            subprocess.run(
+                ["git", "init", "-q", str(checkout)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "-c",
+                    "user.name=receipt-fixture",
+                    "-c",
+                    "user.email=receipt-fixture@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "-q",
+                    "-m",
+                    "fixture anchor",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            anchor_sha = subprocess.run(
+                ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            anchor_row = json.loads(json.dumps(row))
+            anchor_row["commit"] = anchor_sha
+            ledger.write_text(json.dumps(anchor_row) + "\n")
+            predicate_path = predicate or LIVE_PREDICATE
+            driver = (
+                "import pathlib,sys;"
+                f"sys.path[:0]=[{str(CI_HUB)!r},{str(ANCHOR_PY.parent)!r}];"
+                "import anchor_select;"
+                "report=anchor_select.select_anchor("
+                f"checkout=pathlib.Path({str(checkout)!r}),"
+                f"ledger_path=pathlib.Path({str(ledger)!r}),"
+                f"predicate_path=pathlib.Path({str(predicate_path)!r}),"
+                "target_ref='HEAD',apply_floor=False);"
+                "print('ACCEPT' if report.get('anchor') else 'REJECT')"
+            )
+            proc = subprocess.run(
+                [sys.executable, "-c", driver],
+                env=_env(predicate),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        out = proc.stdout.strip().splitlines()
+        self.assertTrue(
+            out and out[-1] in ("ACCEPT", "REJECT"),
+            f"anchor selection gave no verdict: rc={proc.returncode} "
+            f"stdout={proc.stdout!r} stderr={proc.stderr[-800:]}",
+        )
+        return out[-1] == "ACCEPT"
+
+    def _finalizer_accepts(self, row: dict, predicate: Path | None) -> bool:
+        driver = (
+            "import json,sys;"
+            f"sys.path[:0]=[{str(CI_HUB)!r},{str(FINALIZE_PY.parent)!r}];"
+            "import finalize_receipt;"
+            "row=json.load(sys.stdin);"
+            "print('ACCEPT' if finalize_receipt._has_satisfied_schema5(row) else 'REJECT')"
         )
         return self._python_accepts(driver, row, predicate)
 
@@ -296,20 +400,22 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             "validate_status.rs": self._rust_accepts(row, predicate),
             "query.py": self._query_accepts(row, predicate),
             "publish_receipt.py": self._publish_accepts(row, predicate),
+            "anchor_select.py": self._anchor_accepts(row, predicate),
+            "finalize_receipt.py": self._finalizer_accepts(row, predicate),
             "verify_receipt.sh": self._verify_sh_accepts(row, predicate),
         }
 
     # -- scenarios: each asserts unanimity across the whole panel.
 
     def test_live_accepts_genuine_green_unanimously(self) -> None:
-        """POSITIVE control: a real schema-5 full green is ACCEPTED by all five."""
+        """POSITIVE control: a real schema-5 full green is accepted everywhere."""
         panel = self._panel(_green_row(SHA), predicate=None)
         self.assertTrue(all(panel.values()),
                         f"a genuine green must be accepted by every consumer: {panel}")
 
     def test_mutation_rejects_green_unanimously(self) -> None:
         """THE mutation proof: raise executed_tests_min in a COPY and every
-        consumer's answer must move from accept to reject -- one datum edit, five
+        consumer's answer must move from accept to reject -- one datum edit, all
         answers move. Any consumer still accepting is bypassing the registry."""
         with tempfile.TemporaryDirectory() as tmp:
             tightened = _tightened_predicate(Path(tmp) / "tight.json")
@@ -321,16 +427,48 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
 
     def test_live_rejects_incomplete_coverage_unanimously(self) -> None:
         """DRIFT-4 closed: the ee303899 shape (executed>0 but 15 absent nodes) is
-        REFUSED by all five -- the per-node coverage clause is present in every
+        REFUSED everywhere -- the per-node coverage clause is present in every
         consumer, including query.py which historically lacked it."""
         panel = self._panel(_ee303899_row(SHA), predicate=None)
         self.assertFalse(any(panel.values()),
                          f"incomplete coverage must be rejected by every consumer: {panel}")
 
+    def test_live_rejects_unreported_coverage_lists_unanimously(self) -> None:
+        """Missing is UNKNOWN, not empty, in all six consumer legs."""
+        for field in ("zero_executed_nodes", "absent_nodes"):
+            with self.subTest(field=field):
+                panel = self._panel(
+                    _missing_coverage_list_row(SHA, field), predicate=None
+                )
+                self.assertFalse(
+                    any(panel.values()),
+                    f"unreported {field} must be rejected by every consumer: {panel}",
+                )
+
+    def test_live_rejects_out_of_u64_coverage_unanimously(self) -> None:
+        """Python's unbounded int must not accept a count Rust cannot carry."""
+        panel = self._panel(_overflow_coverage_count_row(SHA), predicate=None)
+        self.assertFalse(
+            any(panel.values()),
+            f"planned_test_nodes above u64 must be rejected everywhere: {panel}",
+        )
+
+    def test_live_rejects_non_string_failure_entries_unanimously(self) -> None:
+        """Present-but-malformed name lists are unavailable, never failures."""
+        for field in ("zero_executed_nodes", "absent_nodes"):
+            with self.subTest(field=field):
+                panel = self._panel(
+                    _malformed_coverage_list_row(SHA, field), predicate=None
+                )
+                self.assertFalse(
+                    any(panel.values()),
+                    f"non-string {field} entry must be rejected everywhere: {panel}",
+                )
+
     def test_live_rejects_zero_execution_unanimously(self) -> None:
         """The surviving zero-execution floor: executed_tests==0 is refused by all
-        five (executed_tests is diagnostic only, but a run that executed NOTHING
-        is never a green at any schema)."""
+        consumers (executed_tests is diagnostic only, but a run that executed
+        NOTHING is never a green at any schema)."""
         panel = self._panel(_zero_exec_row(SHA), predicate=None)
         self.assertFalse(any(panel.values()),
                          f"a zero-execution run must be rejected by every consumer: {panel}")

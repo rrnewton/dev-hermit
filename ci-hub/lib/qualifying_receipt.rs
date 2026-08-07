@@ -3,9 +3,11 @@
 //! # Why this module exists
 //!
 //! "Does this ledger row / receipt qualify as a full green?" was answered by
-//! FIVE independent inline certifiers across three languages
+//! independent inline certifiers across three languages
 //! (`validate_status.rs`, `history_queries.rs`, `query.py`,
-//! `publish_receipt.py`, `verify_receipt.sh`). Each was its own floor and each
+//! `publish_receipt.py`, `anchor_select.py`, `finalize_receipt.py`, and
+//! `verify_receipt.sh`). The original sweep found five; follow-up review found
+//! the two Python consumers. Each was its own floor and each
 //! drifted from the others: the count-schema constant was redefined three times,
 //! one consumer gated `filtered_tests == 0` while the others did not, `result ==
 //! pass` was belt-and-suspendered in two places and keyed alone in two others,

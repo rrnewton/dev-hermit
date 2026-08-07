@@ -2,8 +2,9 @@
 """Brackets for the `anchor_select` clauses found LIVE BUT UNTESTED.
 
 The adversarial review (ai_docs/phase2-tightening-guards-adversarial-review-20260805.md)
-mutation-tested `row_qualifies` and `_coverage_satisfied`: killing any of the
-clauses below left the existing suite green, so nothing held them in place. Each
+mutation-tested the former local `row_qualifies` and `_coverage_satisfied`:
+killing any of the clauses below left the existing suite green, so nothing held
+them in place. Each
 was then shown to be LIVE -- it rejects an input that no other clause rejects --
 so they are missing tests, not dead code.
 
@@ -24,6 +25,8 @@ import anchor_select as A  # noqa: E402
 
 PREDICATE = {
     "require": {
+        "commit_anchored": True,
+        "tree_dirty": False,
         "profile": "full",
         "selection_mode": "full",
         "result": "pass",
@@ -31,7 +34,7 @@ PREDICATE = {
         "executed_tests_min": 1,
     },
     "counts_schema": 5,
-    "coverage": {"per_node": True},
+    "coverage": {"applies_at_schema_min": 5, "per_node": True},
 }
 
 
@@ -96,7 +99,7 @@ def test_pre_count_receipt_without_executed_tests_is_refused() -> None:
     assert reason == "pre-count receipt cannot prove nonzero execution"
 
 
-# --- _coverage_satisfied ------------------------------------------------------
+# --- canonical coverage authority through anchor selection ------------------
 
 
 def test_coverage_without_planned_test_nodes_is_refused() -> None:
@@ -107,7 +110,42 @@ def test_coverage_without_planned_test_nodes_is_refused() -> None:
     ):
         ok, reason = A.row_qualifies(_row(coverage=cov), PREDICATE)
         assert ok is False, cov
-        assert reason == "count-capable receipt coverage unsatisfied", cov
+        assert reason == "count-capable receipt coverage unavailable", cov
+
+
+def test_coverage_planned_count_outside_u64_is_unavailable() -> None:
+    for planned in (-1, 0, True, 1 << 64):
+        cov = {
+            "planned_test_nodes": planned,
+            "zero_executed_nodes": [],
+            "absent_nodes": [],
+        }
+        ok, reason = A.row_qualifies(_row(coverage=cov), PREDICATE)
+        assert ok is False, cov
+        assert reason == "count-capable receipt coverage unavailable", cov
+        assert (
+            A.qualifying_receipt.coverage_verdict(cov)
+            is A.qualifying_receipt.CoverageVerdict.UNAVAILABLE
+        )
+
+
+def test_non_string_failure_list_entries_are_unavailable() -> None:
+    malformed_values = (None, False, 7, 1.5, {}, [])
+    for field in ("zero_executed_nodes", "absent_nodes"):
+        for value in malformed_values:
+            cov = {
+                "planned_test_nodes": 10,
+                "zero_executed_nodes": [],
+                "absent_nodes": [],
+            }
+            cov[field] = [value]
+            ok, reason = A.row_qualifies(_row(coverage=cov), PREDICATE)
+            assert ok is False, (field, value)
+            assert reason == "count-capable receipt coverage unavailable"
+            assert (
+                A.qualifying_receipt.coverage_verdict(cov)
+                is A.qualifying_receipt.CoverageVerdict.UNAVAILABLE
+            )
 
 
 def test_coverage_with_zero_executed_nodes_is_refused() -> None:
@@ -119,16 +157,32 @@ def test_coverage_with_zero_executed_nodes_is_refused() -> None:
     assert reason == "count-capable receipt coverage unsatisfied"
 
 
+def test_coverage_without_absent_nodes_is_unavailable() -> None:
+    cov = {"planned_test_nodes": 10, "zero_executed_nodes": []}
+    ok, reason = A.row_qualifies(_row(coverage=cov), PREDICATE)
+    assert ok is False
+    assert reason == "count-capable receipt coverage unavailable"
+
+
+def test_coverage_with_absent_nodes_is_unsatisfied() -> None:
+    cov = {
+        "planned_test_nodes": 10,
+        "zero_executed_nodes": [],
+        "absent_nodes": ["node-b"],
+    }
+    ok, reason = A.row_qualifies(_row(coverage=cov), PREDICATE)
+    assert ok is False
+    assert reason == "count-capable receipt coverage unsatisfied"
+
+
 def test_coverage_clauses_are_independently_reachable() -> None:
     """Guard against one clause masking another: each perturbation alone flips
     the verdict, so none of the brackets above is riding on a shared failure."""
-    # NB `_coverage_satisfied` takes the ROW, not the coverage sub-object.
     assert A.row_qualifies(_row(), PREDICATE)[0] is True
-    assert A._coverage_satisfied(_row()) is True
-    assert A._coverage_satisfied(
-        _row(coverage={"planned_test_nodes": 10, "zero_executed_nodes": [],
-                       "absent_nodes": ["node-b"]})
-    ) is False
-    # A non-dict `coverage` (and an absent one) must be refused, not crash.
-    assert A._coverage_satisfied(_row(coverage="not-a-dict")) is False
-    assert A._coverage_satisfied({}) is False
+    for coverage in (
+        {"planned_test_nodes": 10, "zero_executed_nodes": [],
+         "absent_nodes": ["node-b"]},
+        "not-a-dict",
+        None,
+    ):
+        assert A.row_qualifies(_row(coverage=coverage), PREDICATE)[0] is False
