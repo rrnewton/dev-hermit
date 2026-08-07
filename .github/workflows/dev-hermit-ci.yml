@@ -42,7 +42,14 @@ jobs:
           git -c submodule.agent-utils.update=none submodule update --init --depth 1 -- hermit reverie liteinst2
           timeout --signal=KILL 2m scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
 
+      # `if: always()` because this shard's first step is independently red
+      # (scripts/test_primary_checkout.py, 6 `git commit` exit-128 fixture
+      # errors) and a default step ordering would SKIP the checks below --
+      # observed on 0b8939cd, where they never executed. The job still fails on
+      # the earlier step; this only stops one red from silently disabling an
+      # unrelated gate.
       - name: Install rust-script
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -52,6 +59,7 @@ jobs:
       # rendering an agent's whole ownership set as simultaneous activity. Its
       # tests only gate anything if something runs them.
       - name: Run parent rust-script unit tests
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
