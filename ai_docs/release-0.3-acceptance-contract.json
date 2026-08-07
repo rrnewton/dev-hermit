@@ -1,0 +1,572 @@
+{
+  "schema": "release-0.3-acceptance-contract-v1",
+  "prose": "ai_docs/release-0.3-acceptance-contract.md",
+  "authored_against_parent_main": "19b2804bf4708f7195295c191e536dd95d76634f",
+  "purpose": "Input to a future release-readiness checker. This file defines gates and asserts NO results. Any consumer that reports GO must evaluate every criterion at one RC pair and refuse to substitute the baseline values recorded here.",
+  "global_rules": {
+    "RRC-1": {
+      "name": "one-rc-pair",
+      "statement": "Every criterion is evaluated at one (hermit_sha, reverie_sha) pair re-read from the remote at evaluation time. Evidence from any other SHA is not evidence.",
+      "basis": "All three mains advanced within 17 minutes during the operational-health snapshot."
+    },
+    "RRC-2": {
+      "name": "tightening-gate-binding",
+      "statement": "For determinism parity, the Stripped comparator is forbidden. Only --verify-strict --verify-json with bitwise_parity true and compared_log_messages.left>0 and .right>0 may be recorded.",
+      "basis": "A mutation test showed Stripped missed 3 of 5 planted divergences.",
+      "may_be_relaxed_by_any_criterion": false
+    },
+    "RRC-3": {
+      "name": "absence-is-not-pass",
+      "statement": "A criterion with no artifact at the RC pair is NOT-RUN, which blocks the cut exactly as hard as FAIL."
+    }
+  },
+  "version_freeze": {
+    "statement": "No crate version may change while this contract is open. The 0.2.0 -> 0.3.0 bump belongs solely to release-0.3-semver-cut.",
+    "current_versions": {
+      "hermit_crates": "0.2.0",
+      "reverie_crates": "0.2.0",
+      "liteinst2": "0.1.0"
+    }
+  },
+  "states": {
+    "PASS": {
+      "blocks_cut": false,
+      "requires": [
+        "threshold met",
+        "both controls fired",
+        "artifact committed"
+      ]
+    },
+    "FAIL": {
+      "blocks_cut": true
+    },
+    "NOT-RUN": {
+      "blocks_cut": true
+    },
+    "N/A": {
+      "blocks_cut": false,
+      "reachable_only_via": "a committed decision record (AC-PKG-00 or AC-FBS-00); never by implementer judgement"
+    }
+  },
+  "criteria": [
+    {
+      "id": "AC-STRICT-01",
+      "title": "Ptrace reference corpus is bitwise-green",
+      "source_of_truth": "per-cell --verify-json reports at the RC pair",
+      "not_source_of_truth": "compat-envelope/SCORECARD-CURRENT.md (pre-head render, content commit 20b4a7d5, zero bitwise cells)",
+      "denominator": "corpus cell count read from the corpus manifest at the RC SHA; must be stated, not hardcoded",
+      "threshold": "every cell reports bitwise_parity == true",
+      "forbidden_states": [
+        "compared_log_messages.left == 0 or .right == 0",
+        "comparator == Stripped",
+        "a manifest cell absent from the report set"
+      ],
+      "positive_control": "a known-deterministic guest (/bin/echo) reports bitwise_parity true with nonzero compared counts",
+      "negative_control": "the planted-divergence mutation is re-run at the RC SHA and all plants are caught",
+      "command": "hermit run --strict --verify --verify-strict --verify-json <cell>.json -- <guest>",
+      "artifact": "compat-envelope/rc/<rc-tag>/ptrace/*.json + SUMMARY.md",
+      "position_at_authoring": "expected FAIL"
+    },
+    {
+      "id": "AC-STRICT-02",
+      "title": "Every backend claim names its execution context",
+      "source_of_truth": "the same per-cell JSON",
+      "denominator": "all cells in the AC-STRICT-01 report set",
+      "threshold": "100% of cells record backend, log level, and an explicit relaxation list (none when empty)",
+      "forbidden_states": [
+        "an unqualified pass",
+        "relaxations absent rather than none",
+        "a KVM cell claiming L2"
+      ],
+      "positive_control": "a KVM cell is present and recorded as not-L2",
+      "negative_control": "a cell with a stripped relaxation field is rejected, not defaulted to none",
+      "command": "summariser over the report set",
+      "artifact": "compat-envelope/rc/<rc-tag>/SUMMARY.md",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-STRICT-03",
+      "title": "Local validation receipt at the exact RC head",
+      "source_of_truth": "./ci-hub/ci-hub validate-status <rc-hermit-sha> --json",
+      "denominator": "one RC head",
+      "threshold": "qualifying_count >= 1 and newest_qualifying == RC head",
+      "forbidden_states": [
+        "verdict NOT-VALIDATED",
+        "a receipt inherited from an ancestor",
+        "GitHub green substituted for a local receipt"
+      ],
+      "positive_control": "the receipt dereferences to a durable log with a nonzero executed-test count",
+      "negative_control": "validate-status on a fabricated SHA returns NOT-VALIDATED",
+      "command": "./ci-hub/ci-hub validate-status <rc-hermit-sha> --json",
+      "artifact": "compat-envelope/rc/<rc-tag>/validate-status.json",
+      "position_at_authoring": "FAIL",
+      "position_basis": "at 1fadc037: verdict NOT-VALIDATED, exit_code 4, qualifying_count 0"
+    },
+    {
+      "id": "AC-RUNNERUP-01",
+      "title": "Runner-up backend exceeds 50%",
+      "source_of_truth": "the AC-STRICT-01 report set extended to every non-ptrace backend",
+      "denominator": "cells that are ptrace-green at the RC SHA, recomputed and stated (NOT the whole corpus; the 2026-08-01 baseline was 179 of 200)",
+      "metric": "bitwise-determinism rate; stdout parity is a different number and must not be substituted",
+      "threshold": "the second-highest first-party non-ptrace backend by that rate is > 50%",
+      "forbidden_states": [
+        "a rate computed over the full corpus instead of the ptrace-green denominator",
+        "a rate quoted from the stripped 2026-08-01 baseline",
+        "e9patch counted as a backend (it is ELF preprocessing followed by ptrace)",
+        "a silently broken tie"
+      ],
+      "positive_control": "winner and runner-up both named with numerator and denominator; ranking reproducible from JSON",
+      "negative_control": "the same rate over the full corpus is also reported, so denominator substitution is visible",
+      "command": "ranking script over compat-envelope/rc/<rc-tag>/*/*.json",
+      "artifact": "compat-envelope/rc/<rc-tag>/RUNNER-UP.md",
+      "position_at_authoring": "NOT-RUN",
+      "planning_baseline_only": {
+        "warning": "not a pass; stripped-comparator, mixed provenance across 7 Hermit SHAs, measured 2026-08-01 at Hermit 82a8e853 / Reverie a4f33d69",
+        "eligible_denominator": 179,
+        "corpus": 200,
+        "rates_stdout_parity": {
+          "dbi": 76.0,
+          "kvm": 62.6,
+          "sabre": 78.8,
+          "liteinst": 60.3
+        },
+        "rates_determinism": {
+          "dbi": 86.6,
+          "kvm": 72.1,
+          "sabre": 91.6,
+          "liteinst": 65.9
+        }
+      }
+    },
+    {
+      "id": "AC-UX-01",
+      "title": "The documented default command is the supported default command",
+      "source_of_truth": "a fresh clone with an empty CARGO_HOME and no warm target",
+      "denominator": "every build command the docs tell a new user to run",
+      "threshold": "each documented command builds the first-party core rc=0 with zero warnings, or is corrected before the cut",
+      "forbidden_states": [
+        "a documented default enabling third-party-backends while the crate declares default = []",
+        "any package-manager mutation (make build -> install-deps can run sudo apt-get / dnf install)",
+        "README claiming cargo build --release produces install_pkg when it does not"
+      ],
+      "positive_control": "hermit run --strict --verify --verify-strict on /bin/echo with nonzero compared counts",
+      "negative_control": "LD_LIBRARY_PATH, LIBRARY_PATH and PKG_CONFIG_PATH unset; build still succeeds with no env fixups",
+      "command": "the documented command verbatim in a throwaway clone with CARGO_HOME verified empty",
+      "artifact": "experiments/release-0.3-rc-cold-build_<date>/",
+      "position_at_authoring": "FAIL",
+      "measured_reference": {
+        "cargo build --locked -p hermit": "rc=0, 0 warnings, 51.08s wall",
+        "strict verify": "588 | 588 compared"
+      }
+    },
+    {
+      "id": "AC-UX-02",
+      "title": "Stated coldness limits",
+      "source_of_truth": "metadata.json in the cold-build artifact",
+      "denominator": "the isolation dimensions claimed",
+      "threshold": "the artifact records which dimensions were isolated and which were not",
+      "forbidden_states": [
+        "an unqualified cold-build claim"
+      ],
+      "known_uncovered": [
+        "RUSTUP_HOME was not isolated; a host without the nightly toolchain is uncovered",
+        "the default build reaches rrnewton/reverie, facebookexperimental/rust-shed and rrnewton/liteinst2, so an air-gapped default build is impossible"
+      ],
+      "positive_control": "CARGO_HOME emptiness asserted by entry count plus Downloaded/Compiling line counts (prior: 202 / 217)",
+      "negative_control": "an immediate re-run shows materially smaller download counts",
+      "artifact": "experiments/release-0.3-rc-cold-build_<date>/metadata.json",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-UX-03",
+      "title": "Backends refuse cleanly and help is truthful",
+      "source_of_truth": "CLI output at the RC SHA",
+      "denominator": "every backend selector the CLI accepts",
+      "threshold": "an absent backend exits nonzero with a message naming the feature; every backend in --help is buildable or documented as optional",
+      "forbidden_states": [
+        "a crash, a hang, or an orphaned child process",
+        "--help naming a backend the default build cannot produce, unannotated",
+        "docs describing e9patch as a peer backend"
+      ],
+      "positive_control": "each available backend runs a real guest",
+      "negative_control": "each unavailable backend refuses before starting a guest and leaves no orphan",
+      "command": "hermit run --backend=<b> --strict -- /bin/echo rc-probe for every <b>",
+      "artifact": "experiments/release-0.3-rc-cold-build_<date>/backend-matrix.csv",
+      "position_at_authoring": "FAIL",
+      "position_basis": "KVM hung and orphaned a child in the UX audit"
+    },
+    {
+      "id": "AC-PKG-00",
+      "title": "The distribution contract is chosen in writing",
+      "kind": "decision",
+      "source_of_truth": "a committed decision record naming exactly one of A (GitHub tag + source release) or B (crates.io publication)",
+      "denominator": "one decision",
+      "threshold": "the record exists, is committed, and names A or B",
+      "forbidden_states": [
+        "starting the crates.io criteria without it",
+        "treating crates.io publication as an incidental final-cut step"
+      ],
+      "blocking_facts": [
+        "1 of 5 publishable crates (hermit-resources) packages cleanly",
+        "the other 4 fail through one chain: reverie-* 0.0.1 placeholder -> detcore-model -> hermit-detcore -> {hermit, hermit-verify}",
+        "21 git dependencies must become registry dependencies",
+        "the crates.io name hermit belongs to hermit-os at v0.13.0, which already exceeds any 0.3.x"
+      ],
+      "artifact": "ai_docs/release-0.3-distribution-contract.md",
+      "position_at_authoring": "open"
+    },
+    {
+      "id": "AC-PKG-01",
+      "title": "Source release is complete and reproducible",
+      "applies_if": "AC-PKG-00 == A",
+      "source_of_truth": "the published GitHub release for the RC tag",
+      "denominator": "the release asset set",
+      "threshold": "SemVer tag exists; release notes exist; the source archive builds under AC-UX-01 from the archive alone",
+      "forbidden_states": [
+        "no tag (rrnewton/hermit currently has 0 releases; tags are demo-* and archive/* only)",
+        "no changelog (Hermit has none; Reverie's stops at 0.1.0 in 2021)",
+        "an archive requiring submodules it does not carry"
+      ],
+      "positive_control": "unpack into an empty directory and complete AC-UX-01 there",
+      "negative_control": "an archive with a deliberately removed required file fails the same build",
+      "command": "gh release view <rc-tag> --repo rrnewton/hermit --json assets",
+      "artifact": "experiments/release-0.3-rc-source-release_<date>/",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-PKG-02",
+      "title": "Registry publication order is satisfied",
+      "applies_if": "AC-PKG-00 == B",
+      "source_of_truth": "cargo publish --dry-run per crate in dependency order",
+      "denominator": "all publishable crates (5 of 13 at 1fadc037)",
+      "threshold": "every publishable crate dry-runs rc=0",
+      "forbidden_states": [
+        "a git dependency remaining in a published manifest",
+        "a flagship crate name that is not ours",
+        "publishing out of dependency order",
+        "bypassing a failure with --no-verify"
+      ],
+      "positive_control": "hermit-resources (zero path deps) dry-runs clean",
+      "negative_control": "a crate with an unpublished path dep still fails dry-run",
+      "command": "cargo publish --dry-run -p <crate>",
+      "artifact": "experiments/release-0.3-rc-publish-dryrun_<date>/results.csv",
+      "position_at_authoring": "FAIL"
+    },
+    {
+      "id": "AC-PKG-03",
+      "title": "First-party core excludes third-party payloads",
+      "source_of_truth": "cargo tree --locked on default features, plus the built package archive contents",
+      "denominator": "the full default dependency closure",
+      "threshold": "zero DBT/DynamoRIO, SaBRe or e9patch occurrences in the default closure and in the archive",
+      "forbidden_states": [
+        "the monolithic installer staging all payloads into the core package",
+        "release-core initialising unrelated submodules",
+        "treating feature gating alone as the distribution boundary"
+      ],
+      "explicitly_allowed": "LiteInst is first-party; libreverie_liteinst.so and the liteinst2 dependency in the core closure are not violations",
+      "positive_control": "the --features third-party-backends tree DOES contain the payload crates, proving the check discriminates",
+      "negative_control": "a deliberately added payload dependency is detected",
+      "command": "cargo tree --locked -p <core-cli> --no-default-features",
+      "artifact": "experiments/release-0.3-rc-core-closure_<date>/",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-PKG-04",
+      "title": "Third-party payload packages carry licence and provenance",
+      "source_of_truth": "each payload package archive",
+      "denominator": {
+        "dynamorio_dbt": {
+          "files": 858,
+          "bytes": 24396159,
+          "licences": "BSD/LGPL/Valgrind"
+        },
+        "sabre": {
+          "files": 286,
+          "bytes": 1510679,
+          "licences": "GPL/LGPL/BSD/MIT"
+        },
+        "e9patch": {
+          "files": 779,
+          "bytes": 12334251,
+          "licences": "GPL/LGPL/MIT"
+        }
+      },
+      "threshold": "each archive carries every applicable licence plus a provenance record naming upstream source and revision",
+      "forbidden_states": [
+        "a payload shipped without its licence set",
+        "an archive over the crates.io 10 MiB limit under contract B",
+        "a payload silently substituted by filename fallback"
+      ],
+      "positive_control": "the exact-version pair runs a real guest under --strict --verify-strict",
+      "negative_control": "four refusals each fail BEFORE the guest starts: absent helper (exit 69), version mismatch, ABI/build-ID mismatch, tampered manifest or DSO",
+      "artifact": "experiments/release-0.3-rc-payload-packages_<date>/",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-SYS-01",
+      "title": "The pinned census is exhaustive and guarded",
+      "source_of_truth": "the checked-in classification test at the RC SHA",
+      "denominator": "the pinned syscalls crate x86_64 row count, read not hardcoded (373 at 1fadc037, last lsm_list_modules=461)",
+      "threshold": "test passes; classes sum exactly to the denominator; no missing, extra or cross-class duplicate rows",
+      "forbidden_states": [
+        "a wildcard arm absorbing unknown rows without failing"
+      ],
+      "positive_control": "the landed census 289 Determinized / 83 PassThrough / 1 Unsupported = 373 is reproduced",
+      "negative_control": "adding a synthetic audit_future_syscall=462 makes the test fail to compile (rc=101, E0080) at Sysno::count() == EXPECTED_X86_64_SYSNO_COUNT",
+      "command": "cargo test -p hermit-detcore every_pinned_sysno_has_an_explicit_classification",
+      "artifact": "experiments/release-0.3-rc-syscall-census_<date>/",
+      "position_at_authoring": "PASS at 1fadc037; must be re-run at the RC SHA"
+    },
+    {
+      "id": "AC-SYS-02",
+      "title": "The live-ABI gap is declared, not silently absent",
+      "source_of_truth": "a diff of the pinned denominator against the Linux master row set at a named kernel SHA",
+      "denominator": "live Linux common/64 row count (385 at c0a27675, last rseq_slice_yield=471)",
+      "threshold": "every row present live but absent from the pin is enumerated and carries an open tracking issue",
+      "forbidden_states": [
+        "shipping with the gap undocumented",
+        "relying on the classification-issue corpus as authority (288 open rows, 238 unique names, 50 duplicate-title groups, 0 closed, while 176 of those names are now Determinized and 61 PassThrough)"
+      ],
+      "known_gap": {
+        "transport_unsupported": [
+          "uprobe",
+          "uretprobe",
+          "mseal",
+          "setxattrat",
+          "getxattrat",
+          "listxattrat",
+          "removexattrat",
+          "open_tree_attr",
+          "file_getattr",
+          "file_setattr",
+          "listns",
+          "rseq_slice_yield"
+        ],
+        "tracking_issue": "https://github.com/rrnewton/hermit/issues/1831",
+        "pinned_unsupported": [
+          "restart_syscall"
+        ],
+        "pinned_tracking_issue": "https://github.com/rrnewton/hermit/issues/404"
+      },
+      "positive_control": "the enumeration regenerated at the RC SHA matches schema release-0.3-syscall-audit-v1",
+      "negative_control": "removing a row from the tracking set makes the check fail rather than shrinking the reported gap",
+      "artifact": "experiments/release-0.3-rc-syscall-census_<date>/census.json",
+      "position_at_authoring": "FAIL"
+    },
+    {
+      "id": "AC-SYS-03",
+      "title": "Dispatch binds every classified row",
+      "source_of_truth": "the dispatch-plan authority consumed by every backend",
+      "denominator": "the 289 Determinized rows",
+      "threshold": "each has a named handler; no row reaches unsupported handling or non-strict passthrough via a wildcard",
+      "forbidden_states": [
+        "the Determinized typed match reaching a wildcard that lands in unsupported handling and non-strict passthrough"
+      ],
+      "positive_control": "a handler-plan enumeration equal in size to the Determinized class",
+      "negative_control": "deleting one handler makes the enumeration fail",
+      "artifact": "experiments/release-0.3-rc-syscall-census_<date>/dispatch-plan.json",
+      "position_at_authoring": "FAIL",
+      "position_basis": "https://github.com/rrnewton/hermit/issues/1793#issuecomment-5211486551"
+    },
+    {
+      "id": "AC-SEMVER-01",
+      "title": "Version is single-sourced and moves exactly once",
+      "source_of_truth": "hermit-cli/Cargo.toml and hermit --version",
+      "denominator": "every crate in both workspaces (13 Hermit, 25 Reverie)",
+      "threshold": "the bump is 0.2.0 -> 0.3.0; hermit --version reports it; the embedded git SHA equals the RC SHA with no -dirty suffix",
+      "forbidden_states": [
+        "a hardcoded version string in any .rs file",
+        "a -dirty build stamp in a release binary",
+        "any bump performed before every other criterion is PASS"
+      ],
+      "positive_control": "after the bump hermit --version shows 0.3.0 and the RC SHA",
+      "negative_control": "grep for a hardcoded 0.3.0 in .rs sources returns nothing (the equivalent grep for 0.2.0 currently returns nothing)",
+      "command": "grep -rn '0\\.3\\.0' --include=*.rs . | grep -v target/",
+      "artifact": "experiments/release-0.3-rc-semver_<date>/",
+      "position_at_authoring": "not started; all crates correctly at 0.2.0"
+    },
+    {
+      "id": "AC-SEMVER-02",
+      "title": "Breaking-change claim is measured, not assumed",
+      "source_of_truth": "a public-API diff between the 0.2.0 point and the RC",
+      "denominator": "the publishable crates",
+      "threshold": "a breaking change is demonstrated, or the bump is justified in writing on other grounds",
+      "forbidden_states": [
+        "asserting per-crate breakage without running the diff"
+      ],
+      "positive_control": "cargo-semver-checks or equivalent runs and reports",
+      "negative_control": "the tool detects a deliberately introduced breaking change on a scratch branch",
+      "command": "cargo semver-checks check-release",
+      "artifact": "experiments/release-0.3-rc-semver_<date>/api-diff.md",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-UPSTREAM-01",
+      "title": "Upstream pull request exists at the RC SHA and is green",
+      "source_of_truth": "the PR on facebookexperimental/hermit",
+      "denominator": "one PR",
+      "threshold": "exists, targets upstream main, carries the RC SHA, required checks green",
+      "forbidden_states": [
+        "opening it before the RC exists",
+        "ignoring the still-open prior import https://github.com/facebookexperimental/hermit/pull/88",
+        "creating any issue on facebookexperimental/* (upstream issues sync into an internal tracker)"
+      ],
+      "positive_control": "the PR head SHA equals the RC SHA",
+      "negative_control": "a PR whose head has drifted fails the same equality check",
+      "command": "gh pr view <n> --repo facebookexperimental/hermit --json headRefOid,statusCheckRollup",
+      "artifact": "ai_docs/release-0.3-upstream-pr.md",
+      "position_at_authoring": "not started"
+    },
+    {
+      "id": "AC-FBS-00",
+      "title": "The import source point is chosen",
+      "kind": "decision",
+      "source_of_truth": "a committed decision record",
+      "denominator": "one decision from three shapes",
+      "options": {
+        "a": "re-establish stable on both repos as a true validated ancestor of main, then import stable->stable",
+        "b": "import from a specific validated main commit on each side and retire the stable indirection",
+        "c": "wholesale main import (the blind mega-import this audit exists to avoid)"
+      },
+      "threshold": "the record names one and gives its reason",
+      "forbidden_states": [
+        "letting option c happen by default",
+        "assuming stable is a validated frontier"
+      ],
+      "basis": "rrnewton/hermit stable is NOT an ancestor of main (merge-base f853cc0f8; stable carries one CI-only commit; main moved 832 commits past). Reverie stable has not moved in ~2 weeks and is not an ancestor of upstream main.",
+      "artifact": "ai_docs/release-0.3-fbsource-import-plan.md",
+      "position_at_authoring": "open"
+    },
+    {
+      "id": "AC-FBS-01",
+      "title": "Two diffs, Reverie first, each standing alone",
+      "source_of_truth": "the diff stack",
+      "denominator": "two diffs",
+      "threshold": "diff 1 = fbcode/hermetic_infra/reverie/** plus common/**, green before diff 2 is evaluated; diff 2 = fbcode/hermetic_infra/hermit/**",
+      "forbidden_states": [
+        "hermit landing first",
+        "a single combined diff"
+      ],
+      "order_is_forced_by": "buck2 uquery deps(hermit-cli:hermit, 3) contains the reverie targets and the reverse query is empty: a one-way edge with no back-edge. Matches precedent D113553864 (Reverie) < D113553943 (Hermit).",
+      "positive_control": "buck2 build and buck2 test fbcode//hermetic_infra/reverie/... both green at diff 1",
+      "negative_control": "hermit built against a half-imported reverie fails",
+      "artifact": "ai_docs/release-0.3-fbsource-import-plan.md",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-FBS-02",
+      "title": "The mod.rs codemod is carried, not reverted",
+      "source_of_truth": "the import diff's rename mapping",
+      "denominator": "23 renames = 46 file operations (16 hermit, 26 reverie, 4 common), from f256a94da424",
+      "threshold": "the import carries the upstream->internal rename mapping, or replays the codemod as a third mechanical diff",
+      "forbidden_states": [
+        "a blind import that silently reverts the codemod to the mod.rs layout"
+      ],
+      "positive_control": "post-import, zero mod.rs files remain in the imported subtrees",
+      "negative_control": "a trial import without the mapping collides on all 23 files",
+      "artifact": "ai_docs/release-0.3-fbsource-import-plan.md",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-FBS-03",
+      "title": "Test baselines are met with contention excluded",
+      "source_of_truth": "buck2 test results",
+      "denominator": "Reverie unittest set; Hermit test target set",
+      "threshold": "Reverie >= the 361/362 baseline with Fail 0; Hermit heavy suite re-measured on a quiet box with Fail 0",
+      "forbidden_states": [
+        "quoting the contended Hermit number as a baseline (Pass 591 / Fail 109 / Timeout 161 at load average 54/175/398 against 316 cores)",
+        "closing the 1-test discrepancy (361 measured vs 362 cited) by assertion"
+      ],
+      "discriminator_already_run": "the same core surface --local-only -j 8 gave Pass 180 / Fail 0 / Timeout 0",
+      "positive_control": "load average recorded alongside the result",
+      "negative_control": "the core surface re-run under load reproduces timeouts",
+      "artifact": "ai_docs/release-0.3-fbsource-parity.md",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-FBS-04",
+      "title": "Matching-binary parity",
+      "source_of_truth": "the same guest run under the fbsource-built and OSS-built binaries at the RC pair",
+      "denominator": "a named smoke set including a racy multi-process guest",
+      "threshold": "identical observable results",
+      "forbidden_states": [
+        "using the in-binary version string to identify the import (a local buck build self-reports fbsource: unknown, fbpkg: unknown; the SCM commit is the only reliable version handle)",
+        "a smoke set of only single-threaded one-liners"
+      ],
+      "interface_note": "hermit_verify is a separate binary internally and takes --hermit-arg=, not --hermit-bin",
+      "positive_control": "hermit_verify run --hermit-arg=--strict -- /bin/bash -c 'for i in 1 2 3; do echo $i & done; wait' reports success",
+      "negative_control": "a deliberately perturbed guest diverges",
+      "artifact": "ai_docs/release-0.3-fbsource-parity.md",
+      "position_at_authoring": "NOT-RUN"
+    },
+    {
+      "id": "AC-PRE-01",
+      "title": "Parent main is green",
+      "kind": "precondition",
+      "source_of_truth": "the last completed run of each dev-hermit workflow on main",
+      "threshold": "all green at a re-read tip",
+      "forbidden_states": [
+        "counting a pending tip as green or as red"
+      ],
+      "basis": "three consecutive Dev-hermit operational tooling main runs failed; failure 31142757501 was superseded by 2a911cff; tip c17f82ff was pending at capture",
+      "artifact": "ai_docs/release-0.3-preconditions.md",
+      "position_at_authoring": "FAIL",
+      "denominator": "every dev-hermit workflow that runs on main, enumerated from .github/workflows at the re-read tip (not a hardcoded list)",
+      "positive_control": "the enumeration is nonempty AND each named workflow has a COMPLETED run at the re-read tip; a workflow with no completed run at the tip yields NOT-RUN, never green",
+      "negative_control": "the same checker run against tip f5815130a397489d5ecdc415861384e60ccca80a reports red (its ci-hub bounded operations shard failed when the release-worktree durability guard invoked with-proxy on a runner that lacked it), proving the checker reads run conclusions rather than defaulting to green"
+    },
+    {
+      "id": "AC-PRE-02",
+      "title": "The RC head carries an authoritative check",
+      "kind": "precondition",
+      "source_of_truth": "the authoritative check set per repo",
+      "denominator": "open PRs at capture, and the RC head itself",
+      "forbidden_states": [
+        "an RC head with no authoritative check created at all"
+      ],
+      "basis": "93 of 107 open PRs (87%) had no authoritative result; 6 hermit PRs were ready-for-review with none while 0 ready PRs had one",
+      "negative_control": "gate red must stay distinguished from product red: 33 of 94 hermit PRs carried a failing gate check while only 2 (#1766, #1767) carried a failing product check; reporting 33 red would be wrong by 16x",
+      "artifact": "ai_docs/release-0.3-preconditions.md",
+      "position_at_authoring": "FAIL",
+      "threshold": "the RC head has a COMPLETED run of every check in its repository's authoritative set, and every one is success",
+      "positive_control": "the authoritative check names are enumerated from the repository's own merge-gate/branch-protection configuration rather than hardcoded, and the enumeration is nonempty; an empty enumeration is a checker failure, not a pass"
+    },
+    {
+      "id": "AC-PRE-03",
+      "title": "Parent gitlinks match the RC pair",
+      "kind": "precondition",
+      "source_of_truth": "git ls-tree origin/main in the parent",
+      "threshold": "Hermit and LiteInst2 gitlinks equal the RC commits",
+      "forbidden_states": [
+        "pinning an ancestor"
+      ],
+      "basis": "at snapshot the parent pinned Hermit b4e94ce4 (69 commits behind) and LiteInst2 8bffae9d (2 behind); Reverie was exact",
+      "artifact": "ai_docs/release-0.3-preconditions.md",
+      "position_at_authoring": "FAIL",
+      "denominator": "the parent gitlink set at origin/main: hermit, reverie, liteinst2, agent-utils (4 gitlinks)",
+      "positive_control": "git ls-tree origin/main <path> returns exactly the RC commit for hermit and reverie, and the recorded commit for each remaining submodule resolves to a real object",
+      "negative_control": "the same check evaluated against the 2026-08-07 snapshot reports FAIL (hermit gitlink b4e94ce4 was 69 commits behind, liteinst2 8bffae9d was 2 behind), proving it compares rather than assumes"
+    }
+  ],
+  "decision_procedure": {
+    "GO": "every criterion is PASS at one RC pair with its artifact committed and reachable from parent main",
+    "note": "positions recorded above are the starting position at authoring time, not gate results. Per RRC-1 each must be re-measured at the RC pair."
+  },
+  "provenance": {
+    "audits": [
+      "release-0.3-audit-state",
+      "release-0.3-audit-ux",
+      "release-0.3-audit-backends",
+      "release-0.3-audit-syscalls",
+      "release-0.3-audit-cold-build",
+      "release-0.3-audit-package-readiness",
+      "release-0.3-audit-fbsource-baseline",
+      "release-0.3-operational-health-snapshot"
+    ],
+    "baseline_pair": {
+      "hermit": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+      "reverie": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6"
+    },
+    "warning": "all three mains have since advanced; no number in this file may be used as a gate result"
+  }
+}
