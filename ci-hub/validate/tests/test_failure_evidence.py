@@ -667,3 +667,126 @@ def test_ruby_guest_reason_added_by_the_producer_fix_classifies_host_environment
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- The structured FAULT marker: class travels as a token, not as prose ------
+#
+# The regression this brackets is real and was shipped once: rewording a guest's
+# reason from "lua5.4 not found" to "no Lua interpreter on PATH (tried: lua5.4,
+# lua)" removed the substring the classifier keyed on, silently flipping the cell
+# from host-environment to code. A producer-side improvement defeated a
+# consumer-side fix, and only an integration check caught it.
+
+_REWORDS = (
+    "lua5.4 not found",                                    # the original phrasing
+    "no Lua interpreter on PATH (tried: lua5.4, lua)",     # the reword that broke it
+    "could not locate a Lua runtime",                      # neither old nor new substring
+    "लुआ नहीं मिला",  # non-English
+    "",                                                    # empty detail
+)
+
+
+def test_reworded_detail_cannot_change_the_fault_class():
+    """NEGATIVE (the regression bar): same underlying fault, arbitrary prose.
+
+    Every one of these must classify host-environment. Before the marker, the
+    class tracked whether the sentence happened to contain `not found`.
+    """
+    seen = set()
+    for detail in _REWORDS:
+        log = _fail(
+            "test.lua_guest",
+            f"FAULT host-environment: {detail}",
+            "prepare failed for language-runtimes/lua-random.sh",
+            detail,
+        )
+        [rec] = classify_failed_substeps(log)
+        seen.add(rec["fault_class"])
+    assert seen == {"host-environment"}, (
+        f"a reword changed the class across {len(_REWORDS)} phrasings: {seen}"
+    )
+
+
+def test_prose_alone_still_flips_without_the_marker():
+    """The control that proves the test above is not vacuous.
+
+    Without a marker the classifier necessarily falls back to prose, and the
+    reword DOES change the class. If this ever stops being true the marker test
+    is no longer measuring what it claims.
+    """
+    classes = {}
+    for detail in ("lua5.4 not found", "could not locate a Lua runtime"):
+        log = _fail(
+            "test.lua_guest",
+            "prepare failed for language-runtimes/lua-random.sh",
+            detail,
+        )
+        [rec] = classify_failed_substeps(log)
+        classes[detail] = rec["fault_class"]
+    assert classes["lua5.4 not found"] == "host-environment"
+    assert classes["could not locate a Lua runtime"] == "code"
+
+
+def test_marker_does_not_launder_a_genuine_compile_error():
+    """POSITIVE: a real product defect must still be `code`.
+
+    A marker path that could be used to relabel a compile failure as an
+    environment gap would be a worse defect than the prose matching it replaces.
+    An unmarked genuine error stays code.
+    """
+    log = _fail(
+        "build.workspace",
+        "   Compiling detcore v0.2.0",
+        "error[E0432]: unresolved import `detcore::sched`",
+        "error: could not compile `detcore` (lib) due to 1 previous error",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "code"
+    assert rec["host_env_signature"] is None
+
+
+def test_explicit_code_marker_is_honoured():
+    """The token is authoritative in BOTH directions: a node whose prose looks
+    like a host gap but which the harness classifies as code stays code."""
+    log = _fail(
+        "test.some_guest",
+        "FAULT code: assertion compared the wrong field",
+        "expected key not found in output",   # prose that reads host-env-ish
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "code"
+
+
+def test_pre_marker_log_still_classifies_via_legacy_prose():
+    """A historical log predating the marker must stay attributable, so old
+    ledger rows do not silently become `code`."""
+    log = _fail(
+        "test.old_guest",
+        "prepare failed for language-runtimes/lua-random.sh",
+        "lua5.4 not found",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "host-environment"
+    assert rec["host_env_signature"] == "not found"
+
+
+def test_first_marker_wins_so_a_second_cannot_relabel():
+    log = _fail(
+        "test.two_markers",
+        "FAULT host-environment: no interpreter",
+        "FAULT code: actually my fault",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "host-environment"
+
+
+def test_malformed_marker_is_ignored_not_obeyed():
+    """An unknown class must not be honoured, and must not crash the classifier:
+    it falls through to the existing evidence."""
+    log = _fail(
+        "build.workspace",
+        "FAULT whatever: not a real class",
+        "error: could not compile `detcore` (lib) due to 1 previous error",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "code"

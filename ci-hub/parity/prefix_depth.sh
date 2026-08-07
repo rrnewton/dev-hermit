@@ -12,10 +12,12 @@
 # This is INFO-log depth. Today's published parity is STDOUT-ONLY, so this is
 # strictly stronger and WILL read worse. That is correct, not a regression.
 set -uo pipefail
-LU=/home/newton/work/dev-hermit/ignored/lu-parity/usr/lib64
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+readonly ROOT_DIR
+LU=${LU:-$ROOT_DIR/ignored/lu-parity/usr/lib64}
 export LD_LIBRARY_PATH="$LU"
-H=${HERMIT:-/home/newton/work/dev-hermit/ignored/prefix-build/target/release/hermit}
-OUT=${OUT:-/home/newton/work/dev-hermit/scratch/prefix}
+H=${HERMIT:-$ROOT_DIR/ignored/prefix-build/target/release/hermit}
+OUT=${OUT:-$ROOT_DIR/scratch/prefix}
 mkdir -p "$OUT"
 
 commits() {  # $1=logfile+errfile prefix -> ordered COMMIT records, normalised
@@ -45,7 +47,7 @@ depth() { # $1=golden-prefix $2=cand-prefix -> Y
        END{if(!found)print (FNR<n?FNR:n)}' "$OUT/.g" "$OUT/.c"
 }
 
-GOLDEN_SHA=$(git -C /home/newton/work/dev-hermit/hermit rev-parse HEAD)
+GOLDEN_SHA=$(git -C "$ROOT_DIR/hermit" rev-parse HEAD)
 DATE=$(date -u +%Y-%m-%d)
 # EMIT is the candidate's own comparable-record count. It is printed as its own
 # column because Y alone cannot distinguish "compared and diverged immediately"

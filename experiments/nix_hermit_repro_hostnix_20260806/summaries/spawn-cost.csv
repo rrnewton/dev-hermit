@@ -1,0 +1,8 @@
+spawn-cost: 200 sequential /bin/true execs, 3 reps
+mode,rep,wall_s,per_proc_ms
+native,1,0.152,0.760
+native,2,0.159,0.795
+native,3,0.155,0.775
+hermit,1,1.199,5.995
+hermit,2,1.330,6.650
+hermit,3,1.344,6.720

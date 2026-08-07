@@ -1,0 +1,13 @@
+probe,environment,result
+unshare_user,native,OK
+unshare_mount,native,OK
+unshare_pid,native,OK
+unshare_user,hermit-default-namespace,EPERM
+unshare_mount,hermit-default-namespace,EPERM
+unshare_user,hermit-image,EPERM
+unshare_mount,hermit-image,EPERM
+unshare_pid,hermit-image,EPERM
+nix_chroot_store_chown,hermit-image,fixed-by-build-users-group-empty
+nix_instantiate_drv,hermit-image,OK
+nix_build_chroot_store,hermit-image,BLOCKED-writing-to-file-EPERM
+nix_build_default_store,hermit-image,BLOCKED-private-mount-namespace-EPERM

@@ -5,6 +5,13 @@ dev-hermit workspace. It measures, in machine-readable form, how each Hermit /
 Reverie execution backend compares to the golden **ptrace** reference across the
 e2e test corpus, and renders the owner's scorecard table from that data.
 
+> **Looking for the numbers, not the machinery?** Read
+> [`SCORECARD-CURRENT.md`](SCORECARD-CURRENT.md) — the current rendering of all
+> four CSVs with every column, denominator, and certification limit stated
+> inline. It is the entry point; this file documents the system that produces
+> it. `SCORECARD.md` and `REPORT.md` are earlier (2026-08-04) narrative
+> analyses, superseded for current numbers.
+
 It replaces the retired free-text
 [`ai_docs/deprecated/progress_report_template.md`](../ai_docs/deprecated/progress_report_template.md)
 (fake-cell risk): every number here is produced by actually running a cell, and
@@ -41,9 +48,12 @@ A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-gre
 | `hermit/tests/backend-parity/run_matrix.py` | Runs the focused ptrace/DBI/KVM contracts and appends live `backend-parity` rows directly to this outer `scorecard.csv`; no generated matrix is tracked in the inner Hermit repository. |
 | `expansion-dag.rs` | Generates the **expansion-mode** safe-ci-dag-runner DAG: one boxed step per cell with per-cell wall-time + memory budgets, plus a dated evidence run dir. |
 | `render-scorecard.rs` | Reads a scorecard CSV and renders the owner's table (`--json` / `--tsv` also). Shared by all collectors. |
+| `render-current-scorecard.sh` | Renders **all four** CSVs in one pass, in the order published in `SCORECARD-CURRENT.md`, plus the provenance block and the `verify_compare` certification-tier distribution. Re-run and diff to detect doc drift. |
+| `SCORECARD-CURRENT.md` | The published, human-readable rendering: current tables + schema + interpretation + provenance + known limitations. Start here. |
 | `scorecard.csv` | Hermit Detcore-envelope results (schema below). |
 | `reverie-scorecard.csv` | Reverie B1.5 Guest/Tool-boundary results (same schema). |
 | `e9patch-scorecard.csv` | e9patch preprocessing-invariance results over the ptrace backend (same schema). |
+| `pre-tightening-baseline-20260806/` | **Frozen, self-contained HISTORICAL snapshot**, not part of the live pipeline: one `collect-fullcorpus.sh` sweep at Hermit `4c70658e` / Reverie `dd3c178e`, captured as the matched *before* state for an upcoming strictness tightening of the comparison contract. Carries its own `scorecard.csv` (the 19-column schema plus a `verify_compare` tier column), `metadata.json`, `no-results.csv`, `sweep-transcript.txt`, `loadavg.tsv`, and a `generate.py --check` that asserts the README still matches its inputs. Nothing else reads it; do not append to it. |
 
 All `.rs` files are [`rust-script`](https://rust-script.org) executables
 (`chmod +x`, run directly). They resolve their own directory via
@@ -79,7 +89,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
           ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → stdout parity
           └─ appends 19-col rows → compat-envelope/scorecard.csv
       └─ collect-reverie-compat.rs → reverie-scorecard.csv
-      └─ render-scorecard.rs --csv scorecard.csv --all               → rendered table
+      └─ render-scorecard.rs --csv scorecard.csv --latest            → rendered table
 ```
 
 **Local definition-of-done** (`make validate`, this repo, a box with `/dev/kvm`):
@@ -120,15 +130,15 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
   (`/dev/kvm` for KVM; `--features third-party-backends` for dbi/sabre/e9patch);
   a missing backend is recorded `n/a`, never a false red.
 - Runs **ptrace first** to write the stdout reference, then each other backend:
-  `det` = `--strict --verify` exits 0; `parity` (the legacy CSV field name) =
-  backend stdout SHA-256 == reference. The renderer labels this value
-  `stdout-parity`; it is not the four-signal parity standard.
+  `det` = `--strict --verify` exits 0; `stdout_parity` = backend stdout SHA-256
+  == reference. It is not the four-signal parity standard.
 - **Parity reference gotcha (important):** the reference is captured with plain
   `hermit run --strict`, *not* `--strict --verify`. `--verify` does an internal
   double-run and emits **no** guest stdout to the parent, so a `--verify` capture
   is 0 bytes and every backend's parity-vs-reference collapses to ~0. Cells where
   ptrace itself fails under plain `--strict` are marked (`ptv.fail`) so downstream
-  backends record `parity=""` (unmeasured), never a false empty-vs-empty match.
+  backends record `stdout_parity=""` (unmeasured), never a false
+  empty-vs-empty match.
 - **Ratchet-asserts** each backend's det count against a measured floor
   (ptrace 214, e9patch 214, sabre 199, dbi 190, kvm 160, liteinst 118); a drop
   below the floor fails the gate. The existing 205-cell floors and the thirty new
@@ -138,8 +148,11 @@ both lanes = the full 235-cell verify corpus across every runnable backend**.
 
 ```
 run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,
-test_id,test_mode,backend,cell_state,outcome,deterministic,parity,
-output_hash,duration_ms,max_rss_kb,reason
+test_id,test_mode,backend,cell_state,outcome,deterministic,<observable>_parity,
+output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,
+compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,
+parity_comparator,parity_tier,profile_flags,population_id,selected_count,
+executed_count,evidence_count
 ```
 
 - `run_mode` — `regression` | `expansion` (hermit) or `reverie`.
@@ -150,15 +163,27 @@ output_hash,duration_ms,max_rss_kb,reason
 - `cell_state` — `enabled` (in the regression envelope) | `disabled` (expansion
   candidate).
 - `outcome` — `pass` | `diverge` | `fail` | `skip`.
-- `deterministic` / `parity` — `1` | `0` | blank (unknown). `parity` is the
-  legacy schema name for stdout-only parity. `deterministic` records run1==run2
-  **independent of stdout parity**.
-- `output_hash` — the comparable observable (hermit: guest-output hash; reverie:
-  the syscall total).
+- `deterministic` / `<observable>_parity` — `1` | `0` | blank (unknown).
+  Hermit and e9patch stdout comparisons write `stdout_parity`; Reverie counter
+  comparisons write `tool_count_parity`. Scorecards written before this rename
+  use the ambiguous `parity` spelling. A parity boolean is qualified only when
+  the same row carries both SHA-256 operands, exact product SHAs, comparator,
+  tier, full profile, population receipt, and selected/executed/evidence counts.
+  Historical booleans missing those conditions live in
+  `legacy_parity_unqualified` and are never counted by the renderer.
+  `deterministic` records run1==run2 independently of either parity observable.
+- `output_hash` / `ref_output_hash` — SHA-256 operands for the candidate and
+  reference observables (guest output or the decimal syscall-count text).
+- `parity_comparator` / `parity_tier` / `profile_flags` — the comparison
+  contract and exact argv/profile that condition a qualified verdict.
+- `population_id` — SHA-256 receipt over the sorted selected row identities;
+  the verifier re-derives it. The three count columns state the selected,
+  executed, and evidence-bearing denominators for that run.
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
 
-The renderer keys logical cells on `(bucket, test_id, test_mode, backend)` and,
-with `--all`, keeps the newest `run_id` per cell (last-writer-wins).
+The renderer keys logical cells on `(bucket, test_id, test_mode, backend)`.
+`--all` is accepted only for a single run identity; mixed-run aggregation is
+refused. Use `--run-id` (or `--latest`) so a table has one code/population state.
 
 ## Two modes (hermit envelope)
 
@@ -219,7 +244,7 @@ busybox applets.
 #     --bin reverie-kvm-counter1 --bin reverie-kvm-counter2
 ./collect-reverie-compat.rs --repo ../hermit --csv reverie-scorecard.csv
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter \
-    --backends kvm --observable tool-count --all
+    --backends kvm --observable tool-count --latest
 ```
 
 Only tools that have both launchers become tool-count-parity cells; a ptrace-only example
@@ -243,8 +268,8 @@ two arms and asks: is the e9tool-rewritten ELF's output bitwise-identical (L2) t
 the same guest run **without** rewriting (the golden reference)?
 
 - The `ptrace` column is the golden, un-rewritten reference arm (the denominator).
-- The `e9patch` column is the e9tool-rewritten variant arm; its legacy CSV
-  `parity` field means e9 stdout == golden stdout, both under ptrace.
+- The `e9patch` column is the e9tool-rewritten variant arm; its
+  `stdout_parity` field means e9 stdout == golden stdout, both under ptrace.
 
 It lives in its own `e9patch-scorecard.csv` (like reverie), never as a column in
 the backend `scorecard.csv`, because a literal `e9patch` token in a backend field
@@ -280,13 +305,13 @@ disk (defaults resolve to the `worktrees/e9patch` checkout).
 ## Rendering
 
 ```bash
-./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --all
-./render-scorecard.rs --csv scorecard.csv --observable stdout --all
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --run-id RUN_ID
+./render-scorecard.rs --csv scorecard.csv --observable stdout --latest
 ./render-scorecard.rs --csv reverie-scorecard.csv --denominator counter \
-    --backends kvm --observable tool-count --all
+    --backends kvm --observable tool-count --latest
 ./render-scorecard.rs --csv e9patch-scorecard.csv --backends e9patch \
     --observable stdout --latest
-./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --all --json
+./render-scorecard.rs --csv fullcorpus-scorecard.csv --observable stdout --run-id RUN_ID --json
 ```
 
 `--csv` is required. A bare invocation exits 2 rather than silently choosing

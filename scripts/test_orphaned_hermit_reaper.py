@@ -19,7 +19,7 @@ SPEC.loader.exec_module(reaper)
 
 
 UID = 212630
-WORKSPACE = Path("/home/newton/work/dev-hermit")
+WORKSPACE = Path("/home/test/work/dev-hermit")
 CGROUP = (
     "/user.slice/user-212630.slice/user@212630.service/"
     "3pai_sandbox.slice/run-p847299-iABC.scope"

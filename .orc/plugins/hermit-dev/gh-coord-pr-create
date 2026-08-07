@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# Open a pull request as the orc-coord-014 coordinator team.
+#
+# WHY THIS EXISTS. The team-identity labels are the only way another team can
+# filter this coordinator's PRs out of a shared queue, and a label that depends
+# on someone remembering `--label` twice is a label that will be missing. So both
+# are applied unconditionally here rather than documented and hoped for.
+#
+# THE RULE (canonical text: AGENTS.md, "Team identity — orc-coord-014"):
+#   every PR this team creates carries BOTH labels --
+#     orc-coord      groups all coordinator-team work across teams
+#     orc-coord-014  identifies THIS coordinator instance
+#   Neither implies the other, so both are required; a caller's own --label
+#   values are preserved and these two are added on top.
+#
+# LABELS MUST ALREADY EXIST on the target repo or `gh pr create` fails the whole
+# call. `--ensure-labels` provisions the two team labels on an rrnewton repo
+# first (idempotent; it never touches upstream). Run it once per repo.
+#
+# Destination is restricted to rrnewton/*; facebookexperimental/* is refused,
+# for the reason in AGENTS.md, Bot-Created GitHub Issue Policy.
+#
+#   gh-coord-pr-create --repo rrnewton/hermit --title T --body B --head branch
+#   gh-coord-pr-create --repo rrnewton/dev-hermit --ensure-labels
+#   gh-coord-pr-create --repo rrnewton/hermit --title T --body B --check-only
+
+set -euo pipefail
+
+readonly TEAM_LABEL="orc-coord-014"
+readonly GROUP_LABEL="orc-coord"
+readonly DEFAULT_HTTPS_PROXY="http://fwdproxy:8080"
+readonly GH_COMMAND="${GH_BIN:-gh}"
+
+repo="${GH_REPO:-}"
+ensure_labels=0
+check_only=0
+declare -a forwarded=()
+
+die() { echo "error: $*" >&2; exit 2; }
+
+while (($# > 0)); do
+  case "$1" in
+    -R|--repo)      (($# >= 2)) || die "$1 requires a repository"; repo="$2"; shift 2 ;;
+    --repo=*)       repo="${1#*=}"; shift ;;
+    --ensure-labels) ensure_labels=1; shift ;;
+    --check-only)   check_only=1; shift ;;
+    -h|--help)      sed -n '2,28p' "$0"; exit 0 ;;
+    --)             forwarded+=("$@"); break ;;
+    *)              forwarded+=("$1"); shift ;;
+  esac
+done
+
+if [[ -z "$repo" ]]; then
+  remote="$(git config --get remote.origin.url 2>/dev/null || true)"
+  if [[ "$remote" =~ github\.com[:/]([^/]+)/([^/]+)$ ]]; then
+    repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+  else
+    die "pass --repo rrnewton/<repo>"
+  fi
+fi
+repo="${repo#https://github.com/}"; repo="${repo#http://github.com/}"
+repo="${repo#git@github.com:}";     repo="${repo#github.com/}"; repo="${repo%.git}"
+
+case "$repo" in
+  rrnewton/*) ;;
+  facebookexperimental/*)
+    die "refusing to open a PR on $repo: upstream syncs into Meta's internal task tracker. Open it on the rrnewton fork." ;;
+  *) die "coordinator-team PRs are restricted to rrnewton/* (got: $repo)" ;;
+esac
+
+export HTTPS_PROXY="${HTTPS_PROXY:-$DEFAULT_HTTPS_PROXY}"
+unset GH_REPO
+
+if ((ensure_labels)); then
+  for label in "$GROUP_LABEL" "$TEAM_LABEL"; do
+    if "$GH_COMMAND" label list --repo "$repo" --limit 300 --json name 2>/dev/null \
+         | grep -Fq "\"$label\""; then
+      echo "label present: $repo $label"
+    else
+      "$GH_COMMAND" label create "$label" --repo "$repo" \
+        --description "orc-coord-014 coordinator team" --color BFD4F2 >/dev/null
+      echo "label created: $repo $label"
+    fi
+  done
+  ((${#forwarded[@]})) || exit 0
+fi
+
+# Both labels, always. A caller's own --label values are already in "forwarded".
+forwarded+=(--label "$GROUP_LABEL" --label "$TEAM_LABEL")
+
+if ((check_only)); then
+  printf 'repo=%s\n' "$repo"
+  printf 'args:'; printf ' %q' "${forwarded[@]}"; printf '\n'
+  exit 0
+fi
+
+exec "$GH_COMMAND" pr create --repo "$repo" "${forwarded[@]}"

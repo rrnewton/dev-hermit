@@ -96,9 +96,14 @@ fetch_metadata() {
     die "Release does not authenticate the selected Sources.gz"
   local source_count missing_count
   source_count=$(gzip -cd "$cache/Sources.gz" | grep -c '^Package: ')
+  # The checked-in manifests are C-collation sorted (the recovery recipe in
+  # README.md uses a plain `sort -u`). `comm` and `sort` honour the ambient
+  # locale, and en_US.UTF-8 orders '-', '+' and '.' differently from C, so an
+  # interactive shell made this refuse with "file 1 is not in sorted order".
+  # Pin both sides to C so the comparison matches how the files were written.
   missing_count=$(
-    comm -23 "$here/asplos20_dettrace_reproduced_target.txt" \
-      <(gzip -cd "$cache/Sources.gz" | awk '/^Package: / {print $2}' | sort -u) |
+    LC_ALL=C comm -23 "$here/asplos20_dettrace_reproduced_target.txt" \
+      <(gzip -cd "$cache/Sources.gz" | awk '/^Package: / {print $2}' | LC_ALL=C sort -u) |
       wc -l
   )
   [[ "$source_count" == 17175 ]] ||
@@ -138,7 +143,11 @@ finish_bootstrap() {
     echo 'DRB bootstrap already complete; preserving it'
     return
   fi
-  require_file "$cache/wheezy-rootfs/debootstrap/debootstrap"
+  # Either the second stage still has to run, or it already ran and debootstrap
+  # removed itself. Both are resumable; only a rootfs with neither is broken.
+  if [[ ! -x "$cache/wheezy-rootfs/debootstrap/debootstrap" ]]; then
+    require_file "$cache/wheezy-rootfs/var/lib/dpkg/status"
+  fi
   if [[ -L "$cache/wheezy-rootfs/proc" ]]; then
     unlink "$cache/wheezy-rootfs/proc"
     mkdir "$cache/wheezy-rootfs/proc"

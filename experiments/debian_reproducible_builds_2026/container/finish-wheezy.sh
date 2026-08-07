@@ -10,12 +10,29 @@ cat >/usr/bin/ischroot <<'EOF'
 exit 0
 EOF
 chmod 755 /usr/bin/ischroot
+# Idempotent: `debootstrap --second-stage` unpacks debianutils, which owns
+# /usr/bin/ischroot and reinstates the real binary itself, consuming the backup.
+# The unguarded `mv` then failed ("cannot stat ischroot.drb-original"), and under
+# `set -e` that aborted the script *after* the base system had installed
+# successfully -- so the rootfs never got its sources.list, policy-rc.d, or the
+# .drb-bootstrap-complete marker, and every later stage refused. Restore only
+# when a backup is actually present; the EXIT trap can then also fire harmlessly.
 restore_ischroot() {
-  mv -f /usr/bin/ischroot.drb-original /usr/bin/ischroot
+  if [ -e /usr/bin/ischroot.drb-original ]; then
+    mv -f /usr/bin/ischroot.drb-original /usr/bin/ischroot
+  fi
 }
 trap restore_ischroot EXIT
 
-/debootstrap/debootstrap --second-stage
+# debootstrap deletes /debootstrap once the second stage succeeds, so its
+# absence means the base system is already installed. Skipping it here makes
+# this script resumable after a post-second-stage failure; re-running it would
+# otherwise be impossible and the rootfs would have to be rebuilt from scratch.
+if [ -x /debootstrap/debootstrap ]; then
+  /debootstrap/debootstrap --second-stage
+else
+  echo "second stage already complete; configuring only"
+fi
 restore_ischroot
 trap - EXIT
 

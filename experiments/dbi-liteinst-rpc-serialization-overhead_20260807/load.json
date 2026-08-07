@@ -1,0 +1,34 @@
+{
+  "cpu": {
+    "cpus": 316,
+    "executing_cores": 38.74789345272531,
+    "executing_percent": 12.261991598963705,
+    "idle_percent": 87.68267223382045,
+    "iowait_percent": 0.0553361672158362
+  },
+  "load": {
+    "fifteen": 47.72,
+    "five": 39.82,
+    "one": 37.43
+  },
+  "memory": {
+    "available_bytes": 571337371648,
+    "available_percent": 70.49602496058681,
+    "pressure_avg10": 0.17,
+    "swap_used_bytes": 63364669440,
+    "total_bytes": 810453315584
+  },
+  "policy": {
+    "max_executing_percent": 50.0,
+    "min_memory_available_percent": 10.0
+  },
+  "sample_seconds": 1.272847,
+  "schema": 1,
+  "verdict": {
+    "reasons": [
+      "executing CPU 12.26% <= policy 50.00%",
+      "MemAvailable 70.50% >= policy 10.00%"
+    ],
+    "suitable": true
+  }
+}
