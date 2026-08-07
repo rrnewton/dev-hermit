@@ -156,9 +156,12 @@ pub(crate) struct ProcessIdentity {
 }
 
 /// Durable state for one supervised payload domain. The `Armed` state is
-/// persisted before spawn, `Published` binds the still-gated child identity,
-/// `CensusPending` durably disables heartbeat renewal before any descendant is
-/// frozen, and `Residual` records the final exact census. Every consumer
+/// persisted before spawn, `Prepared` binds the still-gated child identity,
+/// `Released` is persisted before the start gate can open, `CensusPending`
+/// durably disables heartbeat renewal before any descendant is frozen, and
+/// `Residual` records the final exact census. `Published` remains readable for
+/// records written by older landing-lock binaries and for validate-lock, but a
+/// new landing run never enters it before its census exists. Every consumer
 /// must dereference this record through `verify_cleanup_record`; file existence
 /// or a printed marker is not proof.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -184,6 +187,14 @@ pub(crate) struct CleanupRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CleanupPhase {
     Armed,
+    Prepared {
+        leader: ProcessIdentity,
+        pgid: u32,
+    },
+    Released {
+        leader: ProcessIdentity,
+        pgid: u32,
+    },
     Published {
         leader: ProcessIdentity,
         pgid: u32,
@@ -290,6 +301,20 @@ impl CleanupRecord {
             {
                 CleanupPhase::Armed
             }
+            Some("prepared") if domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::Prepared {
+                    leader: leader
+                        .ok_or_else(|| "prepared cleanup record has no leader".to_string())?,
+                    pgid: pgid.ok_or_else(|| "prepared cleanup record has no pgid".to_string())?,
+                }
+            }
+            Some("released") if domain_complete.is_none() && residuals.is_empty() => {
+                CleanupPhase::Released {
+                    leader: leader
+                        .ok_or_else(|| "released cleanup record has no leader".to_string())?,
+                    pgid: pgid.ok_or_else(|| "released cleanup record has no pgid".to_string())?,
+                }
+            }
             Some("published") if domain_complete.is_none() && residuals.is_empty() => {
                 CleanupPhase::Published {
                     leader: leader
@@ -341,6 +366,14 @@ impl CleanupRecord {
         }
         match &self.phase {
             CleanupPhase::Armed => output.push_str("phase=armed\n"),
+            CleanupPhase::Prepared { leader, pgid } => output.push_str(&format!(
+                "phase=prepared\nleader={}:{}\npgid={pgid}\n",
+                leader.pid, leader.start_ticks
+            )),
+            CleanupPhase::Released { leader, pgid } => output.push_str(&format!(
+                "phase=released\nleader={}:{}\npgid={pgid}\n",
+                leader.pid, leader.start_ticks
+            )),
             CleanupPhase::Published { leader, pgid } => output.push_str(&format!(
                 "phase=published\nleader={}:{}\npgid={pgid}\n",
                 leader.pid, leader.start_ticks
@@ -796,12 +829,29 @@ impl LandingLock {
         })
     }
 
-    fn publish_run(&self, agent: &str, pr: &str, gated: &GatedChild) -> Result<(), LandLockError> {
+    fn prepare_run(&self, agent: &str, pr: &str, gated: &GatedChild) -> Result<(), LandLockError> {
         self.transition_run_cleanup(
             agent,
             pr,
             |phase| matches!(phase, CleanupPhase::Armed),
-            CleanupPhase::Published {
+            CleanupPhase::Prepared {
+                leader: gated.leader.clone(),
+                pgid: gated.pgid,
+            },
+        )
+    }
+
+    fn mark_run_released(
+        &self,
+        agent: &str,
+        pr: &str,
+        gated: &GatedChild,
+    ) -> Result<(), LandLockError> {
+        self.transition_run_cleanup(
+            agent,
+            pr,
+            |phase| matches!(phase, CleanupPhase::Prepared { .. }),
+            CleanupPhase::Released {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
             },
@@ -859,7 +909,7 @@ impl LandingLock {
         self.transition_run_cleanup(
             agent,
             pr,
-            |phase| matches!(phase, CleanupPhase::Published { .. }),
+            |phase| matches!(phase, CleanupPhase::Released { .. }),
             CleanupPhase::CensusPending {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
@@ -877,6 +927,12 @@ impl LandingLock {
                 identities: Vec::new(),
             },
         )?;
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{pr}"), RunCrashPoint::AfterCensus) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after complete census publication".into(),
+            ));
+        }
         self.with_guard(|| {
             let holder = self.read_holder()?.ok_or_else(|| {
                 LandLockError::InvalidState("cleanup clear has no lock holder".into())
@@ -907,10 +963,13 @@ impl LandingLock {
             }
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Active { record, .. }
-                    if matches!(record.phase, CleanupPhase::Published { .. }) => {}
+                    if matches!(
+                        record.phase,
+                        CleanupPhase::Released { .. } | CleanupPhase::Published { .. }
+                    ) => {}
                 other => {
                     return Err(LandLockError::CleanupQuarantined(format!(
-                        "run heartbeat requires an active published domain, got {other:?}"
+                        "run heartbeat requires an active released domain, got {other:?}"
                     )))
                 }
             }
@@ -1118,7 +1177,7 @@ impl LandingLock {
                 print_cleanup_record(&record, &reason);
             }
             CleanupVerification::Uncensused { record, reason } => {
-                println!("QUARANTINED (published domain lacks final census):");
+                println!("QUARANTINED (released domain lacks final census):");
                 print_cleanup_record(&record, &reason);
             }
             CleanupVerification::Unknown { record, reason } => {
@@ -1278,14 +1337,29 @@ impl LandingLock {
                 "test-injected supervisor crash after spawn".into(),
             ));
         }
-        self.publish_run(&args.agent, &args.pr, &gated)?;
+        // Bind the exact gated identity while the payload is still provably
+        // unable to start. A dead owner can discharge this phase once that
+        // identity and group are absent: no guest instruction could have run.
+        self.prepare_run(&args.agent, &args.pr, &gated)?;
+        #[cfg(test)]
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterPrepare) {
+            return Err(LandLockError::CleanupQuarantined(
+                "test-injected supervisor crash after gated identity preparation".into(),
+            ));
+        }
+
+        // Persist the conservative "may run" boundary BEFORE opening the
+        // gate. Reversing these two operations would permit a live payload to
+        // remain recorded as safely prepared if the supervisor died between
+        // the write and release.
+        self.mark_run_released(&args.agent, &args.pr, &gated)?;
         gated.release().map_err(|source| {
             io_error("release child start gate at", &self.paths.cleanup, source)
         })?;
         #[cfg(test)]
-        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterPublish) {
+        if take_run_crash_hook(&format!("pr:{}", args.pr), RunCrashPoint::AfterRelease) {
             return Err(LandLockError::CleanupQuarantined(
-                "test-injected supervisor crash after publication".into(),
+                "test-injected supervisor crash after start-gate release".into(),
             ));
         }
 
@@ -1313,6 +1387,8 @@ impl LandingLock {
         // Atomically disable heartbeat renewal before stopping it. A heartbeat
         // already holding the guard finishes first; after this durable phase
         // transition no stale renewal can race cleanup or authorize reclaim.
+        // Only now, after supervision has ended, does the run enter a phase
+        // whose sole next transition carries a process-domain census.
         self.begin_run_census(&args.agent, &args.pr, &gated)?;
         let _ = stop_tx.send(());
         let _ = heartbeat.join();
@@ -1729,7 +1805,42 @@ pub(crate) fn verify_cleanup_record(
             reason: "pre-spawn barrier is armed; no payload identity was durably published".into(),
             record,
         },
-        CleanupPhase::Published { leader, pgid } | CleanupPhase::CensusPending { leader, pgid } => {
+        CleanupPhase::Prepared { leader, pgid } => {
+            let leader_liveness = exact_process_liveness(leader);
+            let group_liveness = process_group_liveness(*pgid);
+            match (leader_liveness, group_liveness) {
+                (Ok(false), ProcessGroupLiveness::Absent) => CleanupVerification::Recoverable {
+                    reason: "prepared start gate was never released and its exact child identity and process group are absent".into(),
+                    record,
+                },
+                (Err(reason), ProcessGroupLiveness::Unknown(group_reason)) => {
+                    CleanupVerification::Unknown {
+                        reason: format!(
+                            "cannot verify prepared child: {reason}; cannot verify pgid {pgid}: {group_reason}"
+                        ),
+                        record: Some(record),
+                    }
+                }
+                (Err(reason), _) => CleanupVerification::Unknown {
+                    reason,
+                    record: Some(record),
+                },
+                (_, ProcessGroupLiveness::Unknown(reason)) => CleanupVerification::Unknown {
+                    reason: format!("cannot verify pgid {pgid}: {reason}"),
+                    record: Some(record),
+                },
+                _ => CleanupVerification::Active {
+                    reason: format!(
+                        "prepared start-gated child identity {}@{} or pgid {pgid} remains active",
+                        leader.pid, leader.start_ticks
+                    ),
+                    record,
+                },
+            }
+        }
+        CleanupPhase::Released { leader, pgid }
+        | CleanupPhase::Published { leader, pgid }
+        | CleanupPhase::CensusPending { leader, pgid } => {
             let mut active = Vec::new();
             let mut unknown = Vec::new();
             match exact_process_liveness(leader) {
@@ -1747,7 +1858,7 @@ pub(crate) fn verify_cleanup_record(
             if !active.is_empty() {
                 CleanupVerification::Active {
                     reason: format!(
-                        "published payload identities remain active: {}",
+                        "released or legacy-published payload identities remain active: {}",
                         active.join(", ")
                     ),
                     record,
@@ -1755,7 +1866,7 @@ pub(crate) fn verify_cleanup_record(
             } else {
                 let mut reason = unknown;
                 reason.push(
-                    "published payload ended without a complete residual census; same-boot absence cannot exclude an escaped descendant"
+                    "released or legacy-published payload ended without a complete residual census; same-boot absence cannot exclude an escaped descendant"
                         .into(),
                 );
                 CleanupVerification::Uncensused {
@@ -2312,7 +2423,12 @@ pub(crate) fn heartbeat_test_helper_delay() {}
 pub(crate) enum RunCrashPoint {
     AfterArm,
     AfterSpawn,
+    /// Validate-lock's legacy name for the point after its payload identity is
+    /// published. Landing-lock no longer writes that phase before a census.
     AfterPublish,
+    AfterPrepare,
+    AfterRelease,
+    AfterCensus,
 }
 
 #[cfg(test)]
@@ -3369,12 +3485,13 @@ wait
     }
 
     #[test]
-    fn crash_windows_retain_armed_or_uncensused_barrier_after_owner_death() {
+    fn crash_windows_distinguish_never_released_from_uncensused_payloads() {
         let _domain_guard = process_domain_test_guard();
         for (index, point) in [
             RunCrashPoint::AfterArm,
             RunCrashPoint::AfterSpawn,
-            RunCrashPoint::AfterPublish,
+            RunCrashPoint::AfterPrepare,
+            RunCrashPoint::AfterRelease,
         ]
         .into_iter()
         .enumerate()
@@ -3406,27 +3523,39 @@ wait
 
             let record =
                 CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
-            let published = match (&point, &record.phase) {
+            let identity = match (&point, &record.phase) {
                 (RunCrashPoint::AfterArm | RunCrashPoint::AfterSpawn, CleanupPhase::Armed) => None,
-                (RunCrashPoint::AfterPublish, CleanupPhase::Published { leader, pgid }) => {
-                    Some((leader.clone(), *pgid))
+                (RunCrashPoint::AfterPrepare, CleanupPhase::Prepared { leader, pgid }) => {
+                    Some((leader.clone(), *pgid, false))
+                }
+                (RunCrashPoint::AfterRelease, CleanupPhase::Released { leader, pgid }) => {
+                    Some((leader.clone(), *pgid, true))
                 }
                 (_, phase) => panic!("crash point {point:?} left unexpected phase {phase:?}"),
             };
 
-            if let Some((leader, _)) = &published {
+            if let Some((leader, _, true)) = &identity {
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < deadline && !marker.exists() {
                     thread::sleep(Duration::from_millis(10));
                 }
-                assert!(marker.exists(), "published guest never started");
+                assert!(marker.exists(), "released guest never started");
                 assert!(matches!(exact_process_liveness(leader), Ok(true)));
             } else {
-                thread::sleep(Duration::from_millis(100));
-                reap_exited_children();
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < deadline {
+                    reap_exited_children();
+                    if identity.as_ref().is_none_or(|(leader, pgid, _)| {
+                        matches!(exact_process_liveness(leader), Ok(false))
+                            && !process_group_exists(*pgid)
+                    }) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
                 assert!(
                     !marker.exists(),
-                    "guest payload ran before exact identity publication"
+                    "guest payload ran before its start gate was released"
                 );
             }
 
@@ -3451,13 +3580,9 @@ wait
                 lock.release("crash-lander", false),
                 Err(LandLockError::CleanupQuarantined(_))
             ));
-            assert!(matches!(
-                lock.reclaim_dead(),
-                Err(LandLockError::ReclaimNotProven(_))
-            ));
             lock.status().unwrap();
 
-            if let Some((leader, pgid)) = published {
+            if let Some((leader, pgid, true)) = identity {
                 signal_group(libc::SIGKILL, pgid);
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < deadline {
@@ -3479,9 +3604,106 @@ wait
                     lock.reclaim_dead(),
                     Err(LandLockError::ReclaimNotProven(_))
                 ));
+            } else if matches!(point, RunCrashPoint::AfterPrepare) {
+                assert!(matches!(
+                    lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+                    CleanupVerification::Recoverable { .. }
+                ));
+                assert_eq!(lock.reclaim_dead().unwrap(), 0);
+                assert!(!paths.cleanup.exists());
+            } else {
+                assert!(matches!(
+                    lock.reclaim_dead(),
+                    Err(LandLockError::ReclaimNotProven(_))
+                ));
             }
             let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
         }
+    }
+
+    #[test]
+    fn complete_census_is_reclaimable_after_owner_death() {
+        let _domain_guard = process_domain_test_guard();
+        let paths = temp_paths("complete-census-reclaim");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        install_run_crash_hook("pr:complete-census", RunCrashPoint::AfterCensus);
+        let error = lock
+            .run(RunArgs {
+                agent: "census-lander".into(),
+                pr: "complete-census".into(),
+                wait: 0,
+                hold: 30,
+                child_deadline: 30,
+                child: vec![OsString::from("/bin/true")],
+            })
+            .unwrap_err();
+        assert!(matches!(error, LandLockError::CleanupQuarantined(_)));
+        let record = CleanupRecord::parse(&fs::read_to_string(&paths.cleanup).unwrap()).unwrap();
+        assert!(matches!(
+            record.phase,
+            CleanupPhase::Residual {
+                domain_complete: true,
+                ref residuals,
+                ..
+            } if residuals.is_empty()
+        ));
+
+        let mut owner = lock.read_process_owner().unwrap().unwrap();
+        owner.pid = u32::MAX;
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Recoverable { .. }
+        ));
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
+        assert!(!paths.cleanup.exists());
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    #[test]
+    fn planted_incomplete_census_is_refused() {
+        let paths = temp_paths("incomplete-census-refused");
+        let lock = LandingLock {
+            paths: paths.clone(),
+        };
+        assert_eq!(
+            lock.acquire(&AcquireArgs {
+                agent: "incomplete-lander".into(),
+                pr: "incomplete-census".into(),
+                wait: 0,
+                hold: 30,
+            })
+            .unwrap(),
+            0
+        );
+        let record = CleanupRecord::new(
+            "incomplete-lander",
+            "pr:incomplete-census",
+            CleanupPhase::Residual {
+                pgid: u32::MAX,
+                domain_complete: false,
+                residuals: Vec::new(),
+            },
+        )
+        .unwrap();
+        write_cleanup_record(&paths.cleanup, &record).unwrap();
+        assert!(matches!(
+            lock.cleanup_verification(lock.read_holder().unwrap().as_ref()),
+            CleanupVerification::Unknown { reason, .. }
+                if reason.contains("capture was incomplete")
+        ));
+        assert!(matches!(
+            lock.acquire(&AcquireArgs {
+                agent: "replacement".into(),
+                pr: "replacement".into(),
+                wait: 0,
+                hold: 30,
+            }),
+            Err(LandLockError::CleanupQuarantined(_))
+        ));
+        let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
     }
 
     #[test]

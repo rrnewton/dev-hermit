@@ -505,7 +505,8 @@ class OperationalBoundsTest(unittest.TestCase):
 
             quarantined = self.run_bounded("land-lock", "status", env=env)
             self.assertIn("QUARANTINED (cleanup active)", quarantined.stdout)
-            self.assertIn("phase=published", quarantined.stdout)
+            self.assertIn("phase=released", quarantined.stdout)
+            self.assertNotIn("phase=published", quarantined.stdout)
             self.assertIn("owner_process=dead:", quarantined.stdout)
             refused = self.run_bounded(
                 "land-lock",
@@ -544,7 +545,7 @@ class OperationalBoundsTest(unittest.TestCase):
             child_pid = None
             uncensused = self.run_bounded("land-lock", "status", env=env)
             self.assertIn(
-                "QUARANTINED (published domain lacks final census)",
+                "QUARANTINED (released domain lacks final census)",
                 uncensused.stdout,
             )
             # Leader/group absence is necessary but not sufficient after the
