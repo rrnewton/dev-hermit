@@ -1,0 +1,56 @@
+{
+  "experiment": "liteinst-maps-inode-self-determinism",
+  "date_utc": "2026-08-07",
+  "task": "liteinst-virtual-time-nondeterminism-in-proc-self-maps-self-scan",
+  "agent": "hermit-w7",
+  "question": "Does hermit PR #1847 take LiteInst's baseline stack self-determinism from 302/412 differing to 0/412, and with that baseline clean, is there a TSC leak into LiteInst stack memory?",
+  "repos": {
+    "hermit_base_sha": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "hermit_fix_sha": "077833ad65955b30309d40ac3105a135779c0dce",
+    "hermit_fix_pr": "https://github.com/rrnewton/hermit/pull/1847",
+    "hermit_fix_branch": "fix/liteinst-maps-inode-nondeterminism-w23",
+    "merge_base": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "reverie_pin_base": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+    "reverie_pin_fix": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+    "reverie_pin_note": "IDENTICAL in both arms, so the Reverie side is not a variable in this A/B."
+  },
+  "binaries": {
+    "base": {
+      "path": "ignored/w7-1847/base/hermit",
+      "self_reported_version": "hermit 0.2.0 (2026-08-07, g0041130ccb0d)",
+      "dirty": false,
+      "sha256": "cc6236843764cb0beb49f1b70c48fc6965f38f4059b686088e30705ca9048257"
+    },
+    "fix": {
+      "path": "ignored/w7-1847/fix/hermit",
+      "self_reported_version": "hermit 0.2.0 (2026-08-07, g077833ad6595)",
+      "dirty": false,
+      "sha256": "90b45a1584a2ba8c4a8cfd963d6d96289a4ed7a487120f49d2be402e8022577e"
+    },
+    "build_command": "cargo build --release -p hermit --features third-party-backends && ./scripts/stage-liteinst-runtime.sh release $PWD/target/release/libreverie_liteinst.so $PWD/target/liteinst-runtime-build",
+    "build_tree": "worktrees/w7/hermit",
+    "both_arms_same_tree": true
+  },
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316,
+    "load_average_1min_at_start": 295.25,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "guests": {
+    "notsc.c": "no-TSC control: fills a 64-entry volatile stack array with fixed constants, then 8 getpid() calls to force stack hash points. Prints only a boolean.",
+    "tscleak.c": "identical shape but fills the array with raw rdtsc(). Prints only a boolean. Source: scratch/w27-tsc/, authored by hermit-w27.",
+    "compiled_with": "gcc -O0"
+  },
+  "commands": {
+    "stack_ratchet": "hermit --log=info --backend=liteinst run --strict --base-env=minimal --detlog-stack -- ./<guest>",
+    "hash_extraction": "grep -o '\\[stack\\]->[0-9a-f]*' <stderr>",
+    "maps_probe": "hermit --backend=liteinst run --strict --base-env=minimal -- /bin/cat /proc/self/maps",
+    "negative_control": "hermit --log=info --backend=liteinst run --no-virtualize-time --no-virtualize-metadata --base-env=minimal --detlog-stack -- ./<guest>",
+    "prefix_depth": "harness/liteinst_depth.sh <hermit> <outdir>, replicating ci-hub/parity/prefix_depth.sh's commits()/depth() verbatim over ci-hub/parity/guests/*.c"
+  },
+  "seed": "n/a — no randomized input; repetition count is the variable",
+  "relaxations": "none in the strict arms; the negative control deliberately relaxes --no-virtualize-time --no-virtualize-metadata and is labelled as such"
+}

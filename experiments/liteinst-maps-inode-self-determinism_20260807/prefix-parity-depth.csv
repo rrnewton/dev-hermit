@@ -1,0 +1,17 @@
+arm,hermit_build,guest,backend,Y,Z,EMIT,rc
+base,g0041130ccb0d,detlog_syscalls,ptrace-golden,15,15,15,0
+base,g0041130ccb0d,detlog_syscalls,liteinst,2,15,42,0
+base,g0041130ccb0d,heap_fragment_reuse,ptrace-golden,15,15,15,0
+base,g0041130ccb0d,heap_fragment_reuse,liteinst,2,15,42,0
+base,g0041130ccb0d,stack_deep_recursion,ptrace-golden,15,15,15,0
+base,g0041130ccb0d,stack_deep_recursion,liteinst,2,15,42,0
+base,g0041130ccb0d,stdout_bytes,ptrace-golden,16,16,16,0
+base,g0041130ccb0d,stdout_bytes,liteinst,2,16,43,0
+fix,g077833ad6595,detlog_syscalls,ptrace-golden,15,15,15,0
+fix,g077833ad6595,detlog_syscalls,liteinst,2,15,42,0
+fix,g077833ad6595,heap_fragment_reuse,ptrace-golden,15,15,15,0
+fix,g077833ad6595,heap_fragment_reuse,liteinst,2,15,42,0
+fix,g077833ad6595,stack_deep_recursion,ptrace-golden,15,15,15,0
+fix,g077833ad6595,stack_deep_recursion,liteinst,2,15,42,0
+fix,g077833ad6595,stdout_bytes,ptrace-golden,16,16,16,0
+fix,g077833ad6595,stdout_bytes,liteinst,2,16,43,0
