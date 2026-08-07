@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#
+# collect-reverie-compat.rs — backend coverage, typed absence, and idempotence.
+#
+# Hermetic: builds a throwaway hermit/reverie pair in $TMP with NO launchers
+# built, so every cell resolves through the absence taxonomy rather than
+# executing anything. That is exactly the property under test — the collector
+# must emit a TYPED row for every known backend even when nothing can run.
+#
+# Bracketed on both sides per the Proxy Binding axis: each assertion below has a
+# positive case (the expected token IS emitted, with a nonzero count) and, where
+# it is meaningful, a negative case (the wrong token is NOT emitted).
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+COLLECT="$ROOT/collect-reverie-compat.rs"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+ok()   { echo "  ok: $*"; }
+
+# --- fixture: a hermit/reverie pair with no built launchers -------------------
+mkdir -p "$TMP/hermit" "$TMP/reverie/target/debug"
+git -C "$TMP/hermit"  init -q  && git -C "$TMP/hermit"  commit -q --allow-empty -m init
+git -C "$TMP/reverie" init -q  && git -C "$TMP/reverie" commit -q --allow-empty -m init
+GUEST="$TMP/guest-elf"; : >"$GUEST"        # never executed; only its path is used
+
+CSV="$TMP/out.csv"
+RUN=(env RUST_SCRIPT_BASE_PATH="$ROOT" "$COLLECT"
+     --repo "$TMP/hermit" --guest "$GUEST" --csv "$CSV"
+     --run-id fixed-run --run-utc '@1700000000')
+
+KNOWN=(ptrace kvm dbt sabre liteinst)
+PROGRAMS=(counter1-true counter1-echo-hi counter1-pwd
+          counter2-true counter2-echo-hi counter2-pwd)
+
+col() { awk -F, -v n="$1" 'NR>1{print $n}' "$CSV"; }   # 1-indexed CSV column
+
+echo "== 1. every known backend x every program gets exactly one row =="
+"${RUN[@]}" >/dev/null 2>&1
+rows=$(($(wc -l <"$CSV") - 1))
+[ "$rows" -eq 30 ] || fail "expected 30 rows (6 programs x 5 backends), got $rows"
+ok "30 rows emitted"
+
+for b in "${KNOWN[@]}"; do
+  n=$(col 11 | grep -cx "$b" || true)
+  [ "$n" -eq 6 ] || fail "backend $b has $n rows, expected 6"
+done
+ok "each of ${KNOWN[*]} has 6 rows"
+
+for p in "${PROGRAMS[@]}"; do
+  n=$(col 9 | grep -cx "$p" || true)
+  [ "$n" -eq 5 ] || fail "program $p has $n rows, expected 5"
+done
+ok "each of the 6 programs has 5 rows (one per backend)"
+
+echo "== 2. header carries absence_reason, appended last =="
+head -1 "$CSV" | grep -q ',absence_reason$' || fail "absence_reason must be the LAST column"
+ncol=$(head -1 "$CSV" | awk -F, '{print NF}')
+[ "$ncol" -eq 20 ] || fail "expected 20 columns, got $ncol"
+ok "header is the 19-column contract + absence_reason"
+
+echo "== 3. no blank ambiguous cells: unmeasured => typed token =="
+# Every row here is unmeasured (nothing is built), so every absence_reason must
+# be one of the four tokens. Positive: count > 0. Negative: zero empties.
+blank=$(col 20 | grep -c '^$' || true)
+[ "$blank" -eq 0 ] || fail "$blank row(s) have a BLANK absence_reason but were not measured"
+ok "0 blank absence_reason cells"
+bad=$(col 20 | grep -vcE '^(not_collected|unsupported|unavailable|no_result)$' || true)
+[ "$bad" -eq 0 ] || fail "$bad row(s) carry an absence_reason outside the taxonomy"
+ok "all 30 absence_reason values are in the taxonomy"
+
+echo "== 4. absence taxonomy is assigned to the right cause =="
+# unsupported: dbt/sabre/liteinst have no launcher entry for either tool.
+for b in dbt sabre liteinst; do
+  n=$(awk -F, -v b="$b" 'NR>1 && $11==b && $20=="unsupported"' "$CSV" | wc -l)
+  [ "$n" -eq 6 ] || fail "$b: expected 6 'unsupported' rows, got $n"
+done
+ok "dbt/sabre/liteinst => unsupported (no launcher), 18 rows"
+# NEGATIVE: they must NOT be mislabelled as a failure-ish or not-asked token.
+n=$(awk -F, 'NR>1 && ($11=="dbt"||$11=="sabre"||$11=="liteinst") && $20!="unsupported"' "$CSV" | wc -l)
+[ "$n" -eq 0 ] || fail "$n dbt/sabre/liteinst row(s) carry the wrong token"
+ok "negative: 0 dbt/sabre/liteinst rows carry any other token"
+
+# unavailable: ptrace IS supported+requested, but the launcher is not built.
+n=$(awk -F, 'NR>1 && $11=="ptrace" && $20=="unavailable"' "$CSV" | wc -l)
+[ "$n" -eq 6 ] || fail "ptrace: expected 6 'unavailable' rows, got $n"
+ok "ptrace => unavailable (launcher not built), 6 rows"
+grep -q 'launcher not built' "$CSV" || fail "unavailable rows must say WHY in the reason column"
+ok "unavailable rows carry a human reason"
+
+echo "== 5. not_collected appears iff a supported backend is left out =="
+# Ask for ptrace only: kvm is supported by both tools but unrequested.
+"${RUN[@]}" --backends ptrace >/dev/null 2>&1
+n=$(awk -F, 'NR>1 && $11=="kvm" && $20=="not_collected"' "$CSV" | wc -l)
+[ "$n" -eq 6 ] || fail "expected 6 kvm 'not_collected' rows when only ptrace requested, got $n"
+ok "kvm => not_collected when unrequested (6 rows)"
+# NEGATIVE: with kvm requested it must NOT be not_collected.
+"${RUN[@]}" --backends ptrace,kvm >/dev/null 2>&1
+n=$(awk -F, 'NR>1 && $11=="kvm" && $20=="not_collected"' "$CSV" | wc -l)
+[ "$n" -eq 0 ] || fail "kvm still 'not_collected' after being requested ($n rows)"
+ok "negative: 0 kvm not_collected rows once requested"
+# Row count is invariant to the requested set — absence is visible, not silent.
+rows=$(($(wc -l <"$CSV") - 1))
+[ "$rows" -eq 30 ] || fail "row count changed with --backends; absence must stay visible ($rows)"
+ok "row count stays 30 regardless of --backends"
+
+echo "== 6. DBT terminology with legacy DBI read compatibility =="
+out=$("${RUN[@]}" --backends dbi 2>&1 >/dev/null || true)
+grep -q 'dbi->dbt' <<<"$out" || fail "legacy 'dbi' must be reported as aliased to dbt"
+ok "--backends dbi is announced as dbi->dbt"
+n=$(col 11 | grep -cx dbi || true)
+[ "$n" -eq 0 ] || fail "legacy name 'dbi' must never be EMITTED ($n rows)"
+ok "negative: 'dbi' never appears in the backend column"
+n=$(col 11 | grep -cx dbt || true)
+[ "$n" -eq 6 ] || fail "canonical 'dbt' should have 6 rows, got $n"
+ok "canonical 'dbt' emitted (6 rows)"
+
+echo "== 7. unknown backend is refused in-band, not silently dropped =="
+out=$("${RUN[@]}" --backends ptrace,nosuchbackend 2>&1 >/dev/null || true)
+grep -q 'not in the known vocabulary' <<<"$out" || fail "unknown backend must warn"
+ok "unknown backend warns and names the vocabulary"
+
+echo "== 8. regeneration is idempotent (byte-identical, no duplicates) =="
+"${RUN[@]}" >/dev/null 2>&1; a=$(sha256sum <"$CSV" | cut -d' ' -f1); ra=$(($(wc -l <"$CSV") - 1))
+"${RUN[@]}" >/dev/null 2>&1; b=$(sha256sum <"$CSV" | cut -d' ' -f1); rb=$(($(wc -l <"$CSV") - 1))
+"${RUN[@]}" >/dev/null 2>&1; c=$(sha256sum <"$CSV" | cut -d' ' -f1); rc=$(($(wc -l <"$CSV") - 1))
+[ "$a" = "$b" ] && [ "$b" = "$c" ] || fail "3 runs produced differing bytes: $a / $b / $c"
+[ "$ra" -eq 30 ] && [ "$rb" -eq 30 ] && [ "$rc" -eq 30 ] \
+  || fail "row count drifted across runs: $ra / $rb / $rc"
+ok "3 consecutive runs are byte-identical at 30 rows"
+
+echo "== 9. --append restores accumulating behaviour (control for #8) =="
+"${RUN[@]}" --append >/dev/null 2>&1
+rows=$(($(wc -l <"$CSV") - 1))
+[ "$rows" -eq 60 ] || fail "--append should have grown 30 -> 60 rows, got $rows"
+ok "--append grows the file, proving #8 measured replacement not a no-op"
+
+echo "== 10. foreign buckets are preserved, never clobbered =="
+: >"$CSV"
+head -1 <<<"$(env RUST_SCRIPT_BASE_PATH="$ROOT" "$COLLECT" --help 2>&1)" >/dev/null || true
+{
+  echo "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,absence_reason"
+  echo "r,@1,h,rv,false,regression,portable,c-programs,someone-elses-test,strict,ptrace,enabled,pass,1,,abc,10,,\"foreign\","
+} >"$CSV"
+"${RUN[@]}" >/dev/null 2>&1
+grep -q 'someone-elses-test' "$CSV" || fail "a foreign bucket's row was destroyed by the rewrite"
+ok "foreign c-programs row survived the reverie-examples rewrite"
+n=$(awk -F, 'NR>1 && $8=="reverie-examples"' "$CSV" | wc -l)
+[ "$n" -eq 30 ] || fail "expected 30 reverie-examples rows beside the foreign row, got $n"
+ok "30 reverie rows written alongside it"
+
+echo
+echo "PASS: all 10 checks green."

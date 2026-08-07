@@ -168,6 +168,17 @@ pub(crate) struct CleanupRecord {
     pub(crate) host: String,
     pub(crate) boot_id: String,
     pub(crate) phase: CleanupPhase,
+    /// Cgroup-v2 path of the published payload, relative to the cgroup mount.
+    ///
+    /// The ONE supervisor-independent anchor in this record. `leader`/`pgid` are
+    /// both useless post-hoc: a ppid walk needs the (now dead) subreaper, and
+    /// pgid membership does not survive `setsid()`. Cgroup membership DOES
+    /// survive both `setsid()` and reparenting, so this is what lets an orphaned
+    /// domain be censused mechanically instead of by operator attestation.
+    ///
+    /// `None` on every record written before this field existed, and on records
+    /// whose payload cgroup could not be read — those keep the attestation path.
+    pub(crate) cgroup: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,6 +217,7 @@ impl CleanupRecord {
             host,
             boot_id: read_current_boot_id()?,
             phase,
+            cgroup: None,
         })
     }
 
@@ -219,6 +231,7 @@ impl CleanupRecord {
         let mut leader = None;
         let mut pgid = None;
         let mut domain_complete = None;
+        let mut cgroup = None;
         let mut residuals = Vec::new();
         for (line_number, line) in content.lines().enumerate() {
             let (key, value) = line
@@ -251,11 +264,20 @@ impl CleanupRecord {
                     set_once(&mut domain_complete, parsed, key)?;
                 }
                 "residual" => residuals.push(parse_process_identity(value, "residual")?),
+                "cgroup" => set_once(&mut cgroup, value.to_string(), key)?,
                 unknown => return Err(format!("unknown cleanup field {unknown:?}")),
             }
         }
-        if version.as_deref() != Some("2") {
-            return Err(format!("unsupported cleanup version {version:?}"));
+        // v3 == v2 plus an optional `cgroup`. Both are accepted so a record
+        // written by either binary generation stays readable while builds are
+        // mixed on this box; `cgroup` on a v2 record is a malformed record, not
+        // a tolerable extra.
+        match version.as_deref() {
+            Some("2") if cgroup.is_some() => {
+                return Err("cleanup version 2 cannot carry a cgroup field".to_string())
+            }
+            Some("2") | Some("3") => {}
+            other => return Err(format!("unsupported cleanup version {other:?}")),
         }
         residuals.sort();
         residuals.dedup();
@@ -298,14 +320,25 @@ impl CleanupRecord {
             host: host.ok_or_else(|| "cleanup record has no host".to_string())?,
             boot_id: boot_id.ok_or_else(|| "cleanup record has no boot_id".to_string())?,
             phase,
+            cgroup,
         })
     }
 
     pub(crate) fn render(&self) -> String {
+        // Emit v3 ONLY when there is actually a cgroup to carry. A record
+        // without one renders byte-identically to what every prior binary
+        // wrote, so landing-lock records and armed/legacy validate records are
+        // untouched and stay readable by older builds still present on this
+        // box. Only a published validate payload -- the sole consumer of the
+        // mechanical census -- moves to v3.
+        let version = if self.cgroup.is_some() { 3 } else { 2 };
         let mut output = format!(
-            "version=2\nagent={}\noperation={}\nhost={}\nboot_id={}\n",
+            "version={version}\nagent={}\noperation={}\nhost={}\nboot_id={}\n",
             self.agent, self.operation, self.host, self.boot_id
         );
+        if let Some(cgroup) = &self.cgroup {
+            output.push_str(&format!("cgroup={cgroup}\n"));
+        }
         match &self.phase {
             CleanupPhase::Armed => output.push_str("phase=armed\n"),
             CleanupPhase::Published { leader, pgid } => output.push_str(&format!(
@@ -1918,6 +1951,165 @@ pub(crate) fn enable_child_subreaper() -> io::Result<()> {
     Ok(())
 }
 
+/// Root of the unified (cgroup-v2) hierarchy.
+pub(crate) const CGROUP_MOUNT: &str = "/sys/fs/cgroup";
+
+/// Outcome of censusing one cgroup subtree. `Unknown` is deliberately distinct
+/// from `Empty`: "I could not look" must never read as "nothing is there".
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CgroupCensus {
+    /// No process in the subtree — including the case where the cgroup itself
+    /// is gone, which is a POSITIVE proof: the kernel only lets a cgroup be
+    /// removed once it holds no processes.
+    Empty { absent: bool },
+    /// At least one live pid, listed exactly.
+    Populated(Vec<u32>),
+    /// Could not be determined. Fail closed on this.
+    Unknown(String),
+}
+
+/// Cgroup-v2 path of `pid`, relative to [`CGROUP_MOUNT`].
+///
+/// Returns `None` rather than an error: a missing or v1-shaped entry simply
+/// means this record cannot carry the anchor and must keep the attestation
+/// path. `/proc/<pid>/cgroup` on a v2 host has the single line `0::/<path>`.
+pub(crate) fn process_cgroup(pid: u32) -> Option<String> {
+    let content = fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    for line in content.lines() {
+        // hierarchy-ID:controllers:path — the v2 entry is the one with an empty
+        // controller list and hierarchy 0.
+        let mut parts = line.splitn(3, ':');
+        let hierarchy = parts.next()?;
+        let controllers = parts.next()?;
+        let path = parts.next()?;
+        if hierarchy == "0" && controllers.is_empty() && path.starts_with('/') {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
+/// Census every process in `relative` and all of its descendant cgroups.
+///
+/// This is the supervisor-independent half of proving an orphaned domain empty:
+/// unlike a ppid walk it needs no live subreaper, and unlike a pgid check it is
+/// not defeated by `setsid()`.
+pub(crate) fn cgroup_population(relative: &str) -> CgroupCensus {
+    if !relative.starts_with('/') || relative.contains("..") {
+        return CgroupCensus::Unknown(format!("refusing to census cgroup path {relative:?}"));
+    }
+    let root = PathBuf::from(CGROUP_MOUNT).join(relative.trim_start_matches('/'));
+    match root.symlink_metadata() {
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return CgroupCensus::Empty { absent: true }
+        }
+        Err(source) => {
+            return CgroupCensus::Unknown(format!("cannot stat {}: {source}", root.display()))
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return CgroupCensus::Unknown(format!("{} is not a cgroup directory", root.display()))
+        }
+        Ok(_) => {}
+    }
+
+    let mut pids = Vec::new();
+    let mut pending = vec![root];
+    while let Some(directory) = pending.pop() {
+        match fs::read_to_string(directory.join("cgroup.procs")) {
+            Ok(content) => {
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    match line.parse::<u32>() {
+                        Ok(pid) => pids.push(pid),
+                        Err(error) => {
+                            return CgroupCensus::Unknown(format!(
+                                "unparsable pid {line:?} in {}: {error}",
+                                directory.display()
+                            ))
+                        }
+                    }
+                }
+            }
+            // A cgroup that vanished mid-walk took its processes with it.
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return CgroupCensus::Unknown(format!(
+                    "cannot read cgroup.procs in {}: {source}",
+                    directory.display()
+                ))
+            }
+        }
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return CgroupCensus::Unknown(format!(
+                    "cannot list {}: {source}",
+                    directory.display()
+                ))
+            }
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return CgroupCensus::Unknown(format!("cannot walk {}", directory.display()));
+            };
+            // Nested cgroups are real directories; never follow a symlink out
+            // of the subtree we were asked to census.
+            if matches!(entry.file_type(), Ok(kind) if kind.is_dir()) {
+                pending.push(entry.path());
+            }
+        }
+    }
+    pids.sort_unstable();
+    pids.dedup();
+    if pids.is_empty() {
+        CgroupCensus::Empty { absent: false }
+    } else {
+        CgroupCensus::Populated(pids)
+    }
+}
+
+/// Cgroup anchor for a published payload, or the reason there is none.
+///
+/// Deliberately NOT gated on the cgroup being exclusive to this run. I tried
+/// that and backed it out: every available exclusivity test is a ppid-tree walk,
+/// and ppid trees being unreliable is the PREMISE of this whole mechanism. In a
+/// real transient unit ci-hub re-execs through a cost-measurement wrapper
+/// (`ci-hub -> python3 -> python3.12 -> ci-hub -> payload`) whose intermediates
+/// exit and reparent, so a tree-rooted check reported four "foreign" occupants
+/// for a cgroup that was entirely this run's, and the anchor was never recorded
+/// -- the feature was inert.
+///
+/// Recording an anchor is safe without that gate because a POPULATED domain
+/// never silently discharges: it is refused by default and can only be overidden
+/// by an explicit attestation that is logged with the exact occupant pids. The
+/// value is in the other direction anyway -- an EMPTY or absent cgroup is a
+/// mechanical proof that needs no human at all.
+pub(crate) fn payload_cgroup_anchor(leader_pid: u32) -> Result<String, String> {
+    process_cgroup(leader_pid)
+        .ok_or_else(|| format!("no cgroup-v2 entry for payload pid {leader_pid}"))
+}
+
+/// The one cgroup a payload can legitimately migrate OUT of its unit cgroup
+/// into: `safe-ci.slice`, used by `safe-ci-dag-runner`.
+///
+/// Derived from the payload's own recorded path rather than hardcoded, because
+/// the real path embeds the invoking uid
+/// (`/user.slice/user-<uid>.slice/user@<uid>.service/...`); a host literal would
+/// be both wrong on another account and a portability-lint violation. `None`
+/// when the recorded path is not user-manager shaped — the caller must then
+/// treat the census as incomplete rather than skip the domain silently.
+pub(crate) fn safe_ci_slice_for(payload_cgroup: &str) -> Option<String> {
+    let marker = payload_cgroup
+        .split('/')
+        .find(|segment| segment.starts_with("user@") && segment.ends_with(".service"))?;
+    let (prefix, _) = payload_cgroup.split_once(marker)?;
+    Some(format!("{prefix}{marker}/safe.slice/safe-ci.slice"))
+}
+
 fn scan_descendants(root_pid: u32) -> io::Result<Vec<ProcessIdentity>> {
     let mut processes = BTreeMap::new();
     for entry in fs::read_dir("/proc")? {
@@ -2409,6 +2601,134 @@ pub(crate) fn exit_status_code(status: ExitStatus) -> i32 {
         .code()
         .or_else(|| status.signal().map(|signal| 128 + signal))
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod cgroup_anchor_tests {
+    use super::*;
+
+    fn record_with(cgroup: Option<&str>) -> CleanupRecord {
+        CleanupRecord {
+            agent: "a".into(),
+            operation: "validate:deadbeef".into(),
+            host: "testhost".into(),
+            boot_id: "boot".into(),
+            phase: CleanupPhase::Published {
+                leader: ProcessIdentity {
+                    pid: 42,
+                    start_ticks: 7,
+                },
+                pgid: 42,
+            },
+            cgroup: cgroup.map(str::to_string),
+        }
+    }
+
+    // BACK-COMPAT, the load-bearing half of the version bump: a record with no
+    // cgroup must still render EXACTLY as version 2. Landing-lock records and
+    // every armed/legacy validate record take this path, so older binaries on
+    // this shared box keep reading them.
+    #[test]
+    fn record_without_a_cgroup_still_renders_version_2() {
+        let rendered = record_with(None).render();
+        assert!(
+            rendered.starts_with("version=2\n"),
+            "expected v2 for an anchorless record, got: {rendered}"
+        );
+        assert!(!rendered.contains("cgroup="));
+        assert_eq!(CleanupRecord::parse(&rendered).unwrap().cgroup, None);
+    }
+
+    // A record that HAS an anchor moves to v3 and round-trips.
+    #[test]
+    fn record_with_a_cgroup_renders_version_3_and_round_trips() {
+        let record = record_with(Some("/user.slice/payload.scope"));
+        let rendered = record.render();
+        assert!(rendered.starts_with("version=3\n"), "got: {rendered}");
+        assert!(rendered.contains("cgroup=/user.slice/payload.scope\n"));
+        assert_eq!(CleanupRecord::parse(&rendered).unwrap(), record);
+    }
+
+    // Forward-compat in the other direction: a v2 record that somehow carries a
+    // cgroup is MALFORMED, not silently tolerated. Version must continue to
+    // mean something.
+    #[test]
+    fn version_2_carrying_a_cgroup_is_refused() {
+        let bad = "version=2\nagent=a\noperation=o\nhost=h\nboot_id=b\n\
+                   cgroup=/x\nphase=armed\n";
+        let error = CleanupRecord::parse(bad).unwrap_err();
+        assert!(error.contains("cannot carry a cgroup"), "got: {error}");
+    }
+
+    #[test]
+    fn unsupported_versions_are_still_refused() {
+        let bad = "version=4\nagent=a\noperation=o\nhost=h\nboot_id=b\nphase=armed\n";
+        assert!(CleanupRecord::parse(bad)
+            .unwrap_err()
+            .contains("unsupported cleanup version"));
+    }
+
+    // POSITIVE CONTROL for the census: pointed at a cgroup that demonstrably
+    // contains a live process -- our own -- it must SEE it. Without this, a
+    // census that reported Empty unconditionally would pass every other test
+    // here while being catastrophically wrong.
+    #[test]
+    fn cgroup_population_sees_this_very_process() {
+        let Some(mine) = process_cgroup(std::process::id()) else {
+            eprintln!("skipping: no cgroup-v2 entry for self on this host");
+            return;
+        };
+        assert!(mine.starts_with('/'), "expected an absolute v2 path: {mine}");
+        match cgroup_population(&mine) {
+            CgroupCensus::Populated(pids) => assert!(
+                pids.contains(&std::process::id()),
+                "own cgroup {mine} did not list this process: {pids:?}"
+            ),
+            other => panic!("own cgroup {mine} must be POPULATED, got {other:?}"),
+        }
+    }
+
+    // The emptiness proof that closes the one-way door: an absent cgroup counts
+    // as empty, because the kernel only removes one that holds no processes.
+    #[test]
+    fn an_absent_cgroup_counts_as_proven_empty() {
+        let absent = "/user.slice/user-999999.slice/user@999999.service/ci-hub-absent.scope";
+        assert_eq!(
+            cgroup_population(absent),
+            CgroupCensus::Empty { absent: true }
+        );
+    }
+
+    // Fail closed on anything that is not a plain absolute cgroup path, so a
+    // crafted record cannot walk the census out of the hierarchy.
+    #[test]
+    fn traversal_and_relative_cgroup_paths_are_refused() {
+        for bad in ["../escape", "relative/path", "/ok/../../escape"] {
+            assert!(
+                matches!(cgroup_population(bad), CgroupCensus::Unknown(_)),
+                "cgroup path {bad:?} must be refused"
+            );
+        }
+    }
+
+
+
+    // safe-ci.slice is DERIVED from the payload's own path, never hardcoded:
+    // the real path embeds the invoking uid.
+    #[test]
+    fn safe_ci_slice_is_derived_from_the_payload_path() {
+        assert_eq!(
+            safe_ci_slice_for(
+                "/user.slice/user-4321.slice/user@4321.service/x.slice/payload.scope"
+            )
+            .as_deref(),
+            Some("/user.slice/user-4321.slice/user@4321.service/safe.slice/safe-ci.slice")
+        );
+        // Not user-manager shaped => the caller must NOT get a confidently wrong
+        // path; it must get nothing and treat the census as incomplete.
+        assert_eq!(safe_ci_slice_for("/system.slice/whatever.scope"), None);
+        assert_eq!(safe_ci_slice_for("/"), None);
+    }
 }
 
 #[cfg(test)]

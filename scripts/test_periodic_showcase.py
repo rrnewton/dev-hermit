@@ -281,8 +281,15 @@ class WorkflowSourceTests(unittest.TestCase):
 
     def test_owner_facing_title_is_periodic_showcase(self) -> None:
         self.assertIn('SHOWCASE_TITLE = "Periodic showcase"', self.source)
-        # The old owner-facing name must not survive in anything emitted.
-        self.assertNotIn("demo-presentation", self.code)
+        # The old name may appear ONLY as a retirement target. Anywhere else in
+        # the code it would be an emitted title or a live dependency, which is
+        # what the naming policy forbids -- so excise the retirement list and
+        # require the rest of the file to be clean.
+        start = self.code.index("const RETIRED_WORKFLOW_NAMES")
+        end = self.code.index("];", start) + 2
+        without_retirement_list = self.code[:start] + self.code[end:]
+        self.assertNotIn("demo-presentation", without_retirement_list)
+        self.assertNotIn("demo-run-owner-pitch-watch", without_retirement_list)
 
     def test_registration_is_inside_the_guarded_surface(self) -> None:
         # Anything registered at module scope re-runs in the reduced
@@ -323,6 +330,40 @@ class WorkflowSourceTests(unittest.TestCase):
     def test_config_loads_this_plugin(self) -> None:
         config = (PLUGIN.parent.parent.parent / "config.js").read_text()
         self.assertIn('import "./plugins/periodic-showcase/index.ts";', config)
+
+    # -- retirement of the two superseded runtime workflows -----------------
+
+    def test_both_superseded_workflows_are_retired(self) -> None:
+        self.assertIn('"demo-presentation",', self.code)
+        self.assertIn('"demo-run-owner-pitch-watch",', self.code)
+        self.assertIn("orc.killWorkflow(name)", self.code)
+
+    def test_retirement_runs_after_the_replacement_is_registered(self) -> None:
+        # If retirement ran first and registration then failed, the old
+        # workflows would be gone with nothing covering their responsibility.
+        surface = self.code.index("function registerPluginSurface()")
+        register = self.code.index("orc.workflow(", surface)
+        retire = self.code.index("RETIRED_WORKFLOW_NAMES", register)
+        self.assertGreater(
+            retire, register, "retirement must come after the replacement registers"
+        )
+        # ...and inside the guarded surface, not at module scope.
+        self.assertGreater(retire, surface)
+
+    def test_a_failed_retirement_cannot_take_down_the_replacement(self) -> None:
+        loop = self.code.index("for (const name of RETIRED_WORKFLOW_NAMES)")
+        body = self.code[loop:loop + 600]
+        self.assertIn("try {", body)
+        self.assertIn("catch", body)
+        self.assertNotIn("throw", body)
+
+    def test_retirement_does_not_probe_an_unenumerable_api(self) -> None:
+        # registerStartup works but is absent from orc.listEffects() on this
+        # build, so a capability probe would report a false negative and
+        # silently skip the retirement.
+        self.assertIn("orc.registerStartup(", self.code)
+        self.assertNotIn('hasOrcSurface("registerStartup")', self.code)
+        self.assertNotIn('hasOrcSurface("killWorkflow")', self.code)
 
 
 if __name__ == "__main__":
