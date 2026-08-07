@@ -19,6 +19,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,11 +29,11 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
-    capture_and_freeze_residuals, current_host, enable_child_subreaper, exit_status_code,
-    heartbeat_test_helper_delay, print_cleanup_record, process_group_exists, process_start_ticks,
-    reap_exited_children, remove_cleanup_record, signal_group, spawn_gated_child, suffix,
-    verify_cleanup_record, write_cleanup_record, CleanupPhase, CleanupRecord, CleanupVerification,
-    GatedChild, ResidualCapture,
+    capture_and_freeze_residuals, current_host, enable_child_subreaper, exact_process_liveness,
+    exit_status_code, heartbeat_test_helper_delay, print_cleanup_record, process_group_exists,
+    process_start_ticks, reap_exited_children, remove_cleanup_record, signal_group,
+    spawn_gated_child, suffix, verify_cleanup_record, write_cleanup_record, CleanupPhase,
+    CleanupRecord, CleanupVerification, GatedChild, ProcessIdentity, ResidualCapture,
 };
 
 const DEFAULT_WAIT_SECONDS: u64 = 1_800;
@@ -87,9 +88,44 @@ pub enum ValidateLockCommand {
     Status,
     /// Reclaim a lease only when its recorded owner process is proven dead.
     ReclaimDead,
+    /// Census an UNCENSUSED payload domain post-hoc, after the supervisor died
+    /// before it could take one, so `reclaim-dead` can finish.
+    CensusOrphanedDomain(CensusOrphanedDomainArgs),
     /// Acquire and run with a heartbeat + child-deadline; release after complete
     /// cleanup proof, otherwise retain a quarantine.
     Run(RunArgs),
+}
+
+/// Restated identity plus the one operator attestation that discharges an
+/// UNCENSUSED quarantine. Every field is re-checked against the durable record;
+/// a mismatch refuses, so this cannot be run blind against whatever happens to
+/// be quarantined at the time.
+#[derive(Args, Clone, Debug)]
+pub struct CensusOrphanedDomainArgs {
+    /// Must equal the recorded `agent` of the quarantined operation.
+    #[arg(long)]
+    pub agent: String,
+    /// Must equal the recorded `operation` (`<kind>:<target>`).
+    #[arg(long)]
+    pub operation: String,
+    /// Must equal the recorded published `leader` as `<pid>:<start_ticks>`.
+    #[arg(long)]
+    pub leader: String,
+    /// Must equal the recorded published `pgid`.
+    #[arg(long)]
+    pub pgid: u32,
+    /// Affirms that the payload's process domain was observed empty by a
+    /// supervisor-independent authority (unit cgroup absent/empty AND every
+    /// cgroup the payload can migrate into empty). This is the ONLY fact the
+    /// kernel cannot answer once the subreaper anchor died; everything else is
+    /// checked mechanically and is not attestable.
+    #[arg(long)]
+    pub attest_domain_empty: bool,
+    /// The exact observations backing `--attest-domain-empty`. Recorded in the
+    /// refusal/acceptance transcript so the attestation is auditable rather than
+    /// anonymous. Must be non-empty.
+    #[arg(long)]
+    pub evidence: String,
 }
 
 /// A box-exclusive job kind. BOTH kinds share the ONE lock, so a validate and a
@@ -397,6 +433,12 @@ pub enum ValidateLockError {
     ReclaimNotProven(String),
     #[error("validate-lock: cleanup quarantine: {0}")]
     CleanupQuarantined(String),
+    /// A post-hoc census was requested but at least one MECHANICALLY checkable
+    /// precondition failed. These are never attestable — an operator may only
+    /// attest the one fact the kernel cannot answer once the subreaper anchor is
+    /// gone (see `census_orphaned_domain`), never that a live process is dead.
+    #[error("validate-lock: cannot census orphaned domain: {0}")]
+    RecoveryNotProven(String),
 }
 
 impl ValidateLockError {
@@ -406,6 +448,7 @@ impl ValidateLockError {
             | Self::ReleaseNotOwner { .. }
             | Self::ProcessNotOwner { .. }
             | Self::ReclaimNotProven(_)
+            | Self::RecoveryNotProven(_)
             | Self::CleanupQuarantined(_)
             | Self::GuardTimeout
             | Self::StaleBase(_)
@@ -488,6 +531,7 @@ pub fn execute(root: &Path, args: ValidateLockArgs) -> Result<i32, ValidateLockE
             Ok(0)
         }
         ValidateLockCommand::ReclaimDead => lock.reclaim_dead(),
+        ValidateLockCommand::CensusOrphanedDomain(args) => lock.census_orphaned_domain(args),
         ValidateLockCommand::Run(args) => lock.run(args, root),
     }
 }
@@ -1096,6 +1140,24 @@ impl ValidateLock {
             CleanupVerification::Uncensused { record, reason } => {
                 println!("QUARANTINED (published domain lacks final census):");
                 print_cleanup_record(&record, &reason);
+                // Uncensused used to name NO action while `reclaim-dead` refused
+                // it, which read as "wait" when nothing was ever coming. Name the
+                // exit, with the identity already restated for the operator.
+                if let CleanupPhase::Published { leader, pgid }
+                | CleanupPhase::CensusPending { leader, pgid } = &record.phase
+                {
+                    println!(
+                        "  recovery=ci-hub validate-lock census-orphaned-domain \
+                         --agent {} --operation {} --leader {}:{} --pgid {pgid} \
+                         --attest-domain-empty --evidence '<observations>'",
+                        record.agent, record.operation, leader.pid, leader.start_ticks
+                    );
+                    println!(
+                        "  recovery_precondition=confirm the payload's unit cgroup is absent/empty \
+                         AND every cgroup it migrates into is empty; reclaim-dead alone CANNOT \
+                         clear this state"
+                    );
+                }
             }
             CleanupVerification::Unknown { record, reason } => {
                 println!("QUARANTINED (cleanup unverifiable):");
@@ -1205,6 +1267,196 @@ impl ValidateLock {
         Ok(0)
     }
 
+    /// Take the residual census that a dead supervisor never got to take, so the
+    /// existing `reclaim-dead` path can finish.
+    ///
+    /// WHY THIS EXISTS. `capture_and_freeze_residuals` enumerates the payload
+    /// domain with `scan_descendants(supervisor_pid)` — a PPID-tree walk that is
+    /// only exhaustive because `run` made the supervisor a
+    /// `PR_SET_CHILD_SUBREAPER`, so even a `setsid`'d double-fork reparents back
+    /// to it. When the supervisor itself dies (e.g. systemd TERMs the whole unit
+    /// cgroup) that anchor is destroyed: survivors reparent to `systemd --user`
+    /// or pid 1 and NO ppid walk can reconstruct the domain. So `Published` ->
+    /// `Uncensused` became a one-way door — `reclaim_dead` refuses `Uncensused`
+    /// before it ever checks owner liveness, and the only writer of a complete
+    /// census lives inside `run`. The box stayed refused for every agent.
+    ///
+    /// WHAT IS AND IS NOT ATTESTABLE. Everything the kernel can still answer is
+    /// checked mechanically here and REFUSES on failure — the restated identity,
+    /// a proven-dead supervisor, the leader's exact pid+start_ticks absence, and
+    /// an absent process group. None of those may be attested away. The single
+    /// residual unknown is whether a descendant ESCAPED the recorded process
+    /// group before dying out of view: `pgid` membership does not survive
+    /// `setsid()`, so an absent pgid is necessary but not sufficient. Cgroup
+    /// membership DOES survive `setsid()` and reparenting, so a
+    /// supervisor-independent census is possible — but the version-2 record
+    /// carries no cgroup anchor to check it against. Until it does (see the
+    /// follow-up that records the payload cgroup at publish time), that one fact
+    /// is supplied by `--attest-domain-empty` with the observations in
+    /// `--evidence`, which are echoed into the transcript.
+    fn census_orphaned_domain(
+        &self,
+        args: CensusOrphanedDomainArgs,
+    ) -> Result<i32, ValidateLockError> {
+        if args.evidence.trim().is_empty() {
+            return Err(ValidateLockError::RecoveryNotProven(
+                "--evidence must record the observations backing --attest-domain-empty; \
+                 an anonymous attestation is not auditable"
+                    .into(),
+            ));
+        }
+        let restated = parse_leader_identity(&args.leader)?;
+        let (leader, pgid) = self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                ValidateLockError::RecoveryNotProven(
+                    "no lock holder; a census only discharges a quarantine bound to one".into(),
+                )
+            })?;
+
+            // (1) The quarantine must be exactly the one this path addresses.
+            let record = match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Uncensused { record, .. } => record,
+                CleanupVerification::None => {
+                    return Err(ValidateLockError::RecoveryNotProven(
+                        "no cleanup authority is quarantined; nothing to census".into(),
+                    ))
+                }
+                CleanupVerification::Recoverable { reason, .. } => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "payload absence is ALREADY proven; run reclaim-dead instead: {reason}"
+                    )))
+                }
+                CleanupVerification::Active { reason, .. } => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "payload identities are STILL ALIVE; a census cannot bury a live \
+                         domain: {reason}"
+                    )))
+                }
+                CleanupVerification::Armed { reason, .. } => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "cleanup is only ARMED, so no payload was ever published and there is \
+                         no domain to census: {reason}"
+                    )))
+                }
+                CleanupVerification::Unknown { reason, .. } => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "cleanup authority is UNVERIFIABLE; refusing to census it: {reason}"
+                    )))
+                }
+            };
+
+            let (leader, pgid) = match &record.phase {
+                CleanupPhase::Published { leader, pgid }
+                | CleanupPhase::CensusPending { leader, pgid } => (leader.clone(), *pgid),
+                other => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "uncensused authority has unexpected phase {other:?}"
+                    )))
+                }
+            };
+
+            // (2) The caller must restate the recorded identity exactly, so this
+            // cannot be aimed blind at whatever is quarantined right now.
+            if record.agent != args.agent {
+                return Err(ValidateLockError::RecoveryNotProven(format!(
+                    "restated agent {:?} does not match recorded agent {:?}",
+                    args.agent, record.agent
+                )));
+            }
+            if record.operation != args.operation {
+                return Err(ValidateLockError::RecoveryNotProven(format!(
+                    "restated operation {:?} does not match recorded operation {:?}",
+                    args.operation, record.operation
+                )));
+            }
+            if leader != restated {
+                return Err(ValidateLockError::RecoveryNotProven(format!(
+                    "restated leader {}:{} does not match recorded leader {}:{}",
+                    restated.pid, restated.start_ticks, leader.pid, leader.start_ticks
+                )));
+            }
+            if pgid != args.pgid {
+                return Err(ValidateLockError::RecoveryNotProven(format!(
+                    "restated pgid {} does not match recorded pgid {pgid}",
+                    args.pgid
+                )));
+            }
+
+            // (3) A LIVE supervisor owns its own census; never race it.
+            match self.owner_liveness()? {
+                OwnerLiveness::Dead(_) => {}
+                OwnerLiveness::Alive => {
+                    return Err(ValidateLockError::RecoveryNotProven(
+                        "the recorded supervisor process is ALIVE and owns this census; \
+                         refusing to take it out from under a running validate"
+                            .into(),
+                    ))
+                }
+                OwnerLiveness::Unknown(reason) => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "supervisor liveness is UNVERIFIABLE, so its death is not proven: {reason}"
+                    )))
+                }
+            }
+
+            // (4) Re-assert the mechanically checkable half of absence at the
+            // instant of the write, under the guard — not from the earlier
+            // classification, which was computed before the caller was admitted.
+            match exact_process_liveness(&leader) {
+                Ok(false) => {}
+                Ok(true) => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "recorded leader {}:{} is ALIVE",
+                        leader.pid, leader.start_ticks
+                    )))
+                }
+                Err(reason) => {
+                    return Err(ValidateLockError::RecoveryNotProven(format!(
+                        "cannot verify recorded leader absence: {reason}"
+                    )))
+                }
+            }
+            if process_group_exists(pgid) {
+                return Err(ValidateLockError::RecoveryNotProven(format!(
+                    "recorded process group {pgid} is still populated"
+                )));
+            }
+
+            // (5) Only now is the attestation consumed, and only for the one
+            // fact no mechanical check above can supply.
+            if !args.attest_domain_empty {
+                return Err(ValidateLockError::RecoveryNotProven(format!(
+                    "every mechanical precondition passes (supervisor dead, leader {}:{} absent, \
+                     pgid {pgid} absent), but an escaped descendant cannot be excluded from the \
+                     record alone. Re-run with --attest-domain-empty --evidence '<observations>' \
+                     after confirming the payload's unit cgroup is absent/empty AND every cgroup \
+                     the payload migrates into is empty.",
+                    leader.pid, leader.start_ticks
+                )));
+            }
+
+            let mut recovered = record.clone();
+            recovered.phase = CleanupPhase::Residual {
+                pgid,
+                domain_complete: true,
+                residuals: Vec::new(),
+            };
+            write_cleanup_record(&self.paths.cleanup, &recovered)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
+            Ok((leader, pgid))
+        })?;
+        eprintln!(
+            "validate-lock: CENSUSED orphaned domain agent={} operation={} leader={}:{} pgid={pgid}; \
+             supervisor proven dead, leader and process group proven absent, empty domain attested: {}",
+            args.agent, args.operation, leader.pid, leader.start_ticks, args.evidence.trim()
+        );
+        eprintln!(
+            "validate-lock: quarantine is now RECOVERABLE; run `validate-lock reclaim-dead` to \
+             release the box."
+        );
+        Ok(0)
+    }
+
     fn run(&self, args: RunArgs, root: &Path) -> Result<i32, ValidateLockError> {
         if args.child.is_empty() {
             return Err(ValidateLockError::EmptyChild);
@@ -1284,6 +1536,18 @@ impl ValidateLock {
             return Err(error);
         }
 
+        // Install AFTER acquisition (so a stop during a long FIFO wait keeps its
+        // default, immediate disposition — there is no cleanup record yet, and a
+        // dead owner with no record is plain `reclaim-dead` territory) and BEFORE
+        // `arm_run` writes the first durable cleanup authority, so every state
+        // that `reclaim-dead` refuses is covered by a census on the way out.
+        install_termination_handlers().map_err(|source| {
+            io_error(
+                "install termination handlers at",
+                Path::new("/proc/self"),
+                source,
+            )
+        })?;
         self.arm_run(&args.agent, args.kind, &args.target)?;
         #[cfg(test)]
         if crate::landing_lock::take_run_crash_hook(
@@ -1396,6 +1660,18 @@ impl ValidateLock {
                     args.target, args.child_deadline
                 );
                 Ok(CHILD_DEADLINE_EXIT_CODE)
+            }
+            ChildOutcome::Signalled { pgid, signal } => {
+                debug_assert_eq!(pgid, gated.pgid);
+                eprintln!(
+                    "validate-lock: ABANDON {}: supervisor was signalled ({signal}); \
+                     killed the subtree, PROVED the payload domain empty, and RELEASED the box \
+                     so the FIFO can proceed.",
+                    args.target
+                );
+                // Same convention as `exit_status_code` for a signal death, so a
+                // stopped supervisor is not mistaken for a payload exit code.
+                Ok(128 + signal)
             }
             ChildOutcome::Uncertain { reason, .. } => Err(ValidateLockError::InvalidState(
                 format!("child supervision failed after payload domain was proven empty: {reason}"),
@@ -1611,6 +1887,21 @@ fn parse_unsigned(name: &str, value: &str) -> Result<u64, ValidateLockError> {
     })
 }
 
+/// Parse a restated `<pid>:<start_ticks>` payload-leader identity. `start_ticks`
+/// is what defeats PID reuse, so a bare pid is refused rather than tolerated.
+fn parse_leader_identity(value: &str) -> Result<ProcessIdentity, ValidateLockError> {
+    let refuse = || {
+        ValidateLockError::RecoveryNotProven(format!(
+            "--leader must be <pid>:<start_ticks> exactly as `status` prints it, got {value:?}"
+        ))
+    };
+    let (pid, start_ticks) = value.trim().split_once(':').ok_or_else(refuse)?;
+    Ok(ProcessIdentity {
+        pid: pid.parse().map_err(|_| refuse())?,
+        start_ticks: start_ticks.parse().map_err(|_| refuse())?,
+    })
+}
+
 fn current_boot_id() -> Result<String, ValidateLockError> {
     let path = Path::new("/proc/sys/kernel/random/boot_id");
     fs::read_to_string(path)
@@ -1702,17 +1993,71 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> ValidateLoc
 enum ChildOutcome {
     Exited { status: ExitStatus, pgid: u32 },
     TimedOut { pgid: u32 },
+    /// The SUPERVISOR was signalled (systemd stopping the unit TERMs the whole
+    /// control group, so this is the common death path — not an exotic one).
+    Signalled { pgid: u32, signal: i32 },
     Uncertain { pgid: u32, reason: String },
 }
 
 impl ChildOutcome {
     fn pgid(&self) -> u32 {
         match self {
-            Self::Exited { pgid, .. } | Self::TimedOut { pgid } | Self::Uncertain { pgid, .. } => {
-                *pgid
-            }
+            Self::Exited { pgid, .. }
+            | Self::TimedOut { pgid }
+            | Self::Signalled { pgid, .. }
+            | Self::Uncertain { pgid, .. } => *pgid,
         }
     }
+}
+
+/// First termination signal delivered to the supervisor, or 0. Written ONLY by
+/// `record_termination_signal`.
+static SUPERVISOR_TERMINATION_SIGNAL: AtomicI32 = AtomicI32::new(0);
+
+/// Async-signal-safe handler: one lock-free atomic CAS, nothing else. No
+/// allocation, no libc call, no I/O — everything real happens back in
+/// `supervise_child`, which polls this flag.
+extern "C" fn record_termination_signal(signal: libc::c_int) {
+    let _ = SUPERVISOR_TERMINATION_SIGNAL.compare_exchange(
+        0,
+        signal as i32,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    );
+}
+
+/// Replace the DEFAULT disposition of the termination signals with a recorder,
+/// so the supervisor survives long enough to census its payload domain.
+///
+/// This is the fix for the fleet-wide wedge of 2026-08-06: `validate-lock run`
+/// had no handler, so when systemd stopped the transient unit (`KillMode`
+/// defaults to `control-group`, TERMing every process in the cgroup at once) the
+/// supervisor died instantly inside `supervise_child` and never reached
+/// `begin_run_census`/`capture_and_freeze_residuals`. The record was left at
+/// `phase=published`, which `verify_cleanup_record` classifies as `Uncensused` —
+/// a state `reclaim_dead` refuses and, because the census can only be taken from
+/// the live subreaper, nothing could ever discharge. Every agent's validate was
+/// refused until it was cleared by hand.
+///
+/// SIGKILL and SIGSTOP remain uncatchable, so this narrows the window rather
+/// than closing it; `census-orphaned-domain` covers the residue. systemd's
+/// default `TimeoutStopSec` (90s) is far longer than a census (~11s worst case:
+/// a 5s TERM grace, a 5s KILL settle, then four freeze iterations), so the
+/// common path now completes.
+fn install_termination_handlers() -> io::Result<()> {
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        // SAFETY: zeroed sigaction is a valid empty set; we install a plain
+        // handler with no flags and read back nothing.
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = record_termination_signal as usize;
+        // SAFETY: sigemptyset initialises the mask field we just zeroed.
+        unsafe { libc::sigemptyset(&mut action.sa_mask) };
+        // SAFETY: `action` is fully initialised and outlives the call.
+        if unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 /// Wait for `child`, killing its process group if it runs longer than
@@ -1744,6 +2089,19 @@ fn supervise_child(child: &mut Child, deadline_secs: u64, target: &str) -> Child
                     };
                 }
             },
+        }
+        // A termination signal aimed at the SUPERVISOR must still fall through to
+        // the census below, never skip it. Check before the deadline so a stop
+        // during the final poll is not misreported as a deadline breach.
+        let signal = SUPERVISOR_TERMINATION_SIGNAL.load(Ordering::SeqCst);
+        if signal != 0 {
+            let pgid = child.id();
+            eprintln!(
+                "validate-lock: supervisor received signal {signal} while running {target}; \
+                 terminating the payload subtree and censusing it before releasing the box."
+            );
+            terminate_child_group(child, target);
+            return ChildOutcome::Signalled { pgid, signal };
         }
         if Instant::now() >= deadline {
             let pgid = child.id();
