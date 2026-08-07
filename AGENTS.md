@@ -454,6 +454,21 @@ Other agents may update the parent, primaries, registries, or branches mid-task.
 integration or pinning step; unexpected movement is a reason to reassess, not to restore an older snapshot.
 
 - Do not use `git reset --hard`, `git checkout -- <path>`, or destructive cleanup on changes you did not create.
+- **Do not move a shared branch tip backwards — `git reset HEAD~1` counts, `--hard` or not.** This is called out
+  separately because it does not read as destructive: "undo my last commit" sounds private. On a branch with
+  ~15 concurrent committers it is not. `HEAD~1` is a **proxy** for "the commit I just made", and nothing binds
+  the two — if anyone committed in between, `HEAD~1` deletes *their* commit and says nothing.
+  **This has happened** (2026-08-06, parent main): an agent reset twice to redo its own commit and took a
+  second agent's commit with the second reset, then recommitted only its own. The lost commit was off the
+  branch for ~20 minutes while HEAD advanced twice on top of the deletion, and was noticed only by luck.
+  Safe forms, in preference order:
+  1. `git revert <sha>` — never removes anyone's commit, and is the right answer on a shared branch.
+  2. If you must reset, **bind the proxy first**: record your own SHA at commit time and reset only after
+     `test "$(git rev-parse HEAD)" = "$my_sha"` — i.e. confirm the tip is still *your* commit. A tip that
+     moved means someone is on top of you; stop and revert instead.
+  Detection is `ci-hub/health/rescue_ref_reconcile.py`, which reconciles the `rescue/auto-*` refs against
+  `main` and reports commits that exist only on a rescue ref. It does not prevent the reset; it makes a
+  silent drop loud, and its `--baseline` file is what keeps the known backlog from muting it.
 - Do not move uncommitted work between slots without recording its owner and exact recovery procedure. Do not silently adopt another agent's branch or worktree.
 - If a feature no longer fast-forwards, update the private branch and retest; never paper over divergence with a merge commit.
 - If a primary is dirty, integration stops until the changes are attributed.
