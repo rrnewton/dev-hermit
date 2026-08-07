@@ -575,6 +575,31 @@ ORDER BY local_id
     return tuple(tasks)
 
 
+def _resolve_current_task_ids(
+    current_task: str,
+    tasks: Sequence[TaskRecord],
+) -> tuple[str, ...]:
+    """Bind ORC's display value to zero, one, or many TaskGraph identities."""
+    # Accept a stable identity if ORC starts carrying local_id directly. Today
+    # listAgents() carries a title, truncated as "<prefix>..." at 40 chars.
+    candidates = {
+        task.id
+        for task in tasks
+        if task.id == current_task or task.title == current_task
+    }
+    # A value colliding between one task's local_id and another task's title is
+    # ambiguous without a schema discriminator, so preserve both candidates.
+    if candidates:
+        return tuple(sorted(candidates))
+
+    if current_task.endswith("..."):
+        prefix = current_task[:-3]
+        return tuple(
+            task.id for task in tasks if task.title.startswith(prefix)
+        )
+    return ()
+
+
 def reconcile_active_work(
     tasks: Sequence[TaskRecord],
     agents: Sequence[AgentRecord],
@@ -590,6 +615,14 @@ def reconcile_active_work(
     busy_agents = tuple(agent for agent in live_agents if agent.busy)
     live_by_name = {agent.name: agent for agent in live_agents}
     task_by_id = {task.id: task for task in in_progress}
+    current_task_candidates = {
+        agent.name: _resolve_current_task_ids(
+            agent.current_task,
+            in_progress,
+        )
+        for agent in live_agents
+        if agent.current_task
+    }
 
     orphaned = tuple(task for task in owned_active if task.owner not in live_by_name)
     actually_active: list[TaskRecord] = []
@@ -598,7 +631,9 @@ def reconcile_active_work(
         agent = live_by_name.get(task.owner)
         if agent is None:
             continue
-        if agent.busy and agent.current_task == task.id:
+        candidates = current_task_candidates.get(agent.name, ())
+        current_task_id = candidates[0] if len(candidates) == 1 else None
+        if agent.busy and current_task_id == task.id:
             actually_active.append(task)
             continue
         misrouted.add(
@@ -607,7 +642,8 @@ def reconcile_active_work(
                 task=task.id,
                 reason=(
                     f"owner-status={agent.status},"
-                    f"owner-current-task={agent.current_task or 'none'}"
+                    "owner-current-task="
+                    f"{current_task_id or agent.current_task or 'none'}"
                 ),
             )
         )
@@ -616,16 +652,22 @@ def reconcile_active_work(
     for agent in busy_agents:
         if not agent.current_task:
             continue
-        task = task_by_id.get(agent.current_task)
-        if task is None:
+        candidates = current_task_candidates[agent.name]
+        if len(candidates) != 1:
             misrouted.add(
                 Misroute(
                     agent=agent.name,
                     task=agent.current_task,
-                    reason="current-task-is-not-in-progress",
+                    reason=(
+                        "current-task-title-is-ambiguous"
+                        if candidates
+                        else "current-task-is-not-in-progress"
+                    ),
                 )
             )
-        elif task.implemented:
+            continue
+        task = task_by_id[candidates[0]]
+        if task.implemented:
             misrouted.add(
                 Misroute(
                     agent=agent.name,

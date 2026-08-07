@@ -241,6 +241,99 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertEqual(len(report.misrouted), 2)
         self.assertGreater(report.actionable_count, 0)
 
+    def test_active_work_resolves_thirteen_orc_titles_without_false_pairs(
+        self,
+    ) -> None:
+        tasks = []
+        agents = []
+        for index in range(13):
+            task_id = f"healthy_task_{index:02d}"
+            title = (
+                "Healthy short task"
+                if index == 0
+                else f"Healthy task {index:02d} -- a title longer than forty characters"
+            )
+            owner = f"worker-{index:02d}"
+            tasks.append(operational_health.TaskRecord(task_id, title, owner, ()))
+            agents.append(
+                operational_health.AgentRecord(
+                    owner,
+                    "busy",
+                    title if len(title) <= 40 else f"{title[:37]}...",
+                )
+            )
+
+        report = operational_health.reconcile_active_work(tasks, agents)
+
+        # The old two-way local_id/title comparison emitted 2 rows per agent.
+        self.assertEqual(report.counts()["actually_active"], 13)
+        self.assertEqual(report.counts()["misrouted"], 0)
+
+    def test_active_work_still_reports_a_real_title_resolved_misroute(self) -> None:
+        expected_title = "Expected task whose title is longer than forty characters"
+        actual_title = "Different task whose title is longer than forty characters"
+        report = operational_health.reconcile_active_work(
+            [
+                operational_health.TaskRecord(
+                    "expected_task", expected_title, "worker", ()
+                ),
+                operational_health.TaskRecord("actual_task", actual_title, "", ()),
+            ],
+            [
+                operational_health.AgentRecord(
+                    "worker",
+                    "busy",
+                    f"{actual_title[:37]}...",
+                ),
+            ],
+        )
+        self.assertEqual(report.actually_active, ())
+        self.assertEqual(report.counts()["misrouted"], 2)
+        self.assertEqual({item.agent for item in report.misrouted}, {"worker"})
+        self.assertIn(
+            operational_health.Misroute(
+                "worker",
+                "expected_task",
+                "owner-status=busy,owner-current-task=actual_task",
+            ),
+            report.misrouted,
+        )
+        self.assertIn(
+            operational_health.Misroute(
+                "worker",
+                "actual_task",
+                "task-owner=none",
+            ),
+            report.misrouted,
+        )
+
+    def test_active_work_refuses_an_ambiguous_title_prefix(self) -> None:
+        shared_prefix = "A title prefix shared by two active tasks"
+        display_title = f"{shared_prefix[:37]}..."
+        report = operational_health.reconcile_active_work(
+            [
+                operational_health.TaskRecord(
+                    "first", f"{shared_prefix} first", "worker", ()
+                ),
+                operational_health.TaskRecord(
+                    "second", f"{shared_prefix} second", "other", ()
+                ),
+            ],
+            [
+                operational_health.AgentRecord("worker", "busy", display_title),
+                operational_health.AgentRecord("other", "idle", None),
+            ],
+        )
+        self.assertEqual(report.actually_active, ())
+        self.assertIn(
+            operational_health.Misroute(
+                "worker",
+                display_title,
+                "current-task-title-is-ambiguous",
+            ),
+            report.misrouted,
+        )
+
     def test_awaiting_land_alone_is_not_actionable(self) -> None:
         report = operational_health.reconcile_active_work(
             [
