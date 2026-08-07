@@ -84,10 +84,41 @@ class TaskRecord:
     title: str
     owner: str
     tags: tuple[str, ...]
+    # Defaulted so existing fixtures that only describe live work stay valid.
+    status: str = "IN_PROGRESS"
 
     @property
     def implemented(self) -> bool:
         return "implemented" in self.tags
+
+    @property
+    def closed(self) -> bool:
+        return self.status.strip().upper() == "CLOSED"
+
+    @property
+    def awaiting_landing(self) -> bool:
+        """Finished work whose landing is still owed.
+
+        TAG FIRST, STATUS SECOND — the same rule `scripts/status-log.rs`
+        `classify_task` already applies. Under the close-on-implemented
+        lifecycle an implemented task is CLOSED immediately, so keying
+        awaiting-landing off `IN_PROGRESS` (as this module used to) reports
+        ~zero while the real population sits in CLOSED. Keying off the tag is
+        correct under BOTH the old and new lifecycles.
+        """
+        return self.implemented
+
+    @property
+    def lifecycle_violation(self) -> bool:
+        """An implemented task that was NOT closed.
+
+        The current lifecycle closes implemented work immediately and lets
+        `drain-implemented-to-landed` enumerate the landing debt from
+        CLOSED+implemented records. A nonterminal implemented row is therefore
+        a deviation to fix, not a state to honour — it is invisible to the
+        drain tracker while still occupying the live queue.
+        """
+        return self.implemented and not self.closed
 
 
 @dataclass(frozen=True)
@@ -116,6 +147,7 @@ class Misroute:
 class ActiveWorkReport:
     in_progress: tuple[TaskRecord, ...]
     awaiting_land: tuple[TaskRecord, ...]
+    lifecycle_violations: tuple[TaskRecord, ...]
     stale: tuple[TaskRecord, ...]
     owned_active: tuple[TaskRecord, ...]
     actually_active: tuple[TaskRecord, ...]
@@ -138,6 +170,7 @@ class ActiveWorkReport:
         return {
             "in_progress": len(self.in_progress),
             "awaiting_land": len(self.awaiting_land),
+            "lifecycle_violations": len(self.lifecycle_violations),
             "stale": len(self.stale),
             "owned_active": len(self.owned_active),
             "actually_active": len(self.actually_active),
@@ -520,15 +553,27 @@ def cache_agent_snapshot(snapshot: str | None = None) -> int:
 
 
 def _taskgraph_in_progress() -> tuple[TaskRecord, ...]:
+    # Two populations, deliberately in one query:
+    #   * IN_PROGRESS       -- the live queue (activity, staleness, routing)
+    #   * implemented, ANY status -- the landing debt, which under the
+    #     close-on-implemented lifecycle lives in CLOSED and was previously
+    #     invisible here because the filter was `status = 'IN_PROGRESS'` alone.
+    # Tag matching uses json_each on the JSON array so `implemented` cannot be
+    # matched inside some longer tag by a LIKE '%implemented%'.
     sql = """
 SELECT json_object(
   'id', local_id,
   'title', title,
   'owner', COALESCE(owner, ''),
+  'status', status,
   'tags', json(tags)
 ) AS task_json
 FROM tasks
 WHERE status = 'IN_PROGRESS'
+   OR EXISTS (
+        SELECT 1 FROM json_each(tasks.tags)
+        WHERE json_each.value = 'implemented'
+      )
 ORDER BY local_id
 """.strip()
     last_error = "unknown failure"
@@ -579,6 +624,7 @@ ORDER BY local_id
                 title=str(raw.get("title") or ""),
                 owner=str(raw.get("owner") or "").strip(),
                 tags=tuple(tags),
+                status=str(raw.get("status") or "IN_PROGRESS").strip(),
             )
         )
     count_match = re.search(r"\((\d+) rows\)", process.stdout)
@@ -619,8 +665,23 @@ def reconcile_active_work(
     tasks: Sequence[TaskRecord],
     agents: Sequence[AgentRecord],
 ) -> ActiveWorkReport:
-    in_progress = tuple(sorted(tasks, key=lambda task: task.id))
-    awaiting_land = tuple(task for task in in_progress if task.implemented)
+    everything = tuple(sorted(tasks, key=lambda task: task.id))
+    # LANDING DEBT: keyed off the tag, not the status, so it survives the
+    # close-on-implemented lifecycle. These records are CLOSED; they are the
+    # set `drain-implemented-to-landed` enumerates, and ancestry verification
+    # is that tracker's job, not this monitor's.
+    awaiting_land = tuple(task for task in everything if task.awaiting_landing)
+    # LIFECYCLE DEVIATION: implemented but not closed. Reported separately so
+    # it is fixable rather than silently absorbed into the landing debt.
+    lifecycle_violations = tuple(
+        task for task in everything if task.lifecycle_violation
+    )
+    # THE LIVE QUEUE. Everything downstream — staleness, ownership, routing,
+    # orphan detection — is derived from this and ONLY this, so a closed
+    # implemented record can never be surfaced as ready work or dispatched.
+    in_progress = tuple(
+        task for task in everything if task.status.strip().upper() == "IN_PROGRESS"
+    )
     active_candidates = tuple(task for task in in_progress if not task.implemented)
     stale = tuple(task for task in active_candidates if not task.owner)
     owned_active = tuple(task for task in active_candidates if task.owner)
@@ -702,6 +763,7 @@ def reconcile_active_work(
     return ActiveWorkReport(
         in_progress=in_progress,
         awaiting_land=awaiting_land,
+        lifecycle_violations=lifecycle_violations,
         stale=stale,
         owned_active=owned_active,
         actually_active=tuple(sorted(actually_active, key=lambda task: task.id)),
@@ -719,9 +781,24 @@ def _active_work_detail(report: ActiveWorkReport) -> list[str]:
     detail: list[str] = []
     detail.extend(f"ORPHANED {task.id} owner={task.owner}" for task in report.orphaned)
     detail.extend(f"STALE {task.id}" for task in report.stale)
+    # The landing debt is now the whole CLOSED+implemented population, so
+    # enumerating it here would bury every other line. Show a bounded sample
+    # and state the residue explicitly -- a silent truncation would read as
+    # "that is all of them".
+    _AWAITING_SAMPLE = 5
+    shown = report.awaiting_land[:_AWAITING_SAMPLE]
     detail.extend(
-        f"AWAITING-LAND {task.id} owner={task.owner or 'none'}"
-        for task in report.awaiting_land
+        f"AWAITING-LAND {task.id} owner={task.owner or 'none'}" for task in shown
+    )
+    residue = len(report.awaiting_land) - len(shown)
+    if residue > 0:
+        detail.append(
+            f"AWAITING-LAND +{residue} more (full set via drain-implemented-to-landed)"
+        )
+    detail.extend(
+        f"LIFECYCLE-VIOLATION {task.id} status={task.status} "
+        "implemented-but-not-closed"
+        for task in report.lifecycle_violations
     )
     detail.extend(
         f"OFF-BOOK {agent.name} status={agent.status}" for agent in report.off_book
@@ -790,6 +867,7 @@ def active_work_gate(
                 f"in-progress={counts['in_progress']},"
                 f"actually-active={counts['actually_active']},"
                 f"awaiting-land={counts['awaiting_land']},"
+                f"lifecycle-violations={counts['lifecycle_violations']},"
                 f"stale={counts['stale']},orphaned={counts['orphaned']},"
                 f"off-book={counts['off_book']},misrouted={counts['misrouted']}"
             ),

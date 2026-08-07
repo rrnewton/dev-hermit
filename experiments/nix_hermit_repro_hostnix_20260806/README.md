@@ -8,6 +8,12 @@ need it?
 
 ## TL;DR
 
+0. **The seam is the only nesting that can work.** Detcore refuses `unshare`/
+   `mount`/`setns` at a fixed `-EPERM` *by design* (to keep the pinned container
+   bitwise-identical under `--verify` and record/replay), and nix unshares before
+   every sandboxed build — so **nix cannot run inside Hermit**. Wrapping the
+   builder Nix `execve`s is not a workaround; it is the correct architecture.
+   Verified with a discriminating probe (the obvious one is a false positive).
 1. **The seam works and is one line**, but the mode in every prior write-up was
    wrong. `--tmp=/tmp`, not `--no-namespace`; no `setarch -R`. On the four-source
    probe `--no-namespace` scores **10 distinct in 10 — identical to no Hermit at
@@ -92,6 +98,44 @@ Because `realBuilder` is part of the input-addressed derivation, wrapping
 changes the derivation identity and the output path. We therefore compare
 wrapped-vs-wrapped and native-vs-native, never wrapped-vs-native.
 
+### The seam is the only possible nesting, not a workaround
+
+`nix` **cannot run inside Hermit and build anything**, in any mode. Detcore
+refuses the mount/namespace-admin family at a fixed `-EPERM` *by design*
+(`detcore/src/syscall_classification.rs`, `is_mount_ns_admin_refused_syscall`:
+`mount`, `umount2`, `mount_setattr`, `move_mount`, `open_tree`, `fsopen`,
+`fsmount`, `fsconfig`, `fspick`, `unshare`, `setns`, `open_by_handle_at`,
+`fanotify_*`, `settimeofday`). The source gives the reason in its own words:
+these calls "would otherwise perturb the pinned container", and refusing them in
+Detcore is "bitwise-identical across `--verify` and record/replay". nix's
+sandboxed builder path unshares a user+mount namespace before **every** build.
+
+So the exec-builder seam is not a way around a Hermit limitation — it is the
+**only** nesting that can work. Nix does its namespace work on the host and
+`execve`s a builder; Hermit owns that builder and everything below it. Nix keeps
+evaluation, dependency ordering, output registration and comparison; Hermit
+keeps determinism. (Corollary: the rootless-podman approach of running the whole
+`nix-build` under Hermit inside a container cannot work either, for the same
+reason — podman is providing the *installation*, and Hermit still cannot be the
+outer layer around `nix`.)
+
+Verified here with [`harness/namespace-refusal-probe.sh`](harness/namespace-refusal-probe.sh):
+
+```
+FALSE DISCRIMINATOR  bare unshare(CLONE_NEWNS)
+  native  rc=-1 errno=1 (EPERM)
+  hermit  rc=-1 errno=1 (EPERM)      <- EPERM BOTH WAYS; proves nothing
+
+DISCRIMINATING       unshare --mount --user --map-root-user  (what nix does)
+  native  OK
+  hermit  EPERM (refused)
+```
+
+The first probe is worth calling out: an unprivileged process cannot unshare a
+mount namespace *without also* unsharing a user namespace, so `unshare(CLONE_NEWNS)`
+alone returns EPERM natively too. Testing only that would "confirm" the refusal
+on a host where nothing is being refused.
+
 ### The oracle — canonical rebuild, not `nix --check`
 
 [`harness/canonical-nrep.sh`](harness/canonical-nrep.sh) builds a derivation
@@ -171,10 +215,31 @@ distinct NAR hashes across N canonical rebuilds; `1` means byte-identical.
 | `… --sequentialize-threads` | 2 |
 | `… --target-timeslice 1000000000` | 2 |
 
-`--no-namespace` scores **10/10 — exactly as bad as native** on this probe,
-because `$RANDOM` and the procfs UUID leak straight through it. That is the
-single sharpest argument for the mode correction, independent of the
-buildability argument in R3.
+`--no-namespace` scores **10/10 on the aggregate — the same as native.** Read
+that carefully: it does *not* mean `--no-namespace` determinizes nothing. It
+means at least one source leaks, and a single leaking source changes the NAR.
+Attributing an aggregate to every input is exactly the error this experiment
+refuted three times tonight, so the sources were measured individually.
+
+#### Per-source, measured directly (6 wrapped builds of `nondet-demo-fast` each)
+
+| source | `--no-namespace --no-rcb-time --max-timeslice disabled` + `setarch -R` | `--tmp=/tmp --no-rcb-time --max-timeslice disabled` |
+|---|---|---|
+| `date -u +%s.%N` | identical 6/6 | 2 values (the 250 ms quantum below) |
+| `/dev/urandom` (32 B) | identical 6/6 | identical 6/6 |
+| bash `$RANDOM$RANDOM` | **2 distinct — LEAKS** | identical 6/6 |
+| `/proc/sys/kernel/random/uuid` | **6 distinct — LEAKS COMPLETELY** | identical 6/6 |
+| aggregate NAR hash, N=10 | 10 distinct | 2 distinct |
+
+So `--no-namespace` does virtualize the wall clock and `/dev/urandom`; what it
+loses is the `AT_RANDOM`-seeded userspace PRNG and the procfs RNG, and the
+procfs UUID is not virtualized *at all* (a fresh value every build). This
+reproduces the 20260729 prototype's two documented leaks and is the sharpest
+argument for the mode correction, independent of the buildability argument in
+R3. Note also the inversion in the top row: the clock is *stable* in this
+`--no-namespace` sample and *jitters* under `--tmp=/tmp` — the check-in quantum
+is workload-path dependent, not mode dependent, and 6 builds is too small a
+sample to rank the two modes on it.
 
 **Summary of results at N=20** (dose `run --tmp=/tmp --no-rcb-time --max-timeslice disabled`):
 
@@ -214,6 +279,39 @@ seam's competence even though the clock is not perfectly deterministic.
 `--max-timeslice disabled` is not needed for correctness but is a **~3x speedup**
 (1 s vs 3 s per build) and removes the 59 s outlier seen with PMU preemption on.
 `--strict` is free.
+
+
+#### Consolidated dose study — 4 derivations x 7 doses, N=10 each
+
+`distinct/10`; **1 = byte-identical = reproducible**. Native is the control in
+every column.
+
+| dose | `nondet-time` (ns clock + urandom) | `nondet-seconds` (s clock, **the lensfun class**) | `urandom-temp-names` (kernel RNG) | `nondet-demo-fast` (all 4 sources) |
+|---|---|---|---|---|
+| native (control) | 10 | 8 | 10 | 10 |
+| `run --no-namespace` +`setarch -R` | 4 | **1** | **1** | 10 |
+| `run --no-namespace --no-rcb-time --max-timeslice disabled` +`setarch -R` | 2 | **1** | **1** | 10 |
+| `run --tmp=/tmp` | 3 | **1** | **1** | 4 |
+| **`run --tmp=/tmp --no-rcb-time`** | **1** | **1** | **1** | 2 |
+| `run --tmp=/tmp --no-rcb-time --max-timeslice disabled` | **1** | **1** | **1** | 2 |
+| `… --strict` | **1** | **1** | **1** | 2 |
+
+Reading across rather than down is what makes this a study rather than four
+anecdotes:
+
+- **`--tmp=/tmp --no-rcb-time` is the only dose that reproduces every
+  clock-and-RNG probe.** That is the minimum dose claim, and it rests on four
+  derivations, not one.
+- **`--no-namespace` looks fine on two of the four probes** (`nondet-seconds`,
+  `urandom-temp-names`) because those probes touch only sources it does
+  virtualize. A study that had used only those two would have concluded
+  `--no-namespace` was sufficient — which is how the superseded 20260729 and
+  20260730 results were reached. Probe coverage, not dose, decided that answer.
+- **`nondet-seconds` reproduces under every dose including plain
+  `--no-namespace`.** Whole-second timestamps are the easiest class, and it is
+  the class the one real package we found (`lensfun`) belongs to.
+- **`nondet-demo-fast` never reaches 1** under any dose; the residual is the
+  clock quantum, isolated below.
 
 #### Why `--no-rcb-time` is required here — mechanism, not correlation
 
@@ -623,6 +721,7 @@ stops the harness before it fills the disk.
 | `harness/dose-sweep.sh` | minimum-dose sweep over namespace/clock flag sets |
 | `harness/screen-batch.sh` | two-step real-package triage (native, then hermit) |
 | `harness/spawn-cost.sh` | per-process cost of the seam |
+| `harness/namespace-refusal-probe.sh` | why the seam wraps the builder and not `nix` (with the false-discriminator warning) |
 | `harness/ca-probe.sh` | `ca-derivations` assessment |
 | `harness/ergonomics-check.sh` | two-sided gate on the opt-in overlay |
 | `harness/lila-multihash.py` | pull the cross-machine candidate list from Lila |

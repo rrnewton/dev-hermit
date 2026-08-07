@@ -64,7 +64,13 @@
     "wrapper_cmd": "exec <hermit> run --tmp=/tmp --no-rcb-time --max-timeslice disabled -- <drv.drvAttrs.builder> \"$@\"",
     "original_builder_source": "drv.drvAttrs.builder read off the already-evaluated derivation, NOT hard-coded to stdenv.shell",
     "nix_patch_required": false,
-    "nixpkgs_patch_required": false
+    "nixpkgs_patch_required": false,
+    "architectural_necessity": {
+      "claim": "nix cannot run INSIDE hermit and build, in any mode; the exec-builder seam is the only workable nesting",
+      "mechanism": "detcore/src/syscall_classification.rs is_mount_ns_admin_refused_syscall returns a fixed -EPERM for mount, umount2, mount_setattr, move_mount, open_tree, fsopen, fsmount, fsconfig, fspick, unshare, setns, open_by_handle_at, fanotify_init, fanotify_mark, settimeofday. The source states this keeps the pinned container bitwise-identical across --verify and record/replay. nix unshares a user+mount namespace before every sandboxed build.",
+      "verified_by": "harness/namespace-refusal-probe.sh",
+      "false_discriminator_warning": "a bare unshare(CLONE_NEWNS) returns EPERM NATIVELY too (unprivileged mount-ns unshare needs an accompanying user-ns unshare), so it cannot discriminate. The discriminating probe is `unshare --mount --user --map-root-user`: native OK, hermit EPERM."
+    }
   },
   "dose": {
     "minimum_measured_on_this_host": "run --tmp=/tmp --no-rcb-time",
@@ -73,7 +79,8 @@
     "rationale_max_timeslice_disabled": "removes PMU-backed preemption; ~3x faster here (1s vs 3s per build) and removes a 59s outlier; not required for correctness",
     "strict_is_free": true,
     "host_conditional": true,
-    "determinism_label": "reproducible-output-under-shared-/tmp"
+    "determinism_label": "reproducible-output-under-shared-/tmp",
+    "study_scope": "4 derivations x 7 doses at N=10, plus N=20 confirmation on 3 of them; native control in every block"
   },
   "namespace_mode_ab": {
     "tmp_slash_tmp": {
@@ -178,6 +185,66 @@
       "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --strict": 2,
       "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --sequentialize-threads": 2,
       "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --target-timeslice 1000000000": 2
+    },
+    "consolidated_dose_study_distinct_of_10": {
+      "native": {
+        "nondet-time": 10,
+        "nondet-seconds": 8,
+        "urandom-temp-names": 10,
+        "nondet-demo-fast": 10
+      },
+      "run --no-namespace +setarch-R": {
+        "nondet-time": 4,
+        "nondet-seconds": 1,
+        "urandom-temp-names": 1,
+        "nondet-demo-fast": 10
+      },
+      "run --no-namespace --no-rcb-time --max-timeslice disabled +setarch-R": {
+        "nondet-time": 2,
+        "nondet-seconds": 1,
+        "urandom-temp-names": 1,
+        "nondet-demo-fast": 10
+      },
+      "run --tmp=/tmp": {
+        "nondet-time": 3,
+        "nondet-seconds": 1,
+        "urandom-temp-names": 1,
+        "nondet-demo-fast": 4
+      },
+      "run --tmp=/tmp --no-rcb-time": {
+        "nondet-time": 1,
+        "nondet-seconds": 1,
+        "urandom-temp-names": 1,
+        "nondet-demo-fast": 2
+      },
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled": {
+        "nondet-time": 1,
+        "nondet-seconds": 1,
+        "urandom-temp-names": 1,
+        "nondet-demo-fast": 2
+      },
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled --strict": {
+        "nondet-time": 1,
+        "nondet-seconds": 1,
+        "urandom-temp-names": 1,
+        "nondet-demo-fast": 2
+      }
+    },
+    "per_source_6_builds": {
+      "method": "6 canonical rebuilds of nondet-demo-fast per mode; $out/result.txt diffed directly, NOT inferred from the aggregate NAR",
+      "run --no-namespace --no-rcb-time --max-timeslice disabled +setarch-R": {
+        "date -u +%s.%N": "identical 6/6",
+        "/dev/urandom": "identical 6/6",
+        "bash $RANDOM$RANDOM": "2 distinct - LEAKS",
+        "/proc/sys/kernel/random/uuid": "6 distinct - LEAKS COMPLETELY (fresh value every build)"
+      },
+      "run --tmp=/tmp --no-rcb-time --max-timeslice disabled": {
+        "date -u +%s.%N": "2 distinct (250 ms check-in quantum)",
+        "/dev/urandom": "identical 6/6",
+        "bash $RANDOM$RANDOM": "identical 6/6",
+        "/proc/sys/kernel/random/uuid": "identical 6/6"
+      },
+      "correction": "A relayed per-source table claimed --no-namespace determinizes procfs_uuid and leaks only getpid and bash_random. Measured here on the same derivation as the aggregate: procfs_uuid is NOT virtualized under --no-namespace at all (6 distinct in 6). The 10/10 aggregate must not be read as 'determinizes nothing' either - the clock and /dev/urandom ARE virtualized."
     }
   },
   "ca_derivations": {
@@ -199,7 +266,8 @@
     "harness/collect-results.py": "cdd3db0bc5f234f6b83ccd7013be0fbbf3f487786f82d93df8b364d249da5053",
     "harness/lila-multihash.py": "5190d3c6ff785f341d03fc17bea43daea9f9e19ee3533dde4ef9ae7d35f27a37",
     "note": "hashes of the producers as of publication; bootstrap.sh and run.sh are entry points, not producers of the numbers",
-    "harness/cmake-hang-repro.sh": "see git; added after the initial hash snapshot"
+    "harness/cmake-hang-repro.sh": "see git; added after the initial hash snapshot",
+    "harness/namespace-refusal-probe.sh": "see git"
   },
   "hermit_findings_for_product": [
     {
