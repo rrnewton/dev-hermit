@@ -7,11 +7,11 @@
 # can outlive a dead agent and wedge the FIFO (the 2040-minute starvation bug).
 #
 # Sequence (while holding the land-lock):
-#   fetch fresh main -> GitHub-free eligibility gate (clean full-validate record
-#   for the exact pre-rebase head; the label is non-authoritative) -> rebase
-#   (union|plain) + push -> require a clean record for the exact pushed head ->
-#   derive locally-validated through apply-local-label -> bounded merge-gate poll
-#   -> gh pr merge --rebase (NEVER --admin) -> ancestry-verify.
+#   fetch fresh main -> exact-head local-OR-hosted authority -> rebase
+#   (union|plain, SKIPPED by --no-rebase) + push -> recheck the exact pushed head
+#   -> derive the optional locally-validated cache only for a local receipt ->
+#   bounded merge-gate poll -> gh pr merge --rebase (NEVER --admin)
+#   -> ancestry-verify.
 #
 # Three fixes distilled from the 2026-08-03 stuck-gate diagnosis:
 #   1. Trinary gate poll: PASSED lands, FAILED stops, and NO_RESULT blocks while
@@ -27,11 +27,15 @@
 # `land-lock run` wrapper releases the lock so the next FIFO waiter proceeds.
 #
 # Usage:
-#   ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union] [--agent NAME]
+#   ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union|--no-rebase] [--agent NAME]
 #                             [--gate-deadline SECS] [--child-deadline SECS]
 #                             [--foreground]
 #   --union          use the additive manifest union-rebase (union-rebase.sh);
 #                    default is a plain `git rebase origin/main`.
+#   --no-rebase      OPT-IN. Skip step 2 (the local rebase + force-push) and
+#                    merge the already-authorized head as it stands. Mutually
+#                    exclusive with --union. Rationale + how to re-verify it:
+#                    see the step-2 comment. Default behaviour is UNCHANGED.
 #   --agent NAME     lock holder + PR-comment role tag (default: hermit-lander).
 #   --gate-deadline  bound on the merge-gate poll (default 1080).
 #   --child-deadline hard ceiling for the whole land subtree (default: twice the
@@ -54,7 +58,7 @@ set -uo pipefail
 # this repo legitimately sets either for the lander.
 unset CI_HUB_VALIDATE_STATUS_BIN CI_HUB_VALIDATE_LEDGER
 
-PR=""; BR=""; UNION=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
+PR=""; BR=""; UNION=0; NO_REBASE=0; INNER=0; DETACHED_CHILD=0; FOREGROUND=0
 AGENT="hermit-lander"
 MODEL="${LANDER_MODEL:-opus-4.8}"
 # Measured 2026-08-04 over 11 successful pull_request demo-hot-path runs created
@@ -65,6 +69,7 @@ CHILD_DEADLINE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --union) UNION=1 ;;
+    --no-rebase) NO_REBASE=1 ;;
     --agent) AGENT="$2"; shift ;;
     --gate-deadline) GATE_DEADLINE="$2"; shift ;;
     --child-deadline) CHILD_DEADLINE="$2"; shift ;;
@@ -78,7 +83,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$PR" ] || [ -z "$BR" ]; then
-  echo "usage: land-pr.sh <PR> <BRANCH> [--union] [--agent NAME] [--gate-deadline S] [--child-deadline S]" >&2
+  echo "usage: land-pr.sh <PR> <BRANCH> [--union|--no-rebase] [--agent NAME] [--gate-deadline S] [--child-deadline S]" >&2
+  exit 2
+fi
+# --union IS a rebase driver (union-rebase.sh rewrites and pushes the branch), so
+# asking for both is incoherent rather than merely redundant. Refuse instead of
+# silently picking one: a lander that thinks it skipped the rewrite while the
+# union driver performed it is exactly the failure this flag exists to prevent.
+if [ "$UNION" -eq 1 ] && [ "$NO_REBASE" -eq 1 ]; then
+  echo "land-pr: --union and --no-rebase are mutually exclusive (--union rebases by definition)" >&2
   exit 2
 fi
 case "$GATE_DEADLINE" in ''|*[!0-9]*|0) echo "land-pr: gate deadline must be positive seconds" >&2; exit 2 ;; esac
@@ -91,8 +104,8 @@ if [ "$CHILD_DEADLINE" -le "$GATE_DEADLINE" ]; then
   exit 2
 fi
 if [ -n "${CI_HUB_DOCS_PARSE_ONLY:-}" ]; then
-  printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s agent=%s\n' \
-    "$PR" "$BR" "$UNION" "$AGENT"
+  printf 'DOCS PARSE OK: land-pr.sh pr=%s branch=%s union=%s no_rebase=%s agent=%s\n' \
+    "$PR" "$BR" "$UNION" "$NO_REBASE" "$AGENT"
   exit 0
 fi
 
@@ -126,6 +139,7 @@ if [ "$INNER" -eq 0 ] && [ "$DETACHED_CHILD" -eq 0 ] && [ "$FOREGROUND" -eq 0 ];
   detached_args=(--_detached "$PR" "$BR" --agent "$AGENT" \
     --gate-deadline "$GATE_DEADLINE" --child-deadline "$CHILD_DEADLINE")
   [ "$UNION" -eq 1 ] && detached_args+=(--union)
+  [ "$NO_REBASE" -eq 1 ] && detached_args+=(--no-rebase)
   printf 'DETACHED LAND START pr=%s branch=%s agent=%s started_at=%s\n' \
     "$PR" "$BR" "$AGENT" "$stamp" >"$log"
   nohup setsid "$0" "${detached_args[@]}" </dev/null >>"$log" 2>&1 &
@@ -146,6 +160,7 @@ if [ "$INNER" -eq 0 ]; then
     --session "${ORC_AGENT_SESSION_ID:-${HOSTNAME:-unknown}:$$}"
   args=(--_inner "$PR" "$BR" --agent "$AGENT" --gate-deadline "$GATE_DEADLINE")
   [ "$UNION" -eq 1 ] && args+=(--union)
+  [ "$NO_REBASE" -eq 1 ] && args+=(--no-rebase)
   # Persist the exact-SHA verification obligation intent before the bounded
   # child can merge. If this process dies after the merge, the ORC recovery
   # watcher observes the merged SHA and arms both verifiers.
@@ -181,24 +196,54 @@ abandon(){
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
-# 1b. GITHUB-FREE LANDING GATE (owner P0 lander-lands-on-local-validate-only).
-# The label is only a cache. It never authorizes landing independently of the
-# source ledger, including when shared credentials applied it. The exact PR head
-# must have a clean full-coverage PASS record. The same predicate is checked
-# again after rebase because a SHA-changing rebase invalidates the old receipt.
+# 1b. Owner-authorized exact-head OR gate. A counted local receipt and the
+# registered hosted job set are interchangeable positive authorities; a
+# genuine red from either blocks. Missing/partial/stale evidence is NO_RESULT,
+# never a green. The same predicate is checked again after a SHA-changing rebase.
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
-PRELABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$ORIG" "$PRELABELS" 2>&1); VRC=$?
-say "local-validation eligibility(head=$ORIG) rc=$VRC: $VS"
+VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$ORIG" 2>&1); VRC=$?
+say "exact-head validation(head=$ORIG) rc=$VRC: $VS"
 case "$VRC" in
-  0) say "landing eligibility: clean full-validate record for $ORIG" ;;
-  3) abandon "GitHub-free landing gate: PR head $ORIG has a clean full-validate record that FAILED (known-failing); refusing to land" 4 ;;
-  4) abandon "GitHub-free landing gate: PR head $ORIG has no clean full-validate PASS record; observed labels are non-authoritative" 4 ;;
-  *) abandon "GitHub-free landing gate: could not evaluate exact-head validation evidence (rc=$VRC)" 4 ;;
+  0) say "landing eligibility: exact-head authority green for $ORIG" ;;
+  3) abandon "exact-head authority reported a genuine red for PR head $ORIG" 4 ;;
+  4) abandon "neither exact-head authority produced green for PR head $ORIG" 4 ;;
+  *) abandon "could not evaluate exact-head validation authority (rc=$VRC)" 4 ;;
 esac
 
 # 2. rebase onto latest main + push
-if [ "$UNION" -eq 1 ]; then
+#
+# --no-rebase (OPT-IN; the default path below is byte-for-byte unchanged) skips
+# this whole step and merges the head that step 1b already authorized.
+#
+# WHY that is safe -- re-verify this rather than trusting the comment:
+#   with-proxy gh api repos/rrnewton/hermit/rulesets --jq '.[]|"\(.id)\t\(.name)"'
+#   with-proxy gh api repos/rrnewton/hermit/rulesets/<id-of-"main check gating"> \
+#     --jq '.rules[]|select(.type=="required_status_checks")
+#           |.parameters.strict_required_status_checks_policy'
+# Observed 2026-08-07: `false`. A false strict policy means main does NOT require
+# a PR branch to be up to date, so being behind main is not a merge blocker; and
+# `gh pr merge --rebase` in step 6 replays the PR commits onto the current tip
+# server-side regardless. The local rebase therefore produces nothing the merge
+# needs.
+#
+# What it DOES produce is a rewritten head. Step 2 force-pushes, step 4 then
+# re-derives the exact-head authority at the NEW sha, and every exact-head green
+# earned at the old sha is orphaned -- a rebase can only ever downgrade an
+# already-authorized head to NO_RESULT. Measured 2026-08-07 on #1705/#1711/#1678:
+# all three held a qualifying `AUTHORITY=hosted` green (~30 min of hosted CI
+# each) that an unconditional rebase would have voided the moment another team
+# advanced main. See also rrnewton/hermit#1812, where an unconditional
+# rebase-and-force-push in the union driver amended main's tip onto two PR
+# branches and landed #1188/#1209 as semantic no-ops.
+#
+# This flag removes a MUTATION, never a CHECK. Still executed on this path: the
+# land-lock (outer `land-lock run`), the step-1b exact-head authority, the step-4
+# recheck at the head actually being merged, the merge-gate poll, the step-5b
+# final-boundary authority + receipt dereference, `--match-head-commit`,
+# obligation arming, and the post-merge mergeCommit.oid ancestry proof.
+if [ "$NO_REBASE" -eq 1 ]; then
+  say "no-rebase: skipping the local rebase + force-push; merging the authorized head as it stands"
+elif [ "$UNION" -eq 1 ]; then
   ulog="/tmp/land-$PR-union.log"
   "$SCRIPT_DIR/union-rebase.sh" "$WT" "$BR" --push >"$ulog" 2>&1
   RES=$(grep -E '^RESULT' "$ulog" | tail -1)
@@ -218,14 +263,21 @@ else
   git -C "$WT" checkout -q --detach origin/main 2>/dev/null || true
 fi
 
-# 3. record pushed head
+# 3. record the head that will actually be merged. Re-fetched from the remote in
+# every mode, so this also catches a concurrent push by someone else -- under
+# --no-rebase nothing was pushed by us, but the remote is still the source of
+# truth and step 4 re-authorizes whatever it finds.
 with-proxy git -C "$WT" fetch -q origin "$BR"
 HEAD=$(git -C "$WT" rev-parse "origin/$BR")
-say "pushed head=$HEAD"
+if [ "$NO_REBASE" -eq 1 ]; then
+  say "unrebased head=$HEAD (expected to equal the authorized head $ORIG)"
+else
+  say "pushed head=$HEAD"
+fi
 
-# 4. The pushed exact head needs its own ledger receipt. A rebase that changed
-# the SHA cannot inherit the old authorization. Only the ledger-guarded applier
-# may materialize the cache label; the lander never types it directly.
+# 4. The pushed exact head needs a fresh positive from either registered
+# authority. A rebase that changed the SHA cannot inherit the old authorization.
+# Only the ledger-guarded applier may materialize the optional local cache label.
 #
 # 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
 # ledger. hermit's validate.sh writes a count-less schema-3 receipt when it can't
@@ -244,16 +296,19 @@ say "pushed head=$HEAD"
 # writes, this is what makes a red attributable to which BUG (not just which gate)
 # after the log is gone.
 python3 "$ROOT/ci-hub/validate/attribute_reds.py" --last 0 --persist >/dev/null 2>&1 || true
-PUSHLABELS=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")' 2>/dev/null)
-VS=$("$SCRIPT_DIR/local-validation-eligibility.sh" "$HEAD" "$PUSHLABELS" 2>&1); VRC=$?
-say "post-push local-validation eligibility(head=$HEAD) rc=$VRC: $VS"
-[ "$VRC" -eq 0 ] || abandon "pushed head $HEAD has no clean exact-head full-validate PASS record; validate it before stamping" 4
-"$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
-  || abandon "ledger-guarded apply-local-label failed" 4
-sleep 4
-LB=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")')
-grep -q locally-validated <<<"$LB" || abandon "locally-validated stripped immediately (labels=$LB)" 4
-say "ledger-derived label present; labels=$LB"
+VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$HEAD" 2>&1); VRC=$?
+say "post-push exact-head validation(head=$HEAD) rc=$VRC: $VS"
+[ "$VRC" -eq 0 ] || abandon "pushed head $HEAD has no accepted exact-head validation authority (rc=$VRC)" 4
+if grep -q 'LOCAL=green' <<<"$VS"; then
+  "$ROOT/ci-hub/ci-hub" apply-local-label --pr "$PR" --repo "$R" \
+    || abandon "ledger-guarded apply-local-label failed" 4
+  sleep 4
+  LB=$(with-proxy gh pr view "$PR" -R "$R" --json labels -q '[.labels[].name]|join(",")')
+  grep -q locally-validated <<<"$LB" || abandon "locally-validated stripped immediately (labels=$LB)" 4
+  say "ledger-derived label present; labels=$LB"
+else
+  say "hosted exact-head authority selected; no local-receipt cache label required"
+fi
 
 # 4b. a draft PR cannot be merged; marking ready fires a fresh (label-present)
 # merge-gate run, which the poll below waits on.
@@ -318,10 +373,9 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. The exact pushed head must carry a dereferenceable validation receipt at
-# the final authorization boundary. A label or well-shaped comment is only a
-# pointer; the parent-pinned verifier resolves the immutable receipt and checks
-# its digest, repository, head, counted ledger row, and coverage obligations.
+# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. A
+# local positive now additionally dereferences its immutable receipt comment;
+# a hosted positive remains independently sufficient. Any genuine red blocks.
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \
@@ -330,17 +384,16 @@ receipt_comments=$(mktemp) \
   || abandon "could not allocate the receipt-comment observation file" 5
 if ! with-proxy gh api --paginate --slurp \
     "repos/$R/issues/$PR/comments?per_page=100" >"$receipt_comments"; then
-  rm -f -- "$receipt_comments"
-  abandon "could not fetch comments for exact-head receipt authorization" 5
+  printf '[]\n' >"$receipt_comments"
 fi
-receipt_detail=$("$ROOT/ci-hub/validation/verify_receipt.sh" \
+receipt_detail=$("$SCRIPT_DIR/exact-head-validation-authority.sh" \
   --repo "$R" --sha "$HEAD" --comments "$receipt_comments" 2>&1)
 receipt_rc=$?
 rm -f -- "$receipt_comments"
 if [ "$receipt_rc" -ne 0 ]; then
-  abandon "exact-head validation receipt REFUSED for $HEAD: ${receipt_detail:-no receipt}" 5
+  abandon "exact-head validation authority REFUSED for $HEAD: ${receipt_detail:-no result}" 5
 fi
-say "exact-head validation receipt authorized: $receipt_detail"
+say "exact-head validation authority authorized: $receipt_detail"
 
 # 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
 # --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to

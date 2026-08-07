@@ -1,0 +1,114 @@
+{
+  "experiment": "rb_debian_tworoot",
+  "date": "2026-08-07",
+  "agent": "claude-coord-176 (impl, claude-opus-5)",
+  "question": "For a Debian source package whose build demonstrably depends on the root path it is built in, does Hermit make the build independent of that path?",
+  "design": "Prepare once, then build four times from the same prepared source in four DIFFERENT root paths: native in N1 and N2, hermit in A and B. Compare N1-vs-N2 and A-vs-B. The native pair is a per-package internal control establishing that the package really is root-sensitive, so a matching hermit pair is evidence about Hermit rather than about an already-reproducible package.",
+  "answer": "35 of 35 packages diverge natively across two build roots (the control fired on every one). 28 of 28 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.",
+  "scope_warning": "13 packages with all four builds complete, selected as small fast-building members of the 8,688-name ASPLOS'20 target set. This is NOT a random sample and must not be reported as a percentage of that set. Selection is convenience-biased toward small packages.",
+  "hermit": {
+    "repo": "rrnewton/hermit",
+    "sha": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+    "branch": "origin/main (clean checkout; binary reports g1fadc03779f2, no -dirty)",
+    "binary_sha256": "96a29c8d74548dc9de0faa60e697e85a10e7973e74b445237f5426bbcf5dfe87",
+    "profile": "release",
+    "backend": "ptrace",
+    "invocation": "hermit run --strict --no-rcb-time --max-timeslice=disabled --base-env=minimal --network=local --bind=<root>:/tmp/drb-root --mount=type=bind,source=/proc,target=/tmp/drb-root/proc --mount=type=bind,source=/dev,target=/tmp/drb-root/dev -- /usr/sbin/chroot /tmp/drb-root ... dpkg-buildpackage -uc -us -b",
+    "invocation_notes": "The --bind is load-bearing: Hermit gives the guest a private /tmp tmpfs, so output under /tmp/drb-root would be discarded without it. Full namespaces retained; neither --no-namespace nor setarch -R is used."
+  },
+  "reverie": {
+    "sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+    "state": "unchanged by this experiment; the pin recorded by hermit 1fadc037"
+  },
+  "toolchain": {
+    "target_distro": "Debian 7.11 (wheezy) reconstruction rootfs",
+    "snapshot": "https://snapshot.debian.org/archive/debian/20190301T000000Z/",
+    "builder_image": "docker.io/library/debian@sha256:41a613df4beca480a97c22b1f6837f7502cb95206e2cc2daf1ea3cb28f8755ab",
+    "container_runtime": "podman",
+    "build_command": "dpkg-buildpackage -uc -us -b"
+  },
+  "host": {
+    "kernel": "Linux 6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba",
+    "glibc": "2.34",
+    "cpu": "AMD EPYC 9D85",
+    "limitations": [
+      "PMU validation fails: AmdSpecLockMapShouldBeDisabled",
+      "ARCH_SET_CPUID returns ENODEV: Hermit runs without CPUID interception"
+    ]
+  },
+  "throughput": {
+    "bottleneck": "per-package prepare (apt build-deps + source download through a single serialized IPv6-loopback proxy bridge)",
+    "prepare_minutes_per_package": "1-3",
+    "native_build_seconds": "~5",
+    "hermit_build_seconds": "~50"
+  },
+  "harness_repairs": [
+    "rebuild.sh fetch-metadata: manifests are C-collation sorted but comm/sort honoured en_US.UTF-8, so verification refused with 'file 1 is not in sorted order'. Pinned both sides to LC_ALL=C.",
+    "container/finish-wheezy.sh: debootstrap --second-stage reinstates /usr/bin/ischroot itself and consumes the script's backup; the unguarded mv then failed and set -e aborted after the base system installed successfully, so the rootfs never got sources.list, policy-rc.d, or .drb-bootstrap-complete. Made the restore idempotent.",
+    "finish_bootstrap was unrecoverable after that failure: debootstrap deletes /debootstrap on success, and finish_bootstrap hard-required it. Both sides now accept an already-second-staged rootfs."
+  ],
+  "container_egress_recipe": "fwdproxy is IPv6-only and unreachable from containers even with --network=host; an IPv4 loopback bridge fails with \"Could not resolve '127.0.0.1'\". Working: setsid ncat --listen ::1 13129 --keep-open --sh-exec 'ncat fwdproxy 8080'; DRB_CONTAINER_PROXY=http://[::1]:13129",
+  "not_attempted": [
+    "reprotest environment variations (multiplies build count)",
+    "dettrace oracle arm (additionally needs the modern-vDSO patch rebuilt)",
+    "confirmation of the confounder on a working-PMU host"
+  ],
+  "reproduction": "DRB_CONTAINER_PROXY=\"http://[::1]:13129\" ./tworoot.sh --hermit-bin /path/to/hermit hostname tree ed units ; ./summarize.sh",
+  "followups": [
+    "Re-run the default (no --no-rcb-time) arm on a host with a working PMU to confirm the confounder attribution directly.",
+    "Widen N with a randomized draw from the 8,688-name target set rather than a convenience selection, so a percentage becomes defensible.",
+    "Parallelise prepare beyond a single proxy bridge; it is the sole throughput limit."
+  ],
+  "results_summary": {
+    "native_control_measured": 35,
+    "native_two_root_diverges": "35/35",
+    "default_hermit_arm_measured": 29,
+    "default_hermit_identical": "23/29 (CONFOUNDED -- see confounder)",
+    "corrected_arm_measured": 28,
+    "corrected_arm_identical": "28/28",
+    "controlled_win": "28/28",
+    "pending_at_stop": [
+      "groff",
+      "mtools",
+      "numactl",
+      "cflow",
+      "ethtool",
+      "ltrace (corrected arm only)",
+      "bsdmainutils (hermit build failed)"
+    ],
+    "derivation": "computed by ./summarize.sh from results.csv; each arm counted against its own completed denominator"
+  },
+  "timing_units_caveat": "This experiment records no per-package durations, deliberately. Any duration printed by a build running under Hermit is VIRTUAL time (Hermit virtualizes the clock; a guest-side $SECONDS or `time` does not measure host wall clock). Approximate durations quoted in README.md are host wall-clock observed from outside the guest. Do not derive an overhead or slowdown factor from this experiment.",
+  "confounder": "This host's PMU fails validation (AmdSpecLockMapShouldBeDisabled). Hermit derives virtual time from retired-conditional-branch counts, so without --no-rcb-time Hermit's own clock is a nondeterminism source. The default arm's six failures (figlet, grep, indent, nano, time, wdiff) all become IDENTICAL with --no-rcb-time and none of the seven passes changes -- the signature of a measurement artifact, not six product gaps. --no-rcb-time is REQUIRED for determinism measurement on this class of host.",
+  "retraction": "An earlier version of this experiment described figlet/grep/indent/nano/time/wdiff as cases where Hermit's determinization is incomplete, and floated hermit#1850 (pipe readiness/EOF) as a possible cause of the figlet divergence. Both are withdrawn: figlet builds successfully and byte-identically under Hermit once virtual time is off the broken PMU, there is no hang, and nothing here supports a link to #1850.",
+  "mechanism_model": {
+    "source": "predicted by the buck2 lane; tested here",
+    "mechanism_1_path_embedded": "the build root lands in the output bytes. Hermit should NOT fix this: the guest asked where it was and got a truthful answer that differs per root.",
+    "mechanism_2_path_triggered": "the root change perturbs timing, entropy, allocation or iteration order, which leaks out. Hermit SHOULD fix this.",
+    "prediction": "if the main experiment's wins are all mechanism 2, then no package in the set embeds its build root in the compared output",
+    "verdict": "CONFIRMED, and for a stronger reason than luck",
+    "evidence_path_embedding": "check_path_embedding.sh unpacks both native .deb payloads and greps for the host root paths and the differing component: 0 of 28 packages embed the host root path (path_embedding_check.txt). Bracketed: the same grep finds a present string and misses an absent control string.",
+    "structural_reason": "the build runs inside the rootfs (podman --rootfs, or hermit + chroot), so the guest-visible build directory is /work/build in all roots (verified from etc/drb-source-dir). Only the host path differs and the build never sees it. This experiment isolates mechanism 2 by construction and excludes mechanism 1.",
+    "sharper_reading": "Hermit eliminated every path-TRIGGERED divergence in the set. The main arms say nothing about path-EMBEDDED divergence.",
+    "packages_that_do_embed_a_build_path": "groff embeds /work/build/src/libs/libgroff/errarg.cpp and hdparm embeds /work/build -- i.e. they bake in the GUEST path, which is held constant here, so it causes no divergence",
+    "mechanism_1_probe": "guestpath_arm.sh varies the guest-visible path (/work/build vs /work/build-with-a-substantially-longer-directory-name). hostname, tree, zip: native DIFFERS and hermit --no-rcb-time DIFFERS -- Hermit correctly declines to mask a truthful path difference.",
+    "mechanism_1_control": "samepath_control.sh builds twice at the SAME long guest path under hermit: hostname, tree, zip all IDENTICAL, so the short-vs-long difference is caused by the path and not by residual nondeterminism.",
+    "unexplained_observation": "for hostname the mechanism-1 delta is 19 bytes, all in the ELF build-id (d977c152... vs 5db02718...); tar listing and every mtime are identical and the path string is absent from the stripped artifact. dh_strip removes the visible build path but a path-dependent fingerprint survives in the build-id. The propagation channel into that hash is not localized here."
+  },
+  "files": {
+    "tworoot.sh": "the experiment: prepare, then six builds across three arms in six roots",
+    "summarize.sh": "derives the verdict table and per-arm denominators from results.csv",
+    "check_path_embedding.sh": "mechanism-1 grep over both native payloads",
+    "guestpath_arm.sh": "mechanism-1 probe: varies the guest-visible build path",
+    "samepath_control.sh": "control for the above: same long guest path twice",
+    "results.csv": "append-only artifact manifest, six rows per fully measured package",
+    "mechanism_probe.csv": "guest-path arm and its control, tabulated",
+    "path_embedding_check.txt": "raw output of check_path_embedding.sh"
+  },
+  "attempted_but_not_measured": {
+    "socat": "native build failed (dh_auto_build make exit 2); does not build in this Wheezy reconstruction. Excluded; unrelated to Hermit.",
+    "bsdmainutils": "native OK, Hermit build failed: chown root:tty -> EINVAL because Hermit's container maps exactly one GID while the native podman container maps 65537. Correct user-namespace behavior, not a Hermit defect.",
+    "less, bc": "prepare refused because a partially prepared root from an earlier aborted run exists; rebuild.sh resume-prepare is the intended path. Harness resumability gap."
+  },
+  "executor_privilege_asymmetry": "Guest gid_map: hermit '0 100 1' (one GID) vs native podman '0 100 1' + '1 1879113728 65536'. A package can therefore be buildable in one arm and not the other. Every comparison in this experiment is WITHIN one executor (native n1-vs-n2, hermit a-vs-b), never across, so no verdict is affected; but no cross-executor claim is supported by this data."
+}

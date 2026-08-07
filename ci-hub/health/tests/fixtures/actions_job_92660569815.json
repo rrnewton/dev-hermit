@@ -1,0 +1,26 @@
+{
+  "id": 92660569815,
+  "run_id": 31114544049,
+  "workflow_name": "Merge Gate",
+  "head_sha": "d282a85726a5e0101cad069c2f3d6e2e23b9d6cd",
+  "run_url": "https://api.github.com/repos/rrnewton/hermit/actions/runs/31114544049",
+  "url": "https://api.github.com/repos/rrnewton/hermit/actions/jobs/92660569815",
+  "html_url": "https://github.com/rrnewton/hermit/actions/runs/31114544049/job/92660569815",
+  "check_run_url": "https://api.github.com/repos/rrnewton/hermit/check-runs/92660569815",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-08-06T15:10:10Z",
+  "started_at": "2026-08-06T15:40:35Z",
+  "completed_at": "2026-08-06T15:46:01Z",
+  "name": "reverie-pin-is-latest-main",
+  "steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "failure",
+      "number": 1,
+      "started_at": "2026-08-06T15:40:36Z",
+      "completed_at": "2026-08-06T15:45:36Z"
+    }
+  ]
+}

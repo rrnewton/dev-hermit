@@ -105,24 +105,64 @@ echo "YAMA_PTRACE_SCOPE=$YAMA"
 # or a ptrace op against an unrelated pid is not, and must not be counted.
 ESTABLISHING='PTRACE_ATTACH|PTRACE_SEIZE|PTRACE_TRACEME'
 
+# Count matching lines as EXACTLY ONE integer, and fail loudly if the file
+# cannot be read.
+#
+# `grep -c` PRINTS "0" *and* EXITS 1 when there are no matches, so the idiom
+# `n=$(grep -c ... || echo 0)` captures BOTH outputs and yields the two-line
+# string "0\n0". That did two things here: it broke `(( n > 0 ))` with an
+# arithmetic syntax error on stderr, and -- worse -- it injected a bare "0" line
+# into this script's key=value stdout, so a parser reading the instrument's
+# output saw an orphan line between fields.
+#
+# Assign first, THEN correct on failure, so exactly one integer is produced:
+#   rc 0  matches found          -> the count
+#   rc 1  ran fine, no matches   -> a real, measured 0
+#   rc >1 could not read at all  -> NOT a zero. A setup failure is zero
+#                                   qualifying trials, never a negative
+#                                   finding, so it returns non-zero and the
+#                                   caller must report ERROR rather than 0.
+count_matches() {
+    local pattern=$1 file=$2 n rc
+    n=$(grep -cE "$pattern" "$file" 2>/dev/null)
+    rc=$?
+    ((rc <= 1)) || return 2
+    printf '%d' "${n:-0}"
+}
+
 classify_wrap() {
     local rc=$1
     local contended established
-    # Evidence, not inference: an EPERM on an establishing op inside the traced
-    # process tree.
-    contended=$(grep -cE "ptrace\((${ESTABLISHING}).*= *-1 +EPERM" "$log" 2>/dev/null || echo 0)
-    established=$(grep -cE "ptrace\((${ESTABLISHING})" "$log" 2>/dev/null || echo 0)
-    echo "STRACE_LOG_LINES=$(wc -l <"$log" 2>/dev/null || echo 0)"
-    echo "PTRACE_ESTABLISHING_CALLS=$established"
-    echo "PTRACE_ESTABLISHING_EPERM=$contended"
-    echo "HERMIT_RC=$rc"
 
-    # An empty log means strace never traced anything: that is a NO-RESULT, and
-    # it must not be read as "no ptracer contended".
+    # NO-RESULT GUARD RUNS FIRST, BEFORE ANY COUNT IS PRINTED. An absent or
+    # empty log means strace never traced anything. Emitting "0" counts for
+    # such a run would state a measured absence of contention that was never
+    # measured -- the ambiguous zero this harness exists to avoid. The counts
+    # are reported as n/a so a no-result can never be read as a clean run.
     if [[ ! -s $log ]]; then
+        echo "STRACE_LOG_LINES=0"
+        echo "PTRACE_ESTABLISHING_CALLS=n/a"
+        echo "PTRACE_ESTABLISHING_EPERM=n/a"
+        echo "HERMIT_RC=$rc"
         verdict ERROR "strace produced an empty log; nothing was traced, so this is a no-result not a pass"
         return 4
     fi
+
+    # Evidence, not inference: an EPERM on an establishing op inside the traced
+    # process tree. STRACE_LOG_LINES is the denominator these counts are drawn
+    # from -- a count without it cannot be audited.
+    established=$(count_matches "ptrace\((${ESTABLISHING})" "$log") || {
+        verdict ERROR "could not read the strace log at $log; no trial was measured"
+        return 4
+    }
+    contended=$(count_matches "ptrace\((${ESTABLISHING}).*= *-1 +EPERM" "$log") || {
+        verdict ERROR "could not read the strace log at $log; no trial was measured"
+        return 4
+    }
+    echo "STRACE_LOG_LINES=$(wc -l <"$log")"
+    echo "PTRACE_ESTABLISHING_CALLS=$established"
+    echo "PTRACE_ESTABLISHING_EPERM=$contended"
+    echo "HERMIT_RC=$rc"
     if ((contended > 0)); then
         verdict REFUSED-ALREADY-TRACED \
             "hermit issued $contended establishing ptrace call(s) that returned EPERM while strace held the tracee; a ptracer is in the path for backend '$BACKEND'"

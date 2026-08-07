@@ -14,12 +14,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sabre_reach as SR  # noqa: E402
 
-# Verbatim from a real run on this box, 2026-08-06, hermit release binary:
+# Captured from a real run on 2026-08-06 with its owner-specific path sanitized:
 #   ./target/release/hermit --log=info run --backend sabre -- /bin/echo hi
 REAL_FALLBACK_OUTPUT = (
     "2026-08-06T12:14:08.143897Z  INFO hermit::sabre: launching Detcore guest "
     "through SaBRe with coordinator RPC guest=/bin/echo "
-    "plugin=/home/newton/work/dev-hermit/hermit/target/install_pkg/rsrcs/"
+    "plugin=/home/test/work/dev-hermit/hermit/target/install_pkg/rsrcs/"
     "libdetcore_sabre.so socket=/tmp/hermit-sabre-rpc-U548ZF/coordinator.sock\n"
     "2026-08-06T12:14:08.496193Z  INFO hermit::sabre::fallback: SaBRe ptrace "
     "fallback completed patched_sites=0\n"

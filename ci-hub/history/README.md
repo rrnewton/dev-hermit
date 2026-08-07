@@ -154,11 +154,19 @@ run stuck in the queue is flagged instead of reading `0`. See
 `green-time` implements a dated four-state definition (see the `GREEN-TIME
 DEFINITION` block at the top of `query.py`, `GREEN_TIME_DEFINITION_DATE`). Main's
 wall-clock is partitioned into **green / red / no_result / gap**, where **green
-is a positive success record, never the absence of red**. `success` -> green; a
-genuine failing verdict -> red; `cancelled`/`skipped`/`neutral`/`stale`/unknown ->
-no_result (a destroyed or withheld answer, re-dispatch not revert); pending or
-no-record -> gap. green requires ALL authoritative workflows to succeed
-(precedence red > gap > no_result > green).
+is a positive success record, never the absence of red**. The headline is:
+
+```
+green-time = green wall-hours / authoritative-run wall-hours
+           = green hours / (green hours + genuine-red hours)
+```
+
+`success` -> green; a genuine failing verdict -> red;
+`cancelled`/`skipped`/`neutral`/`stale`/unknown -> no_result (a destroyed or
+withheld answer, re-dispatch not revert); pending or no-record -> gap. NO-RESULT
+and gap hours are measured and printed beside every figure but are excluded from
+the authoritative denominator. Green requires ALL authoritative workflows to
+succeed (precedence red > gap > no_result > green).
 
 The definition names a **seven-case taxonomy** so "not red" is not collapsed into
 one bucket: cancelled-below-cap (supersede/manual) is no_result, cancelled-at-cap
@@ -176,6 +184,12 @@ red<->no_result split (which drives action) without ever changing green_pct. A
 run cancelled while still queued has zero jobs and correctly stays no_result; a
 fetched-set sidecar (`gha-jobs-fetched.json`) makes the ingest O(new cancelled
 runs). Skip it with `ingest.py --no-jobs`; `--refetch-jobs` forces a re-fetch.
+
+The regular `ci_queue_health` tick appends the complete snapshot to
+`ignored/ci-hub/green-time-log.jsonl`: percentage, numerator, authoritative-run
+denominator, exact window, excluded NO-RESULT/gap hours, workflow set, and sample
+count travel together. The lane-health JSONL carries the same window and
+denominator with its copy of the figure; a bare percentage is not a valid record.
 
 The store preserves every conclusion and timestamp, so a refined definition can
 be recomputed later without re-ingesting. Authoritative workflow defaults: hermit

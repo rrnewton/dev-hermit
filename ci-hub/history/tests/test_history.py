@@ -405,17 +405,43 @@ class TempParentTest(unittest.TestCase):
             res["green_ledger_hours"] + res["green_conclusion_only_hours"],
             res["green_hours"], places=2)
 
-    def test_green_split_filtered_tests_nonzero_does_not_corroborate(self):
-        # NEGATIVE: filtered_tests>0 (the false-green case) fails the predicate,
-        # so the slice stays conclusion-only. Also covers a red commit whose
-        # ledger row must never leak into green_ledger.
+    def test_green_split_filtered_tests_nonzero_still_corroborates(self):
+        # POSITIVE: aggregate filtered_tests is diagnostic. A full run may filter
+        # tests outside its planned DAG nodes, while complete per-node coverage
+        # proves that every planned test-bearing node actually ran.
         self._write_gha([
             self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
                          "2026-08-03T00:00:00Z"),
             self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
                          "2026-08-03T01:00:00Z"),
         ])
-        self._write_ledger([self._full_pass_row("a" * 40, filtered_tests=3)])
+        self._write_ledger([self._full_pass_row(
+            "a" * 40,
+            schema_version=5,
+            filtered_tests=3,
+            coverage={"planned_test_nodes": 2, "zero_executed_nodes": [],
+                      "absent_nodes": []},
+        )])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertGreater(res["green_ledger_hours"], 0.0)
+
+    def test_green_split_incomplete_coverage_does_not_corroborate(self):
+        # NEGATIVE: an absent planned node keeps the slice conclusion-only even
+        # when aggregate counts are positive. Coverage, not filtered count, is
+        # the binding evidence for completeness.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z"),
+            self._gha_wf("b" * 40, "success", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z"),
+        ])
+        self._write_ledger([self._full_pass_row(
+            "a" * 40,
+            schema_version=5,
+            filtered_tests=3,
+            coverage={"planned_test_nodes": 2, "zero_executed_nodes": [],
+                      "absent_nodes": ["test.missing"]},
+        )])
         res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertEqual(res["green_ledger_hours"], 0.0)
 
@@ -496,6 +522,63 @@ class TempParentTest(unittest.TestCase):
         res = query.green_time(str(self.parent), "r/x", None, ["W"])
         self.assertAlmostEqual(res["no_result_hours"], 1.0, places=1)
         self.assertEqual(res["red_hours"], 0.0)
+
+    def test_green_time_denominator_excludes_cancelled_and_no_conclusion(self):
+        # Hand-computable window:
+        #   00-01 success    -> 1 green authoritative hour
+        #   01-03 cancelled  -> 2 NO-RESULT hours, excluded
+        #   03-04 no concl.  -> 1 NO-RESULT hour, excluded
+        #   04-05 failure    -> 1 red authoritative hour
+        # The final success only bounds the preceding reign. Green-time is
+        # therefore 1 / (1 + 1) = 50%, never 1 / the four-hour mixed window.
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z", run_id="1"),
+            self._gha_wf("b" * 40, "cancelled", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="2"),
+            self._gha_wf("c" * 40, "", "2026-08-03T03:00:00Z",
+                         "2026-08-03T03:00:00Z", run_id="3"),
+            self._gha_wf("d" * 40, "failure", "2026-08-03T04:00:00Z",
+                         "2026-08-03T04:00:00Z", run_id="4"),
+            self._gha_wf("e" * 40, "success", "2026-08-03T05:00:00Z",
+                         "2026-08-03T05:00:00Z", run_id="5"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertAlmostEqual(res["green_hours"], 1.0, places=1)
+        self.assertAlmostEqual(res["red_hours"], 1.0, places=1)
+        self.assertAlmostEqual(res["no_result_hours"], 3.0, places=1)
+        self.assertAlmostEqual(res["authoritative_run_hours"], 2.0, places=1)
+        self.assertAlmostEqual(res["green_pct"], 50.0, places=1)
+        self.assertAlmostEqual(res["red_pct"], 50.0, places=1)
+
+        # Independent recomputation from the classified intervals: do not call
+        # green_time's denominator arithmetic. This brackets the published
+        # value against a second implementation over the identical window.
+        tl = query.state_timeline(str(self.parent), "r/x", None, ["W"])
+        independent = {"green": 0.0, "red": 0.0}
+        for iv in tl["intervals"]:
+            if iv["state"] in independent:
+                independent[iv["state"]] += iv["end"] - iv["start"]
+        independent_denom = independent["green"] + independent["red"]
+        independent_pct = 100.0 * independent["green"] / independent_denom
+        self.assertAlmostEqual(res["green_pct"], independent_pct, places=8)
+
+    def test_only_no_result_has_zero_authoritative_denominator(self):
+        # Both a literal cancellation and a completed run with no conclusion
+        # are NO-RESULT. With no positive green/red answer, there is no
+        # authoritative denominator and no percentage may be fabricated.
+        self._write_gha([
+            self._gha_wf("a" * 40, "cancelled", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:00:00Z", run_id="1"),
+            self._gha_wf("b" * 40, "", "2026-08-03T01:00:00Z",
+                         "2026-08-03T01:00:00Z", run_id="2"),
+        ])
+        res = query.green_time(str(self.parent), "r/x", None, ["W"])
+        self.assertEqual(res["authoritative_run_hours"], 0.0)
+        self.assertIsNone(res["green_pct"])
+        self.assertIsNone(res["red_pct"])
+        self.assertGreater(res["no_result_hours"], 0.0)
+        self.assertIn("NO-RESULT and gap excluded", res["note"])
 
     def test_green_time_neutral_is_no_result_not_green(self):
         self._write_gha([
@@ -753,6 +836,10 @@ class TempParentTest(unittest.TestCase):
         self.assertEqual(len(lines), 2)  # appends, never truncates
         self.assertEqual(lines[0]["repo"], "r/x")
         self.assertIn("green_pct", lines[0])
+        for field in ("window_start", "window_end_utc", "green_hours",
+                      "authoritative_run_hours", "window_hours",
+                      "denominator_definition", "no_result_hours"):
+            self.assertIn(field, lines[0])
 
 
     def _gha_run(self, **over):
@@ -919,9 +1006,10 @@ class GreenTimeObservationHorizonTest(unittest.TestCase):
 
         res = query.green_time(str(self.parent), "rrnewton/hermit", None, [self.WF])
         # Years of unobserved time dwarf the 1h observed, so gap must dominate
-        # and green must be a rounding error -- not ~100%.
+        # the WINDOW accounting. The headline uses only conclusive
+        # authoritative-run hours; do not use it as a store-coverage proxy.
         self.assertGreater(res["gap_pct"], 99.0)
-        self.assertLess(res["green_pct"], 1.0)
+        self.assertLess(res["green_window_pct"], 1.0)
 
     def test_buckets_stay_mutually_exclusive_and_sum_to_the_denominator(self):
         self._write_gha([
@@ -932,11 +1020,20 @@ class GreenTimeObservationHorizonTest(unittest.TestCase):
         total = sum(res[k] for k in
                     ("green_hours", "red_hours", "no_result_hours", "gap_hours"))
         self.assertAlmostEqual(total, res["total_hours"], places=1)
-        pct = sum(res[k] for k in
-                  ("green_pct", "red_pct", "no_result_pct", "gap_pct"))
-        self.assertAlmostEqual(pct, 100.0, places=0)
+        # The headline denominator is conclusive authoritative-run time only.
+        self.assertAlmostEqual(
+            res["green_hours"] + res["red_hours"],
+            res["authoritative_run_hours"], places=1)
+        self.assertAlmostEqual(res["green_pct"] + res["red_pct"], 100.0,
+                               places=0)
+        # Separately, named *_window_pct fields partition the complete window.
+        window_pct = sum(res[k] for k in
+                         ("green_window_pct", "red_window_pct",
+                          "no_result_window_pct", "gap_window_pct"))
+        self.assertAlmostEqual(window_pct, 100.0, places=0)
         # The denominator and window must be reportable -- a percentage without
         # them is the unqualified-number defect this metric is meant to avoid.
-        for field in ("total_hours", "window_start", "window_end_utc",
-                      "observed_through_utc", "samples"):
+        for field in ("authoritative_run_hours", "window_hours",
+                      "denominator_definition", "window_start",
+                      "window_end_utc", "observed_through_utc", "samples"):
             self.assertIsNotNone(res.get(field), f"{field} must be reported")

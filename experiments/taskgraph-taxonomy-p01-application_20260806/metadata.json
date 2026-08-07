@@ -1,0 +1,14 @@
+{
+ "experiment": "taskgraph-taxonomy-p01-application",
+ "date_utc": "2026-08-07",
+ "agent": "hermit-w3",
+ "tasks": [
+  "apply-taskgraph-label-taxonomy-to-priority-work",
+  "apply-taskgraph-taxonomy-evidence-backed-subset"
+ ],
+ "validator": "ci-hub/taskgraph/label_taxonomy.py (landed 53200775c9d3e4491e02edc4a0ec9efc4fa2c417)",
+ "validator_invocation": "python3 ci-hub/taskgraph/label_taxonomy.py --gate p01",
+ "source_db": "~/.tg/hermit.db (read-only, every read inside BEGIN ... ROLLBACK)",
+ "mutations": "TaskGraph tags only; no status/owner/priority/dependency/description changed",
+ "host": "devbig014.atn7.facebook.com"
+}

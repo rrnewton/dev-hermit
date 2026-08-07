@@ -1,0 +1,135 @@
+{
+  "artifact": "compat-envelope pre-tightening baseline",
+  "label": "PRE-TIGHTENING / HISTORICAL",
+  "baseline_date": "2026-08-06",
+  "purpose": "matched before-state for an upcoming strictness tightening of the compat-envelope comparison contract; measured hours (not days) before the after-state, on the same host, corpus and backend matrix",
+  "supersedes_for_before_state": "compat-envelope/SCORECARD-CURRENT.md Table 1 (a 2026-08-01 sweep at hermit 82a8e853357584a3a567fd80812e015572a607c7)",
+  "provenance": {
+    "hermit_sha": "4c70658e785834737cbe1524f77330c781a6f5ea",
+    "hermit_ref": "rrnewton/hermit origin/main, freshly fetched 2026-08-07T01:59Z",
+    "hermit_version_stamp": "hermit 0.2.0 (2026-08-07, g4c70658e7858)",
+    "hermit_worktree_dirty": false,
+    "reverie_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+    "reverie_ref": "rrnewton/reverie origin/main, freshly fetched 2026-08-07T01:59Z",
+    "reverie_cargo_locked_rev": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+    "reverie_pin_note": "the Reverie checkout and the git rev Cargo.lock links resolve independently in general; here they are equal, so the measured binary and the recorded reverie_sha agree",
+    "hermit_submodules": {
+      "agent-utils": "a6f4232f849271af4c65585f9861769912411222",
+      "third-party/rr": "39e5c18e7e43236b7ca0fb1eb647fe9c93e3934e"
+    },
+    "parent_producer_commit": "1cbe6331986b3f83ae4bf7e886e2f2e0505ddadd",
+    "producer_script": "compat-envelope/collect-fullcorpus.sh",
+    "producer_script_sha256": "6f8b532d5e581bef125349e6f34ebb7065870e2eda7ef13799354674655fae11",
+    "renderer": "compat-envelope/render-scorecard.rs",
+    "renderer_sha256": "14cebb4fb9e11b3ae3902c963093a5ea540c9c3650560cd2e3a509600f4a52b8",
+    "corpus_c": "compat-envelope/corpus/corpus-c.tsv",
+    "corpus_c_sha256": "54ed0ed059967a881cc9c0bdc1f24d5253fcd27cec54ca9f1c056e3adbf3c78c",
+    "corpus_nonc": "compat-envelope/corpus/corpus-nonc.tsv",
+    "corpus_nonc_sha256": "3184ff833ac1fd7f84d5f7adba5efbd32fcfc4607a9b8242b24e0087139c9bf6",
+    "build": "cargo build --release --locked -p hermit --features third-party-backends, after make install-deps; CARGO_NET_OFFLINE=1",
+    "host": "devbig014",
+    "cores": 316,
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cc": "gcc 11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "rustc": "rustc 1.99.0-nightly (26ae60a9e 2026-07-28)",
+    "cargo": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+    "run_utc_field": "@1786069022",
+    "run_utc_start": "2026-08-07T02:17:02Z",
+    "run_utc_end": "2026-08-07T03:47:25Z",
+    "run_utc_note": "collect-fullcorpus.sh stamps ONE sweep-start epoch on every row, so run_utc is a sweep identity, not a per-cell timestamp; the window above is the sweep start stamp and the mtime of the emitted CSV"
+  },
+  "comparison_contract": {
+    "verify_compare": "stripped",
+    "verify_compare_derivation": "the collector builds every Hermit argv in one place (build_hermit_argv) and never passes --verify-strict, so the --verify leg selects the default Stripped comparator; the column is a recorded constant for this sweep, not a per-row measurement",
+    "det_argv_template": "hermit [--backend B] run --strict --verify [--no-virtualize-cpuid --max-timeslice=disabled if lane=portable] --base-env minimal -e LC_ALL=C -e TZ=UTC -- <guest>",
+    "parity_reference_argv_template": "hermit run --strict [lane flags] --base-env minimal -e LC_ALL=C -e TZ=UTC -- <guest>   (plain --strict, ptrace, NOT --verify)",
+    "deterministic_means": "the --verify leg exited 0 under the stripped comparator (run1 == run2 after normalization)",
+    "stdout_parity_means": "sha256(backend plain --strict piped guest stdout) == sha256(ptrace plain --strict piped guest stdout)",
+    "not_established": [
+      "bitwise DETLOG equality",
+      "address-value equality",
+      "path-string equality",
+      "INFO log, stack detlog, heap detlog comparison",
+      "TTY behaviour"
+    ],
+    "timeout_run_s": 90,
+    "timeout_verify_s": 120,
+    "parallelism": 16,
+    "assert_mode": "--no-assert (measurement, not the green-stays-green gate)"
+  },
+  "backends_measured": [
+    "ptrace",
+    "dbi",
+    "sabre",
+    "e9patch",
+    "liteinst"
+  ],
+  "backends_absent": [
+    "kvm"
+  ],
+  "denominators": {
+    "corpus_nominal_cells": 235,
+    "corpus_measurable_cells": 205,
+    "corpus_unbuildable_cells": 30,
+    "rows_per_backend": 205,
+    "ptrace_pass_denominator": 182,
+    "denominator_rule": "a non-ptrace backend percentage is a fraction of the ptrace cells that themselves passed the golden --strict --verify leg; cells where ptrace did not pass are excluded from every backend percentage"
+  },
+  "ratchet": {
+    "verdict": "the collector's per-backend det floors are NOT satisfiable on this corpus and must not be read as regressions",
+    "reason": "the floors are absolute cell counts calibrated on a 235-cell corpus; only 205 cells are buildable at this Hermit SHA, so ptrace (floor 214) and e9patch (floor 214) exceed the number of cells that can even run",
+    "observed": {
+      "ptrace": {
+        "det": 182,
+        "of": 205,
+        "floor": 214
+      },
+      "dbi": {
+        "det": 157,
+        "of": 205,
+        "floor": 190
+      },
+      "sabre": {
+        "det": 152,
+        "of": 205,
+        "floor": 199
+      },
+      "e9patch": {
+        "det": 182,
+        "of": 205,
+        "floor": 214
+      },
+      "liteinst": {
+        "det": 121,
+        "of": 205,
+        "floor": 118
+      }
+    }
+  },
+  "host_load": {
+    "metric": "1-minute load average sampled every 15s, from /proc/loadavg",
+    "denominator": "316 cores",
+    "coverage": "212 in-window samples spanning 2026-08-07T02:54:28Z-2026-08-07T03:47:25Z, i.e. the last ~53 of the 90 minute sweep; sampling started after the sweep did",
+    "samples": 212,
+    "one_min_min": 29.69,
+    "one_min_median": 57.5,
+    "one_min_max": 1054.85,
+    "contention_note": "the box is shared with ~18 agents and carried a second, independent collect-fullcorpus.sh sweep concurrently with this one; duration_ms and max_rss_kb in the CSV are contended and are not benchmark-grade"
+  },
+  "post_processing": {
+    "raw_producer_output": "collect-fullcorpus.sh --out <ignored>/pre-tightening-raw.csv (19 columns)",
+    "changes_applied_to_scorecard_csv": [
+      "run_id rewritten from the collector's generic literal 'fullcorpus' to 'pre-tightening-baseline-20260806' so these rows are self-identifying and cannot collide with the 2026-08-01 '*-fullcorpus-scorecard' run_ids under the renderer's last-writer-wins --all resolution",
+      "appended a 20th column verify_compare='stripped' so the certification tier travels with every row (the 19-column fullcorpus schema has no field in which a comparator can be recorded)"
+    ],
+    "no_other_changes": "no row was added, removed, reordered or otherwise edited"
+  },
+  "reproduce_command": "HERMIT_REPO=<hermit checkout> REVERIE_REPO=<reverie checkout> HERMIT_BIN=<hermit>/target/release/hermit \\\n  compat-envelope/collect-fullcorpus.sh --backends ptrace,dbi,sabre,e9patch,liteinst \\\n  --par 16 --no-assert --out <out>.csv",
+  "render_backend_columns": [
+    "dbi",
+    "kvm",
+    "sabre",
+    "e9patch",
+    "liteinst"
+  ]
+}

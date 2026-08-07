@@ -40,7 +40,8 @@ is_build_file() {
     case "$1" in
         *.sh | *.bash | *.rs | *.py | *.c | *.h | *.cc | *.cpp | *.cxx | *.go \
             | *.pl | *.rb | *.toml | *.yml | *.yaml | *.config | *.conf | *.cfg \
-            | *.mk | Makefile | Makefile.* | */Makefile | */Makefile.* \
+            | *.mk | *.service | *.timer | Makefile | Makefile.* \
+            | */Makefile | */Makefile.* \
             | Dockerfile | */Dockerfile | Containerfile | */Containerfile \
             | .github/* | .claude/* | .llms/*)
             return 0 ;;
@@ -103,10 +104,22 @@ scan_file() {
 self_test() {
     local hits
 
+    is_build_file scripts/systemd/example.service || {
+        echo "portability self-test failed to scan systemd service units" >&2
+        return 1
+    }
+
     hits=$(printf '%s\n' 'cache="/home/ci-portability-owner/.cache"' |
         scan_file scripts/build.sh)
     [[ -n $hits ]] || {
         echo "portability self-test failed to reject an owner home" >&2
+        return 1
+    }
+
+    hits=$(printf '%s\n' 'runner_host="devbig999.example.com"' |
+        scan_file scripts/build.sh)
+    [[ -n $hits ]] || {
+        echo "portability self-test failed to reject a machine-specific host" >&2
         return 1
     }
 
@@ -122,6 +135,30 @@ self_test() {
         scan_file tests/tool_lookup.rs)
     [[ -z $hits ]] || {
         echo "portability self-test rejected a test PATH fallback" >&2
+        return 1
+    }
+
+    hits=$(printf '%s\n' \
+        'fixture="/home/test/work/dev-hermit/hermit/target/release/hermit"' |
+        scan_file tests/fixture.py)
+    [[ -z $hits ]] || {
+        echo "portability self-test rejected a generic test-home fixture" >&2
+        return 1
+    }
+
+    hits=$(printf '%s\n' \
+        'ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)' |
+        scan_file scripts/build.sh)
+    [[ -z $hits ]] || {
+        echo "portability self-test rejected a repo-relative root" >&2
+        return 1
+    }
+
+    hits=$(printf '%s\n' \
+        'ExecStart=%h/work/dev-hermit/scripts/relay.sh' |
+        scan_file scripts/systemd/example.service)
+    [[ -z $hits ]] || {
+        echo "portability self-test rejected a systemd home specifier" >&2
         return 1
     }
 

@@ -44,7 +44,7 @@
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -77,7 +77,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,run_flags";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -103,6 +103,76 @@ fn git(repo: &Path, args: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn exact_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Resolve the Reverie revision that the measured Hermit binary actually uses.
+/// A sibling checkout is only correlated state; Cargo.lock is the dependency
+/// authority.  More than one locked Reverie revision is an ambiguous build and
+/// therefore not qualifying provenance.
+fn locked_reverie_sha(repo: &Path) -> Option<String> {
+    let lock = fs::read_to_string(repo.join("Cargo.lock")).ok()?;
+    let mut revisions = BTreeSet::new();
+    for line in lock.lines().filter(|line| line.contains("github.com/rrnewton/reverie.git")) {
+        let Some((_, suffix)) = line.rsplit_once('#') else { continue };
+        let sha: String = suffix.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+        if sha.len() == 40 {
+            revisions.insert(sha.to_ascii_lowercase());
+        }
+    }
+    (revisions.len() == 1).then(|| revisions.into_iter().next().unwrap())
+}
+
+fn population_id(cells: &[PlanCell], mode: &str, lane: &str) -> String {
+    let mut keys: Vec<String> = cells
+        .iter()
+        .map(|cell| {
+            format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                mode, lane, cell.bucket, cell.test, cell.mode, cell.backend, cell.cell_state
+            )
+        })
+        .collect();
+    keys.sort();
+    let mut hash = Sha256::new();
+    hash.update(b"scorecard-population-v2\n");
+    for key in keys {
+        hash.update(key.as_bytes());
+        hash.update(b"\n");
+    }
+    format!("sha256:{:x}", hash.finalize())
+}
+
+fn profile_flags(lane: &str, bucket: &str, backend: &str, mode: &str) -> String {
+    let harness_mode = if mode == "regression" { "--ci-only" } else { "--include-manual" };
+    let mut comparison = vec![
+        "run".to_string(),
+        "--backend".to_string(),
+        backend.to_string(),
+        "--strict".to_string(),
+        "--summary".to_string(),
+        "--base-env".to_string(),
+        "minimal".to_string(),
+        "-e".to_string(),
+        "LC_ALL=C".to_string(),
+        "-e".to_string(),
+        "TZ=UTC".to_string(),
+    ];
+    if lane == "portable" {
+        comparison.extend([
+            "--no-virtualize-cpuid".to_string(),
+            "--max-timeslice=disabled".to_string(),
+        ]);
+    }
+    comparison.push("--".to_string());
+    serde_json::json!({
+        "harness": ["run", "--lane", lane, "--category", bucket, "--backend", backend, harness_mode],
+        "comparison": comparison,
+    })
+    .to_string()
 }
 
 fn main() {
@@ -153,17 +223,22 @@ fn main() {
         .or_else(|| env::var("DEV_HERMIT").ok().map(|d| PathBuf::from(d).join("hermit")))
         .unwrap_or_else(|| die("could not locate hermit checkout; pass --repo"));
     let repo = fs::canonicalize(&repo).unwrap_or(repo);
-    let parent = repo.parent().map(Path::to_path_buf).unwrap_or_else(|| here.clone());
-    let reverie = parent.join("reverie");
-
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let meta = Meta {
         run_id: run_id_arg.unwrap_or_else(|| now.to_string()),
         run_utc: format!("@{now}"),
         hermit_sha: git(&repo, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into()),
-        reverie_sha: git(&reverie, &["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into()),
+        reverie_sha: locked_reverie_sha(&repo).unwrap_or_else(|| "unknown".into()),
         dirty: git(&repo, &["status", "--porcelain"]).map(|s| !s.is_empty()).unwrap_or(false),
     };
+    if with_parity
+        && (!exact_sha(&meta.hermit_sha) || !exact_sha(&meta.reverie_sha) || meta.dirty)
+    {
+        die(&format!(
+            "parity requires clean exact code provenance; hermit_sha={:?} reverie_sha={:?} dirty={}",
+            meta.hermit_sha, meta.reverie_sha, meta.dirty
+        ));
+    }
 
     let backends_filter: Option<Vec<String>> =
         backends_arg.map(|l| l.split(',').map(|s| s.trim().to_string()).collect());
@@ -177,6 +252,8 @@ fn main() {
         .filter(|c| buckets_filter.as_ref().map_or(true, |b| b.contains(&c.bucket)))
         .filter(|c| backends_filter.as_ref().map_or(true, |b| b.contains(&c.backend)))
         .collect();
+    let population_id = population_id(&cells, &mode, &lane);
+    let planned_count = cells.len();
 
     eprintln!(
         "collect-envelope: mode={mode} lane={lane} cells={} hermit={} dirty={}",
@@ -201,11 +278,38 @@ fn main() {
     if !csv_path.exists() {
         fs::write(&csv_path, format!("{HEADER}\n")).unwrap_or_else(|e| die(&format!("cannot create CSV: {e}")));
     }
-    let mut out = fs::OpenOptions::new()
-        .append(true)
-        .open(&csv_path)
-        .unwrap_or_else(|e| die(&format!("cannot open CSV for append: {e}")));
-
+    // BIND TO THE FILE'S SCHEMA, not to ours.
+    //
+    // This producer's HEADER is wider than the canonical scorecard (it also records
+    // stdout_parity/parity_exercised/backend_engaged/native_output_hash/
+    // ref_output_hash/run_flags). It used to append its own row shape regardless of
+    // what the target file's header actually was, so appending into the canonical
+    // 23-column scorecard wrote 28-field rows: five values past the last column,
+    // which a reader surfaces as csv.DictReader's None key and which shifts nothing
+    // visibly until someone reads the tail. Read the header and project onto it.
+    let target_header: Vec<String> = {
+        let first = fs::read_to_string(&csv_path)
+            .unwrap_or_else(|e| die(&format!("cannot read CSV header: {e}")));
+        let line = first.lines().next().unwrap_or("").to_string();
+        line.split(',').map(|c| c.trim().to_string()).collect()
+    };
+    // A provenance column is not optional merely because a legacy target header
+    // omitted it.  Dropping one would recreate the exact condition/value split
+    // this producer is responsible for repairing.
+    for required in [
+        "run_id", "run_utc", "hermit_sha", "reverie_sha", "test_id", "backend",
+        "outcome", "deterministic", "ref_output_hash", "parity_comparator",
+        "parity_tier", "profile_flags", "population_id", "selected_count",
+        "executed_count", "evidence_count", "comparison_tier",
+    ] {
+        if !target_header.iter().any(|c| c == required) {
+            die(&format!(
+                "scorecard {} is missing the required column {required:?}; its header has {} \
+                 column(s): {}",
+                csv_path.display(), target_header.len(), target_header.join(",")
+            ));
+        }
+    }
     // Run each (bucket,backend) group through the harness and read its JSONL.
     let mut groups: BTreeMap<(String, String), Vec<PlanCell>> = BTreeMap::new();
     for c in cells {
@@ -230,7 +334,7 @@ fn main() {
         }
     }
 
-    let mut rows_written = 0usize;
+    let mut pending_rows: Vec<(Vec<String>, bool, bool)> = Vec::new();
     let mut regressions: Vec<String> = Vec::new();
     for ((bucket, backend), group) in &groups {
         let unavailable_reason = avail.get(backend).and_then(|r| r.clone());
@@ -247,6 +351,7 @@ fn main() {
         }
         for c in group {
             let hr = outcomes.get(&(c.test.clone(), c.mode.clone()));
+            let executed = hr.is_some();
             let (outcome, duration_ms, reason) = if !available {
                 (
                     "unavailable".to_string(),
@@ -314,7 +419,15 @@ fn main() {
             // compare-mode flag, so hermit runs the Stripped policy, whose own
             // --verify-json reports bitwise_parity:false. `bitwise` is therefore
             // NOT emittable here and is not merely unset -- it is unreachable.
-            let tier = if verify_compare.is_empty() { "" } else { "stripped" };
+            // `stripped-uncounted`, NOT `stripped`. This harness does not read
+            // --verify-json, so it has no compared-message count to report -- and the
+            // wired verifier requires a count from anything claiming `stripped`,
+            // because a log comparison that cannot say how much it compared could have
+            // compared nothing. Emitting `stripped` here produced rows this very
+            // producer's own verifier refused. The uncounted tier states the comparator
+            // that ran and admits the missing count in its name, which is exactly what
+            // the historical rows carry, so fresh and migrated rows agree.
+            let tier = if verify_compare.is_empty() { "" } else { "stripped-uncounted" };
             // Blank, not "0": this harness does not read --verify-json, so it has
             // no parity boolean and no message counts to report. Blank means "not
             // recorded"; a 0 would assert a measurement that was never taken.
@@ -363,16 +476,15 @@ fn main() {
             } else {
                 reason
             };
-            // WHICH INVOCATION produced this row. Without it, "pass" is ambiguous across
-            // strictness levels: the same cell id can be run under different harness flags and
-            // the CSV would render both as an identical green. These are the flags
-            // `run_group` actually passes for this (bucket, backend, run mode).
-            let run_flags = format!(
-                "--lane {lane} --category {bucket} --backend {backend} {} | test_mode={}",
-                if mode == "regression" { "--ci-only" } else { "--include-manual" },
-                c.mode
-            );
-            let row = [
+            let has_parity_evidence = parity.is_some();
+            let parity_comparator = if has_parity_evidence {
+                "stdout-sha256-exact-v1"
+            } else {
+                ""
+            };
+            let parity_tier = if has_parity_evidence { "stdout-exact" } else { "" };
+            let profile_flags = profile_flags(&lane, bucket, backend, &mode);
+            let row = vec![
                 meta.run_id.clone(),
                 meta.run_utc.clone(),
                 meta.hermit_sha.clone(),
@@ -403,14 +515,64 @@ fn main() {
                 bitwise_parity.to_string(),
                 compared_log_messages.to_string(),
                 tier.to_string(),
-                run_flags,
+                String::new(), // legacy_parity_unqualified: producers never write legacy claims
+                parity_comparator.to_string(),
+                parity_tier.to_string(),
+                profile_flags,
+                population_id.clone(),
+                String::new(), // selected_count: filled after every row is known
+                String::new(), // executed_count
+                String::new(), // evidence_count
+                // This collector compares stdout only.  It must state that
+                // limitation on every row and can never mint either strict
+                // green tier merely because the execution itself passed.
+                "unqualified-stdout-only".to_string(),
             ];
-            let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
-            writeln!(out, "{line}").unwrap_or_else(|e| die(&format!("CSV write failed: {e}")));
-            rows_written += 1;
+            pending_rows.push((row, executed, has_parity_evidence));
         }
     }
-    eprintln!("collect-envelope: wrote {rows_written} rows to {}", csv_path.display());
+    let executed_count = pending_rows.iter().filter(|(_, executed, _)| *executed).count();
+    let evidence_count = pending_rows.iter().filter(|(_, _, evidence)| *evidence).count();
+    if pending_rows.len() != planned_count {
+        die(&format!(
+            "selected population changed while running: planned={planned_count} rows={}",
+            pending_rows.len()
+        ));
+    }
+    let names: Vec<&str> = HEADER.split(',').collect();
+    let set_named = |row: &mut Vec<String>, name: &str, value: String| {
+        let index = names
+            .iter()
+            .position(|candidate| *candidate == name)
+            .unwrap_or_else(|| die(&format!("internal HEADER missing {name}")));
+        row[index] = value;
+    };
+    let mut out = fs::OpenOptions::new()
+        .append(true)
+        .open(&csv_path)
+        .unwrap_or_else(|e| die(&format!("cannot open CSV for append: {e}")));
+    for (mut row, _, _) in pending_rows {
+        set_named(&mut row, "selected_count", planned_count.to_string());
+        set_named(&mut row, "executed_count", executed_count.to_string());
+        set_named(&mut row, "evidence_count", evidence_count.to_string());
+        let line = target_header
+            .iter()
+            .map(|col| {
+                let want: &str = if col == "parity" { "stdout_parity" } else { col.as_str() };
+                match names.iter().position(|name| *name == want) {
+                    Some(index) => csv_field(&row[index]),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        writeln!(out, "{line}").unwrap_or_else(|e| die(&format!("CSV write failed: {e}")));
+    }
+    eprintln!(
+        "collect-envelope: wrote {} rows to {} (executed={executed_count} parity_evidence={evidence_count} population={population_id})",
+        planned_count,
+        csv_path.display()
+    );
 
     // Whole-envelope green gate (owner: `validate`/CI asserts every known-green
     // cell stayed green as a side effect of writing the CSV).
@@ -425,7 +587,10 @@ fn main() {
         exit(1);
     }
     if assert_green {
-        eprintln!("collect-envelope: envelope GREEN — all enabled cells passed.");
+        eprintln!(
+            "collect-envelope: RAW EXECUTION PASS — all enabled cells passed, but every new row is comparison_tier=unqualified-stdout-only; emitted strict greens: 0/{}",
+            planned_count
+        );
     }
 }
 

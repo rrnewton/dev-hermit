@@ -129,6 +129,7 @@ def create_obligation(
     landed_sha: str,
     land_mode: str,
     verification_scope: str = "total",
+    verification_policy: Mapping[str, Any] | None = None,
     actor: str = "unknown",
     obligation_id: str | None = None,
     path: Path | None = None,
@@ -139,6 +140,8 @@ def create_obligation(
         raise StoreError("land_mode must be 'admin' or 'speculative'")
     if verification_scope not in {"total", "incremental"}:
         raise StoreError("verification_scope must be 'total' or 'incremental'")
+    if verification_policy is not None and not isinstance(verification_policy, Mapping):
+        raise StoreError("verification_policy must be an object")
 
     opened_at = utc_now()
     obligation_id = obligation_id or (
@@ -170,23 +173,36 @@ def create_obligation(
                 "landed_sha": landed_sha,
                 "land_mode": land_mode,
                 "verification_scope": verification_scope,
+                "verification_policy": copy.deepcopy(verification_policy),
                 "actor": actor,
                 "opened_at": opened_at,
                 "updated_at": opened_at,
                 "overall_state": "open",
+                "launch": {
+                    "state": "pending",
+                    "token": None,
+                    "launcher_pid": None,
+                    "attempt": 0,
+                    "started_at": None,
+                    "armed_at": None,
+                    "last_error": None,
+                },
                 "first_terminal_at": None,
                 "satisfied_at": None,
                 "failure_source": None,
                 "failure_summary": None,
                 "recommendation": None,
                 "local": {
-                    "state": "pending",
+                    "state": "not_started",
                     "started_at": None,
                     "finished_at": None,
                     "exit_code": None,
                     "log_path": None,
                     "pid": None,
+                    "launch_token": None,
+                    "registered_at": None,
                     "workspace": None,
+                    "receipt_verification": None,
                     "cost": {
                         "estimate": None,
                         "actual": None,
@@ -194,16 +210,27 @@ def create_obligation(
                     },
                 },
                 "github": {
-                    "state": "pending",
+                    "state": "no_result",
                     "started_at": None,
                     "finished_at": None,
                     "run_ids": [],
                     "urls": [],
                     "workflow_name": None,
                     "event": None,
-                    "last_poll_error": None,
+                    "required_positive_count": None,
+                    "positive_count": 0,
+                    "jobs": [],
+                    "last_poll_error": "no dereferenced workflow producer",
                 },
-                "watcher": {"pid": None, "log_path": None, "started_at": None},
+                "watcher": {
+                    "state": "pending",
+                    "pid": None,
+                    "launch_token": None,
+                    "log_path": None,
+                    "started_at": None,
+                    "finished_at": None,
+                    "exit_code": None,
+                },
                 "alert": {"state": "none", "raised_at": None},
                 "remediation": {
                     "state": "none",
@@ -241,6 +268,82 @@ def transition(
             immutable = {"obligation_id", "repo", "landed_sha", "opened_at"}
             if immutable.intersection(patch):
                 raise StoreError("transition cannot change immutable obligation identity")
+            if (
+                "verification_policy" in patch
+                and previous.get("verification_policy") is not None
+                and patch["verification_policy"] != previous["verification_policy"]
+            ):
+                raise StoreError("transition cannot change bound verification policy")
+            _merge(record, patch)
+            now = utc_now()
+            record.update(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "event_id": uuid.uuid4().hex,
+                    "event_type": event_type,
+                    "recorded_at": now,
+                    "updated_at": now,
+                }
+            )
+            _append_locked(handle, record)
+            return record
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _matches_expected(record: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    """Whether every expected leaf still has the same value in ``record``."""
+    for key, value in expected.items():
+        observed = record.get(key)
+        if isinstance(value, Mapping):
+            if not isinstance(observed, Mapping) or not _matches_expected(
+                observed, value
+            ):
+                return False
+        elif observed != value:
+            return False
+    return True
+
+
+def transition_if_matches(
+    obligation_id: str,
+    event_type: str,
+    patch: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Append ``patch`` only if the latest record still matches ``expected``.
+
+    This compare-and-append primitive is the launch/recovery arbitration point:
+    two recovering processes may inspect the same OPEN record, but only one can
+    claim a verifier token or register a process for that token.
+    """
+    if not event_type or not re.fullmatch(r"[a-z][a-z0-9_-]*", event_type):
+        raise StoreError(f"invalid event_type {event_type!r}")
+    store = path or default_store_path()
+    store.parent.mkdir(parents=True, exist_ok=True)
+    with store.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            latest = _latest_from_handle(handle)
+            try:
+                previous = latest[obligation_id]
+            except KeyError as error:
+                raise StoreError(f"unknown obligation {obligation_id!r}") from error
+            if not _matches_expected(previous, expected):
+                return None
+            record = copy.deepcopy(previous)
+            immutable = {"obligation_id", "repo", "landed_sha", "opened_at"}
+            if immutable.intersection(patch):
+                raise StoreError(
+                    "transition cannot change immutable obligation identity"
+                )
+            if (
+                "verification_policy" in patch
+                and previous.get("verification_policy") is not None
+                and patch["verification_policy"] != previous["verification_policy"]
+            ):
+                raise StoreError("transition cannot change bound verification policy")
             _merge(record, patch)
             now = utc_now()
             record.update(

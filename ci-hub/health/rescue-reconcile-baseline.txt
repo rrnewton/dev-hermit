@@ -1,0 +1,29 @@
+# rescue/auto-* commits already triaged as of 2026-08-07.
+# They are still LISTED by rescue_ref_reconcile.py; they just do not fail it.
+# Purpose: a check that can never go green gets muted, and then the NEXT drop
+# is invisible again -- which is the whole failure this tool exists to prevent.
+# Remove a line once its commit is cherry-picked or its ref deleted.
+009282bdeeb434d412afecee19d4742f698711f4  # docs: Reverie tool address-space architecture per backend
+0b596785746451bee7471b1b2843d5f4a5e56953  # compat-envelope: pin the guest environment so stack-derived observables compare
+0c8efc59cf71c0a8a0ed04b54bd1528d8cad9cf1  # demos: add controllable verbosity to demo 4 schedule bisection
+0e8968604dce041433942459db9d221d53d8c4ed  # health alarm: bind timer liveness to the timer, not to a lagging mtime
+1459b5bfbc390e111fa03f70834c04024ce68411  # Add scripts/check-reverie-dep.sh: reverie dep/submodule pin lint
+18fd9889ab4f9b32826f2c3ac6fc711ae28e646a  # docs: KVM M3 Detcore-integration status (blocked, evidence-based)
+1a428852e39336f5fa87b648fe1878acd47b3004  # demos: quit GDB after replay continue to avoid timeout hang
+1daab69aa575ea1877a7f441e9605b2f16380128  # Merge branch 'impl-demo-descriptions-prereq' into demo-merge-078
+27ed552d597a72cb1afb41844dd1a2c8473045ea  # Document scx-sim replay strategy
+4e0495550c83e95a8ef6a21b9db035e2ac4eda02  # Provision QEMU demo assets automatically
+4e0cdb02964969494c7e231c70699d3f1343bf45  # ai_docs: census and classify all 616 nonterminal TaskGraph tasks
+659c5850cfe5dd9e31048cd2268163967eda7aa8  # Document Hermit runtime overhead profile
+9daf126a233da85261e66f033746fbe72a664ae0  # Preserve hermit-dev plugin and worktree registry WIP before branch switch
+9ef3743f54fd9b2917f5c03d940daf17de3f73aa  # Add top-level Hermit demo walkthrough and runnable scripts
+a3e7de071c579bedf438f78e7e50c8b585a795da  # demos: run correctly from a /tmp checkout and quit GDB cleanly
+b99530dd4323a99de459b44d4af106698be6fe61  # demos: fix meaningless --verify (empty logs) and use a racy guest
+c7ff0a1bb37dd2f8fb1e94873d192488d7575dbc  # docs: reverie-kvm Guest trait audit vs ptrace/DBI
+ce0e078836c672ec616aef98eefc5baad8ce141d  # docs: SaBRe backend status snapshot
+d135ed3351062b17a2d66b129db9993d83c8f073  # agent-utils: pin final-head landing rules
+de0905b74369e876b0fa6c9322ff02b5a4ea7ba1  # Derive the checkout at runtime instead of hard-coding one owner's home
+e64687c06379ebd9b5498c844484c294b04295c1  # demos: self-document, check prerequisites, and clean demo 4 output
+ebfd9485ea84a589314638d9dd9e83d3061369a0  # docs: gVisor KVM architecture -> hermit/reverie mapping
+f33b00545de8bb568fc8611b60e44eda73f36655  # Add relaxed QEMU Linux boot demo
+fed884428b575b33f26bacbf9246f0c16393bc12  # Add Hermit development coordinator plugin

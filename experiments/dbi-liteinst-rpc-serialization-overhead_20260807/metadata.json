@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "experiment": "dbi-liteinst-rpc-serialization-overhead",
+  "run_id": "20260807T050215Z-devbig014-k1",
+  "run_utc": "2026-08-07T05:02:15Z",
+  "repository": "rrnewton/dev-hermit",
+  "repository_sha": "8c3c7dffc01107aac153a37946b55c143f9895c1",
+  "hermit_sha": "75506005d873a76f62be00b1d82696188651047a",
+  "reverie_pinned_sha": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+  "reverie_live_main_sha": "6144323c5dab8b521278fce206f8774360c2b05f",
+  "liteinst2_sha": "8bf704feb06a62e7a05bee3b237d70793e4e2689",
+  "dirty": true,
+  "dirty_reason": "tracked parent base clean; exact producer was the untracked experiment directory, bound by script_sha256",
+  "short_hostname": "devbig014",
+  "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443 x86_64",
+  "cpu_model": "AMD EPYC 9D85 158-Core Processor",
+  "logical_cpus": 316,
+  "tool_versions": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)",
+    "python": "3.12.13+meta"
+  },
+  "script_sha256": "7770825211202792eb12954fc480c40cc9cd5e559fb61db99dcf06a2330938c9",
+  "cargo_toml_sha256": "5620503c296af148bff3281f9d13ec1b998cdcf3f75e33b87e115702f884f16b",
+  "cargo_lock_sha256": "76f4d7745eaf9f0e63c61ffcc2df79ff46cc5fd2be7966182f62645939488064",
+  "binary_sha256": "eabfc84fbda2a866fc0e9b14f326c20d007a11e080d02f99c4573b4e375893c6",
+  "raw_log_path": "raw.txt",
+  "raw_log_sha256": "851045eaa16d0af510051749da23b59997ec34dc158aa8b42dc02a70d3643f81",
+  "load_probe_sha256": "df62101c687d129a110c97ae941432b98c716cf4c80fd016838474507e23bc0a",
+  "payload": {
+    "request": "GlobalTimeLowerBound",
+    "request_bytes": 74,
+    "response_bytes": 13,
+    "total_bytes": 87,
+    "codec": "bincode 2 config::legacy()"
+  },
+  "correctness_gate": "request and response encode/decode exact equality before timing",
+  "warmups_per_variant": 100000,
+  "iterations_per_rep_per_variant": 1000000,
+  "repetitions": 9,
+  "timed_iterations": {
+    "direct_clone": 9000000,
+    "bincode_roundtrip": 9000000,
+    "total": 18000000
+  },
+  "order": "alternating first variant by repetition; direct first on even zero-based reps",
+  "statistic": "median of paired per-repetition bincode-minus-direct ns/RPC",
+  "timeout_seconds": 120,
+  "box": {
+    "systemd_unit": "run-p1034762-i79900765.scope",
+    "invocation_id": "dbe1be1157f143b4aaef7e7c56709a89",
+    "memory_max_bytes": 2147483648,
+    "tasks_max": 64,
+    "cpu_quota_percent": 100,
+    "selected_cpus": [1],
+    "selection": "least-busy free CPU; affinity inherited by process tree"
+  },
+  "load_probe": {
+    "path": "load.json",
+    "executing_percent": 12.261991598963705,
+    "idle_percent": 87.68267223382045,
+    "memory_available_percent": 70.49602496058681,
+    "suitable": true
+  },
+  "result": {
+    "paired_added_median_ns": 226.007874,
+    "paired_added_p25_ns": 225.697659,
+    "paired_added_p75_ns": 226.901215,
+    "failures": 0,
+    "timeouts": 0
+  }
+}

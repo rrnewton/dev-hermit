@@ -35,9 +35,6 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly ROOT_DIR
-
 readonly DEFAULT_DB="hermit"
 readonly GATED_CODEX_SANDBOX_FLAG="--dangerously-disable-linux-sandbox"
 

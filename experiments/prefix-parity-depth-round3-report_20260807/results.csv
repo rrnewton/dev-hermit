@@ -1,0 +1,25 @@
+round,guest,backend,status,y,z,qualifying_trials,attempted_trials,emitted_records,execution,first_divergence_index,first_divergence_commit,first_difference,hermit_sha
+1,bin-true,ptrace,MEASURED_SELF_REFERENCE,5,5,1,1,5,"self-comparison; independent repeat not recorded",,,none; full prefix,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-true,liteinst,MEASURED_DEPTH,2,5,1,1,31,completion status not recorded,2,COMMIT turn 2,injected LiteInst DSO Path replaces /etc/ld.so.cache,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-true,dbi,SETUP_UNAVAILABLE,,5,0,1,0,backend support not included,,,no qualifying candidate log,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-true,sabre,NOT_RUN,,5,0,0,0,backend not offered by binary,,,no candidate invocation,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-true,kvm,NOT_RUN,,5,0,0,0,backend not offered by binary,,,no candidate invocation,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-true,e9patch,NOT_RUN,,5,0,0,0,backend not offered by binary,,,no candidate invocation,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-echo-hi,ptrace,MEASURED_SELF_REFERENCE,6,6,1,1,6,"self-comparison; independent repeat not recorded",,,none; full prefix,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-echo-hi,liteinst,MEASURED_DEPTH,2,6,1,1,32,completion status not recorded,2,COMMIT turn 2,injected LiteInst DSO Path replaces /etc/ld.so.cache,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-echo-hi,dbi,SETUP_UNAVAILABLE,,6,0,1,0,backend support not included,,,no qualifying candidate log,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-echo-hi,sabre,NOT_RUN,,6,0,0,0,backend not offered by binary,,,no candidate invocation,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-echo-hi,kvm,NOT_RUN,,6,0,0,0,backend not offered by binary,,,no candidate invocation,f89c69766371806d3c9b2c3003531df2d59d6118
+1,bin-echo-hi,e9patch,NOT_RUN,,6,0,0,0,backend not offered by binary,,,no candidate invocation,f89c69766371806d3c9b2c3003531df2d59d6118
+2,coreutil-wc,ptrace,MEASURED_GOLDEN,7,7,2,2,7,"rc 0; replicate stdout and COMMIT stream identical",,,none; full prefix,75506005d873a76f62be00b1d82696188651047a
+2,coreutil-wc,liteinst,MEASURED_DEPTH,2,7,1,1,33,rc 0; stdout matches,2,COMMIT turn 2,injected LiteInst DSO Path replaces /etc/ld.so.cache,75506005d873a76f62be00b1d82696188651047a
+2,coreutil-wc,kvm,MEASURED_DEPTH,2,7,1,1,7,rc 0; stdout matches,2,COMMIT turn 2,same /etc/ld.so.cache Path but virtual time differs,75506005d873a76f62be00b1d82696188651047a
+2,coreutil-wc,dbi,SETUP_UNAVAILABLE,,7,0,1,0,backend support not included,,,no qualifying candidate log,75506005d873a76f62be00b1d82696188651047a
+2,coreutil-wc,sabre,SETUP_UNAVAILABLE,,7,0,1,0,backend support not included,,,no qualifying candidate log,75506005d873a76f62be00b1d82696188651047a
+2,coreutil-wc,e9patch,SETUP_UNAVAILABLE,,7,0,1,0,backend support not included,,,no qualifying candidate log,75506005d873a76f62be00b1d82696188651047a
+2,fork-exec-pipeline,ptrace,MEASURED_GOLDEN,30,30,2,2,30,"rc 0; replicate stdout and COMMIT stream identical",,,none; full prefix,75506005d873a76f62be00b1d82696188651047a
+2,fork-exec-pipeline,liteinst,MEASURED_DEPTH_AND_EXECUTION_FAIL,2,30,1,1,37,rc 1; empty stdout; cleanup ENOTSUPP,2,COMMIT turn 2,injected LiteInst DSO Path replaces /etc/ld.so.cache,75506005d873a76f62be00b1d82696188651047a
+2,fork-exec-pipeline,kvm,MEASURED_DEPTH_AND_EXECUTION_FAIL,2,30,1,1,5836,rc 1; stdout 0 expected 2; wc EAGAIN,2,COMMIT turn 2,same /etc/ld.so.cache Path but virtual time differs,75506005d873a76f62be00b1d82696188651047a
+2,fork-exec-pipeline,dbi,SETUP_UNAVAILABLE,,30,0,1,0,backend support not included,,,no qualifying candidate log,75506005d873a76f62be00b1d82696188651047a
+2,fork-exec-pipeline,sabre,SETUP_UNAVAILABLE,,30,0,1,0,backend support not included,,,no qualifying candidate log,75506005d873a76f62be00b1d82696188651047a
+2,fork-exec-pipeline,e9patch,SETUP_UNAVAILABLE,,30,0,1,0,backend support not included,,,no qualifying candidate log,75506005d873a76f62be00b1d82696188651047a

@@ -72,7 +72,7 @@ def needs_impl(invariant: str) -> None:
 # file and is exactly what §7 lint 3 refuses.
 
 TEAM_A, TEAM_B = "hermit", "reverie-infra"
-HOST_1, HOST_2 = "devbig014", "devbig030"
+HOST_1, HOST_2 = "hosta", "hostb"
 SHA_1 = "a" * 40
 SHA_2 = "b" * 40
 SHA_3 = "c" * 40
@@ -258,7 +258,7 @@ def test_deleting_a_line_is_detected():
 def test_appending_to_a_frozen_past_month_shard_is_rejected():
     needs_impl("a line whose emitted_at month != the shard's month is refused (§7 lint 8)")
     e = result("01A", SHA_1, "pass", emitted_at="2026-09-01T00:00:00Z")
-    assert "frozen-shard-append" in impl.validate_event(e, "ledger/hermit/devbig014/2026-08.jsonl")
+    assert "frozen-shard-append" in impl.validate_event(e, f"ledger/hermit/{HOST_1}/2026-08.jsonl")
 
 
 # ---- same-shard serialization & disjoint-machine merge ---------------------
@@ -410,7 +410,7 @@ def test_unknown_envelope_version_is_rejected():
 
 # ---- privacy ---------------------------------------------------------------
 
-@pytest.mark.parametrize("bad_host", ["devbig014.example.internal", "devbig014.corp", "a.b"])
+@pytest.mark.parametrize("bad_host", ["hosta.example.internal", "hosta.corp", "a.b"])
 def test_fqdn_host_is_rejected(bad_host):
     needs_impl(f"a dotted host ({bad_host!r}) is refused — short names only (§7 lint 1)")
     assert "fqdn-host" in impl.validate_event(result("01A", SHA_1, "pass", host=bad_host), None)
