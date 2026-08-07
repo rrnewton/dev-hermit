@@ -31,7 +31,9 @@ class FakeRunner:
         artifact_present=True,
         artifact_type="blob",
         artifact_ancestry_rc=0,
+        tags="implemented",
     ):
+        self.tags = tags
         self.code_state = code_state
         self.artifact_present = artifact_present
         self.artifact_type = artifact_type
@@ -97,6 +99,11 @@ class FakeRunner:
             return completed(command, rc=self.artifact_ancestry_rc)
         if command[:4] == ("git", "-C", str(verified_close.ROOT), "rev-parse"):
             return completed(command, stdout="c" * 40 + "\n")
+        if command[:2] == ("tg", "show"):
+            # A READ, not a mutation. Keeping it out of task_mutations is what
+            # lets the "refused paths never touch the task" assertions stay
+            # meaningful now that the gateway reads tags before closing.
+            return completed(command, stdout=f"Status:    IN_PROGRESS\nTags:      {self.tags}\n")
         if command and command[0] == "tg":
             self.task_mutations.append(command)
             return completed(command)
@@ -113,14 +120,20 @@ class VerifiedCloseTest(unittest.TestCase):
         self.assertEqual(verified_close.UNVERIFIABLE, rc)
         self.assertEqual([], runner.task_mutations)
 
-    def test_refused_and_unverifiable_are_distinct(self):
-        refused = FakeRunner(code_state="not-landed")
+    # CONTRACT CHANGE, 2026-08-06 (close-on-implemented + single drain). This
+    # test previously asserted that a resolved-but-not-landed reference was
+    # REFUSED, pairing it with the unverifiable case. Under the new rule those
+    # two are no longer the same kind of thing: "not landed yet" is a VERIFIED
+    # state that closes, while "did not resolve" still refuses. Rewritten in
+    # place rather than deleted so the reversal is visible in review.
+    def test_not_landed_closes_while_unverifiable_still_refuses(self):
+        unlanded = FakeRunner(code_state="not-landed")
         unverifiable = FakeRunner(code_state="unverifiable")
         self.assertEqual(
-            verified_close.REFUSED,
+            verified_close.CLOSED,
             verified_close.main(
                 ["fixture-task", "--code", "b" * 40, "--source", "."],
-                run=refused,
+                run=unlanded,
             ),
         )
         self.assertEqual(
@@ -130,8 +143,66 @@ class VerifiedCloseTest(unittest.TestCase):
                 run=unverifiable,
             ),
         )
-        self.assertEqual([], refused.task_mutations)
+        self.assertNotEqual([], unlanded.task_mutations)
         self.assertEqual([], unverifiable.task_mutations)
+
+    def test_unlanded_closure_records_the_landing_state_in_the_note(self):
+        """`closed` no longer implies landed, so the note must say which it was.
+
+        Without this the closure record is indistinguishable from a landing
+        claim -- the exact proxy-binding error the drain rule exists to avoid.
+        """
+        runner = FakeRunner(code_state="not-landed")
+        self.assertEqual(
+            verified_close.CLOSED,
+            verified_close.main(
+                ["fixture-task", "--code", "b" * 40, "--source", "."], run=runner
+            ),
+        )
+        notes = [c for c in runner.task_mutations if c[:2] == ("tg", "note")]
+        self.assertEqual(1, len(notes), notes)
+        self.assertIn("landing=implemented-unlanded", notes[0][-1])
+        self.assertIn("b" * 40, notes[0][-1])
+
+        landed = FakeRunner(code_state="landed")
+        verified_close.main(
+            ["fixture-task", "--code", "a" * 40, "--source", "."], run=landed
+        )
+        landed_notes = [c for c in landed.task_mutations if c[:2] == ("tg", "note")]
+        self.assertIn("landing=landed", landed_notes[0][-1])
+
+    def test_unlanded_close_is_refused_when_the_implemented_tag_is_absent(self):
+        """The negative bracket for the tag gate.
+
+        `drain-implemented-to-landed` selects on the `implemented` tag. Closing
+        an unlanded task without it would drop the work out of ready, active,
+        AND the drain simultaneously -- invisible rather than pending. Plant the
+        violating case (no tag) and confirm refusal with no task mutation.
+        """
+        runner = FakeRunner(code_state="not-landed", tags="infra, process")
+        self.assertEqual(
+            verified_close.REFUSED,
+            verified_close.main(
+                ["fixture-task", "--code", "b" * 40, "--source", "."], run=runner
+            ),
+        )
+        self.assertEqual([], runner.task_mutations)
+
+    def test_landed_close_does_not_require_the_implemented_tag(self):
+        """Anti-vacuity guard for the gate above.
+
+        A gate that refused every untagged close would also block the ordinary
+        landed path, so assert the tag requirement is scoped to the unlanded
+        state only.
+        """
+        runner = FakeRunner(code_state="landed", tags="infra, process")
+        self.assertEqual(
+            verified_close.CLOSED,
+            verified_close.main(
+                ["fixture-task", "--code", "a" * 40, "--source", "."], run=runner
+            ),
+        )
+        self.assertNotEqual([], runner.task_mutations)
 
     def test_three_legitimate_fixture_closures_succeed(self):
         runner = FakeRunner()
