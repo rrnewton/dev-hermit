@@ -31,15 +31,22 @@ is the operational summary of the coordinator role.
 - **Primaries ALWAYS on `main`.** Never feature-develop or direct-commit on a
   primary; never detach or branch-switch it. After any op touching a primary,
   verify `git branch --show-current` == `main`.
-- **Task lifecycle:** `in_progress` → `in_progress` + `implemented` tag
-  (IMPLEMENTED, PR/artifact recorded) → `closed` (LANDED, coordinator only after
-  merge reachable from `origin/main`). An implementation agent posts the PR or
-  artifact URL, exact SHA, and evidence, adds the `implemented` tag, leaves the
-  status `in_progress`, and stops. `resolved` aliases to `closed`; never let a
-  working agent close its own task. Closing earlier hides unlanded work from the
-  active drain and makes implementation look delivered. Never use raw
-  `tg update --status closed`; a gateway `REFUSED` or `UNVERIFIABLE` result
+- **Task lifecycle:** `in_progress` → `closed` + `implemented` tag, closed by the
+  coordinator once the work is **published and reviewed** — *not* after the merge.
+  An implementation agent posts the PR or artifact URL, exact SHA, and evidence,
+  adds the `implemented` tag, and stops without touching status. `resolved`
+  aliases to `closed`; never let a working agent close its own task. Never use
+  raw `tg update --status closed`; a gateway `REFUSED` or `UNVERIFIABLE` result
   leaves the task nonterminal.
+- **Landing lives in ONE task: `drain-implemented-to-landed`.** Do not hold
+  implementation tasks open to represent pending merges — that is what produced
+  ~200 rows that looked like active work and buried ready priority work. A
+  `closed` + `implemented` task is *pending landing and quiet*: it must not
+  surface in ready, active, or stuck views. When the PR merges, update the drain
+  task, not the implementation task. **Closure is reversible** — if an
+  implementation proves invalid, reopen it to `in_progress`, strip `implemented`,
+  and say why in a note. That reversibility is what makes closing-before-landing
+  safe.
 - **Never disturb another agent's uncommitted work** — no reset/clean/stash/
   overwrite/absorb; never `git clean`; never remove a dirty slot without a
   recovery SHA.

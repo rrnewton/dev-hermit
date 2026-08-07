@@ -1,0 +1,72 @@
+2026-08-07T03:29:43.944493Z  INFO detcore::scheduler::runqueue: DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0
+2026-08-07T03:29:43.946448Z  INFO detcore::scheduler: [scheduler] daemon task starting up, waiting for guest thread start..
+2026-08-07T03:29:43.946690Z  INFO detcore::tool_local: DETLOG USER RAND: seeding PRNG for root thread with seed 0
+2026-08-07T03:29:43.946710Z  INFO detcore::tool_local: DETLOG CHAOSRAND: seeding chaos scheduler with seed 0
+2026-08-07T03:29:43.949142Z  INFO detcore::scheduler: [scheduler] guest in queue, scheduler proceeding..
+2026-08-07T03:29:43.949274Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_000s
+2026-08-07T03:29:43.949512Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 1, dettid 3 using resources {MemAddrSpace(DetPid(3)): RW}, on previously committed 1_767_225_600.000_500_000s
+2026-08-07T03:29:43.949563Z  INFO detcore::tool_global: [detcore, dtid 3] New thread given go-ahead to proceed via <ivar Go(None)>
+2026-08-07T03:29:43.953491Z  INFO detcore: DETLOG [post_exec, dtid 3] init auxv AT_RANDOM value to [162, 205, 24, 211, 0, 83, 122, 92, 176, 131, 220, 72, 219, 250, 14, 242]
+2026-08-07T03:29:43.954297Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(12289, 0x7fffffffec80) = ?
+2026-08-07T03:29:43.954369Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #2: arch_prctl(12289, 0x7fffffffec80) = Err(Errno(EINVAL))
+2026-08-07T03:29:43.954478Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(NULL) = ?
+2026-08-07T03:29:43.954535Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #3: brk(NULL) = Ok(4968448)
+2026-08-07T03:29:43.954578Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(0x4bdd80) = ?
+2026-08-07T03:29:43.954616Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #4: brk(0x4bdd80) = Ok(4971904)
+2026-08-07T03:29:43.954664Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: arch_prctl(ARCH_SET_FS, 4969344) = ?
+2026-08-07T03:29:43.954700Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #5: arch_prctl(ARCH_SET_FS, 4969344) = Ok(0)
+2026-08-07T03:29:43.954748Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: set_tid_address(0x4bd650) = ?
+2026-08-07T03:29:43.954786Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #6: set_tid_address(0x4bd650) = Ok(3)
+2026-08-07T03:29:43.954837Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: set_robust_list(0x4bd660, 24) = ?
+2026-08-07T03:29:43.954869Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #7: set_robust_list(0x4bd660, 24) = Ok(0)
+2026-08-07T03:29:43.954922Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: rseq(4971808, 32, 0, 1392848979, 0, 2048) = ?
+2026-08-07T03:29:43.954933Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #8: rseq(4971808, 32, 0, 1392848979, 0, 2048) = Err(Errno(ENOSYS))
+2026-08-07T03:29:43.955001Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: uname(0x7fffffffeb30) = ?
+2026-08-07T03:29:43.955100Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #9: uname(0x7fffffffeb30) = Ok(0)
+2026-08-07T03:29:43.955163Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: prlimit64(0, 3, NULL, 0x7fffffffecb0) = ?
+2026-08-07T03:29:43.955197Z  INFO detcore::syscalls::sysinfo: DETLOG prlimit64: pid=0, resource=3, mutation=false, old=8388608:18446744073709551615
+2026-08-07T03:29:43.955209Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #10: prlimit64(0, 3, NULL, 0x7fffffffecb0) = Ok(0)
+2026-08-07T03:29:43.955280Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: readlink(0x48db78 -> "/proc/self/exe", 0x7fffffffdbf0, 4096) = ?
+2026-08-07T03:29:43.955383Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #11: readlink(0x48db78 -> "/proc/self/exe", 0x7fffffffdbf0, 4096) = Ok(27)
+2026-08-07T03:29:43.955444Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: getrandom(0x4bbf70, 8, 1) = ?
+2026-08-07T03:29:43.955476Z  INFO detcore::syscalls::misc: DETLOG [dtid 3] USER RAND [getrandom] Filled guest memory with 8 random bytes, hash of bytes: 9401673912765844831
+2026-08-07T03:29:43.955484Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #12: getrandom(0x4bbf70, 8, 1) = Ok(8)
+2026-08-07T03:29:43.955547Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(NULL) = ?
+2026-08-07T03:29:43.955578Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #13: brk(NULL) = Ok(4971904)
+2026-08-07T03:29:43.955611Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(0x4ded80) = ?
+2026-08-07T03:29:43.955643Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #14: brk(0x4ded80) = Ok(5107072)
+2026-08-07T03:29:43.955679Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: brk(0x4df000) = ?
+2026-08-07T03:29:43.955707Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #15: brk(0x4df000) = Ok(5107712)
+2026-08-07T03:29:43.955763Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: mprotect(0x4b1000, 16384, ProtFlags(PROT_READ)) = ?
+2026-08-07T03:29:43.955811Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b1000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+2026-08-07T03:29:43.955864Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: fstat(1, 0x7fffffffeab0) = ?
+2026-08-07T03:29:43.955993Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: fstat(1, 0x7fffffffeab0) = Ok(0)
+2026-08-07T03:29:43.956048Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: write(1, 0x4be8a0, 16) = ?
+2026-08-07T03:29:43.956255Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 2, dettid 3 using resources {Device(ContainerStdout): W}, on previously committed 1_767_225_600.175_262_500s
+2026-08-07T03:29:43.956434Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(1, 0x4be8a0, 16) = Ok(16)
+2026-08-07T03:29:43.956515Z  INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: exit_group(0) = ?
+2026-08-07T03:29:43.956603Z  INFO detcore::scheduler: [sched-step5] >>>>>>>
+
+ COMMIT turn 3, dettid 3 using resources {Exit { group: true, process: DetPid(3), mm: MmId { creator: DetPid(3), generation: 1 } }: RW}, on previously committed 1_767_225_600.300_762_500s
+2026-08-07T03:29:43.956664Z  INFO detcore::tool_global: Scheduler authorized an exit-group scenario, from dettid 3 / detpid 3
+2026-08-07T03:29:43.956703Z  INFO reverie_ptrace::task: [tool] (tid 3) beginning tail_inject of syscall: exit_group
+2026-08-07T03:29:43.957011Z  INFO detcore::scheduler: logically_kill: Scheduler removing all knowledge of [det]tid 3 in pid 3..
+2026-08-07T03:29:43.957294Z  INFO detcore::scheduler: scheduler (step2_process_blocked): zero threads left anywhere, fizzling.
+2026-08-07T03:29:43.957336Z  INFO detcore::scheduler: [scheduler] run queue empty, exiting sched_loop.
+2026-08-07T03:29:43.957419Z  INFO detcore::tool_global: detcore shut down, destroying global state
+2026-08-07T03:29:43.957465Z  INFO detcore::tool_global: 
+  ------------------------------ hermit run report ------------------------------
+Final thread-tree was: [3]
+There were 1 group leaders of 1 thread(s) total.
+Internally, the hermit scheduler ran 4 turns, recorded 0 events, replayed 0 events (0 desynced)
+Final virtual global (cpu) time: 1_767_225_600.301_262_500s
+Elapsed virtual global (cpu) time: 301_262_500ns
+Timeslice stats: none recorded
+
+2026-08-07T03:29:43.957496Z  INFO hermit::backend_stats: backend run complete backend=ptrace stats=metrics=none

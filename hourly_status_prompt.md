@@ -43,10 +43,13 @@ or a workstream. So, per live agent:
 - **Exactly one bullet.** An agent is a worker, not a portfolio. Its one bullet
   is the single task it is working on this hour.
 - **Derive activity from live TaskGraph, not from memory or from ownership.** A
-  task tagged `implemented` is finished and waiting to land — it is a landing
-  obligation, not activity, and it keeps status `in_progress` by policy, so
-  status alone will mislead you. `open`/`backlog` means not started. Neither
-  belongs in the active list.
+  task tagged `implemented` is finished and waiting to land — a landing
+  obligation, not activity. Since 2026-08-06 such a task is `closed` +
+  `implemented`, and the pending-landing set is tracked in the single open task
+  `drain-implemented-to-landed`. `open`/`backlog` means not started. None of
+  these belong in the active list, and a `closed` + `implemented` task is
+  **not** idle or stuck — it has no owner by design, so flagging it recreates
+  exactly the noise this rule removed.
 - **Name the workstream, not the id.** Use a stable descriptive
   `major-goal/sub-goal` slug — `backend-parity/dbi-stack-hash-determinism`, not
   `dbi_detlog_stack_hashes` and never `phase-1` or `option-a`. The same work

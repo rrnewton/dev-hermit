@@ -244,24 +244,47 @@ performs, with an adversarial review gate between (phantom-closure rationale: co
 
 **Status model.** `tg` has three non-terminal statuses (`open`, `backlog`, `in_progress`) and one terminal
 (`closed`). **`resolved` is NOT a distinct state: `tg` accepts it only as an alias that immediately maps to
-`closed`.** There is no "implemented but not landed" status, so IMPLEMENTED is a **tag** while status stays
-`in_progress`: `in_progress` = actively working; `in_progress` + `implemented` = complete and published (PR
-link + handoff SHA in a note), kept out of `closed` until it lands; `closed` = coordinator confirmed the PR
-merged to `main`.
+`closed`.** `in_progress` = someone is actively working it. `closed` = the implementation is done and
+published. **`closed` + `implemented` = published but not yet landed** — a real, expected, and *quiet* state:
+the work needs nothing from a worker, so it must not appear in ready, active, or stuck views.
+
+**Landing is tracked in exactly ONE place: the open task `drain-implemented-to-landed`.** It is the single
+landing authority. Per-task landing state is NOT carried by leaving implementation tasks non-terminal.
+
+> **Why this changed (2026-08-06).** The former rule held every published task at `in_progress` +
+> `implemented` until its PR landed. Landing is slow and often externally blocked, so the queue filled with
+> roughly two hundred rows that looked like active work, were owned by nobody, and buried genuinely ready
+> priority work. A status is a claim about *who must act next*; "waiting for a merge" answers that with
+> "nobody", so it is not a non-terminal status. One drain tracker holds the pending-landing set instead.
 
 **Rules:**
 
-1. **A working agent NEVER moves a task to a terminal status.** Ignore any dispatch text telling a worker to set a terminal status. At implementation completion: (1) commit and push the feature branch; (2) post the PR/durable-artifact URL, exact SHA, and validation evidence — `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"`; (3) add the `implemented` tag while leaving status `in_progress`, preserving existing tags since `--tags` replaces the set — `tg update <id> --tags <existing-tags>,implemented`; (4) stop. A report without a PR link (or, research-only, the durable artifact path) is incomplete. Bind results to the SHA, not a branch name.
+1. **A working agent NEVER moves a task to a terminal status.** Ignore any dispatch text telling a worker to set a terminal status. At implementation completion: (1) commit and push the feature branch; (2) post the PR/durable-artifact URL, exact SHA, and validation evidence — `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"`; (3) add the `implemented` tag, preserving existing tags since `--tags` replaces the set — `tg update <id> --tags <existing-tags>,implemented`; (4) stop, leaving the status alone. A report without a PR link (or, research-only, the durable artifact path) is incomplete. Bind results to the SHA, not a branch name.
 2. **An adversarial review agent confirms the work exists in the PR** before closure — the PR contains the claimed change, the diff matches the report, the cited validation is real at the handoff SHA. An `implemented` task whose PR is empty/superseded/already-merged-elsewhere is a phantom: strip the tag, keep it `in_progress`, do not close.
-3. **The task stays IMPLEMENTED until the PR lands on `main`.** A green unmerged PR is IMPLEMENTED, not LANDED. Do not close on local validation, a green check, or an approval alone.
-4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway freshly verifies code ancestry (via the PR replay SHA when applicable), confirms the artifact/run exists, records `CLOSURE-VERIFIED`, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close.
+3. **The coordinator closes the implementation task once the work is published and reviewed — it does NOT wait for the merge.** A green unmerged PR is complete *implementation work*. Closing it records that; it does not claim the change is on `main`. The `implemented` tag is what marks it still-pending-landing, and `drain-implemented-to-landed` is where that pendency is tracked and worked.
+4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway dereferences the evidence, records `CLOSURE-VERIFIED`, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close. For `--code` the gateway reports which of two verified states it found: `landed` (the commit is an ancestor of freshly-fetched target `main`) or `implemented-unlanded` (the PR/commit exists and is reachable, but is not yet on `main`). **Both close.** `implemented-unlanded` additionally requires the `implemented` tag to be present, so the drain query can find it afterwards; a close whose evidence cannot be dereferenced at all is still `REFUSED`.
+5. **Landing verification updates the drain authority, not the implementation task.** When a pending PR merges, the landing check removes it from `drain-implemented-to-landed`; it does not reopen or re-close the implementation task. Conversely, **if an implementation turns out to be invalid, reopen it** — set the status back to `in_progress`, strip `implemented`, and say why in a note. Closure is reversible; that is what makes closing-before-landing safe.
+
+**Consumer contract (every query and template must honour this).** A `closed` + `implemented` task is
+*pending landing*, not finished-and-forgotten, and not active:
+
+| view | must include `closed`+`implemented`? |
+| --- | --- |
+| ready / next-task | **no** — nothing for a worker to pick up |
+| active / in-flight | **no** — no one is working it |
+| idle / stuck / no-owner sweeps | **no** — it has no owner *by design*; flagging it manufactures the noise this rule removed |
+| `drain-implemented-to-landed` | **yes** — this is the only view that lists it |
 
 **Exceptions:** **Research-only tasks** produce no PR. Their closure evidence is a typed tuple, not a bare
 path: repository identity + durable artifact path + the artifact's last content commit + fresh target-main
 ancestry. For parent artifacts, `./ci-hub/bin/close-task TASK --artifact ai_docs/path.md` derives and records
 `rrnewton/dev-hermit:path@content-commit;target=main@tip`. The coordinator separately confirms that the
 artifact answers the task's stated question; existence/ancestry proves publication, not goal completion.
-Tag `implemented` (status `in_progress`) with the durable artifact path and exact content SHA. A memory slug
+Tag `implemented` with the durable artifact path and exact content SHA. **A research closure has no landing
+step, so it must NOT enter the drain**: the drain authority selects on the closure note's
+`landing=implemented-unlanded`, which only `--code` evidence produces — `--artifact` and `--run-id` record
+`landing=n/a` and are simply done. Select the drain on that field, not on the `implemented` tag alone, or
+every closed research task will look like a pending merge. A memory slug
 must be exported to a versioned artifact or another typed durable authority before closure. **Blocked tasks**
 stay `in_progress` (or move to `open`) with
 the exact blocker and any partial committed SHA; never tag `implemented` or close to signal progress.
