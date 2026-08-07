@@ -171,3 +171,68 @@ every rate in §8 is a **lower bound** on true per-machine validate volume.
 
 For continuity: that artifact measured 635 rows / ~697 KB earlier on 2026-08-06. Today's
 650 rows / 724,904 B is consistent with the slow 08-06 → 08-07 tail (57 then 6 rows/day).
+
+---
+
+## 10. Correction — 650 rows are **not** 650 runs
+
+**Credit: `hermit-w10`, who was dispatched to this same task concurrently and found this;
+I reproduced it independently before republishing it here.** Their own write-up
+(`ai_docs/2026-08-06-validate-ledger-dataset-measurement.md`) was left untracked, so the
+finding is carried here to keep it durable.
+
+Keying each record on `(host, started_at, finished_at, commit, slot)`:
+
+| quantity | value |
+| --- | ---: |
+| rows | 650 |
+| **distinct keys (= runs)** | **604** |
+| keys appearing more than once | 37 |
+| **excess rows** | **46 (7.1%)** |
+
+**46 of the 51 `schema_version=5` rows share a key with a row already present.** They are
+finalizer-minted clones (`_clone_upgraded`, `ci-hub/validate/finalize_receipt.py:189-197`),
+not new runs.
+
+**What this corrects, precisely.** The byte figures in §1 and the storage projections in §8
+are unaffected — bytes are bytes, and a clone occupies real storage. What is overstated is
+the *run* rate: the 163.3 **rows**/day in §8 corresponds to roughly **152 runs/day**. Any
+reading of §8 as "validate executions per day" is ~7% high; as "ledger bytes per day" it
+stands.
+
+**Design consequence:** a shard scheme that dedups on arrival stores ~7% fewer records; one
+that does not must expect row count to exceed run count permanently, and any consumer
+computing pass rates or run counts straight off row counts inherits the same 7% error.
+
+## 11. Two further refinements from `hermit-w10`
+
+**The compression ratio climbs with corpus size, so §8's compressed projection is
+conservative** — the right direction for a sizing decision. Measured on prefixes of this
+same corpus:
+
+| rows | raw B | gzip-9 | ratio | zstd-19 | ratio |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 65 | 50,559 | 4,505 | 11.22× | 3,984 | 12.69× |
+| 163 | 137,096 | 10,846 | 12.64× | 9,285 | 14.77× |
+| 325 | 293,452 | 22,559 | 13.01× | 18,622 | 15.76× |
+| 488 | 461,959 | 35,016 | 13.19× | 26,310 | 17.56× |
+| 650 | 724,904 | 53,528 | 13.54× | 40,303 | 17.99× |
+
+A 65-row shard compresses ~40% worse than the 650-row whole (12.69× vs 17.99×). That is the
+real cost direction of fine-grained sharding, though in absolute terms it is kilobytes.
+`zstd -19 --long=27` buys 20 bytes over plain `zstd -19` — nothing at this size.
+
+**Reproducibility caveat on the gzip figure.** This note recorded `gzip -9` = 53,546 B and
+`hermit-w10` recorded 53,528 B for the same input. The 18-byte delta is gzip header metadata
+(gzip stores an mtime by default), not a measurement error. `gzip -n` is required if a
+byte-exact, reproducible gzip size ever matters; `zstd` and `xz` figures agreed exactly
+between us.
+
+## 12. Process note
+
+Two agents (`hermit-w10` and `orc-coord-014`/`hermit-w13`) were dispatched to this one task
+and measured it in parallel without knowing about each other. The independent byte and
+compression figures agreed (modulo the gzip header above), which is a genuine cross-check —
+but the duplication was accidental, not designed, and this task was closed while the other
+agent was still posting findings. Recorded so the double-dispatch is visible rather than
+silently absorbed.
