@@ -746,7 +746,7 @@ mod tests {
             id: "4fb50e87-5d91-4294-88b2-afeedf6cc917".to_string(),
             name: "hermit".to_string(),
             pid,
-            cwd: Some("/home/newton/work/dev-hermit".to_string()),
+            cwd: Some("/home/test/work/dev-hermit".to_string()),
             updated_at: Some("2026-08-07T01:02:30Z".to_string()),
         }
     }
@@ -761,7 +761,7 @@ mod tests {
     #[test]
     fn live_orc_process_is_not_flagged() {
         let root = temp_root("live");
-        plant_process(&root, 2_592_813, &["/home/newton/orc-bin/orc", "--db", "hermit"], 11_097_326);
+        plant_process(&root, 2_592_813, &["/home/test/orc-bin/orc", "--db", "hermit"], 11_097_326);
         let (state, observations) = classify_with(vec![session(Some(2_592_813))], &root);
         assert_eq!(state, State::Live);
         assert!(state.is_healthy());
@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn one_live_session_among_dead_ones_is_live() {
         let root = temp_root("mixed");
-        plant_process(&root, 4_242, &["/home/newton/orc-bin/orc"], 5);
+        plant_process(&root, 4_242, &["/home/test/orc-bin/orc"], 5);
         let mut dead = session(Some(999_999));
         dead.id = "dead-row".to_string();
         let mut live = session(Some(4_242));
@@ -969,7 +969,7 @@ mod tests {
     fn expected_command_is_matched_on_basename_not_substring() {
         let root = temp_root("basename");
         // "orchestrator" contains "orc"; a substring check would call this live.
-        plant_process(&root, 7_777, &["/usr/local/bin/orchestrator"], 1);
+        plant_process(&root, 7_777, &["/home/test/orc-bin/orchestrator"], 1);
         let (state, observations) = classify_with(vec![session(Some(7_777))], &root);
         assert_eq!(state, State::DeadPidRecycled);
         assert_eq!(
