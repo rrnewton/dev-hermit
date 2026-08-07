@@ -87,7 +87,7 @@ read it before any worktree operation.**
 12. A handoff is incomplete without exact SHAs and validation results.
 13. Never exceed twelve active worktrees, five parked slots, or fifteen agents (count each separately; active work does not consume the parked allowance). Every normal worktree path is `worktrees/<slot>/{hermit,reverie,liteinst2}` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
-15. Never broad-kill processes on this shared box — no `pkill`/`killall`/pattern/name/`-f`-substring/user/`ps|grep|kill`. Kill only your own child PID/PGID. See **Process-Kill Safety**.
+15. Never run a broad destructive command against SHARED state on this box. Processes: no `pkill`/`killall`/pattern/name/`-f`-substring/user/`ps|grep|kill` — kill only your own child PID/PGID. Shared podman image store: no unscoped `rmi -f`, no `image prune`/`system prune`/`--all` — remove only an image you can prove you created, by exact ID. See **Process-Kill Safety**.
 
 ## Clean Start And Checkout Ownership
 
@@ -447,6 +447,22 @@ user/`ps|grep|kill` match kills siblings' live work. Kill only processes you sta
 (`$!` for a backgrounded command) or run it in its own process group and signal the negative PGID (`setsid cmd
 & pgid=$!; kill -- -$pgid`). If you cannot prove a PID/PGID is your own child, do not kill it. (War story:
 companion doc.)
+
+**The same rule governs every OTHER shared store on this box, not just the process table.** A broad destructive
+command is dangerous because of the SHARED NAMESPACE it sweeps, and the process table is only one such
+namespace. The rootless **podman image store** (`~/.local/share/containers/storage`) is shared by every agent
+in exactly the same way. **NEVER run `podman rmi -f` unscoped, `podman image prune`, `podman system prune`, or
+any pattern/`--all` removal there** — remove only an image you can prove you created, by its exact ID.
+
+Measured incident, 2026-08-05: a cleanup `podman rmi -f` **cascaded and destroyed all five pre-existing images
+in the shared store**, and the originals were unrecoverable because registry egress returns 403. Recovery was a
+rebuild from the intact Hermit rootfs cache as `localhost/restored-ubuntu:24.04`. That is the pkill failure
+mode with a different noun.
+
+**Do not "tidy" that store.** Verified 2026-08-07: six images report ~80.7 MB each, but `podman system df` puts
+the WHOLE store at **85.37 MB** — the per-image numbers overlap almost entirely through shared overlay layers,
+so four untagged `<none>` images cost near zero. Summing the per-image column suggests ~400 MB of waste that
+does not exist, and acting on that phantom is precisely what triggered the incident.
 
 ## Coordinator Checklist
 
