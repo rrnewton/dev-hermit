@@ -1,0 +1,40 @@
+{
+  "fixture": "backend-parity-c/pid-probe",
+  "positive": {
+    "info": {
+      "records_left": 302,
+      "records_right": 302,
+      "accepted": true
+    },
+    "stack": {
+      "records_left": 81,
+      "records_right": 81,
+      "accepted": true
+    },
+    "heap": {
+      "records_left": 2,
+      "records_right": 2,
+      "accepted": true
+    }
+  },
+  "tampered_negative": {
+    "info": {
+      "records_left": 302,
+      "records_right": 302,
+      "refused": true,
+      "first_difference": 0
+    },
+    "stack": {
+      "records_left": 81,
+      "records_right": 81,
+      "refused": true,
+      "first_difference": 0
+    },
+    "heap": {
+      "records_left": 2,
+      "records_right": 2,
+      "refused": true,
+      "first_difference": 0
+    }
+  }
+}

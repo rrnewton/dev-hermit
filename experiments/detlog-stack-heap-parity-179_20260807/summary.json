@@ -1,0 +1,266 @@
+{
+  "caveats": [
+    "INFO is log evidence, never stdout.",
+    "DBI and SaBRe use an explicit stderr fallback because their INFO/DETLOG trace is not wholly routed to --log-file.",
+    "SaBRe split-channel rows are retained as measured and labeled by engagement/source; they are not silently promoted to canonical log-file routing.",
+    "e9patch rows are eligible only when mapped_sites>0 caused rewrite_engaged.",
+    "Zero records, fixture absence, non-engagement, backend failure, and reference failure cannot produce PASS."
+  ],
+  "cells": {
+    "arms": 7,
+    "comparison_rows": 3222,
+    "run_receipts": 1253
+  },
+  "comparator_bracket": {
+    "fixture": "backend-parity-c/pid-probe",
+    "positive": {
+      "heap": {
+        "accepted": true,
+        "records_left": 2,
+        "records_right": 2
+      },
+      "info": {
+        "accepted": true,
+        "records_left": 302,
+        "records_right": 302
+      },
+      "stack": {
+        "accepted": true,
+        "records_left": 81,
+        "records_right": 81
+      }
+    },
+    "tampered_negative": {
+      "heap": {
+        "first_difference": 0,
+        "records_left": 2,
+        "records_right": 2,
+        "refused": true
+      },
+      "info": {
+        "first_difference": 0,
+        "records_left": 302,
+        "records_right": 302,
+        "refused": true
+      },
+      "stack": {
+        "first_difference": 0,
+        "records_left": 81,
+        "records_right": 81,
+        "refused": true
+      }
+    }
+  },
+  "contract": "BitwiseInfoV1 (wall-clock stripped; explicit <hostaddr> ordinalized; all other bytes exact)",
+  "denominator": {
+    "count": 179,
+    "origin": "179 distinct deterministic ptrace-pass IDs in compat-envelope/fullcorpus-scorecard.csv run=ptrace-fullcorpus-scorecard at Hermit 82a8e8533575e7f150ee9e64d9077d35bbb38806",
+    "sha256": "1dd6b79c57f790eb2585206fccdb2228ee003623c66ed2079efa0fb890a6bb10"
+  },
+  "engagement": {
+    "dbi:dbt_engaged": 156,
+    "dbi:not_engaged": 23,
+    "e9patch:no_rewrite": 170,
+    "e9patch:not_engaged": 5,
+    "e9patch:rewrite_engaged": 4,
+    "kvm:detcore_engaged": 130,
+    "kvm:not_engaged": 49,
+    "liteinst:not_engaged": 62,
+    "liteinst:preload_engaged": 117,
+    "ptrace-control:detcore_engaged": 176,
+    "ptrace-control:not_engaged": 3,
+    "ptrace:detcore_engaged": 175,
+    "ptrace:not_engaged": 4,
+    "sabre:not_engaged": 28,
+    "sabre:rewrite_engaged_split_channel": 151
+  },
+  "run_rc": {
+    "dbi:0": 157,
+    "dbi:1": 13,
+    "dbi:101": 1,
+    "dbi:125": 1,
+    "dbi:137": 6,
+    "dbi:40": 1,
+    "e9patch:0": 174,
+    "e9patch:1": 3,
+    "e9patch:125": 1,
+    "e9patch:137": 1,
+    "kvm:0": 130,
+    "kvm:1": 26,
+    "kvm:125": 1,
+    "kvm:137": 16,
+    "kvm:17": 1,
+    "kvm:2": 2,
+    "kvm:20": 1,
+    "kvm:255": 1,
+    "kvm:4": 1,
+    "liteinst:0": 117,
+    "liteinst:1": 60,
+    "liteinst:125": 1,
+    "liteinst:13": 1,
+    "ptrace-control:0": 176,
+    "ptrace-control:1": 2,
+    "ptrace-control:125": 1,
+    "ptrace:0": 175,
+    "ptrace:1": 2,
+    "ptrace:125": 1,
+    "ptrace:137": 1,
+    "sabre:0": 151,
+    "sabre:1": 18,
+    "sabre:125": 1,
+    "sabre:137": 4,
+    "sabre:139": 3,
+    "sabre:5": 1,
+    "sabre:6": 1
+  },
+  "source_pair": {
+    "binary_sha256": "0ee947522db96beeefd657c970ac18ada8f932212c0bb11dc60fa6f058e43300",
+    "hermit": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "reverie": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df"
+  },
+  "sources": {
+    "dbi:fixture_missing": 1,
+    "dbi:stderr_fallback": 178,
+    "e9patch:fixture_missing": 1,
+    "e9patch:logfile": 178,
+    "kvm:fixture_missing": 1,
+    "kvm:logfile": 177,
+    "kvm:none": 1,
+    "liteinst:fixture_missing": 1,
+    "liteinst:logfile": 178,
+    "ptrace-control:fixture_missing": 1,
+    "ptrace-control:logfile": 178,
+    "ptrace:fixture_missing": 1,
+    "ptrace:logfile": 178,
+    "sabre:fixture_missing": 1,
+    "sabre:stderr_fallback": 178
+  },
+  "tier_scope": "single strict inter-backend run; not an L2/L3 certification",
+  "verdicts": {
+    "dbi:heap": {
+      "ABSENT": 148,
+      "DIVERGE": 1,
+      "FAILURE_BACKEND": 21,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_NOT_ENGAGED": 1,
+      "NO_RESULT_ZERO_REFERENCE": 4
+    },
+    "dbi:info": {
+      "DIVERGE": 153,
+      "FAILURE_BACKEND": 21,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_NOT_ENGAGED": 1
+    },
+    "dbi:stack": {
+      "ABSENT": 1,
+      "DIVERGE": 151,
+      "FAILURE_BACKEND": 21,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_NOT_ENGAGED": 1,
+      "NO_RESULT_ZERO_REFERENCE": 1
+    },
+    "e9patch:heap": {
+      "DIVERGE": 1,
+      "FAILURE_BACKEND": 1,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_NOT_ENGAGED": 170,
+      "NO_RESULT_ZERO_REFERENCE": 3
+    },
+    "e9patch:info": {
+      "DIVERGE": 4,
+      "FAILURE_BACKEND": 1,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_NOT_ENGAGED": 170
+    },
+    "e9patch:stack": {
+      "DIVERGE": 3,
+      "FAILURE_BACKEND": 1,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_NOT_ENGAGED": 170,
+      "NO_RESULT_ZERO_REFERENCE": 1
+    },
+    "kvm:heap": {
+      "ABSENT": 125,
+      "FAILURE_BACKEND": 46,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_ZERO_REFERENCE": 4
+    },
+    "kvm:info": {
+      "DIVERGE": 129,
+      "FAILURE_BACKEND": 46,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1
+    },
+    "kvm:stack": {
+      "ABSENT": 128,
+      "FAILURE_BACKEND": 46,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_ZERO_REFERENCE": 1
+    },
+    "liteinst:heap": {
+      "DIVERGE": 117,
+      "FAILURE_BACKEND": 58,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1
+    },
+    "liteinst:info": {
+      "DIVERGE": 117,
+      "FAILURE_BACKEND": 58,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1
+    },
+    "liteinst:stack": {
+      "DIVERGE": 117,
+      "FAILURE_BACKEND": 58,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1
+    },
+    "ptrace-control:heap": {
+      "DIVERGE": 4,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_ZERO_REFERENCE": 4,
+      "PASS": 167
+    },
+    "ptrace-control:info": {
+      "DIVERGE": 21,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "PASS": 154
+    },
+    "ptrace-control:stack": {
+      "DIVERGE": 14,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_ZERO_REFERENCE": 1,
+      "PASS": 160
+    },
+    "sabre:heap": {
+      "DIVERGE": 150,
+      "FAILURE_BACKEND": 24,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1,
+      "NO_RESULT_ZERO_REFERENCE": 1
+    },
+    "sabre:info": {
+      "DIVERGE": 151,
+      "FAILURE_BACKEND": 24,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1
+    },
+    "sabre:stack": {
+      "DIVERGE": 151,
+      "FAILURE_BACKEND": 24,
+      "FAILURE_REFERENCE": 3,
+      "NO_RESULT_FIXTURE_ABSENT": 1
+    }
+  }
+}
