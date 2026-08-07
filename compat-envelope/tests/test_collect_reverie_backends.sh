@@ -57,34 +57,44 @@ ok "each of the 6 programs has 5 rows (one per backend)"
 
 echo "== 2. header carries absence_reason, appended last =="
 head -1 "$CSV" | grep -q ',absence_reason$' || fail "absence_reason must be the LAST column"
+# Derive the width and the absence_reason index FROM THE HEADER rather than
+# hardcoding them. The literal 20 here was already stale: the collector had
+# grown to 24 columns (bitwise_parity, compared_log_messages, tier,
+# absence_reason), so this asserted a false width AND every `col 20` below was
+# silently reading verify_compare instead of absence_reason -- the checks passed
+# or failed on the wrong column. Duplicating a schema is how it drifts.
 ncol=$(head -1 "$CSV" | awk -F, '{print NF}')
-[ "$ncol" -eq 20 ] || fail "expected 20 columns, got $ncol"
-ok "header is the 19-column contract + absence_reason"
+expected=$(awk -F'"' '/^const HEADER: &str =/{print $2}' "$ROOT/collect-reverie-compat.rs" | awk -F, '{print NF}')
+[ -n "$expected" ] || fail "cannot read HEADER from collect-reverie-compat.rs"
+[ "$ncol" -eq "$expected" ] || fail "header width $ncol != collector HEADER width $expected"
+AI=$(head -1 "$CSV" | tr ',' '\n' | grep -n '^absence_reason$' | cut -d: -f1)
+[ -n "$AI" ] || fail "absence_reason column not found in header"
+ok "header width $ncol matches the collector, absence_reason is column $AI"
 
 echo "== 3. no blank ambiguous cells: unmeasured => typed token =="
 # Every row here is unmeasured (nothing is built), so every absence_reason must
 # be one of the four tokens. Positive: count > 0. Negative: zero empties.
-blank=$(col 20 | grep -c '^$' || true)
+blank=$(col "$AI" | grep -c '^$' || true)
 [ "$blank" -eq 0 ] || fail "$blank row(s) have a BLANK absence_reason but were not measured"
 ok "0 blank absence_reason cells"
-bad=$(col 20 | grep -vcE '^(not_collected|unsupported|unavailable|no_result)$' || true)
+bad=$(col "$AI" | grep -vcE '^(not_collected|unsupported|unavailable|no_result)$' || true)
 [ "$bad" -eq 0 ] || fail "$bad row(s) carry an absence_reason outside the taxonomy"
 ok "all 30 absence_reason values are in the taxonomy"
 
 echo "== 4. absence taxonomy is assigned to the right cause =="
 # unsupported: dbt/sabre/liteinst have no launcher entry for either tool.
 for b in dbt sabre liteinst; do
-  n=$(awk -F, -v b="$b" 'NR>1 && $11==b && $20=="unsupported"' "$CSV" | wc -l)
+  n=$(awk -F, -v b="$b" -v ai="$AI" 'NR>1 && $11==b && $ai=="unsupported"' "$CSV" | wc -l)
   [ "$n" -eq 6 ] || fail "$b: expected 6 'unsupported' rows, got $n"
 done
 ok "dbt/sabre/liteinst => unsupported (no launcher), 18 rows"
 # NEGATIVE: they must NOT be mislabelled as a failure-ish or not-asked token.
-n=$(awk -F, 'NR>1 && ($11=="dbt"||$11=="sabre"||$11=="liteinst") && $20!="unsupported"' "$CSV" | wc -l)
+n=$(awk -F, -v ai="$AI" 'NR>1 && ($11=="dbt"||$11=="sabre"||$11=="liteinst") && $ai!="unsupported"' "$CSV" | wc -l)
 [ "$n" -eq 0 ] || fail "$n dbt/sabre/liteinst row(s) carry the wrong token"
 ok "negative: 0 dbt/sabre/liteinst rows carry any other token"
 
 # unavailable: ptrace IS supported+requested, but the launcher is not built.
-n=$(awk -F, 'NR>1 && $11=="ptrace" && $20=="unavailable"' "$CSV" | wc -l)
+n=$(awk -F, -v ai="$AI" 'NR>1 && $11=="ptrace" && $ai=="unavailable"' "$CSV" | wc -l)
 [ "$n" -eq 6 ] || fail "ptrace: expected 6 'unavailable' rows, got $n"
 ok "ptrace => unavailable (launcher not built), 6 rows"
 grep -q 'launcher not built' "$CSV" || fail "unavailable rows must say WHY in the reason column"
@@ -93,12 +103,12 @@ ok "unavailable rows carry a human reason"
 echo "== 5. not_collected appears iff a supported backend is left out =="
 # Ask for ptrace only: kvm is supported by both tools but unrequested.
 "${RUN[@]}" --backends ptrace >/dev/null 2>&1
-n=$(awk -F, 'NR>1 && $11=="kvm" && $20=="not_collected"' "$CSV" | wc -l)
+n=$(awk -F, -v ai="$AI" 'NR>1 && $11=="kvm" && $ai=="not_collected"' "$CSV" | wc -l)
 [ "$n" -eq 6 ] || fail "expected 6 kvm 'not_collected' rows when only ptrace requested, got $n"
 ok "kvm => not_collected when unrequested (6 rows)"
 # NEGATIVE: with kvm requested it must NOT be not_collected.
 "${RUN[@]}" --backends ptrace,kvm >/dev/null 2>&1
-n=$(awk -F, 'NR>1 && $11=="kvm" && $20=="not_collected"' "$CSV" | wc -l)
+n=$(awk -F, -v ai="$AI" 'NR>1 && $11=="kvm" && $ai=="not_collected"' "$CSV" | wc -l)
 [ "$n" -eq 0 ] || fail "kvm still 'not_collected' after being requested ($n rows)"
 ok "negative: 0 kvm not_collected rows once requested"
 # Row count is invariant to the requested set — absence is visible, not silent.

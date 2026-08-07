@@ -37,6 +37,10 @@
 #     [--backends b1,b2,...]   restrict to these (default: auto-detect)
 #     [--par N]                parallelism (default: 16)
 #     [--no-assert]            measure only; do not fail on ratchet regression
+#     [--assert-only PATH]     re-check the ratchet against an EXISTING scorecard
+#                              CSV and exit; runs no guests. Lets a stale-floor or
+#                              regression verdict be re-derived in a second instead
+#                              of re-sweeping for hours.
 #     [--out PATH]             output CSV (default: fullcorpus-scorecard.csv)
 #     [--self-check-env-pin]    bracket the generated Hermit argv; run no guests
 set -uo pipefail
@@ -58,6 +62,7 @@ TMO_RUN="${TMO_RUN:-90}"
 TMO_VERIFY="${TMO_VERIFY:-120}"
 backends_arg=""
 do_assert=1
+assert_only=""
 self_check_env_pin=0
 
 # Build every measured Hermit command in one place. `--base-env host` is the
@@ -156,6 +161,7 @@ while [ $# -gt 0 ]; do
     --backends) backends_arg="$2"; shift 2 ;;
     --par) PAR="$2"; shift 2 ;;
     --no-assert) do_assert=0; shift ;;
+    --assert-only) assert_only="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --self-check-env-pin) self_check_env_pin=1; shift ;;
     -h|--help) grep '^#' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -168,7 +174,7 @@ if [ "$self_check_env_pin" = 1 ]; then
   exit $?
 fi
 
-[ -x "$BIN" ] || { echo "collect-fullcorpus: HERMIT_BIN not executable: $BIN" >&2; exit 2; }
+[ -n "$assert_only" ] || [ -x "$BIN" ] || { echo "collect-fullcorpus: HERMIT_BIN not executable: $BIN" >&2; exit 2; }
 [ -f "$CORPUS_C" ] || { echo "collect-fullcorpus: missing $CORPUS_C" >&2; exit 2; }
 
 HSHA="$(git -C "$HROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -195,15 +201,6 @@ have_backend() { # $1 = backend name; probes the binary's --backend enum + host
 }
 
 ALL_BACKENDS="ptrace kvm dbi sabre e9patch liteinst"
-[ -n "$backends_arg" ] && ALL_BACKENDS="${backends_arg//,/ }"
-DETECTED=""
-for b in $ALL_BACKENDS; do
-  if have_backend "$b"; then DETECTED="$DETECTED $b"; else echo "  backend $b: NOT available here (recorded n/a)"; fi
-done
-DETECTED="${DETECTED# }"
-echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
-echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
-
 # --- per-backend ratchet baselines (green-stays-green floor) ------------------
 # Existing 205-cell floors were measured at hermit 82a8e853; the thirty performance
 # cells were measured with the same binary and uniform lane flags.
@@ -222,6 +219,57 @@ baseline() {
     *) echo 0 ;;
   esac
 }
+
+# The floors above were measured over a 235-cell corpus. Carry that denominator
+# WITH them: a floor is meaningless against a different population, and four of
+# the six are numerically unreachable once the corpus shrinks (e9patch's 214
+# cannot be met by 205 cells no matter how green the run is). Comparing anyway
+# reported four "REGRESSION" lines that were denominator errors, not findings --
+# the failure mode this gate exists to prevent, committed by the gate itself.
+FLOOR_CORPUS=235
+
+# assert_ratchet <csv> <backend>... -> 0 green | 1 real regression | 4 not comparable
+assert_ratchet() {
+  local csv="$1"; shift
+  local fail=0 incomparable=0 backend det tot floor
+  echo "== green-stays-green ratchet (per-backend det floor; floors measured over ${FLOOR_CORPUS} cells) =="
+  for backend in "$@"; do
+    det=$(awk -F, -v b="$backend" 'NR>1 && $11==b && $14=="1"{n++} END{print n+0}' "$csv")
+    tot=$(awk -F, -v b="$backend" 'NR>1 && $11==b{n++} END{print n+0}' "$csv")
+    floor=$(baseline "$backend")
+    [ "$tot" -eq 0 ] && { echo "  n/a: $backend contributed no rows (not measurable here)"; continue; }
+    if [ "$tot" -lt "$FLOOR_CORPUS" ]; then
+      incomparable=1
+      printf '  NOT-COMPARABLE: %s det %s/%s vs floor %s — floor was measured over %s cells, %s are missing here%s\n' \
+        "$backend" "$det" "$tot" "$floor" "$FLOOR_CORPUS" "$((FLOOR_CORPUS - tot))" \
+        "$([ "$floor" -gt "$tot" ] && echo " (and $floor > $tot, so it is unreachable by construction)")" >&2
+    elif [ "$det" -lt "$floor" ]; then
+      echo "  REGRESSION: $backend det $det/$tot < floor $floor" >&2; fail=1
+    else
+      echo "  OK: $backend det $det/$tot (floor $floor)"
+    fi
+  done
+  [ "$fail" -ne 0 ] && return 1
+  [ "$incomparable" -ne 0 ] && return 4
+  return 0
+}
+
+if [ -n "$assert_only" ]; then
+  [ -r "$assert_only" ] || { echo "collect-fullcorpus: cannot read $assert_only" >&2; exit 2; }
+  ao_backends=$(awk -F, 'NR>1{print $11}' "$assert_only" | sort -u | tr '\n' ' ')
+  [ -n "${ao_backends// /}" ] || { echo "collect-fullcorpus: $assert_only has no rows — a no-result, not a pass" >&2; exit 3; }
+  assert_ratchet "$assert_only" $ao_backends; exit $?
+fi
+
+[ -n "$backends_arg" ] && ALL_BACKENDS="${backends_arg//,/ }"
+DETECTED=""
+for b in $ALL_BACKENDS; do
+  if have_backend "$b"; then DETECTED="$DETECTED $b"; else echo "  backend $b: NOT available here (recorded n/a)"; fi
+done
+DETECTED="${DETECTED# }"
+echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
+echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
+
 
 ROWS="$(mktemp -d)"
 HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason"
@@ -400,6 +448,7 @@ else
 fi
 export GARGS_DIR
 
+
 # --- run every detected backend, ptrace FIRST (writes the parity reference) ---
 order="ptrace"
 for b in $DETECTED; do [ "$b" = ptrace ] || order="$order $b"; done
@@ -455,24 +504,21 @@ rm -rf "$ROWS"
 echo "== full-corpus scorecard written: $OUT =="
 
 # --- ratchet assert + render -------------------------------------------------
-fail=0
-echo "== green-stays-green ratchet (per-backend det floor over full corpus) =="
-for backend in $order; do
-  det=$(awk -F, -v b="$backend" 'NR>1 && $11==b && $14=="1"{n++} END{print n+0}' "$OUT")
-  tot=$(awk -F, -v b="$backend" 'NR>1 && $11==b{n++} END{print n+0}' "$OUT")
-  floor=$(baseline "$backend")
-  if [ "$det" -lt "$floor" ]; then
-    echo "  REGRESSION: $backend det $det/$tot < floor $floor" >&2; fail=1
-  else
-    echo "  OK: $backend det $det/$tot (floor $floor)"
-  fi
-done
+assert_ratchet "$OUT" $order; ratchet_rc=$?
 
 echo "== rendered scorecard =="
 "$here/render-scorecard.rs" --csv "$OUT" --all --backends kvm,dbi,sabre,liteinst,e9patch || true
 
-if [ "$do_assert" -eq 1 ] && [ "$fail" -ne 0 ]; then
+if [ "$do_assert" -eq 1 ] && [ "$ratchet_rc" -eq 1 ]; then
   echo "collect-fullcorpus: FAILED — backend regressed below ratchet floor" >&2
   exit 1
 fi
-echo "== full-corpus gate GREEN =="
+if [ "$do_assert" -eq 1 ] && [ "$ratchet_rc" -eq 4 ]; then
+  # Fail CLOSED, but with the right cause. A gate that cannot evaluate its own
+  # floor is a NO-RESULT, never a green -- and never a "regression" either.
+  echo "collect-fullcorpus: REFUSED — the ratchet cannot be evaluated: this corpus is smaller than the ${FLOOR_CORPUS} cells its floors were measured over." >&2
+  echo "  Re-derive the floors against the corpus that actually builds, or restore the missing cells. This is NOT a regression report." >&2
+  exit 4
+fi
+[ "$ratchet_rc" -eq 4 ] && echo "== full-corpus gate: NOT COMPARABLE (floors stale vs corpus; --no-assert so not enforced) =="
+[ "$ratchet_rc" -eq 0 ] && echo "== full-corpus gate GREEN =="
