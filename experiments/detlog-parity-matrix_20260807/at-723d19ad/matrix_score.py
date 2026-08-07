@@ -23,8 +23,65 @@ from ITSELF by an unknown amount. Those cells print NOT-MEASURABLE and their par
 fields are blank.
 """
 from __future__ import annotations
-import csv, difflib, itertools, json, re, sys
+import csv, difflib, importlib.util, itertools, json, re, sys
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# THE VERDICT IS NOT OURS. Ratified boundary, 2026-08-07:
+#   hermit-w5 owns compat-envelope/detlog_compare.py -- the single source of
+#     truth for "do two DETLOG streams agree".
+#   hermit-w7 owns collection and the cross-backend coverage number (this file
+#     and harness/matrix_collect.sh).
+#   The dependency runs w7 -> w5 and never the reverse.
+#
+# FAIL CLOSED. If the module is missing or its interface has moved, ABORT. Do
+# NOT fall back to a local equality check: a fallback would silently recreate
+# the two-implementations drift the split exists to prevent, and it would do it
+# invisibly, which is worse than not running.
+# ---------------------------------------------------------------------------
+VERDICT_MODULE = (Path(__file__).resolve().parents[3]
+                  / "compat-envelope" / "detlog_compare.py")
+
+
+def _load_verdict_module():
+    if not VERDICT_MODULE.is_file():
+        raise SystemExit(
+            f"ABORT: verdict producer not found at {VERDICT_MODULE}.\n"
+            "  This scorer deliberately has no local self-determinism comparison -- the\n"
+            "  verdict belongs to hermit-w5's module under the ratified boundary. Running\n"
+            "  without it would mean scoring with a second implementation."
+        )
+    spec = importlib.util.spec_from_file_location("detlog_compare", VERDICT_MODULE)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:
+        # OBSERVED 2026-08-07 01:51: the producer is untracked and its owner is
+        # editing it live, so an import can land mid-save on a syntactically valid
+        # but incomplete file (that time: `re` used before it was imported). That
+        # is normal for in-flight work and is NOT a defect in the producer. Refuse
+        # to score rather than falling back, and say which of the two it is so
+        # nobody debugs the wrong file.
+        raise SystemExit(
+            f"ABORT: {VERDICT_MODULE} failed to import: {type(exc).__name__}: {exc}\n"
+            "  The verdict producer is owned by hermit-w5 and is currently untracked,\n"
+            "  so this is most likely a mid-edit snapshot rather than a real breakage.\n"
+            "  Re-run in a moment. Do NOT edit that file to make this pass -- it is not\n"
+            "  ours, and this scorer has no fallback comparison on purpose."
+        ) from exc
+    missing = [n for n in ("self_determinism", "PASS", "FAIL", "NOT_MEASURED")
+               if not hasattr(mod, n)]
+    if missing:
+        raise SystemExit(
+            f"ABORT: {VERDICT_MODULE} does not expose {missing}. The producer interface\n"
+            "  moved; this scorer must be updated to match rather than guessing."
+        )
+    return mod
+
+
+import hashlib as _hashlib
+DC = _load_verdict_module()
+VERDICT_SHA256 = _hashlib.sha256(VERDICT_MODULE.read_bytes()).hexdigest()[:16]
 
 HEX = re.compile(r"0x[0-9a-f]+")
 BACKENDS = ["ptrace", "kvm", "dbi", "sabre", "e9patch", "liteinst"]
@@ -94,15 +151,38 @@ def cover(g, c):
 
 
 def selfdet(paths, policy):
+    """Self-determinism over N runs, with the PAIR VERDICT delegated to w5's module.
+
+    THE SPLIT, concretely. `DC.self_determinism` is a PAIR comparison and stays
+    that way -- w5 does not have to change their signature for this. What lives
+    here is the N-RUN AGGREGATION, because collecting N runs is the collection
+    side of the boundary.
+
+    WHY N MATTERS, measured not assumed. Two runs is structurally insufficient:
+    liteinst on detlog_syscalls has a 9/30 minority class, so a 2-run sample
+    draws both runs from one class and reports a false PASS about 60% of the
+    time. A pair count also cannot distinguish "one minority class"
+    (liteinst 21|9) from "every run is unique" (dbi: 30 distinct classes in 30
+    runs), and those are different defects needing different fixes -- so the
+    class census is reported alongside the pair count, never instead of it.
+    """
+    from collections import Counter
+    texts = [p.read_text(errors="replace") for p in paths]
     runs = [load(p, policy) for p in paths]
     pairs = list(itertools.combinations(range(len(runs)), 2))
-    bad = sum(1 for i, j in pairs if runs[i] != runs[j])
-    # Distinct outcome classes. A pair count cannot distinguish "one minority class"
-    # from "every run is unique", and those are different defects.
-    from collections import Counter
+
+    bad = 0
+    not_measured = 0
+    for i, j in pairs:
+        v = DC.self_determinism(texts[i], texts[j])["verdict"]
+        if v == DC.FAIL:
+            bad += 1
+        elif v == DC.NOT_MEASURED:
+            not_measured += 1
+
     cls = Counter("\n".join(r) for r in runs)
     sizes = "|".join(str(n) for _, n in cls.most_common())
-    return len(runs), len(pairs), bad, len(runs[0]), len(cls), sizes
+    return (len(runs), len(pairs), bad, len(runs[0]), len(cls), sizes, not_measured)
 
 
 def load_engagement(root: Path) -> dict:
@@ -123,7 +203,7 @@ def main() -> int:
         gp = sorted(root.glob(f"{cell}.ptrace.*.d"))
         gold_raw, gold_hex = load(gp[0], "raw"), load(gp[0], "hex")
         Z = len(gold_raw)
-        g_runs, g_pairs, g_bad, _, g_cls, g_sizes = selfdet(gp, "raw")
+        g_runs, g_pairs, g_bad, _, g_cls, g_sizes, g_nm = selfdet(gp, "raw")
         for be in BACKENDS:
             population += 1
             cp = sorted(root.glob(f"{cell}.{be}.*.d"))
@@ -137,12 +217,14 @@ def main() -> int:
                 rows.append(row); accounted["no-result"] = accounted.get("no-result", 0) + 1
                 continue
             E = len(load(cp[0], "raw"))
-            c_runs, c_pairs, c_bad, _, c_cls, c_sizes = selfdet(cp, "raw")
+            c_runs, c_pairs, c_bad, _, c_cls, c_sizes, c_nm = selfdet(cp, "raw")
             row.update(Z=Z, E=E,
                        selfdet=(f"{c_cls} class{'es' if c_cls != 1 else ''} over {c_runs} runs"
                                 f" ({c_sizes})"),
                        selfdet_distinct_classes=c_cls, selfdet_class_sizes=c_sizes,
-                       selfdet_differing_pairs=c_bad, selfdet_pairs=c_pairs, selfdet_runs=c_runs)
+                       selfdet_differing_pairs=c_bad, selfdet_pairs=c_pairs, selfdet_runs=c_runs,
+                       selfdet_not_measured_pairs=c_nm,
+                       verdict_source=f"compat-envelope/detlog_compare.py::self_determinism@{VERDICT_SHA256}")
             if E == 0 or Z == 0:
                 row.update(tier="no-result",
                            note="0 DETLOG records — no denominator, so no parity claim")
@@ -182,6 +264,7 @@ def main() -> int:
             "golden_selfdet", "Y_raw", "cover_raw", "uncovered_raw", "inserted_raw",
             "Y_hex", "cover_hex", "uncovered_hex", "inserted_hex", "cover_hex_pct",
             "selfdet_distinct_classes", "selfdet_class_sizes",
+            "selfdet_not_measured_pairs", "verdict_source",
             "inherited", "engagement", "matrix_sample_selfdet", "note"]
     with out_csv.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
