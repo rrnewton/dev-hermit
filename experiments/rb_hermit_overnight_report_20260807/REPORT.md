@@ -118,10 +118,42 @@ Dirs: `rb_no_namespace_random_leaks_20260806`, `rb_nix_minimum_hermit_dose_20260
 | nix builds cannot run with nix itself under Hermit | 2 store configs, 3 probes | **[M]** |
 | **CA store is not a usable oracle** — `nix --check` does not detect nondeterminism in `__contentAddressed` on nix 2.30.2 (nix#5336 reproduces) | 1 derivation | **[C]** |
 
-**N=0 reproduced is the honest headline for real nixpkgs.** The blocker is compatibility, not
-determinization: **cmake configure hangs under Hermit** (90 s reproducer), and **fake uid 0 breaks
-`tar` in `unpackPhase`** for every tarball-sourced package. Both are Hermit bugs found tonight and
-both block real nixpkgs work.
+**N=0 reproduced is still the honest headline for real nixpkgs — but the remaining distance is one
+bug, not a category.** Two Hermit compatibility bugs were found *and fixed* tonight, and a third
+is isolated:
+
+| bug | fix | effect |
+|---|---|---|
+| **#1849** fake uid 0 makes GNU `tar` fail restoring ownership, killing `unpackPhase` for every tarball package | **#1851** — move `chown`/`fchown`/`fchownat`/`lchown` to `Determinized` no-op success | stock `which` and `hello` clear `unpackPhase` unaided |
+| **#1850** cmake configure hangs forever at zero CPU | **#1864** — route NULL-sigmask `epoll_pwait` through the existing non-blockable/timeoutable path | reproducer **`rc=124` at 90 s → `rc=0` at 2 s** |
+| `fixupPhase` hang, different entry point | **not fixed** | `lensfun` now clears configure, build *and* install, then hangs here |
+
+**#1850's root cause is not what it was first reported to be, and the correction is instructive.**
+The original diagnosis — *"pipe readiness/EOF not delivered"* — was **refuted** by a six-probe
+syscall differential (with a must-hang control): Hermit matches native exactly on read-EOF,
+`EPOLLHUP`, `POLLHUP`, buffered data, and data+HUP. A symptom had been generalised into a mechanism
+without testing the mechanism.
+
+Worse, **the supporting evidence never existed.** "No children at all" had been read from
+`/proc/<pid>/task/<tid>/children` — but **this kernel is built without `CONFIG_PROC_CHILDREN`**, so
+that file is empty on every process. An absence produced by a missing kernel option was recorded as
+an observation. The children were alive the whole time. *(Same shape as every other trap this
+sprint: a proxy that returns nothing, read as evidence of nothing.)*
+
+The real cause came from Hermit's own scheduler log rather than inference: the log ends at
+`COMMIT turn 198, dettid 3` injecting `epoll_pwait(3,…,-1,NULL,8)` with `queue len 2`, while dettid
+5 waited with an inbound `openat`. **`handle_epoll_pwait` performed a blocking wait while holding
+the scheduler turn**, and the only task that could satisfy it was queued behind. glibc implements
+`epoll_wait(2)` as `epoll_pwait`, so real programs never reached `handle_epoll_wait` — which has
+always been correct. `epoll_pwait` was also the **only** poll/epoll member lacking
+`NonblockableSyscall`/`TimeoutableSyscall`, while `Ppoll` has had both all along. Non-NULL sigmask
+is deliberately untouched, since polling cannot reproduce the atomic mask swap.
+
+The `fixupPhase` hang was **re-tested rather than assumed** to be the same bug: `find … -print0` is
+alive and ptrace-stopped at `openat`, never resumed, while bash blocks reading its pipe — zero CPU,
+resampled 20 s apart. `handle_read` already routes `FdType::Pipe` through the turn-yielding path, so
+it is a different entry point. Two hypotheses are recorded on the issue as *next steps, not
+findings*, with the exact `--log=debug` check that settles it.
 
 > ⚠️ **`/nix` on this host is chef-ephemeral** — Meta devservers revert it. Run `bootstrap.sh check`
 > before trusting anything in that dir.
