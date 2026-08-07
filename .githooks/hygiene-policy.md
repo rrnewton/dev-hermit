@@ -73,7 +73,8 @@ Every local `main` ref update and every push to `origin/main` must run through
 compare, commit/ref update, push, and the fresh-fetch ancestry proof. It records
 the fetched `origin/main` SHA as the compare-and-swap value; if either local
 `HEAD` or the server-observed old value differs, publication is refused. A
-normal non-force push remains the final remote CAS.
+normal non-force push remains the final remote CAS. A contending writer is
+refused immediately rather than silently waiting and hiding the collision.
 
 Ordinary parent changes use:
 
