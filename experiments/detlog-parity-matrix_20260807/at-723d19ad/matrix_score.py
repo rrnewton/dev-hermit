@@ -23,7 +23,7 @@ from ITSELF by an unknown amount. Those cells print NOT-MEASURABLE and their par
 fields are blank.
 """
 from __future__ import annotations
-import csv, difflib, importlib.util, itertools, json, re, sys
+import csv, difflib, importlib.util, itertools, json, os, re, subprocess, sys, tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -39,49 +39,150 @@ from pathlib import Path
 # the two-implementations drift the split exists to prevent, and it would do it
 # invisibly, which is worse than not running.
 # ---------------------------------------------------------------------------
-VERDICT_MODULE = (Path(__file__).resolve().parents[3]
-                  / "compat-envelope" / "detlog_compare.py")
+# PINNED TO A COMMIT, NOT TO THE WORKING TREE. The previous revision loaded the
+# producer from `compat-envelope/detlog_compare.py` on disk and stamped a digest of
+# whatever it found. That made a stale score DETECTABLE AFTER THE FACT; it did not
+# PREVENT one -- and it was not hypothetical: on 2026-08-07 at 01:51 the file changed
+# under a running score. This loads the blobs out of the object store at a fixed
+# commit, so an edit to the working tree cannot alter a score at all.
+#
+# THE CLOSURE IS TWO FILES, NOT ONE. detlog_compare.py is now a thin contract surface
+# that imports strict_verdict. Pinning only the entry point would leave the actual
+# comparison reading from the working tree, which is the whole defect wearing a hat.
+# strict_verdict imports nothing but hashlib and re, so the closure ends there;
+# _assert_closure_unchanged below re-checks that on every run rather than trusting
+# this comment.
+VERDICT_PIN_COMMIT = "d2d74fc70f188921217360d8e27f75a5f4808dde"
+VERDICT_PIN_SUBJECT = "compat-envelope: one verdict module for detlog, stack and heap"
+VERDICT_PIN_BLOBS = {
+    "compat-envelope/detlog_compare.py": "60a590e46e437b0dad3d9658a92af4fcf77d538b",
+    "compat-envelope/strict_verdict.py": "52ece2e8c833f6881dc9d17cef335f85f3e63ce5",
+}
+VERDICT_ENTRY = "compat-envelope/detlog_compare.py"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+#: Development escape hatch. Deliberately NOT the default, and it stamps provenance
+#: differently so a working-tree score can never be quoted as a pinned one.
+USE_WORKTREE = os.environ.get("DETLOG_VERDICT_USE_WORKTREE") == "1"
+
+
+def _git(*args: str) -> bytes:
+    r = subprocess.run(["git", "-C", str(REPO_ROOT), *args],
+                       capture_output=True)
+    if r.returncode != 0:
+        raise SystemExit(
+            f"ABORT: git {' '.join(args)} failed (rc={r.returncode}): "
+            f"{r.stderr.decode(errors='replace').strip()}"
+        )
+    return r.stdout
+
+
+def _materialise_pinned(dest: Path) -> None:
+    """Write the pinned blobs into `dest`, verifying each hash before use."""
+    for rel, want in VERDICT_PIN_BLOBS.items():
+        got = _git("rev-parse", f"{VERDICT_PIN_COMMIT}:{rel}").decode().strip()
+        if got != want:
+            raise SystemExit(
+                f"ABORT: pin mismatch for {rel} at {VERDICT_PIN_COMMIT[:12]}.\n"
+                f"  pinned blob {want}\n  found  blob {got}\n"
+                "  The recorded pin does not describe the recorded commit. Re-pin "
+                "deliberately; do not adjust one of the two to make this pass."
+            )
+        (dest / Path(rel).name).write_bytes(
+            _git("cat-file", "blob", f"{VERDICT_PIN_COMMIT}:{rel}"))
+
+
+def _report_worktree_drift() -> str:
+    """Say so, loudly, if the working tree no longer matches the pin.
+
+    Not fatal -- the pinned score is still valid. But silently ignoring a newer
+    producer is its own failure mode: the owner edits the file, re-runs, sees the
+    same numbers, and concludes their change had no effect. Name it instead.
+    """
+    drifted = []
+    for rel, want in VERDICT_PIN_BLOBS.items():
+        p = REPO_ROOT / rel
+        if not p.is_file():
+            drifted.append(f"{rel}: ABSENT from the working tree")
+            continue
+        got = _git("hash-object", str(p)).decode().strip()
+        if got != want:
+            drifted.append(f"{rel}: worktree {got[:12]} != pinned {want[:12]}")
+    if drifted:
+        print("NOTE: the verdict producer has moved since this pin. The score below "
+              "used the PINNED revision and is unaffected; your edit did NOT take "
+              "effect here.", file=sys.stderr)
+        for d in drifted:
+            print(f"      {d}", file=sys.stderr)
+        print(f"      To adopt it, re-pin VERDICT_PIN_COMMIT/VERDICT_PIN_BLOBS in "
+              f"{Path(__file__).name} deliberately.", file=sys.stderr)
+    return "drifted" if drifted else "matches-worktree"
 
 
 def _load_verdict_module():
-    if not VERDICT_MODULE.is_file():
-        raise SystemExit(
-            f"ABORT: verdict producer not found at {VERDICT_MODULE}.\n"
-            "  This scorer deliberately has no local self-determinism comparison -- the\n"
-            "  verdict belongs to hermit-w5's module under the ratified boundary. Running\n"
-            "  without it would mean scoring with a second implementation."
-        )
-    spec = importlib.util.spec_from_file_location("detlog_compare", VERDICT_MODULE)
+    """Import the producer, from the pin by default and the worktree only on request."""
+    tmp = Path(tempfile.mkdtemp(prefix="w7-verdict-pin-"))
+    if USE_WORKTREE:
+        for rel in VERDICT_PIN_BLOBS:
+            src = REPO_ROOT / rel
+            if not src.is_file():
+                raise SystemExit(f"ABORT: DETLOG_VERDICT_USE_WORKTREE=1 but {src} is absent.")
+            (tmp / Path(rel).name).write_bytes(src.read_bytes())
+    else:
+        _materialise_pinned(tmp)
+
+    entry = tmp / Path(VERDICT_ENTRY).name
+    sys.path.insert(0, str(tmp))          # so its `import strict_verdict` resolves here
+    spec = importlib.util.spec_from_file_location("detlog_compare", entry)
     mod = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(mod)
     except Exception as exc:
-        # OBSERVED 2026-08-07 01:51: the producer is untracked and its owner is
-        # editing it live, so an import can land mid-save on a syntactically valid
-        # but incomplete file (that time: `re` used before it was imported). That
-        # is normal for in-flight work and is NOT a defect in the producer. Refuse
-        # to score rather than falling back, and say which of the two it is so
-        # nobody debugs the wrong file.
         raise SystemExit(
-            f"ABORT: {VERDICT_MODULE} failed to import: {type(exc).__name__}: {exc}\n"
-            "  The verdict producer is owned by hermit-w5 and is currently untracked,\n"
-            "  so this is most likely a mid-edit snapshot rather than a real breakage.\n"
-            "  Re-run in a moment. Do NOT edit that file to make this pass -- it is not\n"
-            "  ours, and this scorer has no fallback comparison on purpose."
+            f"ABORT: the verdict producer failed to import: {type(exc).__name__}: {exc}\n"
+            f"  source: {'WORKING TREE (DETLOG_VERDICT_USE_WORKTREE=1)' if USE_WORKTREE else VERDICT_PIN_COMMIT[:12]}\n"
+            "  This scorer has no fallback comparison on purpose. Do not edit the "
+            "producer to make this pass -- it is not ours."
         ) from exc
+
     missing = [n for n in ("self_determinism", "PASS", "FAIL", "NOT_MEASURED")
                if not hasattr(mod, n)]
     if missing:
         raise SystemExit(
-            f"ABORT: {VERDICT_MODULE} does not expose {missing}. The producer interface\n"
-            "  moved; this scorer must be updated to match rather than guessing."
+            f"ABORT: the verdict producer does not expose {missing}. The interface "
+            "moved; update this scorer to match rather than guessing."
         )
     return mod
 
 
-import hashlib as _hashlib
+def _assert_closure_unchanged() -> None:
+    """The pin covers a closure, so re-derive the closure instead of trusting it."""
+    src = _git("cat-file", "blob",
+               f"{VERDICT_PIN_COMMIT}:{VERDICT_ENTRY}").decode(errors="replace")
+    imported = set(re.findall(r"^\s*(?:import|from)\s+([A-Za-z_][\w]*)", src, re.M))
+    local = {m for m in imported
+             if (REPO_ROOT / "compat-envelope" / f"{m}.py").exists()
+             or f"compat-envelope/{m}.py" in VERDICT_PIN_BLOBS}
+    unpinned = {m for m in local if f"compat-envelope/{m}.py" not in VERDICT_PIN_BLOBS}
+    if unpinned:
+        raise SystemExit(
+            f"ABORT: the verdict producer now imports {sorted(unpinned)} from "
+            "compat-envelope/, which is NOT in VERDICT_PIN_BLOBS.\n"
+            "  Pinning only part of the closure leaves the rest reading from the "
+            "working tree, which is the exact defect the pin exists to remove.\n"
+            "  Add the missing file(s) to the pin deliberately."
+        )
+
+
+DRIFT = "n/a (worktree mode)" if USE_WORKTREE else _report_worktree_drift()
+if not USE_WORKTREE:
+    _assert_closure_unchanged()
 DC = _load_verdict_module()
-VERDICT_SHA256 = _hashlib.sha256(VERDICT_MODULE.read_bytes()).hexdigest()[:16]
+VERDICT_SHA256 = (
+    f"worktree:{_git('hash-object', str(REPO_ROOT / VERDICT_ENTRY)).decode().strip()[:12]}"
+    if USE_WORKTREE else
+    f"{VERDICT_PIN_COMMIT[:12]}:{VERDICT_PIN_BLOBS[VERDICT_ENTRY][:12]}"
+)
 
 HEX = re.compile(r"0x[0-9a-f]+")
 BACKENDS = ["ptrace", "kvm", "dbi", "sabre", "e9patch", "liteinst"]
@@ -174,7 +275,21 @@ def selfdet(paths, policy):
     bad = 0
     not_measured = 0
     for i, j in pairs:
-        v = DC.self_determinism(texts[i], texts[j])["verdict"]
+        # The import-time guard only proves the SYMBOLS exist. A producer can import
+        # cleanly and still fail when called -- observed while testing this pin, where
+        # renaming a helper left `self_determinism` importable but broken. Fail closed
+        # here too, and name the producer, so the traceback does not read as a bug in
+        # the collector.
+        try:
+            v = DC.self_determinism(texts[i], texts[j])["verdict"]
+        except Exception as exc:
+            raise SystemExit(
+                f"ABORT: the verdict producer raised while comparing "
+                f"{paths[i].name} vs {paths[j].name}: {type(exc).__name__}: {exc}\n"
+                f"  source: {VERDICT_SHA256}\n"
+                "  It imported cleanly, so this is a runtime fault in the producer, not "
+                "a missing symbol. This scorer has no fallback comparison on purpose."
+            ) from exc
         if v == DC.FAIL:
             bad += 1
         elif v == DC.NOT_MEASURED:
