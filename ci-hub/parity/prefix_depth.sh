@@ -19,17 +19,48 @@ OUT=${OUT:-/home/newton/work/dev-hermit/scratch/prefix}
 mkdir -p "$OUT"
 
 commits() {  # $1=logfile+errfile prefix -> ordered COMMIT records, normalised
-  # A5 (audit item, owned by the ratchet task -- documented here, not changed):
-  # this concatenates .log THEN .err, so if a backend emits COMMIT records on
-  # BOTH streams the .err records are appended after all .log records rather
-  # than interleaved in emission order, and the "prefix" is then a prefix of a
-  # sequence that never occurred. The grep does filter out the KVM/LiteInst-only
-  # ':: Backend:' banner (it does not match 'COMMIT turn'), so the COUNT is not
-  # inflated by it -- the exposure is ORDER, not magnitude. Do not "fix" by
-  # dropping .err without first checking which backends log only to stderr.
-  cat "$1".log "$1".err 2>/dev/null \
+  # STREAM ORDERING: REFUSE, do not concatenate.
+  #
+  # This used to `cat "$1".log "$1".err`. When a backend emits COMMIT records on
+  # BOTH streams that appends all .err records after all .log records, so the
+  # "prefix" is a prefix of A SEQUENCE THAT NEVER OCCURRED -- an ORDERING
+  # artifact, not a magnitude one, and invisible in the output. Interleaving
+  # cannot be recovered after the fact: the two streams are separately buffered
+  # and the log file carries no ordering relation to stderr.
+  # So: use whichever stream carries the records, and if BOTH do, refuse rather
+  # than invent an order. ptrace writes to the log file, sabre to stderr; the
+  # both-streams case is the one that silently fabricated a sequence.
+  local log_n err_n
+  # NB `grep -c` prints 0 AND exits 1 on no-match, so a `|| echo 0` fallback
+  # appends a SECOND zero and yields the literal "0\n0", which then fails
+  # `[ -gt ]` with "integer expression expected". Capture plainly and default
+  # only when the file is absent.
+  log_n=$(grep -c 'COMMIT turn' "$1".log 2>/dev/null); log_n=${log_n:-0}
+  err_n=$(grep -c 'COMMIT turn' "$1".err 2>/dev/null); err_n=${err_n:-0}
+  if [ "$log_n" -gt 0 ] && [ "$err_n" -gt 0 ]; then
+    echo "AMBIGUOUS-STREAM-ORDER: $log_n on .log and $err_n on .err;" \
+         "interleaving is unrecoverable, refusing to fabricate a sequence" >&2
+    return 3
+  fi
+  if [ "$err_n" -gt 0 ]; then cat "$1".err; else cat "$1".log 2>/dev/null; fi \
     | grep -o 'COMMIT turn .*' \
     | sed -E 's/0x[0-9a-f]+/HEX/g'
+}
+
+# THE PROLOGUE. Every guest begins with the same process-setup records, and for a
+# dynamically linked guest the dynamic loader's opens as well. MEASURED
+# 2026-08-07 at hermit g294e89bfeeeb, --base-env minimal:
+#   /bin/true, /bin/echo, wc   ParentContinue, MemAddrSpace, Path(ld.so.cache), Path(libc.so.6)
+#   static guests              ParentContinue, MemAddrSpace                (no loader)
+# so the first 2 records (static) or 4 (dynamic) are IDENTICAL regardless of what
+# the guest does. A depth at or below that boundary says the backend agreed
+# through process startup and NOTHING about the guest -- which is why dbi=3,
+# sabre=1 and liteinst=8 were constant while Z varied 2,765x. Depth is reported
+# against the prologue boundary for that reason, and a depth inside the prologue
+# is labelled rather than published as coverage.
+prologue_len() { # $1=prefix -> number of leading records that are process/loader setup
+  commits "$1" 2>/dev/null | grep -nE 'ParentContinue|MemAddrSpace|Path\("/etc/ld\.so|Path\("/lib' \
+    | awk -F: 'NR==1&&$1!=1{exit} {last=$1} END{print last+0}'
 }
 
 run() { # $1=backend $2=tag $3.. = guest argv
@@ -153,7 +184,17 @@ for spec in "$@"; do
       continue
     fi
     Y=$(depth "$OUT/$tag.ptrace" "$OUT/$tag.$be")
-    printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "$Y" "$Z" "$emitted" "$rc" ""
+    # A depth at or inside the PROLOGUE is not coverage. Label it instead of
+    # publishing a ratio: Y/Z with Y in the prologue says the backend agreed
+    # through process startup, and Z only says how long the guest ran -- which
+    # is why 3/145 and 3/400940 are THE SAME FACT.
+    PL=$(prologue_len "$OUT/$tag.ptrace")
+    if [ "${Y:-0}" -le "${PL:-0}" ]; then
+      note="PROLOGUE-ONLY (prologue=$PL): agreement is process/loader setup, NOT guest execution; do not quote Y/Z as coverage"
+    else
+      note="beyond prologue by $((Y-PL)) record(s) (prologue=$PL)"
+    fi
+    printf '%-22s %-9s %6s %6s %6s  rc=%-5s %s\n' "$tag" "$be" "$Y" "$Z" "$emitted" "$rc" "$note"
   done
 done
 echo
