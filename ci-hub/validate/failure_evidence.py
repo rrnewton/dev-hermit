@@ -10,6 +10,7 @@ commit/cell is a solo ``-j 4`` reproduction of an earlier rerun-required red.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 from pathlib import Path
@@ -23,6 +24,21 @@ from nonzero_result import per_node_counts  # noqa: E402
 
 
 DEFAULT_REGISTRY = Path(__file__).with_name("flaky-cells.json")
+
+# A timed-out node burning a full core for its whole allowance is a LIVELOCK; one
+# that spent the allowance waiting is CONTENTION. They demand opposite fixes and
+# before this they shared one `FAILED` label, so a timeout could not be triaged
+# from the row at all (measured 2026-08-07: 76 of 316 ledger fails were timeouts
+# that had to stay red because the row carried only WHOLE-RUN user/sys time).
+#
+# The discriminator is `cpu_per_wall` = (user_s + sys_s) / elapsed_s for THAT
+# node. Thresholds are deliberately wide and the raw inputs are always recorded
+# beside the verdict, so a reader can re-derive it and disagree.
+_LIVELOCK_CPU_PER_WALL = 0.9  # >= this: at least one core continuously busy
+_CONTENTION_CPU_PER_WALL = 0.5  # <= this: mostly off-CPU, i.e. waiting
+# cgroup throttling is DIRECT evidence of contention and outranks the ratio: a
+# step can be throttled into a timeout while still showing a busy ratio.
+_THROTTLED_SECONDS_FLOOR = 1.0
 
 
 def flaky_cells(path: Path) -> set[str]:
@@ -460,8 +476,150 @@ def _host_env_signature_for(log_text: str, node: str) -> str | None:
     return None
 
 
+def checkout_root(log_text: str) -> Path | None:
+    """Recover the checkout the run executed in, from the log's own header.
+
+    The runner's profile store is CWD-relative (``DEFAULT_PROFILE_DIR``), so it
+    lives inside the checkout. Reading the root from the log means the timing
+    lookup binds to THIS run's own store without threading a new argument
+    through validate.sh.
+    """
+    match = re.search(r"^Root: (.+)$", log_text, re.M)
+    if not match:
+        return None
+    root = match.group(1).strip()
+    return Path(root) if root else None
+
+
+def _profile_rows(root: Path) -> list[dict[str, str]]:
+    """Read every step-profile row in a checkout's own runner profile store."""
+    profiles = root / ".safe-ci-dag-runner" / "profiles"
+    rows: list[dict[str, str]] = []
+    if not profiles.is_dir():
+        return rows
+    for path in sorted(profiles.glob("step_profiles_*.csv")):
+        try:
+            with path.open(newline="", errors="replace") as handle:
+                rows.extend(dict(r) for r in csv.DictReader(handle))
+        except OSError:
+            continue
+    return rows
+
+
+def _number(raw: object) -> float | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _flag(raw: object) -> bool | None:
+    text = str(raw or "").strip().lower()
+    if text in {"true", "1", "yes"}:
+        return True
+    if text in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def timing_verdict(
+    *, timed_out: bool | None, cpu_per_wall: float | None, throttled_s: float | None
+) -> str | None:
+    """Name WHY a node ran out of time, or refuse to.
+
+    Only meaningful for a node that actually timed out; a node that failed for
+    any other reason gets ``None`` rather than a guess. Returns one of
+    ``livelock`` / ``contention`` / ``inconclusive``.
+    """
+    if not timed_out:
+        return None
+    if throttled_s is not None and throttled_s >= _THROTTLED_SECONDS_FLOOR:
+        # The cgroup measurably stopped it running. That is contention by direct
+        # observation, not inferred from a ratio.
+        return "contention"
+    if cpu_per_wall is None:
+        return "inconclusive"
+    if cpu_per_wall >= _LIVELOCK_CPU_PER_WALL:
+        return "livelock"
+    if cpu_per_wall <= _CONTENTION_CPU_PER_WALL:
+        return "contention"
+    return "inconclusive"
+
+
+def node_timing(rows: list[dict[str, str]], node: str, commit: str) -> dict[str, object]:
+    """Per-node wall and CPU for one failing node, or a typed unavailable record.
+
+    Fails CLOSED: when no profile row can be bound to this node at this commit
+    the numeric fields are ``None`` and ``timing_source`` says so, so a consumer
+    can tell "not measured" from "measured as zero" — the ambiguous-zero trap
+    this field exists to close.
+
+    ``profile_rows_matched`` travels with the value so a reader can see the
+    lookup was unambiguous rather than trusting that it was.
+    """
+    empty: dict[str, object] = {
+        "wall_seconds": None,
+        "cpu_seconds": None,
+        "cpu_user_seconds": None,
+        "cpu_sys_seconds": None,
+        "cpu_per_wall": None,
+        "timed_out": None,
+        "cpu_timed_out": None,
+        "throttled_seconds": None,
+        "quota_utilization_pct": None,
+        "co_tenants_end": None,
+        "timing_verdict": None,
+        "timing_source": "unavailable:no-profile-row",
+        "profile_rows_matched": 0,
+        "profile_row_timestamp": None,
+    }
+    matches = [
+        r
+        for r in rows
+        if (r.get("step") or "").strip() == node
+        and (r.get("git_sha") or "").strip() == commit
+    ]
+    if not matches:
+        return empty
+    # Rows are appended in step order, so the LAST match at this commit in this
+    # checkout's own store is the current run's. Earlier matches are earlier runs
+    # of the same commit in the same slot; the count is reported either way.
+    row = matches[-1]
+    wall = _number(row.get("elapsed_s"))
+    user = _number(row.get("user_s"))
+    sys_s = _number(row.get("sys_s"))
+    cpu = None if user is None and sys_s is None else (user or 0.0) + (sys_s or 0.0)
+    ratio = (cpu / wall) if (cpu is not None and wall) else None
+    timed = _flag(row.get("timed_out"))
+    throttled = _number(row.get("throttled_s"))
+    return {
+        "wall_seconds": wall,
+        "cpu_seconds": None if cpu is None else round(cpu, 3),
+        "cpu_user_seconds": user,
+        "cpu_sys_seconds": sys_s,
+        "cpu_per_wall": None if ratio is None else round(ratio, 4),
+        "timed_out": timed,
+        "cpu_timed_out": _flag(row.get("cpu_timed_out")),
+        "throttled_seconds": throttled,
+        "quota_utilization_pct": _number(row.get("quota_utilization_pct")),
+        "co_tenants_end": _number(row.get("co_tenants_end")),
+        "timing_verdict": timing_verdict(
+            timed_out=timed, cpu_per_wall=ratio, throttled_s=throttled
+        ),
+        "timing_source": "safe-ci-dag-runner-step-profile",
+        "profile_rows_matched": len(matches),
+        "profile_row_timestamp": (row.get("timestamp") or "").strip() or None,
+    }
+
+
 def classify_failed_substeps(
-    log_text: str, *, flaky_registry: set[str] | None = None
+    log_text: str,
+    *,
+    flaky_registry: set[str] | None = None,
+    commit: str | None = None,
 ) -> list[dict[str, object]]:
     """Turn an aggregate DAG failure into a per-node, triageable verdict list.
 
@@ -503,6 +661,15 @@ def classify_failed_substeps(
     the headline ``fault_class`` is forced to pick one.
     """
     registry = flaky_registry or set()
+    # Per-node wall+CPU, read from the run's OWN checkout profile store. Looked
+    # up once per run rather than per node. When the commit is unknown (an older
+    # caller) or the store is absent, every node records the typed unavailable
+    # shape instead of a fabricated number.
+    profile_rows: list[dict[str, str]] = []
+    if commit:
+        root = checkout_root(log_text)
+        if root is not None:
+            profile_rows = _profile_rows(root)
     records: list[dict[str, object]] = []
     for node in failed_substeps(log_text):
         group = node.split(".", 1)[0] if "." in node else ""
@@ -540,6 +707,10 @@ def classify_failed_substeps(
                 "known_flaky": fault == "code"
                 and sub_step == "lane-run"
                 and cell in registry,
+                # WHY this node ran out of time, when it did. Additive: consumers
+                # read the row with .get()/Option, and validate.sh inlines this
+                # list wholesale, so no producer-side change is needed downstream.
+                "timing": node_timing(profile_rows, node, commit or ""),
             }
         )
     return records
@@ -581,7 +752,9 @@ def build_evidence(
     cells = failed_substeps(log_text)
     cell_set = set(cells)
     flaky_failed = sorted(cell for cell in cells if cell in registry)
-    classes = classify_failed_substeps(log_text, flaky_registry=registry)
+    classes = classify_failed_substeps(
+        log_text, flaky_registry=registry, commit=commit
+    )
     # Top-level, standalone verbatim fault line (already bounded by
     # _first_error_line_for). This is the headline line the PRODUCER serializes
     # with one jq extraction (`.first_error_line`) as a peer of the other scalar
