@@ -6,6 +6,14 @@
 tip — main was `e808322385d4`), release, not `-dirty`, sha256 `cc623684…`, Reverie pin
 `0ae0c01b`, third-party backends staged from `target/install_pkg/rsrcs`.
 
+> **RE-MEASURED AT CURRENT MAIN — see [`at-723d19ad/`](at-723d19ad/README.md).** The harness was
+> re-run at hermit `723d19ad5d10` (Reverie pin `038e9939`, 9 commits later) at **n=30 per cell**
+> instead of n=3. **42 of 42 cells unchanged**; the single non-`UNCHANGED` row is a sampling
+> artifact of a defect already reported here, not a change. That re-measurement is the quotable
+> one for the present tip — this page remains bound to `0041130ccb0d`. It also discharges
+> follow-up 4 below (n=30 for every cell) and sharpens DBI from "3/3 pairs differ" to
+> **30 distinct outcome classes in 30 runs — no run ever repeats**.
+
 ## 0. Why this is a re-measurement and not an aggregation
 
 The task supplies per-backend numbers taken at hermit `590fcc9e` by another agent. Pasting

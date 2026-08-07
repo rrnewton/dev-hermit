@@ -1,0 +1,7 @@
+backend,Z,control_prefix_depth,control_covered,control_verdict,planted_prefix_depth,planted_covered,planted_uncovered,planted_inserted,verdict
+ptrace,96,96,96,no false positive,6,70,26,28,DETECTED
+kvm,96,96,96,no false positive,6,70,26,28,DETECTED
+dbi,94,3,4,CONTROL ALREADY FAILS (self-nondeterministic),3,4,90,92,NOT-ATTRIBUTABLE
+sabre,79,79,79,no false positive,20,29,50,52,DETECTED
+e9patch,96,96,96,no false positive,6,70,26,28,DETECTED (but backend not exercised; this is the ptrace runtime)
+liteinst,832,832,832,no false positive,6,581,251,253,DETECTED
