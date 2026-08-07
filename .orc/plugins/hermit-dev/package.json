@@ -2,5 +2,8 @@
   "name": "hermit-dev",
   "version": "0.0.1",
   "main": "./index.ts",
-  "description": "Canonical dev-hermit coordinator policies"
+  "description": "Canonical dev-hermit coordinator policies",
+  "scripts": {
+    "test": "node ./speculative-land-outcome.test.mjs"
+  }
 }
