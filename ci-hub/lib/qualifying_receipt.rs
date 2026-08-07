@@ -303,11 +303,7 @@ pub fn row_qualifies(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate) ->
 /// The typed form of [`row_qualifies`]. Same decisions, but the outcome carries
 /// its condition so a caller can tell a demonstrated full green from one
 /// grandfathered through the count-only fallback with no coverage evidence.
-pub fn row_qualification(
-    row: &HistoryRow,
-    sha: &str,
-    pred: &QualifyingPredicate,
-) -> Qualification {
+pub fn row_qualification(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate) -> Qualification {
     let req = &pred.require;
     if !(row.commit.as_deref() == Some(sha)
         && row.commit_anchored == Some(req.commit_anchored)
@@ -488,8 +484,14 @@ mod tests {
         let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
 
         for (label, coverage) in [
-            ("absent_nodes omitted", r#"{"planned_test_nodes":19,"zero_executed_nodes":[]}"#),
-            ("zero_executed_nodes omitted", r#"{"planned_test_nodes":19,"absent_nodes":[]}"#),
+            (
+                "absent_nodes omitted",
+                r#"{"planned_test_nodes":19,"zero_executed_nodes":[]}"#,
+            ),
+            (
+                "zero_executed_nodes omitted",
+                r#"{"planned_test_nodes":19,"absent_nodes":[]}"#,
+            ),
             ("both omitted", r#"{"planned_test_nodes":19}"#),
         ] {
             let row = row_with_coverage(&sha, coverage);
@@ -498,7 +500,10 @@ mod tests {
                 matches!(verdict, Qualification::Refused(_)),
                 "{label}: unreported coverage must be refused, got {verdict:?}"
             );
-            assert!(!row_qualifies(&row, &sha, &pred), "{label}: bool view must agree");
+            assert!(
+                !row_qualifies(&row, &sha, &pred),
+                "{label}: bool view must agree"
+            );
         }
     }
 
@@ -514,7 +519,10 @@ mod tests {
             r#"{"planned_test_nodes":19,"executed_test_nodes":19,
                 "zero_executed_nodes":[],"absent_nodes":[]}"#,
         );
-        assert_eq!(row_qualification(&row, &sha, &pred), Qualification::FullCoverage);
+        assert_eq!(
+            row_qualification(&row, &sha, &pred),
+            Qualification::FullCoverage
+        );
         assert!(row_qualifies(&row, &sha, &pred));
     }
 
@@ -530,7 +538,10 @@ mod tests {
         assert_eq!(coverage_verdict(&cov), CoverageVerdict::Unsatisfied);
         let missing: CoverageRow =
             serde_json::from_str(r#"{"planned_test_nodes":19,"absent_nodes":[]}"#).unwrap();
-        assert!(matches!(coverage_verdict(&missing), CoverageVerdict::Unavailable(_)));
+        assert!(matches!(
+            coverage_verdict(&missing),
+            CoverageVerdict::Unavailable(_)
+        ));
     }
 
     /// The count-only fallback stays ACCEPTED (this typing is not a silent floor
@@ -549,8 +560,14 @@ mod tests {
         ))
         .unwrap();
         let verdict = row_qualification(&row, &sha, &pred);
-        assert_eq!(verdict, Qualification::CountsOnlyGrandfathered { schema: 3 });
-        assert!(verdict.accepted(), "behaviour must be unchanged for existing rows");
+        assert_eq!(
+            verdict,
+            Qualification::CountsOnlyGrandfathered { schema: 3 }
+        );
+        assert!(
+            verdict.accepted(),
+            "behaviour must be unchanged for existing rows"
+        );
         assert!(
             !verdict.coverage_demonstrated(),
             "a receipt with no coverage evidence must not read as demonstrated coverage"
@@ -569,7 +586,10 @@ mod tests {
                 "executed_tests":427,"filtered_tests":0}}"#
         ))
         .unwrap();
-        assert!(matches!(row_qualification(&row, &sha, &pred), Qualification::Refused(_)));
+        assert!(matches!(
+            row_qualification(&row, &sha, &pred),
+            Qualification::Refused(_)
+        ));
     }
 
     fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
