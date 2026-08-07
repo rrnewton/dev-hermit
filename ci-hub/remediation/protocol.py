@@ -105,7 +105,7 @@ DEFAULT_NETWORK_TIMEOUT = float(
 #
 # The fix is a WALL BUDGET the gate honours ITSELF, so it always returns under
 # its own power with a typed result instead of being killed with none. Measured
-# 2026-08-07 on devbig014: the work is ~1.7s of user CPU; the tail is blocking
+# 2026-08-07 on the shared dev host: the work is ~1.7s of user CPU; the tail is blocking
 # network wait (a 31.9s run showed 6144 voluntary context switches against ~600
 # on fast runs, with flat CPU). So the budget is not a guess about how long the
 # work takes -- it is the outer bound minus measured startup and the
