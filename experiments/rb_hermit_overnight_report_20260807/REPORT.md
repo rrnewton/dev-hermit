@@ -149,7 +149,27 @@ Dir: `buck2-action-bitwise-determinism_20260806`. The directory labels itself
 | Batched control arm | 5,548 actions, 74 targets | **[C]** | **0 divergent** |
 | Hermit determinizes a nondeterministic tar (Sarah Clark's 2022 test, unmodified) | 1 script, 2 runs | **[C]** | native NONDETERMINISTIC → **DETERMINIZED** |
 | Fleet telemetry, `ds=2026-08-05`, **user builds only** | — | **[C]** | 85,674 flagged rows / 41,701 targets |
-| Flagged-target arm | 5 targets | **[NR]** | **BLOCKED** — GPU/ASIC/MTIA toolchains don't build on a generic devserver |
+| Inverted join: flagged set ∩ known-buildable frame | 74 targets | **[C]** | **0 flagged targets** in that tree — corroborates the control arm |
+| Flagged-target arm | 5 targets | **[NR]** | **NOT MEASURED** — see retraction below. Not blocked, not negative. |
+
+> **RETRACTION (published on main, `47ebae27`).** An earlier version of this section — and of the
+> experiment directory — reported the flagged arm as *"blocked by buildability: flagged targets do
+> not build on a generic devserver."* **That was wrong and is withdrawn.** Three flagged batches
+> reported `BUILD FAILED`, and buildability was inferred from the exit status. The actual root
+> cause, read later from the message body, was:
+>
+> ```
+> Buck2 daemon was killed by an OOM killer due to high memory pressure.
+> ```
+>
+> Each `--isolation-dir` starts *and keeps* its own buck2 daemon; seven were created and none
+> killed, on a box shared with three other agents' Rust builds. `BUILD FAILED` was a **proxy** for
+> "cannot build here", and the root-cause line says something entirely different. It surfaced as an
+> `h2 protocol error ... broken pipe`, which reads nothing like memory pressure.
+>
+> This is the **third** proxy-error this one experiment has documented, after comparing action
+> *result* digests (2022) and the isolation-dir-substring false positive earlier the same night.
+> The correct status of the flagged arm is **NOT MEASURED**.
 
 **Do not report "buck2 is reproducible."** The clean arms are the *control* population; the arm
 that would test flagged targets did not run.
@@ -235,8 +255,9 @@ longer exists.
 2. **Move Debian off 5/13** — finish the 5 incomplete packages and diagnose the 3 that diverged
    under Hermit. The design and controls are done; this is throughput.
 3. **Bisect the GHC `-C0` non-replication.** The harness now exists, so it is cheap.
-4. **Run the buck2 flagged-target arm** somewhere those toolchains build, or invert the join onto
-   a known-buildable frame.
+4. **Retry the buck2 flagged arm serially** — one isolation dir for the whole session, killed
+   between phases, one target at a time. The failure was daemon memory pressure from
+   concurrency, not target size; the harness now carries a `trap ... kill`.
 5. **Do not chase cross-machine reproducibility with these harnesses** — they measure one host and
    would silently report success.
 
