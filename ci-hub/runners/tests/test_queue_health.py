@@ -262,6 +262,39 @@ class GateTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(fields["state"], "ok")
 
+    def test_regular_gate_persists_green_time_observation(self) -> None:
+        calls = []
+        original = qh.compute_gate
+
+        def fake(repo, gh_cmd, limit, now=None, sink=None,
+                 per_call_timeout=qh.DEFAULT_GH_CALL_TIMEOUT,
+                 persist_green_time=False):
+            calls.append(persist_green_time)
+            return 0, {"state": "ok", "summary": "healthy"}
+
+        qh.compute_gate = fake
+        self.addCleanup(setattr, qh, "compute_gate", original)
+        self.assertEqual(qh.gate(["r/x"], "gh", 10), 0)
+        self.assertEqual(calls, [True])
+
+    def test_green_time_still_logs_when_live_queue_fetch_is_unavailable(self):
+        self._patch(None, None)
+        calls = []
+        original = qh.green_time_field
+
+        def fake(repo, since=None, *, persist=False):
+            calls.append(persist)
+            return "qualified-green-time"
+
+        qh.green_time_field = fake
+        self.addCleanup(setattr, qh, "green_time_field", original)
+        code, fields = qh.compute_gate(
+            "r", "gh", 100, now=NOW, persist_green_time=True)
+        self.assertEqual(code, 1)
+        self.assertEqual(fields["state"], "unknown")
+        self.assertEqual(fields["green_time"], "qualified-green-time")
+        self.assertEqual(calls, [True])
+
 
 class ClassifyFetchFailureTests(unittest.TestCase):
     def test_403_is_ci_hub_broken_auth(self) -> None:
@@ -393,14 +426,52 @@ class GreenTimeFieldTests(unittest.TestCase):
             @staticmethod
             def green_time(parent, repo, since, workflows):
                 return {"green_pct": 87.5, "green_hours": 21.0,
-                        "total_hours": 24.0, "samples": 42,
+                        "authoritative_run_hours": 24.0,
+                        "window_start": "2026-08-01T00:00:00Z",
+                        "window_end_utc": "2026-08-02T06:00:00Z",
+                        "window_hours": 30.0, "no_result_hours": 2.0,
+                        "gap_hours": 4.0, "samples": 42,
                         "current_state": "success"}
         self._with_fake_query(Q)
         out = qh.green_time_field("rrnewton/hermit")
-        self.assertIn("87.5% green over 24.0h", out)
-        self.assertIn("n=42", out)
+        self.assertIn("87.5% green = 21.0 green h / 24.0 authoritative-run h",
+                      out)
+        self.assertIn("window 2026-08-01T00:00:00Z..2026-08-02T06:00:00Z",
+                      out)
+        self.assertIn("excluded NO-RESULT 2.0h + gap 4.0h", out)
+        self.assertIn("n=42 commits", out)
         self.assertIn("current=success", out)
         self.assertNotIn("UNAVAILABLE", out)
+
+    def test_persist_appends_the_same_window_and_denominator_snapshot(self):
+        calls = []
+
+        class Q:
+            @staticmethod
+            def parent_root():
+                return "/parent"
+
+            @staticmethod
+            def green_time(parent, repo, since, workflows):
+                return {"green_pct": 50.0, "green_hours": 1.0,
+                        "authoritative_run_hours": 2.0,
+                        "window_start": "s", "window_end_utc": "e",
+                        "window_hours": 5.0, "no_result_hours": 3.0,
+                        "gap_hours": 0.0, "samples": 5,
+                        "current_state": "red"}
+
+            @staticmethod
+            def append_green_time_log(parent, snapshot, path):
+                calls.append((parent, snapshot, path))
+                return "/parent/ignored/ci-hub/green-time-log.jsonl"
+
+        self._with_fake_query(Q)
+        out = qh.green_time_field("rrnewton/hermit", persist=True)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "/parent")
+        self.assertEqual(calls[0][1]["authoritative_run_hours"], 2.0)
+        self.assertIn("window s..e", out)
+        self.assertIn("log=/parent/ignored/ci-hub/green-time-log.jsonl", out)
 
     def test_thin_store_degrades_to_unavailable(self):
         class Q:
