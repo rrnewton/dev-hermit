@@ -116,3 +116,61 @@ print(collections.Counter((r.get('tier') or '<none>').strip() for r in rows))
 print(sum(1 for r in rows if (r.get('bitwise_parity') or '').strip() in ('true','1')))
 EOF
 ```
+
+## Addendum: the two axes the definition names, and a renderer cross-check
+
+### backend x bucket — coverage is the hidden variable
+
+The definition ratchets "per backend x bucket", so the backend total alone hides where the
+cells are. Denominator 180 enabled; each cell is `parity=1 / enabled`, `bw` = bitwise-qualified.
+
+| backend | applications | backend-parity | c-programs | data-handling | det-stress | det-stress-c | lang-runtimes | system-utils | total |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: |
+| dbi | – | 78/79 bw=0 | 8/8 bw=0 | – | – | – | – | – | 87 |
+| kvm | – | – | 3/7 bw=0 | – | – | – | – | – | 7 |
+| ptrace | 1/1 | 48/48 | 8/8 | 0/2 | 3/5 | 1/1 | 6/6 | 8/8 | 79 |
+| sabre | 0/1 bw=0 | – | 0/3 bw=0 | 0/1 bw=0 | – | – | – | 0/2 bw=0 | 7 |
+
+**DBI's headline 86/87 pass rate is 91% concentrated in one bucket.** 79 of its 87 enabled
+cells are `backend-parity`; it has no cell at all in six of the eight buckets ptrace covers.
+KVM is 7 cells in a single bucket. SaBRe spans four buckets with **0 parity in every one**.
+A per-backend percentage that ignores this reports breadth it does not have.
+
+### `det >= parity` holds, but only vacuously
+
+The definition requires determinism% >= parity% per cell.
+
+* violations (`det < parity`): **0**
+* cells where BOTH fields are set: **60 of 180**
+* cells claiming `parity=1` with determinism **unset**: **105 of 164** (64%)
+
+So the invariant is satisfied on the 60 cells where it can be evaluated and is
+**unenforceable on 64% of all parity claims**, because the determinism side is simply absent.
+Zero violations here is not evidence the invariant holds; it is mostly evidence it was not
+checkable.
+
+### Renderer cross-check — it agrees, and it now fails loudly
+
+`render-scorecard.rs --csv compat-envelope/scorecard.csv --all` states the tier in its own
+caveat, and it matches the CSV-level finding exactly:
+
+> stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal
+> cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured.
+
+So every percentage the renderer prints is stdout-tier — an **upper bound**, by its own
+statement, on the quantity the north star is defined over. Independent agreement with
+`bitwise_parity = 0/618`.
+
+**One prior defect is fixed.** `--latest` used to print a confident `TOTAL 0` and exit 0. It now
+refuses with a typed reason: *"NO DATA: run … has 0 ptrace/verify passing cells, so the
+denominator is empty and no percentage is defined (this is NOT a measured zero)"*, and names
+rows considered, ptrace rows, modes and backends present. That is the denominator travelling
+with the count.
+
+**One remains.** Six buckets have a **zero ptrace denominator** and still render `0%, 0%` across
+all four backend columns — 24 cells reporting a percentage of nothing:
+`backend-parity-c`, `bin-c`, `chaos-c`, `debugger-c`, `shared-futex-c`, `util-c`. The legend
+already distinguishes `n/a` (not runnable) and `?` (never compared); a zero denominator needs
+the same treatment rather than a confident `0%`, which is the exact failure `--latest` was just
+fixed for, one level down.
+
