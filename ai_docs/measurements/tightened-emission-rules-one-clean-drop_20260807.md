@@ -26,6 +26,33 @@ Counts sum: `1200+618+454+12 = 2284` rows and `926+451+454+6 = 1837` raw passes.
 its inputs **by glob, not a hardcoded list**, so no scorecard can be silently omitted from the
 denominator.
 
+## 1a. Executed vs no-result denominators
+
+A count of greens is meaningless without saying how many cells could have produced one. Classified by
+outcome, using the established kill taxonomy here — **a timeout is a no-result, not a failure**:
+
+- **EXECUTED** = `pass | fail | diverge` — the cell ran and produced a verdict about the guest.
+- **NO-RESULT** = `timeout | unavailable | skip | gap` — no verdict was obtainable.
+
+| scorecard | rows | executed | no-result | raw pass | qualified |
+|---|---:|---:|---:|---:|---:|
+| fullcorpus | 1200 | 1184 | 16 | 926 | **0** |
+| scorecard | 618 | 534 | 84 | 451 | **0** |
+| e9patch | 454 | 454 | 0 | 454 | **0** |
+| reverie | 12 | 12 | 0 | 6 | **0** |
+| **TOTAL** | **2284** | **2184** | **100** | **1837** | **0** |
+
+`executed 2184 + no-result 100 = 2284` rows. Asserted per scorecard, not just on the total.
+
+**The figure, with all three denominators stated:**
+
+> **0 / 2184** of executed cells · **0 / 1837** of raw passes · **0 / 2284** of total population rows
+
+**This also verifies the "no-results preserved rather than dropped" rule.** The 100 no-result cells are
+present *as rows* — `timeout 16, unavailable 7, skip 72, gap 5` — rather than vanishing from the
+denominator. Had they been dropped, the executed denominator would silently read 2184 as if it were the
+whole population, which is the shrink this rule exists to prevent.
+
 ## 2. The definition change that produces the drop
 
 > Green now requires `comparison_tier ∈ {full-stdout-info-stack-heap, stdout-info-stack-heap-spot-check}`.
