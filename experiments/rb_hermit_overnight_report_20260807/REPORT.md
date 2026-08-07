@@ -386,13 +386,42 @@ precisely why an audit is worth more than three point fixes:
 |---|---|---|---|
 | 1 | `epoll_pwait` | **no nonblocking path existed.** glibc implements `epoll_wait(2)` as `epoll_pwait`, so real programs never reached the (correct) `handle_epoll_wait` | fixed — **#1864**, reproducer `rc=124` at 90 s → `rc=0` at 2 s |
 | 2 | `read` on a pipe | **the path existed and was not taken.** `openat` typed fds by *pathname string*, so `/dev/fd/63` — bash process substitution, actually a pipe — was classified `FdType::Regular` | fixed — patch on **#1850** |
-| 3 | `openat` on a **FIFO** | **no nonblocking path exists**; blocks in-kernel at `wait_for_partner` | **OPEN — this is what keeps Nix at N=0** |
+| 3 | `openat` on a **FIFO** (write side) | **no nonblocking path exists**; blocks in-kernel at `wait_for_partner`. Convertible in principle but needs `BlockedPool` modelling, not a flag | **OPEN, design specified — this is what keeps Nix at N=0** |
+| 4 | `epoll_pwait2` | byte-for-byte the pre-#1864 shape; **recent glibc may route `epoll_wait` through it**, bypassing the #1864 fix entirely | **OPEN — reachability risk to #1864** |
 
 **Instance 2 is the same proxy trap as everything else in this report:** a pathname is a *proxy* for
 a file's type; the authority is `S_IFMT`. `Pipe` appeared **zero times** in 30 MB of pre-fix debug
 log. Detcore already classifies correctly on the SaBRe fallback path — `openat` had simply never
 been brought into line. Verified in isolation with #1864 reverted: the reproducer advances from
 `shrinking RPATHs` to `checking for references`.
+
+**Instance 3 is now settled: measured, then deliberately NOT implemented.** The blocking side was
+decoded from the scheduler log rather than assumed (`arg2: 577` = `O_WRONLY|O_CREAT|O_TRUNC` — the
+**write** side). Real FIFO semantics were then measured (`harness/fifo-open-semantics.c`):
+
+| probe | result |
+|---|---|
+| `O_WRONLY\|O_NONBLOCK`, no reader | **ENXIO** — a precise "no reader yet" |
+| `O_WRONLY\|O_NONBLOCK`, reader present | succeeds |
+| `O_RDONLY\|O_NONBLOCK`, no writer → `read()` | **returns 0 — spurious EOF** |
+
+So the write side is convertible and *is* the side that deadlocks; **the read side is not** — a guest
+that should wait for a writer would instead see end-of-input, and Linux offers no non-consuming
+"does this FIFO have a writer?" probe. Even the convertible half needs new machinery, for two
+reasons read from source: the turn-yielding framework is **fd-keyed** and `open` has no fd yet
+(`ioaction_based_on_fd_status` starts with `get_fd(...).unwrap_or_else(|| panic!(…))`, and `get_fd`
+has no `Openat` arm — `open`/`openat` *create* descriptors), and every would-block predicate matches
+`EAGAIN`/`EWOULDBLOCK` while FIFO write-open signals **`ENXIO`**. That is `BlockedPool` modelling,
+not a flag flip, so the lane stopped at a design writeup on #1850 with both sides specified.
+
+> **⚠ Reachability risk in #1864 itself, not yet ruled out.** `epoll_pwait2` is byte-for-byte the
+> pre-#1864 shape and marked `(MAYHANG)`, and **its own doc comment says "Detcore treats it exactly
+> like `epoll_pwait`" — which #1864 makes false.** The same comment records that *recent glibc
+> routes `epoll_wait`/`epoll_pwait` through `epoll_pwait2`*. On such a glibc/kernel pairing **#1864
+> would be bypassed and the deadlock would return.** This host traces plain `epoll_pwait`, so the
+> fix does engage here — but the fix's reach is a property of the host's glibc, and that has not
+> been characterised. Anyone deploying #1864 elsewhere must check which entry point their glibc
+> uses.
 
 **Audit criterion, recorded for the follow-up:** every syscall that can block indefinitely must
 either yield the scheduler turn or be modeled in the `BlockedPool`. `(MAYHANG)` comments mark many
