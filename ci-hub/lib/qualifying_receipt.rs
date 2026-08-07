@@ -181,6 +181,13 @@ impl Qualification {
     }
     /// Whether per-node completeness was actually DEMONSTRATED, as opposed to
     /// merely not contradicted.
+    ///
+    /// Exercised by the tests below but not yet called from a non-test
+    /// consumer, so the binary build sees it as dead. Kept rather than deleted:
+    /// it is half of the typed coverage predicate, and the consumer that must
+    /// refuse `CountsOnlyGrandfathered` is still to be wired. Drop this
+    /// attribute the moment a real caller appears.
+    #[allow(dead_code)]
     pub fn coverage_demonstrated(&self) -> bool {
         matches!(self, Qualification::FullCoverage)
     }

@@ -2049,7 +2049,11 @@ fn install_termination_handlers() -> io::Result<()> {
         // SAFETY: zeroed sigaction is a valid empty set; we install a plain
         // handler with no flags and read back nothing.
         let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
-        action.sa_sigaction = record_termination_signal as usize;
+        // Via `*const ()` rather than a direct function-item-to-integer cast:
+        // the direct form is what `function_casts_as_integer` warns about, and
+        // it warned on every ci-hub invocation because cargo replays it from
+        // cache. Same address, no behaviour change.
+        action.sa_sigaction = record_termination_signal as *const () as usize;
         // SAFETY: sigemptyset initialises the mask field we just zeroed.
         unsafe { libc::sigemptyset(&mut action.sa_mask) };
         // SAFETY: `action` is fully initialised and outlives the call.
@@ -2444,6 +2448,192 @@ wait
         assert!(!process_group_exists(pgid));
         assert!(lock.read_holder().unwrap().is_none());
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    // The async-signal-safe recorder in isolation: the FIRST signal latches and
+    // later ones must not overwrite it. That CAS is the whole handler — if a
+    // second signal could clobber the first, the reported cause would be
+    // whichever signal happened to arrive last.
+    #[test]
+    fn record_termination_signal_latches_only_the_first_signal() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        SUPERVISOR_TERMINATION_SIGNAL.store(0, Ordering::SeqCst);
+        record_termination_signal(libc::SIGTERM);
+        record_termination_signal(libc::SIGINT);
+        let latched = SUPERVISOR_TERMINATION_SIGNAL.load(Ordering::SeqCst);
+        // Restore before asserting: the static is process-global and a panic
+        // here would make every later run() test take the Signalled branch.
+        SUPERVISOR_TERMINATION_SIGNAL.store(0, Ordering::SeqCst);
+        assert_eq!(
+            latched,
+            libc::SIGTERM,
+            "the first signal must latch; a later one must not overwrite it"
+        );
+    }
+
+    // POSITIVE CONTROL for `ChildOutcome::Signalled`. A supervisor that is
+    // terminated mid-run must NOT die where it stands: it has to kill the
+    // payload subtree, prove the domain empty, RELEASE the box, and report
+    // 128+signal.
+    //
+    // This is the 2026-08-06 fleet wedge in miniature. With no handler the
+    // supervisor died inside `supervise_child`, the cleanup record stayed at
+    // `phase=published` (which `verify_cleanup_record` maps to Uncensused), and
+    // every agent's validate was refused until it was censused by hand.
+    //
+    // The flag is pre-set rather than delivered as a real signal so the test
+    // cannot race the kernel and never signals anything outside its own domain
+    // (Invariant 15). The recorder that a real SIGTERM would run is covered
+    // directly above.
+    #[test]
+    fn run_signalled_supervisor_censuses_releases_and_reports_128_plus_signal() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        // Lock order is domain-guard THEN env-lock. No other test takes both;
+        // any future test that does must use this same order.
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("signalled-admit", "#!/bin/sh\necho OK\nexit 0\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+
+        let paths = temp_paths("signalled-supervisor");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let identity_path = root.join("payload.identity");
+        // Ignores TERM so the identity write cannot be raced by the terminate,
+        // and so emptying the domain REQUIRES the supervisor's SIGKILL
+        // escalation rather than the payload politely exiting on its own.
+        let script = r#"
+trap '' TERM
+printf '%s %s\n' "$$" "$(awk '{print $22}' "/proc/$$/stat")" > "$1"
+while :; do sleep 60; done
+"#;
+
+        // Record the signal MID-RUN, once the payload has published its
+        // identity. Pre-setting the flag instead would terminate the payload
+        // before bash could install its trap or write the file, and it would
+        // also be less faithful: the wedge happened to a run already in flight.
+        // The bounded fallback keeps a payload that never publishes from
+        // hanging the suite.
+        let publish_probe = identity_path.clone();
+        let flagger = thread::spawn(move || {
+            for _ in 0..600 {
+                if fs::metadata(&publish_probe).map(|m| m.len() > 0).unwrap_or(false) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            SUPERVISOR_TERMINATION_SIGNAL.store(libc::SIGTERM, Ordering::SeqCst);
+        });
+
+        let result = lock.run(
+            RunArgs {
+                agent: "signalled-validate".into(),
+                kind: Kind::Validate,
+                target: HEX_SHA.into(),
+                no_wait: false,
+                wait: 0,
+                hold: 30,
+                // Deliberately far away: if this run ends, it must be because of
+                // the signal, never because the deadline fired.
+                child_deadline: 600,
+                max: 1,
+                skip_base_check: false,
+                child: vec![
+                    OsString::from("/bin/bash"),
+                    OsString::from("-c"),
+                    OsString::from(script),
+                    OsString::from("signalled-payload"),
+                    identity_path.clone().into_os_string(),
+                ],
+            },
+            &root,
+        );
+        let _ = flagger.join();
+        SUPERVISOR_TERMINATION_SIGNAL.store(0, Ordering::SeqCst);
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+
+        // Ok at all is already load-bearing: the alternative return is
+        // CleanupQuarantined, which is the wedge.
+        let code = result.expect("a signalled supervisor must still complete its cleanup");
+        assert_eq!(
+            code,
+            128 + libc::SIGTERM,
+            "a signalled run must report 128+signal"
+        );
+        assert_ne!(
+            code, CHILD_DEADLINE_EXIT_CODE,
+            "a signal must not be reported as a child-deadline breach"
+        );
+        assert!(
+            lock.read_holder().unwrap().is_none(),
+            "the box must be FREE after a signalled run, not left quarantined"
+        );
+
+        // Process-domain cleanup, by EXACT identity rather than bare pid.
+        let identity = fs::read_to_string(&identity_path).unwrap();
+        let fields: Vec<_> = identity.split_whitespace().collect();
+        assert_eq!(fields.len(), 2, "unexpected identity record {identity:?}");
+        let pid: u32 = fields[0].parse().unwrap();
+        let start_ticks: u64 = fields[1].parse().unwrap();
+        assert!(
+            !matches!(process_start_ticks(pid), Ok(current) if current == start_ticks),
+            "payload {pid}@{start_ticks} survived a signalled run"
+        );
+        assert!(!process_group_exists(pid));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // NEGATIVE CONTROL for the same arm. Identical harness with the termination
+    // flag CLEAR must take the ordinary Exited path and return the child's own
+    // status. Without this, a Signalled arm that fired unconditionally would
+    // still satisfy the positive test above.
+    #[test]
+    fn run_without_a_termination_signal_reports_the_child_exit_code() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("unsignalled-admit", "#!/bin/sh\necho OK\nexit 0\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+
+        let paths = temp_paths("unsignalled-supervisor");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+
+        SUPERVISOR_TERMINATION_SIGNAL.store(0, Ordering::SeqCst);
+        let result = lock.run(
+            RunArgs {
+                agent: "unsignalled-validate".into(),
+                kind: Kind::Validate,
+                target: HEX_SHA.into(),
+                no_wait: false,
+                wait: 0,
+                hold: 30,
+                child_deadline: 600,
+                max: 1,
+                skip_base_check: false,
+                child: vec![
+                    OsString::from("/bin/sh"),
+                    OsString::from("-c"),
+                    OsString::from("exit 7"),
+                ],
+            },
+            &root,
+        );
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+
+        let code = result.expect("an ordinary child exit must complete cleanup");
+        assert_eq!(code, 7, "an unsignalled run must report the child's own code");
+        assert_ne!(
+            code,
+            128 + libc::SIGTERM,
+            "the Signalled arm must not fire when no signal was recorded"
+        );
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
