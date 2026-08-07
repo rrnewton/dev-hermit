@@ -90,4 +90,29 @@ published content commit.
 Absolute paths outside the workspace are refused before any git call; use a
 full `https://` URL for anything genuinely external.
 
+## `--code`: a bare PR number needs an explicit `--repo`
+
+`--repo` defaults to `rrnewton/hermit` and `--source` to `ROOT/hermit`, so a
+**parent**-repo task closed with a bare `--code 56` silently verified *hermit's*
+#56. That happened: `execute-ambiguous-zero-fix-order-a3-a4-first`, a task about
+`compat-envelope/render-scorecard.rs`, closed against hermit's
+`docs: add Hermit error catalog (#56)` merged three weeks earlier. The ancestry
+check was real; nothing bound the **repository** to the task's subject.
+
+A 40-hex SHA is self-identifying — the verifier can only resolve it where it
+exists — so it still works with the default. A bare `#N` is not: every
+repository has one. `--code <N>` without `--repo` is therefore **refused**.
+
+The recorded tuple now carries the repository with the SHA:
+
+```
+CLOSURE-VERIFIED: kind=code reference=<ref> resolved=<owner/repo>@<sha> …
+```
+
+That is also what makes the note *readable*. `ci-hub/directives/tg_landed.py`
+derives landing state from it and accepts an explicit SHA token or a typed
+`@sha` tuple — the old bare `resolved=<40hex>` matched **neither** and extracted
+nothing, so code closures had been recording a SHA their own consumer could not
+read. A test in this directory binds the two formats together.
+
 Tests: `python3 -m pytest ci-hub/closure/ -q`
