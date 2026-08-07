@@ -1,0 +1,34 @@
+{
+  "question": "Do all Linux timerfd readiness/consumption APIs agree about the same armed timerfd under Hermit?",
+  "hermit_main_at_measurement": "294e89bfeeebeb0aa4f00bde4b0e1053350d6a5e",
+  "probe_binary_build": "590fcc9eeb0339c5cf23f72b84394a63333e88ff (g590fcc9eeb03); timerfd handler region diffs 0 lines vs main",
+  "reverie_pin": "6144323c5dab8b521278fce206f8774360c2b05f",
+  "host": "devbig014.atn7.facebook.com",
+  "command": "hermit run --strict --base-env minimal -- tfd_disc <api>",
+  "apis": [
+    "read",
+    "readv",
+    "poll",
+    "ppoll",
+    "epoll_wait",
+    "select",
+    "pselect6"
+  ],
+  "result": {
+    "agree": 5,
+    "diverge": 2,
+    "total": 7,
+    "diverging": [
+      "poll",
+      "epoll_wait"
+    ]
+  },
+  "repetitions": {
+    "poll": 3,
+    "epoll_wait": 3,
+    "stable": true
+  },
+  "timeout_race_refuted": "poll timeout raised 2s->30s against a 10ms timer; still rc=0",
+  "strict_mode_dependence": "none; identical without --strict",
+  "native_control": "7 of 7 agree"
+}

@@ -1,0 +1,8 @@
+api,native_rc,native_detail,hermit_strict_rc,hermit_strict_detail,agrees_with_linux
+read,8,val=1,8,val=1,yes
+readv,8,val=1,8,val=1,yes
+ppoll,1,revents=0x1,1,revents=0x1,yes
+select,1,isset=1,1,isset=1,yes
+pselect6,1,isset=1,1,isset=1,yes
+poll,1,revents=0x1,0,revents=0x0 timed out,no
+epoll_wait,1,ready,0,timed out,no
