@@ -33,6 +33,16 @@ POLICY = {
 }
 
 
+def github_patch(state: str) -> dict:
+    jobs = [{"state": state}, {"state": state}]
+    return {
+        "state": state,
+        "required_positive_count": 2,
+        "positive_count": 2 if state == "green" else 0,
+        "jobs": jobs,
+    }
+
+
 class ObligationStoreTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -66,7 +76,12 @@ class ObligationStoreTest(unittest.TestCase):
         updated = obligations.transition(
             "test-obligation",
             "github-observed",
-            {"github": {"state": "running", "run_ids": [123]}},
+            {
+                "github": {
+                    **github_patch("running"),
+                    "run_ids": [123],
+                }
+            },
             self.store,
         )
         self.assertEqual(updated["github"]["run_ids"], [123])
@@ -173,6 +188,53 @@ class ObligationStoreTest(unittest.TestCase):
                 {"verification_policy": {**POLICY, "schema_version": 3}},
                 self.store,
             )
+
+    def test_supported_positive_verdict_is_rederived_and_accepted(self) -> None:
+        self.create()
+        updated = obligations.transition(
+            "test-obligation",
+            "github-green",
+            {"github": github_patch("green")},
+            self.store,
+        )
+        audit = obligations.github_verdict_audit(updated)
+        self.assertTrue(audit["agrees"])
+        self.assertEqual(audit["derived"], "green")
+
+    def test_transition_refuses_overclaim_and_underclaim_without_appending(self) -> None:
+        self.create()
+        before = self.store.read_bytes()
+        for stored, evidence in (
+            ("red", github_patch("no_result")),
+            ("no_result", github_patch("red")),
+        ):
+            with self.subTest(stored=stored), self.assertRaisesRegex(
+                obligations.StoreError, "unsupported GitHub verdict"
+            ):
+                obligations.transition(
+                    "test-obligation",
+                    "unsupported-verdict",
+                    {"github": {**evidence, "state": stored}},
+                    self.store,
+                )
+            self.assertEqual(self.store.read_bytes(), before)
+
+    def test_reader_refuses_a_planted_mismatch(self) -> None:
+        opened = self.create()
+        planted = json.loads(json.dumps(opened))
+        planted["event_id"] = "planted"
+        planted["event_type"] = "planted-mismatch"
+        planted["github"] = {
+            **github_patch("no_result"),
+            "state": "red",
+        }
+        with self.store.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(planted) + "\n")
+        with self.assertRaisesRegex(
+            obligations.StoreError,
+            "stored github.state='red', derived github.state='no_result'",
+        ):
+            obligations.get_record("test-obligation", self.store)
 
 
 if __name__ == "__main__":

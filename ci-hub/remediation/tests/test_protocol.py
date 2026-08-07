@@ -95,6 +95,21 @@ def hosted_evidence(
     return list(runs.values())
 
 
+def stored_github_evidence(
+    state: str,
+    *,
+    repo: str = "rrnewton/hermit",
+    sha: str = SHA,
+) -> dict:
+    policy = protocol.verification_policy_for_repo(repo)
+    job_count = len(policy["github"]["required_jobs"])
+    return protocol._github_patch(
+        hosted_evidence(repo, sha=sha, job_states=(state,) * job_count),
+        sha,
+        policy,
+    )["github"]
+
+
 def counted_receipt_report(sha: str = SHA) -> dict:
     finished_at = "2026-08-05T00:10:00Z"
     host = "test-host"
@@ -540,6 +555,12 @@ class ProtocolTest(unittest.TestCase):
         patch = json.loads(json.dumps(patch))
         if (patch.get("local") or {}).get("state") == "green":
             patch["local"] = {**local_green(), **patch["local"]}
+        github_state = (patch.get("github") or {}).get("state")
+        if github_state in obligations.GITHUB_VERIFICATION_STATES:
+            patch["github"] = {
+                **stored_github_evidence(github_state),
+                **patch["github"],
+            }
         return obligations.transition(
             "test-obligation", "test-transition", patch, self.store
         )
@@ -1469,7 +1490,7 @@ class ProtocolTest(unittest.TestCase):
             "tampered-persisted-green",
             {
                 "local": record["local"],
-                "github": {"state": "no_result"},
+                "github": stored_github_evidence("no_result"),
             },
             self.store,
         )
@@ -1874,7 +1895,7 @@ class ProtocolTest(unittest.TestCase):
                 {
                     "local": {"state": local_state},
                     "github": {
-                        "state": "red",
+                        **stored_github_evidence("red"),
                         "finished_at": "2026-08-04T03:00:00Z",
                     },
                 },
@@ -1918,7 +1939,7 @@ class ProtocolTest(unittest.TestCase):
                         if local_state == "green"
                         else {"state": local_state}
                     ),
-                    "github": {"state": github_state},
+                    "github": stored_github_evidence(github_state),
                 },
                 store,
             )
@@ -1970,38 +1991,79 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(reopened["alert"]["action"], "investigate")
         self.assertTrue(protocol._watch_complete(reopened))
 
-    def test_global_watch_clears_fake_pending_when_no_producer_exists(self) -> None:
+    def test_global_watch_refuses_pending_without_supporting_job(self) -> None:
         self.create()
-        self.transition(
-            {
-                "local": local_green(),
-                "github": {
-                    "state": "pending",
-                    "run_ids": [],
-                    "jobs": [],
+        before = self.store.read_bytes()
+        with self.assertRaisesRegex(
+            obligations.StoreError, "unsupported GitHub verdict"
+        ):
+            obligations.transition(
+                "test-obligation",
+                "unsupported-pending",
+                {
+                    "local": local_green(),
+                    "github": {
+                        "state": "pending",
+                        "run_ids": [],
+                        "required_positive_count": 1,
+                        "positive_count": 0,
+                        "jobs": [],
+                    },
                 },
-            }
+                self.store,
+            )
+        self.assertEqual(self.store.read_bytes(), before)
+
+    def test_verdict_audit_reports_agreements_and_disagreements_with_denominator(
+        self,
+    ) -> None:
+        agreeing = {
+            "obligation_id": "agreeing",
+            "github": stored_github_evidence("no_result"),
+        }
+        disagreeing = {
+            "obligation_id": "disagreeing",
+            "github": {
+                **stored_github_evidence("no_result"),
+                "state": "red",
+            },
+        }
+        with (
+            mock.patch.object(
+                protocol.obligations,
+                "latest_records",
+                return_value={"agreeing": agreeing, "disagreeing": disagreeing},
+            ),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.audit_verdicts(self.store, json_output=True)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 2)
+        self.assertEqual(report["obligation_count"], 2)
+        self.assertEqual(report["agreement_count"], 1)
+        self.assertEqual(report["disagreement_count"], 1)
+        self.assertEqual(
+            [row["agrees"] for row in report["records"]], [True, False]
         )
-        seeded = obligations.get_record("test-obligation", self.store)
-        self.assertFalse(protocol._verification_in_flight(seeded))
-        self.assertTrue(protocol._verification_state_needs_reconcile(seeded))
-        protocol.evaluate_obligation("test-obligation", store_path=self.store)
-        with mock.patch.object(protocol, "github_runs", return_value=[]):
-            with redirect_stdout(io.StringIO()):
-                self.assertEqual(
-                    protocol.watch(
-                        store_path=self.store,
-                        obligation_id=None,
-                        once=True,
-                        poll_seconds=1,
-                    ),
-                    0,
-                )
-        record = obligations.get_record("test-obligation", self.store)
-        self.assertEqual(record["overall_state"], "satisfied")
-        self.assertEqual(record["github"]["state"], "no_result")
-        self.assertFalse(protocol._verification_in_flight(record))
-        self.assertTrue(protocol._watch_complete(record))
+
+    def test_verdict_audit_accepts_complete_agreement(self) -> None:
+        agreeing = {
+            "obligation_id": "agreeing",
+            "github": stored_github_evidence("green"),
+        }
+        with (
+            mock.patch.object(
+                protocol.obligations,
+                "latest_records",
+                return_value={"agreeing": agreeing},
+            ),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            rc = protocol.audit_verdicts(self.store, json_output=True)
+        report = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["agreement_count"], 1)
+        self.assertEqual(report["disagreement_count"], 0)
 
     def test_authoritative_github_red_still_reverts_after_lone_local_guard(
         self,
@@ -2042,7 +2104,7 @@ class ProtocolTest(unittest.TestCase):
                 {
                     "local": {"state": "no_result"},
                     "github": {
-                        "state": "red",
+                        **stored_github_evidence("red"),
                         "finished_at": "2026-08-04T03:00:00Z",
                         "workflow_name": protocol.DEFAULT_WORKFLOW,
                         "urls": ["https://example/run"],
@@ -2089,7 +2151,7 @@ class ProtocolTest(unittest.TestCase):
                 obligation_id=obligation_id,
                 path=store,
             )
-            github_leg = {"state": github_state}
+            github_leg = stored_github_evidence(github_state)
             if github_state in ("green", "red"):
                 github_leg["finished_at"] = "2026-08-04T03:00:00Z"
             obligations.transition(
@@ -2647,7 +2709,7 @@ class ProtocolTest(unittest.TestCase):
                     "local": (
                         local_green() if states[0] == "green" else {"state": states[0]}
                     ),
-                    "github": {"state": states[1]},
+                    "github": stored_github_evidence(states[1]),
                 },
                 store,
             )
@@ -2740,7 +2802,11 @@ class ProtocolTest(unittest.TestCase):
                 "landed_sha": f"{i}" * 40,
                 "overall_state": "open",
                 "local": {"state": "green"},
-                "github": {"state": "no_result"},
+                "github": {
+                    "state": "no_result",
+                    "required_positive_count": None,
+                    "jobs": [],
+                },
                 "recommendation": {},
                 "remediation": {},
             }
@@ -3147,7 +3213,7 @@ class GithubStateClassificationTest(unittest.TestCase):
                 "legs",
                 {
                     "local": local_green(),
-                    "github": {"state": "no_result"},
+                    "github": stored_github_evidence("no_result"),
                 },
                 store,
             )
@@ -3398,7 +3464,7 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
                         "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
                         "source": None,
                     },
-                    "github": {"state": "running"},
+                    "github": stored_github_evidence("running"),
                 },
                 store,
             )
@@ -3429,6 +3495,13 @@ class LocalRedispatchTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def _seed(self, patch: dict) -> None:
+        patch = json.loads(json.dumps(patch))
+        github_state = (patch.get("github") or {}).get("state")
+        if github_state in obligations.GITHUB_VERIFICATION_STATES:
+            patch["github"] = {
+                **stored_github_evidence(github_state),
+                **patch["github"],
+            }
         obligations.transition("ob", "seed", patch, self.store)
 
     def _spawn_and_register(self, arguments, _log_path):

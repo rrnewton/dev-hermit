@@ -24,6 +24,9 @@ SCHEMA_VERSION = 1
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 CLOSED_STATES = frozenset(("satisfied", "remediated"))
+GITHUB_VERIFICATION_STATES = frozenset(
+    ("green", "red", "pending", "running", "no_result")
+)
 
 
 class StoreError(RuntimeError):
@@ -39,6 +42,92 @@ class DuplicateOpenObligation(StoreError):
             f"open obligation {record['obligation_id']} already exists for "
             f"{record['repo']}@{record['landed_sha']}"
         )
+
+
+def derive_github_verdict(github: Mapping[str, Any]) -> str:
+    """Derive the aggregate GitHub verdict solely from its stored job evidence."""
+    jobs = github.get("jobs")
+    if jobs is None:
+        # Pre-job-schema records used null for an empty observation. It carries
+        # no positive or negative evidence, so its only derivable verdict is
+        # no_result, exactly like today's empty array.
+        jobs = []
+    elif not isinstance(jobs, list):
+        raise StoreError("github.jobs must be an array")
+    states: list[str] = []
+    for index, job in enumerate(jobs):
+        if not isinstance(job, Mapping):
+            raise StoreError(f"github.jobs[{index}] must be an object")
+        state = job.get("state")
+        if state not in GITHUB_VERIFICATION_STATES:
+            raise StoreError(
+                f"github.jobs[{index}].state has unsupported value {state!r}"
+            )
+        states.append(str(state))
+
+    required = github.get("required_positive_count")
+    positive = sum(state == "green" for state in states)
+    if "red" in states:
+        return "red"
+    if (
+        type(required) is int
+        and required > 0
+        and positive == required
+        and len(states) == required
+    ):
+        return "green"
+    if "running" in states:
+        return "running"
+    if "pending" in states:
+        return "pending"
+    return "no_result"
+
+
+def github_verdict_audit(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a typed agreement result without trusting the stored verdict."""
+    obligation_id = str(record.get("obligation_id") or "<missing>")
+    github = record.get("github")
+    if not isinstance(github, Mapping):
+        return {
+            "obligation_id": obligation_id,
+            "stored": None,
+            "derived": None,
+            "agrees": False,
+            "error": "github must be an object",
+        }
+    stored = github.get("state")
+    try:
+        derived = derive_github_verdict(github)
+    except StoreError as error:
+        return {
+            "obligation_id": obligation_id,
+            "stored": stored,
+            "derived": None,
+            "agrees": False,
+            "error": str(error),
+        }
+    return {
+        "obligation_id": obligation_id,
+        "stored": stored,
+        "derived": derived,
+        "agrees": stored == derived,
+        "error": None,
+    }
+
+
+def require_rederivable_github_verdict(record: Mapping[str, Any]) -> None:
+    """Refuse a record whose stored verdict is not supported by its own jobs."""
+    audit = github_verdict_audit(record)
+    if audit["agrees"]:
+        return
+    detail = audit["error"] or (
+        f"stored github.state={audit['stored']!r}, "
+        f"derived github.state={audit['derived']!r}"
+    )
+    raise StoreError(
+        f"obligation {audit['obligation_id']} has an unsupported GitHub verdict: "
+        f"{detail}"
+    )
 
 
 def utc_now() -> str:
@@ -95,17 +184,22 @@ def latest_records(path: Path | None = None) -> dict[str, dict[str, Any]]:
 
 def get_record(obligation_id: str, path: Path | None = None) -> dict[str, Any]:
     try:
-        return latest_records(path)[obligation_id]
+        record = latest_records(path)[obligation_id]
     except KeyError as error:
         raise StoreError(f"unknown obligation {obligation_id!r}") from error
+    require_rederivable_github_verdict(record)
+    return record
 
 
 def unresolved_records(path: Path | None = None) -> list[dict[str, Any]]:
     records = latest_records(path).values()
-    return sorted(
+    unresolved = sorted(
         (record for record in records if record.get("overall_state") not in CLOSED_STATES),
         key=lambda record: (str(record.get("opened_at", "")), record["obligation_id"]),
     )
+    for record in unresolved:
+        require_rederivable_github_verdict(record)
+    return unresolved
 
 
 def _merge(target: dict[str, Any], patch: Mapping[str, Any]) -> None:
@@ -240,6 +334,7 @@ def create_obligation(
                     "completed_at": None,
                 },
             }
+            require_rederivable_github_verdict(record)
             _append_locked(handle, record)
             return record
         finally:
@@ -264,6 +359,7 @@ def transition(
                 previous = latest[obligation_id]
             except KeyError as error:
                 raise StoreError(f"unknown obligation {obligation_id!r}") from error
+            require_rederivable_github_verdict(previous)
             record = copy.deepcopy(previous)
             immutable = {"obligation_id", "repo", "landed_sha", "opened_at"}
             if immutable.intersection(patch):
@@ -275,6 +371,7 @@ def transition(
             ):
                 raise StoreError("transition cannot change bound verification policy")
             _merge(record, patch)
+            require_rederivable_github_verdict(record)
             now = utc_now()
             record.update(
                 {
@@ -330,6 +427,7 @@ def transition_if_matches(
                 previous = latest[obligation_id]
             except KeyError as error:
                 raise StoreError(f"unknown obligation {obligation_id!r}") from error
+            require_rederivable_github_verdict(previous)
             if not _matches_expected(previous, expected):
                 return None
             record = copy.deepcopy(previous)
@@ -345,6 +443,7 @@ def transition_if_matches(
             ):
                 raise StoreError("transition cannot change bound verification policy")
             _merge(record, patch)
+            require_rederivable_github_verdict(record)
             now = utc_now()
             record.update(
                 {

@@ -1234,6 +1234,8 @@ enum CiHubError {
         line: usize,
         schema: u32,
     },
+    #[error("ci-hub: obligation {id} has an unsupported GitHub verdict: {detail}")]
+    UnsupportedObligationVerdict { id: String, detail: String },
     #[error("ci-hub: local-history --json returned an invalid typed history row: {0}")]
     HistoryJson(#[source] serde_json::Error),
     #[error("ci-hub: cannot read CI-mode state {path}: {source}")]
@@ -5058,6 +5060,14 @@ fn print_obligations(root: &Path, args: ObligationsArgs) -> Result<i32, CiHubErr
     }
     if !args.all {
         records.retain(|record| !record.is_closed());
+    }
+    for record in &records {
+        record.verify_github_verdict().map_err(|detail| {
+            CiHubError::UnsupportedObligationVerdict {
+                id: record.obligation_id.clone(),
+                detail,
+            }
+        })?;
     }
     records.sort_by(|left, right| {
         (&left.opened_at, &left.obligation_id).cmp(&(&right.opened_at, &right.obligation_id))

@@ -306,7 +306,12 @@ class OperationalBoundsTest(unittest.TestCase):
                     "opened_at": "2026-08-03T00:00:00Z",
                     "overall_state": "remediation_required",
                     "local": {"state": "red"},
-                    "github": {"state": "running"},
+                    "github": {
+                        "state": "running",
+                        "required_positive_count": 1,
+                        "positive_count": 0,
+                        "jobs": [{"state": "running"}],
+                    },
                     "recommendation": {"action": "revert"},
                     "remediation": {
                         "state": "triggered",

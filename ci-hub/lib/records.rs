@@ -47,6 +47,70 @@ impl ObligationRecord {
             .and_then(|dispatch| dispatch.state.as_deref())
             .unwrap_or("-")
     }
+
+    pub fn derived_github_verdict(&self) -> Result<&'static str, String> {
+        let mut job_count = 0usize;
+        let mut positive_count = 0usize;
+        let mut has_red = false;
+        let mut has_running = false;
+        let mut has_pending = false;
+        match self.github.extra.get("jobs") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(jobs)) => {
+                job_count = jobs.len();
+                for (index, job) in jobs.iter().enumerate() {
+                    let state = job
+                        .as_object()
+                        .and_then(|object| object.get("state"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| format!("github.jobs[{index}].state is missing"))?;
+                    match state {
+                        "green" => positive_count += 1,
+                        "red" => has_red = true,
+                        "running" => has_running = true,
+                        "pending" => has_pending = true,
+                        "no_result" => {}
+                        other => {
+                            return Err(format!(
+                                "github.jobs[{index}].state has unsupported value {other:?}"
+                            ));
+                        }
+                    }
+                }
+            }
+            Some(_) => return Err("github.jobs must be an array".to_string()),
+        }
+        let required = self
+            .github
+            .extra
+            .get("required_positive_count")
+            .and_then(Value::as_u64)
+            .and_then(|count| usize::try_from(count).ok());
+        Ok(if has_red {
+            "red"
+        } else if required
+            .is_some_and(|count| count > 0 && positive_count == count && job_count == count)
+        {
+            "green"
+        } else if has_running {
+            "running"
+        } else if has_pending {
+            "pending"
+        } else {
+            "no_result"
+        })
+    }
+
+    pub fn verify_github_verdict(&self) -> Result<(), String> {
+        let derived = self.derived_github_verdict()?;
+        if self.github.state == derived {
+            return Ok(());
+        }
+        Err(format!(
+            "stored github.state={:?}, derived github.state={derived:?}",
+            self.github.state
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -287,9 +351,48 @@ mod tests {
         assert_eq!(record.local.extra["pid"], 42);
         assert_eq!(record.extra["future_field"], "preserved");
         assert_eq!(record.dispatch_state(), "sent_unacknowledged");
+        assert!(record.verify_github_verdict().is_err());
         assert_eq!(
             record.remediation.unwrap().dispatch.unwrap().extra["wake_id"],
             "w1"
+        );
+    }
+
+    #[test]
+    fn obligation_verdict_is_rederived_from_stored_jobs() {
+        let supported: ObligationRecord = serde_json::from_str(
+            r#"{
+                "schema_version":1,
+                "obligation_id":"o1",
+                "repo":"rrnewton/hermit",
+                "landed_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "opened_at":"2026-08-03T00:00:00Z",
+                "overall_state":"satisfied",
+                "local":{"state":"no_result"},
+                "github":{"state":"green","required_positive_count":1,"positive_count":1,"jobs":[{"state":"green"}]}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(supported.derived_github_verdict().unwrap(), "green");
+        assert!(supported.verify_github_verdict().is_ok());
+
+        let unsupported: ObligationRecord = serde_json::from_str(
+            r#"{
+                "schema_version":1,
+                "obligation_id":"o2",
+                "repo":"rrnewton/hermit",
+                "landed_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "opened_at":"2026-08-03T00:00:00Z",
+                "overall_state":"remediation_required",
+                "local":{"state":"green"},
+                "github":{"state":"red","required_positive_count":1,"positive_count":0,"jobs":[{"state":"no_result"}]}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(unsupported.derived_github_verdict().unwrap(), "no_result");
+        assert_eq!(
+            unsupported.verify_github_verdict().unwrap_err(),
+            "stored github.state=\"red\", derived github.state=\"no_result\""
         );
     }
 

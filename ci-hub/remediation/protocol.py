@@ -986,7 +986,9 @@ def _record_policy_investigation(
             "alert": {"state": "raised", "raised_at": now},
             "remediation": {"state": "not_required"},
             "github": {
-                "state": "error",
+                # A policy failure prevented a hosted verdict; it did not turn
+                # any stored job into a failing answer.
+                "state": "no_result",
                 "finished_at": now,
                 "last_poll_error": str(error),
             },
@@ -1987,16 +1989,12 @@ def _github_patch(
 
     states = [job["state"] for job in observed_jobs]
     positive_count = sum(state == "green" for state in states)
-    if "red" in states:
-        state = "red"
-    elif positive_count == expected_count and len(observed_jobs) == expected_count:
-        state = "green"
-    elif "running" in states:
-        state = "running"
-    elif "pending" in states:
-        state = "pending"
-    else:
-        state = "no_result"
+    verdict_fields = {
+        "required_positive_count": expected_count,
+        "positive_count": positive_count,
+        "jobs": observed_jobs,
+    }
+    state = obligations.derive_github_verdict(verdict_fields)
     started = [
         str(run.get("startedAt") or run.get("createdAt"))
         for run in runs
@@ -2022,9 +2020,7 @@ def _github_patch(
                 sorted({str(run.get("event")) for run in runs if run.get("event")})
             )
             or None,
-            "required_positive_count": expected_count,
-            "positive_count": positive_count,
-            "jobs": observed_jobs,
+            **verdict_fields,
             "last_poll_error": "; ".join(reasons) or None,
         }
     }
@@ -3630,6 +3626,8 @@ def watch(
                 ),
             )
         )
+        for record in records:
+            obligations.require_rederivable_github_verdict(record)
         updated, planned, timed_out = _poll_within_budget(
             records, store_path, deadline
         )
@@ -3730,6 +3728,8 @@ def print_status(
             for record in records
             if record["overall_state"] not in obligations.CLOSED_STATES
         ]
+    for record in records:
+        obligations.require_rederivable_github_verdict(record)
     records.sort(key=lambda record: (record["opened_at"], record["obligation_id"]))
     unresolved = [
         record
@@ -3800,6 +3800,37 @@ def print_status(
     return 2 if remediation else 1 if unresolved else 0
 
 
+def audit_verdicts(store_path: Path, *, json_output: bool) -> int:
+    """Recompute every latest obligation verdict and report the full denominator."""
+    records = list(obligations.latest_records(store_path).values())
+    audits = [obligations.github_verdict_audit(record) for record in records]
+    audits.sort(key=lambda audit: audit["obligation_id"])
+    agreement_count = sum(bool(audit["agrees"]) for audit in audits)
+    disagreement_count = len(audits) - agreement_count
+    report = {
+        "schema_version": 1,
+        "authority": "stored-github-job-verdict",
+        "obligation_count": len(audits),
+        "agreement_count": agreement_count,
+        "disagreement_count": disagreement_count,
+        "records": audits,
+    }
+    if json_output:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print(
+            f"VERDICT AUDIT: agreements={agreement_count}/{len(audits)} "
+            f"disagreements={disagreement_count}/{len(audits)}"
+        )
+        for audit in audits:
+            outcome = "AGREE" if audit["agrees"] else "REFUSE"
+            detail = audit["error"] or (
+                f"stored={audit['stored']} derived={audit['derived']}"
+            )
+            print(f"  {outcome} {audit['obligation_id']} {detail}")
+    return 0 if disagreement_count == 0 else 2
+
+
 def recoverable_obligation(
     repo: str, sha: str, store_path: Path
 ) -> dict[str, Any] | None:
@@ -3817,6 +3848,8 @@ def recoverable_obligation(
     ]
     if not matches:
         return None
+    for record in matches:
+        obligations.require_rederivable_github_verdict(record)
     return max(
         matches,
         key=lambda record: (
@@ -4153,6 +4186,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--store", type=Path, default=obligations.default_store_path()
     )
 
+    audit_parser = subparsers.add_parser(
+        "audit-verdicts",
+        help="recompute every stored GitHub verdict from its job evidence",
+    )
+    audit_parser.add_argument("--json", action="store_true")
+    audit_parser.add_argument(
+        "--store", type=Path, default=obligations.default_store_path()
+    )
+
     wake_parser = subparsers.add_parser(
         "wake-sent", help="record a best-effort wake as sent but unacknowledged"
     )
@@ -4252,6 +4294,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 gate=args.gate,
                 actionable_only=args.actionable,
             )
+        if args.command == "audit-verdicts":
+            return audit_verdicts(args.store, json_output=args.json)
         if args.command == "wake-sent":
             record_wake_sent(
                 store_path=args.store, target=args.target, source=args.source
