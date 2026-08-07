@@ -195,10 +195,30 @@ fn check(root: &Path, fetch: bool) -> Result<bool, CheckError> {
 
     let parent_pin = git(root, ["rev-parse", "HEAD:agent-utils"])?;
     let checkout_head = git(&checkout, ["rev-parse", "HEAD"])?;
+    // RESOLVE THE MOVING REF EXACTLY ONCE, then compare against the RESOLVED SHA.
+    //
+    // This used to read `origin/main` three times: once here, and once inside each
+    // `divergence` call, which interpolated the REF STRING into `rev-list` so git
+    // re-resolved it. Eighteen agents share this checkout, so another one fetching
+    // between those reads produced a verdict assembled from two different states --
+    // and the failure branches below OR an equality against THIS sha together with
+    // counts computed against a LATER one, so the two halves could disagree.
+    //
+    // Measured with a planted mid-run advance: the report claimed
+    // `origin_main=182c98f59` and `checkout_behind=1` while the checkout's HEAD WAS
+    // 182c98f59 -- a checkout one commit behind the very sha it is sitting on. That
+    // state never existed at any instant. Worse, the spurious verdict was a FAILURE
+    // on a checkout that was genuinely current, and re-running could not reproduce
+    // it because a re-run resolves both reads consistently again.
+    //
+    // Ancestry-based gates elsewhere in the parent tolerate this because ancestry is
+    // MONOTONE. This gate's predicate is EQUALITY against a moving target, which is
+    // not, so it needs the resolution pinned.
     let origin_main = git(&checkout, ["rev-parse", "origin/main"])?;
+    let resolved_at = resolved_at_utc();
     let branch = git(&checkout, ["branch", "--show-current"])?;
-    let (checkout_ahead, checkout_behind) = divergence(&checkout, "HEAD", "origin/main")?;
-    let (pin_ahead, pin_behind) = divergence(&checkout, &parent_pin, "origin/main")?;
+    let (checkout_ahead, checkout_behind) = divergence(&checkout, "HEAD", &origin_main)?;
+    let (pin_ahead, pin_behind) = divergence(&checkout, &parent_pin, &origin_main)?;
     let unpushed = git_lines(
         &checkout,
         [
@@ -240,7 +260,10 @@ fn check(root: &Path, fetch: bool) -> Result<bool, CheckError> {
     println!("agent-utils drift check");
     println!("  parent_gitlink={parent_pin}");
     println!("  checkout_head={checkout_head}");
+    // {sha, resolved_at}: the verdict names the exact resolution it rests on, so a
+    // stale or disputed result can be re-derived instead of merely re-run.
     println!("  origin_main={origin_main}");
+    println!("  origin_main_resolved_at={resolved_at}");
     println!("  checkout_branch={branch}");
     println!("  checkout_ahead={checkout_ahead}");
     println!("  checkout_behind={checkout_behind}");
@@ -337,6 +360,19 @@ fn check(root: &Path, fetch: bool) -> Result<bool, CheckError> {
     }
     println!("state=drift");
     Ok(false)
+}
+
+/// Wall-clock instant at which `origin/main` was resolved, as epoch seconds.
+///
+/// Paired with the sha in the output. A bare sha says WHAT was compared; the pair
+/// also says WHEN, which is what lets a reader tell "this verdict is old" from
+/// "this verdict is wrong" without re-running and destroying the evidence.
+fn resolved_at_utc() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(since) => format!("{}", since.as_secs()),
+        // Never fail a drift check over a clock read; say so instead.
+        Err(_) => "unknown".to_string(),
+    }
 }
 
 fn divergence(repo: &Path, left: &str, right: &str) -> Result<(u64, u64), CheckError> {
