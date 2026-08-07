@@ -1,0 +1,5 @@
+# The repo-root .gitignore has a bare `*.log` rule, which silently excludes
+# captured evidence. These two logs ARE the experiment; without them score.py
+# has nothing to score and the README reproduction fails.
+!run1.log
+!run2.log
