@@ -1,5 +1,13 @@
 # Compat-Envelope Scorecard — Rendered Report (full-corpus)
 
+> **TIER CORRECTION + newer rendering available (2026-08-06).** This report
+> describes its sweep as "L2, DETLOG-bitwise self-verify". That over-states the
+> tier: the same `hermit run --strict --verify` leg is the **stripped**
+> comparator, which normalizes before comparing and has been measured missing
+> 3 of 5 planted DETLOG/address/path defects. Read every "L2" below as
+> *stripped-L2*. See [`SCORECARD-CURRENT.md`](SCORECARD-CURRENT.md) §6-L1 for
+> the evidence, and §2 there for the current rendering of the same sweep.
+
 Automated, machine-readable cross-backend compatibility measurement.
 Task: `automated-compat-envelope-measurement` /
 `scorecard-full-manifest-denominator`. Rendered from the CSVs in this directory.

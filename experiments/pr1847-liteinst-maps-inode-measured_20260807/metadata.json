@@ -1,0 +1,18 @@
+{
+  "task": "build-and-measure-pr1847-liteinst-maps-inode-fix",
+  "agent": "hermit-w2", "date": "2026-08-07", "host": "devbig014",
+  "pr": 1847, "pr_head": "077833ad65955b30309d40ac3105a135779c0dce",
+  "pr_state_at_measurement": "OPEN, draft, not merged, not an ancestor of hermit main",
+  "reverie_pin_in_build": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+  "build": {
+    "tree": "temporary detached git worktree at scratch/w2-pr1847 (removed after)",
+    "why_not_a_slot": "worktrees/pr1847 has a LIVE coordinator lease (main_pid 1890624) and a registered owner; allocate-worktree refuses a second slot per agent",
+    "commands": ["make release-core (1m13s)", "scripts/stage-liteinst-runtime.sh release <so> <target> (26.6s)"],
+    "note": "make release-core alone does NOT stage libreverie_liteinst.so; the constructor-enabled DSO needs stage-liteinst-runtime.sh"
+  },
+  "baseline_build": "86842f741 (worktrees/cc/hermit, read-only)",
+  "predictions": {"stack_matching": "410/410", "maps_differing": "0/56"},
+  "actual": {"stack_matching": "410/410", "maps_differing": "0/56"},
+  "both_predictions_confirmed": true,
+  "falsifiability": "planted host-file content read into a live stack buffer, changed between runs: 11/48 ptrace and 11/414 liteinst DIFFERING on the same fix binary -> harness not inert"
+}

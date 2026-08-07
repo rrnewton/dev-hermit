@@ -1,0 +1,28 @@
+[Unit]
+Description=Fire the hourly owner-status wake on the hour, independently of ORC
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/hourly-status-relay.rs
+
+[Timer]
+# On the hour. The scheduled-hour bucket the driver dedupes on is derived by
+# truncating UTC to the hour, which is sound precisely because a calendar timer
+# fires AT OR AFTER its calendar point -- AccuracySec can delay a tick, never
+# advance it. A 01:00 tick may land at 01:00:20; it cannot land at 00:59:58.
+OnCalendar=hourly
+
+# THE PROPERTY THE OLD DRIVER LACKED. The ORC workflow re-armed a fresh full
+# hour on every restore (`cleared persisted internal sleep steps before workflow
+# restore`, then available_at = started_at + 3600s exactly), so restarts more
+# frequent than the period starved it indefinitely -- measured at 9h55m with
+# zero deliveries while it still reported alive=true, sleeping. Persistent=true
+# instead runs the tick that was missed during downtime.
+#
+# Note this runs ONE catch-up after an outage, not one per missed hour, which is
+# the behaviour we want: a nine-hour hole should produce one current status, not
+# nine stale ones. The driver's per-hour claim makes that explicit rather than
+# incidental.
+Persistent=true
+AccuracySec=30s
+Unit=hermit-hourly-status.service
+
+[Install]
+WantedBy=timers.target

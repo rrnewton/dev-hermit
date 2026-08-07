@@ -19,9 +19,17 @@
 //!     compare INFO logs, stack detlogs, or heap detlogs. TTY behavior is also
 //!     outside this scorecard.
 //!     Determinism and stdout parity are independent signals; neither implies
-//!     the other. A cell the backend never ran counts as 0 in both, so a small
-//!     envelope reads as a low percentage — that is the honest, anti-fakery
-//!     signal, not a bug.
+//!     the other. A cell the backend never ran is NOT counted as 0: `ran_count`
+//!     and `<parity>_measured_count` travel with every cell, an unmeasured
+//!     observable renders `?` (or `~` for partial) and a backend that could not
+//!     run renders `n/a` — none of which is a confirmed zero. A small envelope
+//!     therefore reads as a small MEASURED population, not as a low percentage
+//!     over an imagined one.
+//!     Correspondingly, an EMPTY DENOMINATOR is refused rather than rendered:
+//!     if no ptrace row passes the requested `--denominator` mode there are no
+//!     cells at all, so the tool prints `NO DATA:` with the modes and backends
+//!     the run does contain and exits 3 (distinct from 2 = usage, 0 = rendered).
+//!     Without that, a dbi/strict-only run rendered a confident `TOTAL 0`.
 //!     Reverie counter CSVs select `--observable tool-count` instead and are
 //!     labeled `tool-count-parity%`; the two observables are never conflated.
 //!
@@ -39,14 +47,15 @@
 //!   --run-id ID       Render only rows from this run_id.
 //!   --latest          Render only the most recent run_id (default when neither
 //!                     --run-id nor --all is given).
-//!   --all             Aggregate across every run in the CSV (last-writer-wins
-//!                     per (run_mode,lane,bucket,test_id,test_mode,backend)).
+//!   --all             Render only when the CSV contains one run identity.
+//!                     Multiple runs are refused; select one with --run-id.
 //!   --denominator M   Which passing ptrace test_mode defines the denominator
 //!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
 //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
-//!   --observable O    Observable compared by the legacy CSV `parity` field
-//!                     (default: stdout; use tool-count for Reverie counters).
+//!   --observable O    Observable-specific parity column to read: `stdout_parity`
+//!                     by default, or `tool_count_parity` for Reverie counters.
+//!                     The legacy `parity` spelling remains readable.
 //!   --json | --tsv    Machine-readable output instead of the table.
 //!
 //! ```cargo
@@ -59,7 +68,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::{exit, Command, Stdio};
 
 const USAGE: &str = r#"Usage: compat-envelope/render-scorecard.rs --csv PATH [OPTIONS]
 
@@ -69,7 +78,7 @@ Options:
   --csv PATH        Scorecard CSV (required; population must be explicit).
   --run-id ID       Render only rows from this run_id.
   --latest          Render only the most recent run_id (default).
-  --all             Aggregate across every run (last-writer-wins per cell).
+  --all             Require one run identity; refuse mixed-run aggregation.
   --denominator M   Passing ptrace test_mode defining the count (def: verify).
   --backends LIST   Comma-separated backend columns (def: dbi,kvm,sabre,liteinst).
   --observable O    stdout (default) or tool-count; labels parity honestly.
@@ -80,6 +89,16 @@ Options:
 fn die(msg: &str) -> ! {
     eprintln!("render-scorecard: {msg}\n\n{USAGE}");
     exit(2);
+}
+
+fn script_dir() -> PathBuf {
+    if let Ok(path) = env::var("RUST_SCRIPT_BASE_PATH") {
+        return PathBuf::from(path);
+    }
+    PathBuf::from(file!())
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("compat-envelope"))
 }
 
 /// One CSV row, only the fields the scorecard needs.
@@ -98,12 +117,43 @@ struct Cell {
     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
     outcome: String,   // pass | fail | error | timeout | oom | skip
     deterministic: Option<bool>,
-    // Legacy CSV field name: this stores stdout-only parity.
-    parity: Option<bool>,
+    /// Selected observable parity. The schema column is chosen from
+    /// `--observable`, with `parity` accepted only as a legacy fallback.
+    observable_parity: Option<bool>,
+    /// Cross-backend standard actually met. This is separate from `tier`,
+    /// which describes the run1/run2 self-determinism comparator.
+    comparison_tier: String,
+    /// Whether the row carries EVIDENCE that a determinism comparison actually
+    /// happened: a non-blank `parity_comparator` or a non-blank
+    /// `compared_log_messages`. Hermit refuses a determinism positive whose
+    /// evidence fields are blank (4da445156, "backend-parity: refuse a
+    /// determinism positive whose evidence fields are blank"); this is the
+    /// parent half of that refusal, which never got inherited across the repo
+    /// boundary. `deterministic=1` beside a blank comparator and blank counts is
+    /// a green with nothing behind it.
+    determinism_evidenced: bool,
 }
 
-/// The canonical header this renderer and `collect-envelope.rs` agree on.
-const HEADER: &[&str] = &[
+const FULL_COMPARISON_TIER: &str = "full-stdout-info-stack-heap";
+const SPOT_CHECK_COMPARISON_TIER: &str = "stdout-info-stack-heap-spot-check";
+const UNQUALIFIED_COMPARISON_TIERS: &[&str] = &[
+    "legacy-unqualified",
+    "unqualified-stdout-only",
+    "unqualified-tool-count-only",
+];
+
+fn qualifies_as_green(tier: &str) -> bool {
+    matches!(tier, FULL_COMPARISON_TIER | SPOT_CHECK_COMPARISON_TIER)
+}
+
+fn known_comparison_tier(tier: &str) -> bool {
+    qualifies_as_green(tier) || UNQUALIFIED_COMPARISON_TIERS.contains(&tier)
+}
+
+/// Columns common to every supported scorecard schema. Observable-specific
+/// parity is resolved separately so stdout equality and Tool-count equality
+/// can never be silently conflated.
+const REQUIRED_COLUMNS: &[&str] = &[
     "run_id",
     "run_utc",
     "hermit_sha",
@@ -118,11 +168,11 @@ const HEADER: &[&str] = &[
     "cell_state",
     "outcome",
     "deterministic",
-    "parity",
     "output_hash",
     "duration_ms",
     "max_rss_kb",
     "reason",
+    "comparison_tier",
 ];
 
 fn parse_bool(s: &str) -> Option<bool> {
@@ -197,6 +247,28 @@ fn main() {
     let csv_path = csv.unwrap_or_else(|| {
         die("--csv is required: choose `compat-envelope/fullcorpus-scorecard.csv` for the full corpus or `compat-envelope/scorecard.csv` for the CI/regression subset")
     });
+    // One semantic verifier owns parity provenance.  The renderer consumes its
+    // verdict before it consumes any cached parity boolean.  --all is explicit
+    // aggregate authority and therefore additionally refuses more than one run.
+    let checker = script_dir().join("check-scorecard-provenance.py");
+    let mut check = Command::new(&checker);
+    check
+        .arg(&csv_path)
+        .arg("--observable")
+        .arg(&observable)
+        .stdout(Stdio::null());
+    if all {
+        check.arg("--aggregate");
+    }
+    if let Some(ref selected_run) = run_id {
+        check.arg("--run-id").arg(selected_run);
+    }
+    let status = check.status().unwrap_or_else(|error| {
+        die(&format!("cannot execute provenance verifier {}: {error}", checker.display()))
+    });
+    if !status.success() {
+        die("parity provenance verifier refused this scorecard/scope");
+    }
     let (parity_label, parity_key, parity_meaning, full_parity_not_measured) =
         match observable.as_str() {
             "stdout" => (
@@ -230,11 +302,48 @@ fn main() {
             .position(|h| h == name)
             .unwrap_or_else(|| die(&format!("CSV missing required column `{name}`")))
     };
-    // Validate the header carries every field we rely on.
-    for h in HEADER {
+    // Validate the header carries every common field we rely on.
+    for h in REQUIRED_COLUMNS {
         let _ = idx(h);
     }
-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
+    let modern_parity_columns = ["stdout_parity", "tool_count_parity"];
+    let selected_modern = parity_key;
+    let selected_count = header
+        .iter()
+        .filter(|h| h.as_str() == selected_modern)
+        .count();
+    let legacy_count = header.iter().filter(|h| h.as_str() == "parity").count();
+    let wrong_modern: Vec<&str> = modern_parity_columns
+        .iter()
+        .copied()
+        .filter(|name| *name != selected_modern && header.iter().any(|h| h == name))
+        .collect();
+    if selected_count > 1 || legacy_count > 1 {
+        die(&format!(
+            "CSV has duplicate observable columns (`{selected_modern}` count={selected_count}, legacy `parity` count={legacy_count})"
+        ));
+    }
+    if !wrong_modern.is_empty() {
+        die(&format!(
+            "CSV observable does not match --observable `{observable}`: found `{}`, expected `{selected_modern}` (or legacy `parity`)",
+            wrong_modern.join("`, `")
+        ));
+    }
+    if selected_count == 1 && legacy_count == 1 {
+        die(&format!(
+            "CSV has ambiguous observable columns `{selected_modern}` and legacy `parity`; keep exactly one"
+        ));
+    }
+    let i_par = if selected_count == 1 {
+        idx(selected_modern)
+    } else if legacy_count == 1 {
+        idx("parity")
+    } else {
+        die(&format!(
+            "CSV missing observable column `{selected_modern}` (legacy `parity` is also accepted)"
+        ));
+    };
+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_comparison_tier) = (
         idx("run_id"),
         idx("bucket"),
         idx("test_id"),
@@ -242,8 +351,14 @@ fn main() {
         idx("backend"),
         idx("outcome"),
         idx("deterministic"),
-        idx("parity"),
+        idx("comparison_tier"),
     );
+    // Evidence that a determinism comparison actually happened. OPTIONAL by
+    // design: pre-schema-5 rows do not carry these columns, and such a row must
+    // read as UNEVIDENCED rather than fail the whole render -- an old row cannot
+    // retroactively acquire evidence it never recorded.
+    let i_comparator = header.iter().position(|h| h == "parity_comparator");
+    let i_compared = header.iter().position(|h| h == "compared_log_messages");
 
     let mut cells: Vec<Cell> = Vec::new();
     for (n, line) in lines.enumerate() {
@@ -256,6 +371,21 @@ fn main() {
             eprintln!("warn: row {} has {} fields (< {}); skipping", n + 2, f.len(), header.len());
             continue;
         }
+        let comparison_tier = get(i_comparison_tier).trim().to_string();
+        if comparison_tier.is_empty() {
+            die(&format!(
+                "REFUSED row {}: outcome {:?} has no comparison_tier; a raw pass may never default to a strict green",
+                n + 2,
+                get(i_outcome)
+            ));
+        }
+        if !known_comparison_tier(&comparison_tier) {
+            die(&format!(
+                "REFUSED row {}: unknown comparison_tier {:?}",
+                n + 2,
+                comparison_tier
+            ));
+        }
         cells.push(Cell {
             seq: n,
             run_id: get(i_run),
@@ -265,7 +395,13 @@ fn main() {
             backend: get(i_backend),
             outcome: get(i_outcome),
             deterministic: parse_bool(&get(i_det)),
-            parity: parse_bool(&get(i_par)),
+            observable_parity: parse_bool(&get(i_par)),
+            comparison_tier,
+            // Absent columns (pre-schema-5 rows) read as blank, i.e. NOT
+            // evidenced -- an older row cannot retroactively acquire evidence it
+            // never recorded.
+            determinism_evidenced: i_comparator.map(&get).is_some_and(|v| !v.trim().is_empty())
+                || i_compared.map(&get).is_some_and(|v| !v.trim().is_empty()),
         });
     }
     if cells.is_empty() {
@@ -287,7 +423,8 @@ fn main() {
     if let Some(r) = &scope_run {
         cells.retain(|c| &c.run_id == r);
     } else {
-        // --all: last-writer-wins per logical cell key across runs.
+        // --all has already been proven single-run by the provenance verifier;
+        // collapse only duplicate writes within that one run identity.
         let mut newest: BTreeMap<(String, String, String, String), Cell> = BTreeMap::new();
         for c in cells.drain(..) {
             let key = (c.bucket.clone(), c.test_id.clone(), c.test_mode.clone(), c.backend.clone());
@@ -303,6 +440,28 @@ fn main() {
         }
         cells = newest.into_values().collect();
     }
+
+    // Report exactly the selected logical population. Raw execution success is
+    // not scorecard green until the row names one qualifying comparison tier.
+    let mut tier_distribution: BTreeMap<String, usize> = BTreeMap::new();
+    let mut raw_passes = 0usize;
+    let mut qualified_passes = 0usize;
+    for cell in &cells {
+        *tier_distribution.entry(cell.comparison_tier.clone()).or_default() += 1;
+        if cell.outcome == "pass" {
+            raw_passes += 1;
+            if qualifies_as_green(&cell.comparison_tier) {
+                qualified_passes += 1;
+            }
+        }
+    }
+    eprintln!(
+        "comparison-tier distribution: {:?} ({} rows); qualified green={}/{} raw passes",
+        tier_distribution,
+        cells.len(),
+        qualified_passes,
+        raw_passes,
+    );
 
     // Restrict the determinism denominator to the requested mode.
     let denom_cells: Vec<&Cell> = cells.iter().filter(|c| c.test_mode == denom_mode).collect();
@@ -327,7 +486,10 @@ fn main() {
     // the denominator mode.
     let mut ptrace_pass: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for c in &denom_cells {
-        if c.backend == "ptrace" && c.outcome == "pass" {
+        if c.backend == "ptrace"
+            && c.outcome == "pass"
+            && qualifies_as_green(&c.comparison_tier)
+        {
             ptrace_pass.entry(c.bucket.clone()).or_default().insert(c.test_id.clone());
         }
     }
@@ -338,6 +500,11 @@ fn main() {
     // internal double-run already proved run1==run2 for a passing verify cell).
     struct BCell {
         det: bool,
+        /// Rows carrying determinism EVIDENCE. `det_measured_count` must count
+        /// these, not rows -- counting rows reports the population size while
+        /// the evidenced count may be zero, which is the same proxy defect one
+        /// level up and would make the refusal invisible in the summary.
+        det_measured: bool,
         par: bool,
         /// Whether parity was actually measured (CSV field non-blank). A blank
         /// parity is "unknown", NOT a confirmed 0 — kept distinct so the
@@ -354,29 +521,34 @@ fn main() {
         if c.backend == "ptrace" || c.backend == "native" {
             continue;
         }
-        let pass = c.outcome == "pass";
+        let pass = c.outcome == "pass" && qualifies_as_green(&c.comparison_tier);
         let ran = c.outcome != "unavailable" && c.outcome != "skip";
         // Determinism (run1 == run2) is independent of parity: a backend can be
         // self-deterministic yet diverge from ptrace. The CSV `deterministic`
-        // field is authoritative; fall back to "verify pass => deterministic"
-        // only when the collector left it blank. Do NOT gate on `pass`, which
-        // for a non-ptrace backend already requires parity.
-        let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
+        // field is authoritative, and the strict comparison tier is required.
+        // Never infer determinism from a raw execution pass.
+        // BLANK-EVIDENCE REFUSAL (parent half of hermit 4da445156). A
+        // determinism positive requires evidence that a comparison verdict
+        // exists. Without it the row is UNMEASURED, not deterministic-by-
+        // default -- and not a negative either: refusing is zero qualifying
+        // evidence, never a confirmed fail.
+        let det = pass && c.deterministic.unwrap_or(false) && c.determinism_evidenced;
+        let det_measured = pass && c.determinism_evidenced;
         // Parity is true only when the collector recorded a bitwise match.
-        let par = c.parity.unwrap_or(false);
-        let par_measured = c.parity.is_some();
+        let par = pass && c.observable_parity.unwrap_or(false);
+        let par_measured = pass && c.observable_parity.is_some();
         by_backend
             .entry(c.backend.clone())
             .or_default()
-            .insert((c.bucket.clone(), c.test_id.clone()), BCell { det, par, par_measured, ran });
+            .insert((c.bucket.clone(), c.test_id.clone()), BCell { det, det_measured, par, par_measured, ran });
     }
 
     // Build per-bucket rows.
     #[derive(Default, Clone)]
     struct Row {
         ptrace: usize,
-        // backend -> (parity_count, det_count, parity_measured_count, ran_count)
-        back: BTreeMap<String, (usize, usize, usize, usize)>,
+        // backend -> (parity_count, det_count, parity_measured_count, ran_count, det_measured_count)
+        back: BTreeMap<String, (usize, usize, usize, usize, usize)>,
     }
     let mut rows: BTreeMap<String, Row> = BTreeMap::new();
     let mut total = Row::default();
@@ -388,6 +560,7 @@ fn main() {
             let mut det = 0usize;
             let mut par_meas = 0usize;
             let mut ran = 0usize;
+            let mut det_meas = 0usize;
             if let Some(map) = by_backend.get(b) {
                 for tid in &denom {
                     if let Some(bc) = map.get(&(bucket.clone(), tid.clone())) {
@@ -400,24 +573,115 @@ fn main() {
                         if bc.par_measured {
                             par_meas += 1;
                         }
+                        if bc.det_measured {
+                            det_meas += 1;
+                        }
                         if bc.ran {
                             ran += 1;
                         }
                     }
                 }
             }
-            row.back.insert(b.clone(), (par, det, par_meas, ran));
+            row.back.insert(b.clone(), (par, det, par_meas, ran, det_meas));
         }
         total.ptrace += row.ptrace;
         for b in &backend_cols {
-            let e = total.back.entry(b.clone()).or_insert((0, 0, 0, 0));
-            let (p, d, m, r) = row.back[b];
+            let e = total.back.entry(b.clone()).or_insert((0, 0, 0, 0, 0));
+            let (p, d, m, r, dm) = row.back[b];
             e.0 += p;
             e.1 += d;
             e.2 += m;
             e.3 += r;
+            e.4 += dm;
         }
         rows.insert(bucket.clone(), row);
+    }
+
+    // A1 -- AN EMPTY DENOMINATOR IS NOT A ZERO RESULT.
+    //
+    // The per-cell vocabulary below (`?` / `~` / `n/a`, plus ran_count and
+    // measured_count) is careful about unmeasured CELLS, but it cannot speak for
+    // the denominator one level up: when no ptrace row passes the requested mode
+    // there are no cells at all, and every format renders a confident `TOTAL 0`
+    // (exit 0) that is indistinguishable from "we measured, and nothing passed".
+    // That happens for real -- a run that is dbi/strict only has a legitimately
+    // empty verify/ptrace denominator.
+    //
+    // So refuse to render, and say what IS present so the caller can pick a mode
+    // or backend that exists. Distinct exit status (3) keeps "could not measure"
+    // separable from usage errors (2) and from a rendered result (0).
+    //
+    // The remedy line reports the modes that would ACTUALLY yield a denominator --
+    // i.e. modes with a *passing ptrace* row -- not the modes the run merely
+    // contains. Those two differ exactly when the run has no ptrace rows at all
+    // (a dbi-only run "contains" strict, yet `--denominator strict` refuses too),
+    // and naming the wrong set would repeat this very defect one level up:
+    // a remedy is only actionable if it travels with the population it is drawn from.
+    let denom_total: usize = ptrace_pass.values().map(|s| s.len()).sum();
+    if denom_total == 0 {
+        let modes_present: BTreeSet<&str> = cells.iter().map(|c| c.test_mode.as_str()).collect();
+        let backends_present: BTreeSet<&str> = cells.iter().map(|c| c.backend.as_str()).collect();
+        let ptrace_rows = cells.iter().filter(|c| c.backend == "ptrace").count();
+        // Exactly the `--denominator` values that would produce a non-empty denominator.
+        let usable: BTreeSet<&str> = cells
+            .iter()
+            .filter(|c| {
+                c.backend == "ptrace"
+                    && c.outcome == "pass"
+                    && qualifies_as_green(&c.comparison_tier)
+            })
+            .map(|c| c.test_mode.as_str())
+            .collect();
+        let run_label = scope_run
+            .clone()
+            .unwrap_or_else(|| "ALL (single run required)".into());
+        let remedy = if !usable.is_empty() {
+            format!(
+                "Retry with --denominator <{}> -- those are the modes this run has passing \
+                 ptrace rows in.",
+                usable.iter().copied().collect::<Vec<_>>().join("|")
+            )
+        } else if ptrace_rows == 0 {
+            "This run has NO ptrace rows in any mode, so no denominator can be formed from it \
+             at all; changing --denominator will not help. Use a run that includes the ptrace \
+             reference backend."
+                .to_string()
+        } else {
+            format!(
+                "This run has {ptrace_rows} ptrace rows but none passing in any mode, so no \
+                 --denominator choice yields a population; the reference backend itself failed \
+                 here."
+            )
+        };
+        eprintln!(
+            "NO DATA: run {run} has 0 ptrace/{mode} qualifying passing cells, so the denominator is empty \
+             and no percentage is defined (this is NOT a measured zero).\n\
+             \x20 rows considered:  {n}\n\
+             \x20 raw passes:       {raw_passes} (qualified: {qualified_passes})\n\
+             \x20 tier distribution:{tier_distribution:?}\n\
+             \x20 ptrace rows:      {ptrace_rows} (passing in modes: {usable})\n\
+             \x20 modes present:    {modes}\n\
+             \x20 backends present: {backends}\n\
+             \x20 csv:              {csv}\n\
+             {remedy}",
+            run = run_label,
+            mode = denom_mode,
+            n = cells.len(),
+            raw_passes = raw_passes,
+            qualified_passes = qualified_passes,
+            tier_distribution = tier_distribution,
+            ptrace_rows = ptrace_rows,
+            usable = if usable.is_empty() {
+                "none".to_string()
+            } else {
+                usable.iter().copied().collect::<Vec<_>>().join(",")
+            },
+            modes = modes_present.iter().copied().collect::<Vec<_>>().join(","),
+            backends = backends_present.iter().copied().collect::<Vec<_>>().join(","),
+            csv = csv_path.display(),
+            remedy = remedy,
+        );
+        exit(3);
     }
 
     let pct = |num: usize, den: usize| -> f64 {
@@ -434,10 +698,14 @@ fn main() {
             let mut emit = |name: &str, row: &Row| {
                 let mut backs = serde_json::Map::new();
                 for b in &backend_cols {
-                    let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
+                    let (p, d, m, r, dm) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0, 0));
                     let mut metrics = serde_json::Map::new();
                     metrics.insert(format!("{parity_key}_count"), json!(p));
                     metrics.insert(format!("{parity_key}_measured_count"), json!(m));
+                    // Rows carrying determinism EVIDENCE, not rows. With a blank
+                    // comparator this is 0 while the population is large, which
+                    // is exactly the distinction the refusal exists to surface.
+                    metrics.insert("determinism_measured_count".to_string(), json!(dm));
                     metrics.insert(
                         format!("{parity_key}_pct"),
                         json!((pct(p, row.ptrace) * 10.0).round() / 10.0),
@@ -464,6 +732,9 @@ fn main() {
                 "run_scope": scope_run.clone().unwrap_or_else(|| "all".into()),
                 "denominator_mode": denom_mode,
                 "denominator_meaning": denominator_meaning,
+                "comparison_tier_distribution": tier_distribution,
+                "raw_pass_count": raw_passes,
+                "qualified_green_count": qualified_passes,
                 "parity_metric": {
                     "label": parity_label,
                     "observable": observable,
@@ -489,7 +760,7 @@ fn main() {
             let emit = |name: &str, row: &Row| {
                 let mut f = vec![name.to_string(), row.ptrace.to_string()];
                 for b in &backend_cols {
-                    let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
+                    let (p, d, m, r, _dm) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0, 0));
                     f.push(format!("{:.1}", pct(p, row.ptrace)));
                     f.push(format!("{:.1}", pct(d, row.ptrace)));
                     f.push(format!("{m}/{}", row.ptrace));
@@ -506,11 +777,15 @@ fn main() {
             // Human table in the owner's exact shape.
             println!(
                 "Compat-envelope scorecard  (run: {}, denominator: {} = {})",
-                scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into()),
+                scope_run
+                    .clone()
+                    .unwrap_or_else(|| "ALL (single run required)".into()),
                 denom_mode,
                 denominator_meaning,
             );
             println!("Input CSV: {}", csv_path.display());
+            println!("Comparison-tier distribution: {:?} ({} rows); qualified green={}/{} raw passes.", tier_distribution, cells.len(), qualified_passes, raw_passes);
+            println!("Qualifying tiers: `{FULL_COMPARISON_TIER}` or `{SPOT_CHECK_COMPARISON_TIER}`. Explicit unqualified tiers remain non-green history.");
             println!("Each backend cell is `{parity_label}%, determinism%` of the ptrace count. The two measurements are independent.");
             if observable == "stdout" {
                 println!("CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.");
@@ -529,7 +804,7 @@ fn main() {
             let emit = |name: &str, row: &Row| {
                 let mut line = format!("{:<22} {:>7}", name, row.ptrace);
                 for b in &backend_cols {
-                    let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
+                    let (p, d, m, r, _dm) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0, 0));
                     // A backend that ran ZERO denom cells here is not measurable
                     // (binary absent / not enabled) — show n/a, never a 0% red.
                     let cell = if row.ptrace > 0 && r == 0 {

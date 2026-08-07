@@ -11,7 +11,7 @@
     "failures_max": 0,
     "executed_tests_min": 1
   },
-  "_accepts_green_class": "WHICH GREEN CLASS MAY LAND. hard = validation executed at THIS exact head. soft-* = inherited from an ancestor head and speculatively trusted (the row carries validated_head_sha != commit plus an inherited_from provenance block). Defaulting to [hard] keeps today's behaviour EXACTLY -- measured: all 585 live ledger rows classify hard, because a row with no validated_head_sha derives it as commit. What changes is that the acceptance is now STATED rather than implied by the absence of a soft producer. Derivation + refusals live in ci-hub/validate/green_class.py; consumers must not restate them. NOTE: the Rust readers ignore unknown predicate keys (no deny_unknown_fields), so this clause is enforced by the PYTHON consumer only until lib/qualifying_receipt.rs reads it -- see ai_docs/fix-inert-determinism-parity-guards-20260806.md.",
+  "_accepts_green_class": "WHICH GREEN CLASS MAY LAND. hard = validation executed at THIS exact head. soft-* = inherited from an ancestor head and speculatively trusted (the row carries validated_head_sha != commit plus an inherited_from provenance block). Defaulting to [hard] keeps today's behaviour EXACTLY -- measured: all 585 pre-provenance live ledger rows classify hard, because a row with no validated_head_sha derives it as commit. Derivation and refusal rules are mirrored by ci-hub/validate/green_class.py and ci-hub/lib/qualifying_receipt.rs; the cross-consumer mutation test requires both engines to agree.",
   "accepts_green_class": [
     "hard"
   ],

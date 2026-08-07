@@ -275,7 +275,22 @@ class LibunwindEnvTest(unittest.TestCase):
             pc = root / "ignored/lu-parity/usr/lib64/pkgconfig"
             pc.mkdir(parents=True)
             (pc / "libunwind-ptrace.pc").write_text("")
-            cmd = self._build(root)
+            # Pin RUNTIME_CANDIDATES like the two probe tests below do. The real
+            # tuple is `~`-relative, so leaving it in place makes the runtime-dir
+            # assertion depend on whether this HOST has a libunwind tree: with one
+            # the probe picks it and the assertion holds, without one the probe
+            # correctly falls back to link_dir and the assertion fails. The
+            # fixture must supply the alternative it is asserting the existence
+            # of, rather than borrowing it from $HOME.
+            runtime = root / "runtime"
+            runtime.mkdir()
+            (runtime / "libunwind-ptrace.so.0").write_text("")
+            original = start_unit.RUNTIME_CANDIDATES
+            start_unit.RUNTIME_CANDIDATES = (str(runtime),)
+            try:
+                cmd = self._build(root)
+            finally:
+                start_unit.RUNTIME_CANDIDATES = original
             self.assertIn(f"PKG_CONFIG_PATH={pc}", cmd)
             # LINK dir is lu-parity, which carries the .pc and the static
             # libunwind-ptrace.a.
@@ -286,6 +301,7 @@ class LibunwindEnvTest(unittest.TestCase):
             ld = [c for c in cmd if c.startswith("LD_LIBRARY_PATH=")]
             self.assertEqual(len(ld), 1)
             self.assertNotIn(str(pc.parent), ld[0])
+            self.assertIn(str(runtime), ld[0])
 
     def test_absent_pc_file_leaves_the_unit_untouched(self):
         with tempfile.TemporaryDirectory() as tmp:

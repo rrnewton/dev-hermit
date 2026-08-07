@@ -1,0 +1,12 @@
+phase,check,backend,hermit_build,guest,differing,matching,denominator,predicted_matching,agrees
+pre-fix,stack-self-determinism,ptrace,86842f741,notsc,0,44,44,,
+pre-fix,stack-self-determinism,liteinst,86842f741,notsc,300,110,410,,
+pre-fix,maps-reproducer,liteinst,86842f741,cat /proc/self/maps,14,42,56,,
+post-fix,stack-self-determinism,ptrace,077833ad,notsc,0,44,44,44,yes
+post-fix,stack-self-determinism,liteinst,077833ad,notsc,0,410,410,410,YES
+post-fix,maps-reproducer,ptrace,077833ad,cat /proc/self/maps,0,25,25,25,yes
+post-fix,maps-reproducer,liteinst,077833ad,cat /proc/self/maps,0,56,56,56,YES
+post-fix,tsc-leak-probe,ptrace,077833ad,tscleak,0,44,44,,clean
+post-fix,tsc-leak-probe,liteinst,077833ad,tscleak,0,410,410,,clean
+post-fix,planted-defect-control,ptrace,077833ad,plant,11,37,48,,harness-detects
+post-fix,planted-defect-control,liteinst,077833ad,plant,11,403,414,,harness-detects

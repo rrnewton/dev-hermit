@@ -1,0 +1,20 @@
+{
+  "experiment": "detlog-parity-three-backends",
+  "captured_utc": "2026-08-07T07:24:35Z",
+  "dimension": "detlog stream only",
+  "containment": "NOT a claim about stack, heap, or backend-wide determinism; stack baselines remain BLOCKED (LiteInst 303/413, SaBRe 121/121)",
+  "denominators": {
+    "ptrace": 141,
+    "sabre": 368,
+    "liteinst": 1245,
+    "note": "not shared; a single parity percentage is undefined, both sides printed per pair"
+  },
+  "self_determinism": {
+    "ptrace": "PASS 0/141",
+    "sabre": "PASS 0/368",
+    "liteinst": "PASS 0/1245"
+  },
+  "cross_backend_whole_stream_parity": "0 of 3 pairs identical",
+  "source": "raw/dl-*.d, copied from gitignored scratch/w27-tsc/ to make the evidence durable",
+  "host": "devbig014.atn7.facebook.com"
+}

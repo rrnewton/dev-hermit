@@ -1,0 +1,20 @@
+# raw evidence, hermit-w2, 2026-08-07
+
+## KVM panic (stdin-dash guest), build w2/77951bcd
+thread 'main' (1) panicked at detcore/src/scheduler.rs:2174:35:
+signal::kill to go through: ESRCH
+
+## detcore/src/scheduler.rs:2173-2174 at 77951bcd
+        let pid = Pid::from_raw(dettid.as_raw()); // TODO(T78538674): virtualize pid/tid:
+        signal::kill(pid, signal).expect("signal::kill to go through");
+
+## O_NONBLOCK probe
+ptrace  PROBE fl=0x0 O_NONBLOCK=0 bytes=4 eagain=0 err=none
+kvm     PROBE fl=0x0 O_NONBLOCK=0 bytes=0 eagain=4 err=none
+kvm (stdin=/dev/null, no pipe)  PROBE fl=0x8000 O_NONBLOCK=0 bytes=0 eagain=0 err=none
+
+## KVM --verify abort
+:: Run1...
+First run errored during --verify, not continuing to a second.
+## cgroup-accounted hang (cc build)
+wall=30.12s cgroup_cpu=29.76s cpu/wall=99%

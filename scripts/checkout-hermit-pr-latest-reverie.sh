@@ -183,7 +183,7 @@ for pr in "${prs[@]}"; do
     cd "$repo"
     with-proxy ./scripts/check-reverie-pin.rs --update-to-latest
   )
-  updated_pin=$("$repo/scripts/check-reverie-pin.rs" --print-pin)
+  updated_pin=$("$repo/scripts/check-reverie-pin.rs" --repo "$repo" --print-pin)
   [[ $updated_pin == "$target" ]] || \
     die "PR #$pr: checker updated to $updated_pin, expected $target"
 

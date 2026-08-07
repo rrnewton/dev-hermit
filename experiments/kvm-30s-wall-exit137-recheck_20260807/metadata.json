@@ -1,0 +1,30 @@
+{
+  "task": "kvm-pipeline-trials-hit-30s-wall-exit-137",
+  "agent": "hermit-w2",
+  "date": "2026-08-07",
+  "host": "devbig014",
+  "cores": 316,
+  "backends": ["kvm", "ptrace"],
+  "builds": [
+    {"slot": "worktrees/w2",       "hermit": "77951bcdf6c766390090fcdc626545bed192d872", "reverie_pin": "038e993926e45514264d30367b70df9b6ac3b9b8", "kvm_bin_true": "rc=0 0.49s",   "note": "hermit-w13's pin branch; read-only use"},
+    {"slot": "worktrees/cc",       "hermit": "9c233ed0bfd6", "reverie_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90", "kvm_bin_true": "rc=137 30.01s"},
+    {"slot": "worktrees/certify",  "hermit": "16cbdbb11925", "reverie_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90", "kvm_bin_true": "rc=137 30.01s"},
+    {"slot": "worktrees/clone",    "hermit": "9cf96a4d9c56", "reverie_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90", "kvm_bin_true": "rc=137 30.01s"},
+    {"slot": "worktrees/det1",     "hermit": "f93109f2e1e9", "reverie_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90", "kvm_bin_true": "rc=137 30.01s"},
+    {"slot": "hermit (primary)",   "hermit": "f89c69766371806d3c9b2c3003531df2d59d6118", "dirty": true, "reverie_pin": "d973a85b328610c14c41c39fa57495b9f77c3c90", "kvm_bin_true": "rc=137 120.01s"}
+  ],
+  "origin_main_at_measurement": "4be8edcd2f947746b5d9d30c81a35202f36a46d4",
+  "cpu_accounting": "cgroup CPUUsageNSec on a transient systemd-run --user unit (RemainAfterExit=yes, Type=oneshot)",
+  "key_results": {
+    "livelock_cpu_pct_of_wall": 99,
+    "kvm_pipeline_trials": 14,
+    "kvm_pipeline_timeouts": 0,
+    "kvm_pipeline_survivors": 0,
+    "self_determinism_cells_measured": 0,
+    "self_determinism_cells_in_scope": 1
+  },
+  "defects_found": [
+    "KVM returns EAGAIN on a blocking pipe read (O_NONBLOCK clear); pipe-specific",
+    "detcore/src/scheduler.rs:2174 panics ESRCH on unvirtualized dettid used as host pid"
+  ]
+}

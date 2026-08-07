@@ -27,8 +27,10 @@ zero-execution floor. See the JSON `_completeness_is_coverage_not_count` note.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -105,9 +107,26 @@ def coverage_satisfied(cov: Any) -> bool:
     one test-bearing DAG node AND no planned test node was inert or absent. The
     NAMES travel with the receipt so this is re-derived without re-reading a log
     (Proxy Binding). Mirrors the Rust `coverage_satisfied`."""
+    # `planned_test_nodes` is checked with isinstance BEFORE the comparison. The
+    # bare `cov.get("planned_test_nodes", 0) > 0` RAISED TypeError on a null or
+    # string value (`None > 0` and `"3" > 0` are both errors in Python 3), so a
+    # malformed receipt crashed this predicate instead of being refused by it.
+    # Rust refuses the same input at the parse boundary because the field is
+    # typed `u64`; this makes Python refuse it too, rather than the two mirrors
+    # disagreeing on malformed input in a THIRD way.
+    #
+    # `== []` on the two lists is deliberate and must not be relaxed to a
+    # truthiness test: a MISSING or null list means the producer did not report
+    # it, which is unknown, and unknown is refused. See the note on
+    # `zero_executed_nodes` in ci-hub/lib/records.rs — an omitted field once
+    # deserialized to `[]` on the Rust side and read as "no inert nodes", i.e. a
+    # pass. That is the bug this spelling prevents.
+    planned = cov.get("planned_test_nodes") if isinstance(cov, dict) else None
     return (
         isinstance(cov, dict)
-        and cov.get("planned_test_nodes", 0) > 0
+        and isinstance(planned, int)
+        and not isinstance(planned, bool)
+        and planned > 0
         and cov.get("zero_executed_nodes") == []
         and cov.get("absent_nodes") == []
     )
@@ -181,3 +200,43 @@ def row_qualifies(row: dict[str, Any], sha: str, pred: dict[str, Any]) -> bool:
     if not _row_qualifies_without_class(row, sha, pred):
         return False
     return green_class_of(row) in _green_class.accepted_classes(pred)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Semantic row-verifier CLI used by non-Python authority consumers."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sha", required=True)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
+        print("qualifying-receipt: --sha must be 40 lowercase hex", file=sys.stderr)
+        return 2
+    try:
+        row = json.load(sys.stdin)
+        if not isinstance(row, dict):
+            raise ValueError("ledger row is not an object")
+        pred = active()
+        green_class, reason = _green_class.derive_class(row)
+        accepted = row_qualifies(row, args.sha, pred)
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        print(f"qualifying-receipt: {error}", file=sys.stderr)
+        return 2
+    report = {
+        "schema_version": 1,
+        "sha": args.sha,
+        "accepted": accepted,
+        "green_class": green_class,
+        "reason": reason,
+        "accepts_green_class": _green_class.accepted_classes(pred),
+    }
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    elif accepted:
+        print(f"QUALIFIED {args.sha} class={green_class}")
+    else:
+        print(f"REFUSED {args.sha} class={green_class}: {reason}")
+    return 0 if accepted else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

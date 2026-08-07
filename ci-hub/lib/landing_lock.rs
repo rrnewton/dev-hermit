@@ -2678,7 +2678,10 @@ mod cgroup_anchor_tests {
             eprintln!("skipping: no cgroup-v2 entry for self on this host");
             return;
         };
-        assert!(mine.starts_with('/'), "expected an absolute v2 path: {mine}");
+        assert!(
+            mine.starts_with('/'),
+            "expected an absolute v2 path: {mine}"
+        );
         match cgroup_population(&mine) {
             CgroupCensus::Populated(pids) => assert!(
                 pids.contains(&std::process::id()),
@@ -2710,8 +2713,6 @@ mod cgroup_anchor_tests {
             );
         }
     }
-
-
 
     // safe-ci.slice is DERIVED from the payload's own path, never hardcoded:
     // the real path embeds the invoking uid.

@@ -5,7 +5,8 @@ PKG_CONFIG_MODULES := libunwind-ptrace liblzma
 SUBMODULE_PROXY ?= $(shell command -v with-proxy 2>/dev/null)
 SUBMODULE_GIT = $(SUBMODULE_PROXY) git
 
-.PHONY: build build-full build-hermit check-agent-utils-pin check-claude-md-size check-deps check-harness-help check-portability check-rust-error-string-proxies clean \
+.PHONY: build build-full build-hermit check-agent-utils-pin check-claude-md-size check-codex-setup check-compat-envelope-tests check-deps check-harness-help check-portability check-primary-freshness check-rust-error-string-proxies clean \
+	restore-primary-freshness \
 	check-submodules checkout-all checkout-e9patch checkout-fresh checkout-optional-submodules checkout-sabre submodules \
 	compat-envelope compat-envelope-full compat-envelope-fullcorpus \
 	demo1 demo2 demo3 demo4 demo5 demo6 demo7 demos distclean doctor \
@@ -131,14 +132,22 @@ check-portability:
 check-harness-help: ## Assert every harness entrypoint's -h/--help/--version is a pure safe probe
 	@scripts/check-harness-help.py
 
+check-primary-freshness: ## One invariant over every primary (parent included): not bare, on main, not detached, equal to origin, clean. Detect+report only; never resets or fast-forwards.
+	@scripts/primary_checkout.py freshness
+
+restore-primary-freshness: ## Repair only the unambiguous drift (an accidental core.bare flip); everything else is reported with the exact command for a human.
+	@scripts/primary_checkout.py freshness --restore-safe
+
 check-rust-error-string-proxies: ## Reject Rust control flow that classifies typed errors by display strings
 	@scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
 
 check-agent-utils-pin: ## Fetch and reject stale/diverged agent-utils state, plus STRANDED local commits (in-flight work on a checked-out branch is reported, not failed)
 	@scripts/check-agent-utils-pin.rs
 
-# The harness spawn-cost warning fires at 40000 chars (the file loads in full at
-# every agent spawn; it is NOT truncated). Policy is now SPLIT: executable predicates
+# Keep the root policy compact even though `.codex/config.toml` raises Codex's
+# instruction-chain limit. Stock Codex defaults to 32768 bytes and would truncate
+# this file; `check-codex-setup` verifies the explicit project override. Policy is
+# now SPLIT: executable predicates
 # live in AGENTS.md, rationale/examples/glossary in ai_docs/agents-md-policy-rationale.md
 # (read on demand). This gate is a REGRESSION guard set just above the trimmed size to
 # catch bloat (e.g. re-inlining rationale that belongs in the companion doc). It also
@@ -158,6 +167,9 @@ check-claude-md-size: ## Guard AGENTS.md against size regression + require the t
 	grep -q 'TAIL-CANARY-KESTREL-7731' $$f || { echo "ERROR: $$f missing the load-verification TAIL CANARY (tail may be truncated)." >&2; exit 1; }; \
 	echo "AGENTS.md size OK ($$size <= $$limit chars) and tail canary present."
 
+check-codex-setup: ## Verify stock-Codex instruction and skill discovery
+	@python3 scripts/check-codex-setup.py
+
 list-rust-scripts: ## Inventory executable Rust and rust-script source files
 	@scripts/list-rust-scripts.rs
 
@@ -168,17 +180,98 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@command -v rustfmt >/dev/null 2>&1 || { echo 'ERROR: rustfmt is required.' >&2; exit 1; }
 	@command -v shellcheck >/dev/null 2>&1 || { echo 'ERROR: shellcheck is required.' >&2; exit 1; }
 	@command -v python3 >/dev/null 2>&1 || { echo 'ERROR: python3 is required.' >&2; exit 1; }
-	rustfmt --edition 2021 --check scripts/*.rs
-	shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push
-	python3 -m py_compile scripts/*.py
-	python3 -m unittest discover -s scripts -p 'test_*.py'
-	@$(MAKE) --no-print-directory check-rust-error-string-proxies
-	@scripts/check-parent-gitmodules.sh
-	@scripts/check-agent-utils-pin.rs
-	@scripts/primary_checkout.py check
-	@$(MAKE) --no-print-directory check-claude-md-size
-	@$(MAKE) --no-print-directory check-portability
-	@$(MAKE) --no-print-directory check-harness-help
+	@# EVERY GATE RUNS. Make aborts a recipe at the first nonzero line, which made
+	@# this target report only its earliest failure and silently skip everything
+	@# after it -- measured 2026-08-07: rustfmt failed on 6 unformatted scripts/*.rs,
+	@# so shellcheck never ran, and the 133 discovered scripts/test_*.py tests never
+	@# ran either. Newly wired tests were nominal, not enforced. A lint target that
+	@# hides its own coverage is worse than a slow one, so each gate is run through
+	@# `gate`, which records the failure and continues; the target still exits
+	@# nonzero, with EVERY failing gate named at the end rather than just the first.
+	@# A GATE THAT PASSED IS NOT A GATE THAT RAN. `gate` reports OK on exit 0,
+	@# which cannot distinguish "checked 33 files" from "checked nothing" -- and
+	@# shellcheck and py-compile are silent on success, so their OK printed zero
+	@# evidence of work. Measured 2026-08-07: all four countable tools DO fail
+	@# closed on empty input today (rustfmt rc=1, shellcheck rc=2, py_compile rc=1,
+	@# unittest rc=5 "NO TESTS RAN"), so nothing is vacuous right now -- but that
+	@# is a property of the tools, not of this target, and nothing binds it. One
+	@# `shopt -s nullglob`, or a switch to a `find` that legitimately matches
+	@# nothing, and an empty run starts reporting OK. `counted` binds it: it counts
+	@# the inputs, REFUSES on zero, and prints the count beside the verdict so the
+	@# log carries what was checked instead of asking to be trusted.
+	@# `ignored-artifacts` is REPORT-ONLY on purpose, and it is a ratchet.
+	@# check-ignored-experiment-artifacts.sh exists to make one silent failure
+	@# loud: the repo-root `*.log` rule (.gitignore:92) swallows experiment
+	@# evidence, and `git add` on an ignored path says nothing useful, so an
+	@# agent believes a golden is stored while the repo has never seen it. The
+	@# script landed at 8ce511d and was then invoked by NOTHING -- an inert
+	@# guard, which is the failure mode it was written to prevent, applied to
+	@# itself. It runs in report mode (rc=0) rather than --strict because 196
+	@# such files span 47 experiment directories today and most run spools
+	@# SHOULD stay ignored -- only their owners can say which are intended
+	@# evidence. Gating on day one would be red for weeks and get muted, the
+	@# same reasoning label_taxonomy.py records for its `--gate p01` default.
+	@# Move to --strict once the 47 directories are triaged.
+	@# `pin-invariant` is report-only for the same ratchet reason as
+	@# ignored-artifacts: the invariant is violated on 3 of 4 legs TODAY
+	@# (measured 2026-08-07 -- manifest 79517704 vs reverie gitlink dd3c178e,
+	@# and both product gitlinks behind their origin/main), so --strict would
+	@# be red from the first run. It reads RECORDED GITLINKS, not checkouts:
+	@# a colleague who clones and runs `git submodule update --init` receives
+	@# the gitlinks, so an invariant read off this box's working tree would
+	@# pass or fail on state nobody else can see. Move to --strict once the
+	@# pins are reconciled.
+	@set -u; failures=''; \
+	gate() { \
+	  name="$$1"; shift; \
+	  printf '\n===== lint gate: %s =====\n' "$$name"; \
+	  if sh -c "$$*"; then \
+	    printf 'lint gate OK       : %s\n' "$$name"; \
+	  else \
+	    rc=$$?; printf 'lint gate FAILED   : %s (rc=%s)\n' "$$name" "$$rc"; \
+	    failures="$$failures $$name"; \
+	  fi; \
+	}; \
+	counted() { \
+	  name="$$1"; unit="$$2"; count_cmd="$$3"; shift 3; \
+	  printf '\n===== lint gate: %s =====\n' "$$name"; \
+	  n=$$(sh -c "$$count_cmd" 2>/dev/null || echo 0); \
+	  if [ "$$n" -eq 0 ] 2>/dev/null || [ -z "$$n" ]; then \
+	    printf 'lint gate FAILED   : %s (zero %s to check -- refusing to pass vacuously)\n' "$$name" "$$unit"; \
+	    failures="$$failures $$name"; \
+	    return; \
+	  fi; \
+	  if sh -c "$$*"; then \
+	    printf 'lint gate OK       : %s (%s %s checked)\n' "$$name" "$$n" "$$unit"; \
+	  else \
+	    rc=$$?; printf 'lint gate FAILED   : %s (rc=%s, %s %s checked)\n' "$$name" "$$rc" "$$n" "$$unit"; \
+	    failures="$$failures $$name"; \
+	  fi; \
+	}; \
+	counted rustfmt      files 'ls scripts/*.rs 2>/dev/null | wc -l' 'rustfmt --edition 2021 --check scripts/*.rs'; \
+	counted shellcheck   files 'ls scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create 2>/dev/null | wc -l' 'shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create'; \
+	counted py-compile   files 'ls scripts/*.py 2>/dev/null | wc -l' 'python3 -m py_compile scripts/*.py'; \
+	counted py-unittest  tests 'python3 -m unittest discover -s scripts -p "test_*.py" 2>&1 | sed -n "s/^Ran \([0-9]*\) test.*/\1/p"' 'python3 -m unittest discover -s scripts -p "test_*.py"'; \
+	gate error-proxies   '$(MAKE) --no-print-directory check-rust-error-string-proxies'; \
+	gate gitmodules      'scripts/check-parent-gitmodules.sh'; \
+	gate agent-utils-pin 'scripts/check-agent-utils-pin.rs'; \
+	gate primary-fresh   'scripts/primary_checkout.py check'; \
+	gate codex-setup     '$(MAKE) --no-print-directory check-codex-setup'; \
+	gate claude-md-size  '$(MAKE) --no-print-directory check-claude-md-size'; \
+	gate portability     '$(MAKE) --no-print-directory check-portability'; \
+	gate harness-help    '$(MAKE) --no-print-directory check-harness-help'; \
+	gate ignored-artifacts 'scripts/check-ignored-experiment-artifacts.sh'; \
+	gate pin-invariant   'scripts/check_reverie_pin_invariant.py'; \
+	gate compat-envelope '$(MAKE) --no-print-directory check-compat-envelope-tests'; \
+	echo; \
+	if [ -n "$$failures" ]; then \
+	  echo "lint: FAILED gates:$$failures"; \
+	  exit 1; \
+	fi; \
+	echo 'lint: all gates passed'
+
+check-compat-envelope-tests: ## Run the compat-envelope renderer unit tests (fixture-only; no hermit build)
+	@compat-envelope/tests/run-all.sh
 
 # compat-envelope: the cross-backend compatibility REGRESSION gate. Builds the
 # RELEASE hermit binary with the in-process DBI backend and asserts every

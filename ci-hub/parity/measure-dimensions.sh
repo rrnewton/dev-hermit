@@ -48,10 +48,17 @@ for entry in "${DIMS[@]}"; do
     *)      val=$(grep -c 'DETLOG' "$OUT/$dim.log") ;;
   esac
   # Emission is GATED: this refuses rather than printing an unattributed number.
-  python3 - "$dim" "$BACKEND" "$val" "$ROOT/$src" "$OUT/$dim.out" "$OUT/$dim.log" "$rc" <<'PY' || status=1
+  python3 - "$dim" "$BACKEND" "$val" "$ROOT/$src" "$OUT/$dim.out" "$OUT/$dim.log" "$rc" "$HERE" <<'PY' || status=1
 import json, sys
-sys.path.insert(0, __import__("os").path.dirname(__file__) or ".")
-sys.path.insert(0, "/home/newton/work/dev-hermit/ci-hub/parity")
+# This block is fed to python on STDIN, so `__file__` is the literal string
+# "<stdin>" and `dirname` of it is "" -- the previous `or "."` therefore resolved
+# to the CURRENT WORKING DIRECTORY, not this script's directory, and only worked
+# when the caller happened to be in ci-hub/parity. That silent wrongness is why a
+# hardcoded absolute home path was added beneath it as the real mechanism, which
+# then made the module importable on exactly one machine. `$HERE` is computed by
+# the shell from BASH_SOURCE and IS this directory, so pass it in rather than
+# trying to recover it from a process that never knew it.
+sys.path.insert(0, sys.argv[8])
 from reference_guest import emit, RefusedError
 dim, backend, val, src, outp, logp, rc = sys.argv[1:8]
 try:

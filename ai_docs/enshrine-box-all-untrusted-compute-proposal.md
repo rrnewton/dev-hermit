@@ -147,22 +147,21 @@ validation compute is run safely) and **before** `## Product Vision`. Close it
 with the cross-link:
 
 ```markdown
-See the `box-all-untrusted-compute` skill (`.claude/skills/box-all-untrusted-compute.md`)
+See the `box-all-untrusted-compute` skill (`.claude/skills/box-all-untrusted-compute/SKILL.md`)
 for the operational checklist, and the hermit-side copy
 (`hermit/.claude/skills/box-all-untrusted-compute/SKILL.md`) for product-repo
 callers. The runner lives in `agent-utils` and is used through
 `ci-hub/bin/agent-tool`.
 ```
 
-### 2.3 New parent skill (memory-backed — respects the 1-1 sync contract)
+### 2.3 New parent skill (repository-authoritative, optional memory mirror)
 
-Parent skills are **generated 1-1 from a source memory** and gated by
-`scripts/sync-memory-skill.rs --check` + `scripts/lint-memory-skill-sync.rs`
-(`.claude/skills/README.md`). So the parent skill is created by adding **one
-source memory** with a `core_skill:` path and running the sync tool — not by
-hand-writing into `.claude/skills/`.
+Parent skills are versioned packages and the repository is authoritative
+(`.claude/skills/README.md`). Create the package and review it normally. The
+optional local memory store may mirror that reviewed package via explicit
+repository-to-memory export; local memory never generates or overwrites policy.
 
-**Proposed source memory** `$MEMDIR/box-all-untrusted-compute.md`:
+**Resulting optional memory mirror** `$MEMDIR/box-all-untrusted-compute.md`:
 
 ```markdown
 ---
@@ -172,10 +171,10 @@ metadata:
   node_type: memory
   type: project
   core_memory: true
-  core_skill: .claude/skills/box-all-untrusted-compute.md
+  core_skill: .claude/skills/box-all-untrusted-compute/SKILL.md
 ---
 
-> **CORE-MEMORY** — generates `.claude/skills/box-all-untrusted-compute.md`.
+> **CORE-MEMORY** — mirrored from `.claude/skills/box-all-untrusted-compute/SKILL.md`.
 
 <full canonical block from §1, plus the operational checklist below>
 ```
@@ -228,18 +227,20 @@ GitHub portable shards box each cell instead of running `run-node.sh` raw
 - hermit-side copy: `hermit/.claude/skills/box-all-untrusted-compute/SKILL.md`
 ```
 
-Then: `scripts/sync-memory-skill.rs --adopt-skill .claude/skills/box-all-untrusted-compute.md`
-(or `--check` after generation) and `scripts/lint-memory-skill-sync.rs`.
+After the versioned package is reviewed, preview the optional export with
+`scripts/sync-memory-skill.rs --adopt-skill .claude/skills/box-all-untrusted-compute/SKILL.md --check`;
+then run it without `--check` only if the local mirror should be created. Finish
+with `scripts/lint-memory-skill-sync.rs`.
 
 ### 2.4 Parent cross-references (small edits)
 
-- `.claude/skills/benchmarking.md` — under "Experimental validity" add a line:
+- `.claude/skills/benchmarking/SKILL.md` — under "Experimental validity" add a line:
   "Run every timed sample boxed under `safe-ci-dag-runner` (enforced cgroup CPU,
   memory, and time limits); an unboxed sample is not a publishable measurement.
-  See [box-all-untrusted-compute](box-all-untrusted-compute.md)."
-- `.claude/skills/validate-sh-cannot-be-green-on-devserver.md` and
-  `.claude/skills/hermit-ci.md` — add "Validation compute is untrusted compute:
-  run it boxed (see [box-all-untrusted-compute](box-all-untrusted-compute.md));
+  See [box-all-untrusted-compute](../box-all-untrusted-compute/SKILL.md)."
+- `.claude/skills/validate-sh-cannot-be-green-on-devserver/SKILL.md` and
+  `.claude/skills/hermit-ci/SKILL.md` — add "Validation compute is untrusted compute:
+  run it boxed (see [box-all-untrusted-compute](../box-all-untrusted-compute/SKILL.md));
   do not paper over a load-sensitive wall breach by raising the timeout."
 - **test-architecture epic task** — append a note that the epic is the vehicle
   that makes this invariant real on every lane (audit's corrected scope:
@@ -261,7 +262,7 @@ See the `box-all-untrusted-compute` skill
 (`.claude/skills/box-all-untrusted-compute/SKILL.md`) for the operational
 checklist. The runner is a pinned `agent-utils` tool; the parent workspace states
 the same invariant in its `AGENTS.md` "Boxing Untrusted Compute" section and
-`.claude/skills/box-all-untrusted-compute.md`.
+`.claude/skills/box-all-untrusted-compute/SKILL.md`.
 ```
 
 Also add a one-line pointer in `## Test`: "Run the workspace suite and any
@@ -282,17 +283,18 @@ description: "Every resource-consuming command in Hermit (cargo test/nextest, he
 Body = the canonical block from §1 + the operational checklist from §2.3, with
 the "Related" cross-link pointing at the parent:
 `../../../AGENTS.md` "Boxing Untrusted Compute" and (for coordinator context)
-the parent `.claude/skills/box-all-untrusted-compute.md`. **No symlink** — this
+the parent `.claude/skills/box-all-untrusted-compute/SKILL.md`. **No symlink** — this
 is a deliberate second copy; when one changes, update both.
 
 ### 3.3 Hermit cross-references
 
-- `hermit/.claude/skills/benchmark.md` — its "Experimental Shape" already
+- `hermit/.claude/skills/benchmark/SKILL.md` — its "Experimental Shape" already
   mandates a dedicated cgroup and K-core allocation; add one line tying that to
   the invariant: "This cgroup discipline is the boxing invariant applied to
   benchmarks — run through `safe-ci-dag-runner`; see box-all-untrusted-compute."
-- `hermit/.claude/skills/ci-debugging.md` and `hermit-ci.md` — reference the new
-  skill so CI wiring changes are held to boxed execution.
+- `hermit/.claude/skills/ci-debugging/SKILL.md` and the parent
+  `.claude/skills/hermit-ci/SKILL.md` — reference the new skill so CI wiring
+  changes are held to boxed execution.
 
 ---
 
@@ -301,7 +303,7 @@ is a deliberate second copy; when one changes, update both.
 | Surface | Parent (`dev-hermit`) | Hermit |
 | --- | --- | --- |
 | AGENTS doc section | `AGENTS.md` "Boxing Untrusted Compute" + Hard Invariant 15 | `hermit/AGENTS.md` "Boxing Untrusted Compute" + `## Test` pointer |
-| Skill | `.claude/skills/box-all-untrusted-compute.md` (memory-backed; add source memory + sync) | `.claude/skills/box-all-untrusted-compute/SKILL.md` (hand-maintained dir) |
+| Skill | `.claude/skills/box-all-untrusted-compute/SKILL.md` (repository-authoritative; optional local mirror) | `.claude/skills/box-all-untrusted-compute/SKILL.md` (hand-maintained dir) |
 | Cross-link direction | → hermit copy + agent-utils | → parent AGENTS/skill |
 | Existing skills touched | benchmarking, validate-sh-*, hermit-ci | benchmark, ci-debugging, hermit-ci |
 | Epic | note on the test-architecture epic (bidirectional) | — |
