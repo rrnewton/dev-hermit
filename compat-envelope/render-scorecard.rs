@@ -120,6 +120,25 @@ struct Cell {
     /// Selected observable parity. The schema column is chosen from
     /// `--observable`, with `parity` accepted only as a legacy fallback.
     observable_parity: Option<bool>,
+    /// Cross-backend standard actually met. This is separate from `tier`,
+    /// which describes the run1/run2 self-determinism comparator.
+    comparison_tier: String,
+}
+
+const FULL_COMPARISON_TIER: &str = "full-stdout-info-stack-heap";
+const SPOT_CHECK_COMPARISON_TIER: &str = "stdout-info-stack-heap-spot-check";
+const UNQUALIFIED_COMPARISON_TIERS: &[&str] = &[
+    "legacy-unqualified",
+    "unqualified-stdout-only",
+    "unqualified-tool-count-only",
+];
+
+fn qualifies_as_green(tier: &str) -> bool {
+    matches!(tier, FULL_COMPARISON_TIER | SPOT_CHECK_COMPARISON_TIER)
+}
+
+fn known_comparison_tier(tier: &str) -> bool {
+    qualifies_as_green(tier) || UNQUALIFIED_COMPARISON_TIERS.contains(&tier)
 }
 
 /// Columns common to every supported scorecard schema. Observable-specific
@@ -144,6 +163,7 @@ const REQUIRED_COLUMNS: &[&str] = &[
     "duration_ms",
     "max_rss_kb",
     "reason",
+    "comparison_tier",
 ];
 
 fn parse_bool(s: &str) -> Option<bool> {
@@ -314,7 +334,7 @@ fn main() {
             "CSV missing observable column `{selected_modern}` (legacy `parity` is also accepted)"
         ));
     };
-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_comparison_tier) = (
         idx("run_id"),
         idx("bucket"),
         idx("test_id"),
@@ -322,6 +342,7 @@ fn main() {
         idx("backend"),
         idx("outcome"),
         idx("deterministic"),
+        idx("comparison_tier"),
     );
 
     let mut cells: Vec<Cell> = Vec::new();
@@ -335,6 +356,21 @@ fn main() {
             eprintln!("warn: row {} has {} fields (< {}); skipping", n + 2, f.len(), header.len());
             continue;
         }
+        let comparison_tier = get(i_comparison_tier).trim().to_string();
+        if comparison_tier.is_empty() {
+            die(&format!(
+                "REFUSED row {}: outcome {:?} has no comparison_tier; a raw pass may never default to a strict green",
+                n + 2,
+                get(i_outcome)
+            ));
+        }
+        if !known_comparison_tier(&comparison_tier) {
+            die(&format!(
+                "REFUSED row {}: unknown comparison_tier {:?}",
+                n + 2,
+                comparison_tier
+            ));
+        }
         cells.push(Cell {
             seq: n,
             run_id: get(i_run),
@@ -345,6 +381,7 @@ fn main() {
             outcome: get(i_outcome),
             deterministic: parse_bool(&get(i_det)),
             observable_parity: parse_bool(&get(i_par)),
+            comparison_tier,
         });
     }
     if cells.is_empty() {
@@ -384,6 +421,28 @@ fn main() {
         cells = newest.into_values().collect();
     }
 
+    // Report exactly the selected logical population. Raw execution success is
+    // not scorecard green until the row names one qualifying comparison tier.
+    let mut tier_distribution: BTreeMap<String, usize> = BTreeMap::new();
+    let mut raw_passes = 0usize;
+    let mut qualified_passes = 0usize;
+    for cell in &cells {
+        *tier_distribution.entry(cell.comparison_tier.clone()).or_default() += 1;
+        if cell.outcome == "pass" {
+            raw_passes += 1;
+            if qualifies_as_green(&cell.comparison_tier) {
+                qualified_passes += 1;
+            }
+        }
+    }
+    eprintln!(
+        "comparison-tier distribution: {:?} ({} rows); qualified green={}/{} raw passes",
+        tier_distribution,
+        cells.len(),
+        qualified_passes,
+        raw_passes,
+    );
+
     // Restrict the determinism denominator to the requested mode.
     let denom_cells: Vec<&Cell> = cells.iter().filter(|c| c.test_mode == denom_mode).collect();
 
@@ -407,7 +466,10 @@ fn main() {
     // the denominator mode.
     let mut ptrace_pass: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for c in &denom_cells {
-        if c.backend == "ptrace" && c.outcome == "pass" {
+        if c.backend == "ptrace"
+            && c.outcome == "pass"
+            && qualifies_as_green(&c.comparison_tier)
+        {
             ptrace_pass.entry(c.bucket.clone()).or_default().insert(c.test_id.clone());
         }
     }
@@ -434,17 +496,16 @@ fn main() {
         if c.backend == "ptrace" || c.backend == "native" {
             continue;
         }
-        let pass = c.outcome == "pass";
+        let pass = c.outcome == "pass" && qualifies_as_green(&c.comparison_tier);
         let ran = c.outcome != "unavailable" && c.outcome != "skip";
         // Determinism (run1 == run2) is independent of parity: a backend can be
         // self-deterministic yet diverge from ptrace. The CSV `deterministic`
-        // field is authoritative; fall back to "verify pass => deterministic"
-        // only when the collector left it blank. Do NOT gate on `pass`, which
-        // for a non-ptrace backend already requires parity.
-        let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
+        // field is authoritative, and the strict comparison tier is required.
+        // Never infer determinism from a raw execution pass.
+        let det = pass && c.deterministic.unwrap_or(false);
         // Parity is true only when the collector recorded a bitwise match.
-        let par = c.observable_parity.unwrap_or(false);
-        let par_measured = c.observable_parity.is_some();
+        let par = pass && c.observable_parity.unwrap_or(false);
+        let par_measured = pass && c.observable_parity.is_some();
         by_backend
             .entry(c.backend.clone())
             .or_default()
@@ -528,7 +589,11 @@ fn main() {
         // Exactly the `--denominator` values that would produce a non-empty denominator.
         let usable: BTreeSet<&str> = cells
             .iter()
-            .filter(|c| c.backend == "ptrace" && c.outcome == "pass")
+            .filter(|c| {
+                c.backend == "ptrace"
+                    && c.outcome == "pass"
+                    && qualifies_as_green(&c.comparison_tier)
+            })
             .map(|c| c.test_mode.as_str())
             .collect();
         let run_label = scope_run
@@ -553,9 +618,11 @@ fn main() {
             )
         };
         eprintln!(
-            "NO DATA: run {run} has 0 ptrace/{mode} passing cells, so the denominator is empty \
+            "NO DATA: run {run} has 0 ptrace/{mode} qualifying passing cells, so the denominator is empty \
              and no percentage is defined (this is NOT a measured zero).\n\
              \x20 rows considered:  {n}\n\
+             \x20 raw passes:       {raw_passes} (qualified: {qualified_passes})\n\
+             \x20 tier distribution:{tier_distribution:?}\n\
              \x20 ptrace rows:      {ptrace_rows} (passing in modes: {usable})\n\
              \x20 modes present:    {modes}\n\
              \x20 backends present: {backends}\n\
@@ -564,6 +631,9 @@ fn main() {
             run = run_label,
             mode = denom_mode,
             n = cells.len(),
+            raw_passes = raw_passes,
+            qualified_passes = qualified_passes,
+            tier_distribution = tier_distribution,
             ptrace_rows = ptrace_rows,
             usable = if usable.is_empty() {
                 "none".to_string()
@@ -622,6 +692,9 @@ fn main() {
                 "run_scope": scope_run.clone().unwrap_or_else(|| "all".into()),
                 "denominator_mode": denom_mode,
                 "denominator_meaning": denominator_meaning,
+                "comparison_tier_distribution": tier_distribution,
+                "raw_pass_count": raw_passes,
+                "qualified_green_count": qualified_passes,
                 "parity_metric": {
                     "label": parity_label,
                     "observable": observable,
@@ -671,6 +744,8 @@ fn main() {
                 denominator_meaning,
             );
             println!("Input CSV: {}", csv_path.display());
+            println!("Comparison-tier distribution: {:?} ({} rows); qualified green={}/{} raw passes.", tier_distribution, cells.len(), qualified_passes, raw_passes);
+            println!("Qualifying tiers: `{FULL_COMPARISON_TIER}` or `{SPOT_CHECK_COMPARISON_TIER}`. Explicit unqualified tiers remain non-green history.");
             println!("Each backend cell is `{parity_label}%, determinism%` of the ptrace count. The two measurements are independent.");
             if observable == "stdout" {
                 println!("CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.");

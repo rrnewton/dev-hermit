@@ -69,6 +69,15 @@ if ! "${here}/check-determinism-earned.sh" "${here}/scorecard.csv"; then
   fail=1
 fi
 
+# A raw execution pass is not a scorecard green unless the row names the exact
+# comparison standard it met. The checker derives the published set and refuses
+# missing/blank/unknown values; the renderer separately withholds explicit
+# legacy/weak tiers from the green denominator.
+if ! python3 "${here}/check-scorecard-tier.py" --root "${here}"; then
+  echo "validate-envelope: UNTIERED comparison rows in the published scorecards" >&2
+  exit 1
+fi
+
 # A parity boolean is accepted only when the row carries both hashed operands,
 # exact code state, comparison/profile identity, and counted run coverage.  This
 # is the same semantic verifier the renderer calls; labels and cached booleans

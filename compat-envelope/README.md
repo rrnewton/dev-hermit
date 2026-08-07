@@ -87,7 +87,7 @@ make compat-envelope            (Makefile; builds release hermit --features dbi)
           │      (bash+jq runner — NOT nextest; also emits …/junit.xml)
           ├─ reads that JSONL (outcome, duration_ms, reason)
           ├─ --with-parity: re-run guest under ptrace + backend, SHA-256 stdout compare → stdout parity
-          └─ appends 19-col rows → compat-envelope/scorecard.csv
+          └─ appends schema-bound rows → compat-envelope/scorecard.csv
       └─ collect-reverie-compat.rs → reverie-scorecard.csv
       └─ render-scorecard.rs --csv scorecard.csv --latest            → rendered table
 ```
@@ -152,7 +152,7 @@ test_id,test_mode,backend,cell_state,outcome,deterministic,<observable>_parity,
 output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,
 compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,
 parity_comparator,parity_tier,profile_flags,population_id,selected_count,
-executed_count,evidence_count
+executed_count,evidence_count,comparison_tier
 ```
 
 - `run_mode` — `regression` | `expansion` (hermit) or `reverie`.
@@ -180,6 +180,13 @@ executed_count,evidence_count
   the verifier re-derives it. The three count columns state the selected,
   executed, and evidence-bearing denominators for that run.
 - `max_rss_kb` — filled by the expansion cgroup path; blank in the fast lanes.
+- `comparison_tier` — the cross-backend certification standard carried on
+  every row. `full-stdout-info-stack-heap` and
+  `stdout-info-stack-heap-spot-check` are the only values that qualify a raw
+  pass as green. `legacy-unqualified`, `unqualified-stdout-only`, and
+  `unqualified-tool-count-only` preserve weaker evidence explicitly and never
+  count green. This is deliberately separate from `tier`, which records the
+  self-determinism comparator used within one backend.
 
 The renderer keys logical cells on `(bucket, test_id, test_mode, backend)`.
 `--all` is accepted only for a single run identity; mixed-run aggregation is

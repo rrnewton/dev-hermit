@@ -28,6 +28,9 @@ for f in fullcorpus-scorecard scorecard reverie-scorecard e9patch-scorecard; do
     "$f.csv" "$(git -C "$here" hash-object "$p")" "$(( $(wc -l < "$p") - 1 ))"
 done
 
+banner "STRICT COMPARISON TIER — per-cell standard and exact distribution"
+python3 "$here/check-scorecard-tier.py" --root "$here"
+
 banner "TABLE 1 — full corpus (definition-of-done denominator)"
 "$render" --csv "$here/fullcorpus-scorecard.csv" --observable stdout --all "${fmt[@]}"
 
