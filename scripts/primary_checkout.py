@@ -23,13 +23,30 @@ REVERIE_SOURCE = re.compile(
     rf"^git\+{re.escape(REVERIE_GIT_URL)}\?rev=([0-9a-f]{{40}})#([0-9a-f]{{40}})$"
 )
 REVERIE_LOCKFILES = (Path("Cargo.lock"), Path("liteinst-runtime-build/Cargo.lock"))
-REVERIE_CACHE_FILES = (
-    Path("ci/dag/portable.json"),
-    Path("hermit-cli/tests/common/liteinst.rs"),
-    Path("hermit-install/build.rs"),
-    Path("validate.sh"),
-)
+# The LiteInst runtime cache key is DERIVED, not stored.
+# `scripts/stage-liteinst-runtime.sh` reads the canonical pin
+# (`ci/run-reverie-pin-check.sh --print-pin`) and appends its first 8 hex to the
+# caller's base path, so callers pass an UNSUFFIXED base and the key can never
+# lag a pin bump.
+#
+# THIS CHECK USED TO ASSERT THE OPPOSITE. It held a hardcoded four-file list and
+# REQUIRED each to contain a literal `liteinst-runtime-<8hex>` equal to the pin.
+# Those literals were removed when the suffix moved into the staging script, so
+# the check reported `cache keys=none` on all four and blocked the snapshot --
+# against a tree that was correct. Worse, the obvious way to "fix" the red was to
+# paste the literals back, which would have PASSED the check and REINTRODUCED the
+# drift it exists to prevent. A green over hardcoded values is worse than a red.
+#
+# So the polarity is inverted: a hardcoded suffix is now a VIOLATION, and what is
+# asserted is the DERIVATION itself.
+REVERIE_STAGING_SCRIPT = Path("scripts/stage-liteinst-runtime.sh")
+REVERIE_PIN_DERIVATION = re.compile(r"--print-pin")
+# A literal 8-hex suffix anywhere in tracked hermit source. `${reverie_pin:0:8}`
+# in the staging script does not match, which is the point.
 REVERIE_CACHE_KEY = re.compile(r"liteinst-runtime(?:-build)?-([0-9a-f]{8})")
+# The checker that legitimately embeds drifted example tokens in its own
+# docstring and fixtures; a check must not scan the file that defines it.
+REVERIE_CACHE_SCAN_EXCLUDE = ("scripts/check-reverie-pin.rs",)
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 
 # Repo-scoped git environment variables OVERRIDE `git -C <repo>`, and git exports
@@ -216,19 +233,62 @@ def reverie_generated_pin_errors(hermit: Path, expected: str) -> list[str]:
             if match is None or match.group(1) != expected or match.group(2) != expected:
                 errors.append(f"{relative}: stale Reverie source {source}")
 
-    expected_short = expected[:8]
-    for relative in REVERIE_CACHE_FILES:
-        path = hermit / relative
-        try:
-            keys = set(REVERIE_CACHE_KEY.findall(path.read_text()))
-        except OSError as error:
-            errors.append(f"could not read {relative}: {error}")
-            continue
-        if keys != {expected_short}:
-            errors.append(
-                f"{relative}: cache keys={','.join(sorted(keys)) or 'none'} "
-                f"expected={expected_short}"
-            )
+    errors.extend(reverie_cache_derivation_errors(hermit))
+    return errors
+
+
+def reverie_cache_derivation_errors(hermit: Path) -> list[str]:
+    """Assert the LiteInst cache key is DERIVED from the pin, and never literal.
+
+    Two halves, and neither alone is sufficient:
+
+      * the staging script must still derive its suffix from the canonical pin --
+        without this, someone could delete the derivation and the tree would look
+        clean because no literal exists either; and
+      * no tracked file may hardcode a `liteinst-runtime-<8hex>` suffix -- without
+        this, pasting literals back would satisfy any presence-based check while
+        recreating the drift.
+    """
+    errors: list[str] = []
+
+    # The two halves are INDEPENDENT and both always run. An early return here
+    # would let a missing staging script mask a hardcoded literal elsewhere --
+    # reporting only the first fault is how a second one stays hidden until the
+    # first is cleared, which is exactly the serial-blocker pattern this gate has
+    # already produced three times.
+    script = hermit / REVERIE_STAGING_SCRIPT
+    body = ""
+    try:
+        body = script.read_text()
+    except OSError as error:
+        errors.append(f"could not read {REVERIE_STAGING_SCRIPT}: {error}")
+    if body and not REVERIE_PIN_DERIVATION.search(body):
+        errors.append(
+            f"{REVERIE_STAGING_SCRIPT}: no `--print-pin` derivation found; the "
+            "LiteInst cache key must be derived from the canonical Reverie pin, "
+            "not written literally"
+        )
+
+    scan = subprocess.run(
+        [
+            "git", "-C", str(hermit), "grep", "-I", "-n", "-E",
+            r"liteinst-runtime(-build)?-[0-9a-f]{8}",
+            "--", ".",
+            *(f":(exclude,top){path}" for path in REVERIE_CACHE_SCAN_EXCLUDE),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if scan.returncode not in (0, 1):  # 1 = no matches, which is the good case
+        errors.append(f"could not scan for hardcoded cache keys: {scan.stderr.strip()}")
+        return errors
+    for line in scan.stdout.splitlines():
+        errors.append(
+            f"{line.split(':', 1)[0]}: hardcoded LiteInst cache key -- the suffix "
+            "is appended by scripts/stage-liteinst-runtime.sh from the canonical "
+            f"pin; remove the literal ({line.strip()})"
+        )
     return errors
 
 
@@ -576,10 +636,11 @@ def check_pins(
     left to the warning-only ``check``:
       * currency (is the pin on reverie main?) -- networked; also enforced by
         hermit's own check-reverie-pin.rs hook + CI;
-      * the revision-keyed build-cache paths (REVERIE_CACHE_FILES) -- those use
-        7-char short SHAs and a heterogeneous key scheme (e.g.
-        hermit-install/build.rs), so a blocking equality check on them would
-        false-positive on a healthy tree. They remain a warning-only signal.
+        * the LiteInst build-cache key -- it is DERIVED at run time by
+          scripts/stage-liteinst-runtime.sh from the canonical pin, so there
+          is no stored literal to compare and nothing here can drift. What
+          is checked instead is that the derivation still exists and that no
+          file hardcodes a suffix (reverie_cache_derivation_errors).
 
     WHAT IT READS (changed 2026-08-06 after a fleet-wide false block): the
     Hermit tree at the gitlink this parent commit will RECORD, never the Hermit
