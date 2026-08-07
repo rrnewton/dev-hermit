@@ -1,0 +1,7 @@
+backend,run1_dtid,run2_dtid,run3_dtid,guest_visible_getpid,deterministic
+ptrace,3,3,3,Ok(3),yes
+kvm,3,3,3,Ok(3),yes
+sabre,3,3,3,Ok(3),yes
+e9patch,3,3,3,Ok(3),yes
+liteinst,3,3,3,Ok(3),yes
+dbi,2477904,2478010,2481848,Ok(3),NO — dtid is the raw host pid while guest-visible getpid is already virtualised

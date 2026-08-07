@@ -1,0 +1,11 @@
+guest,backend,runs,distinct_classes_raw,distinct_classes_dtid_normalised,detlog_records_all_runs,verdict
+notsc,dbi,30,30,1,94,dtid alone is 100% of the self-nondeterminism
+detlog_syscalls,dbi,30,30,1,334,dtid alone is 100% of the self-nondeterminism
+heap_fragment_reuse,dbi,30,30,1,96,dtid alone is 100% of the self-nondeterminism
+stack_deep_recursion,dbi,30,30,1,78,dtid alone is 100% of the self-nondeterminism
+stdout_bytes,dbi,30,30,1,80,dtid alone is 100% of the self-nondeterminism
+bin_true,dbi,30,30,1,68,dtid alone is 100% of the self-nondeterminism
+bin_echo,dbi,30,30,1,82,dtid alone is 100% of the self-nondeterminism
+notsc,ptrace,30,1,1,96,control: already deterministic
+detlog_syscalls,ptrace,30,1,1,336,control: already deterministic
+detlog_syscalls,liteinst,30,2,2,1074,control: dtid normalisation does NOT fix liteinst (different defect)

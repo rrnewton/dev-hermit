@@ -1,0 +1,17 @@
+guest,Z,layer,normalisation,prefix_depth,covered,coverage_pct,note
+notsc,96,L0,hex only,3,4,4.2,baseline: the repo's own 0x<hex> policy
+notsc,96,L1,+ dtid,5,54,56.2,dtid is the raw host pid under DBI
+notsc,96,L2,+ syscall ordinal,5,79,82.3,DBI ordinals are offset from ptrace by exactly 1
+notsc,96,L3,+ decimal Ok(addr),48,90,93.8,syscall returns are printed in decimal so hex policy misses them
+bin_true,68,L0,hex only,3,4,5.9,
+bin_true,68,L1,+ dtid,5,35,51.5,
+bin_true,68,L2,+ syscall ordinal,5,55,80.9,
+bin_true,68,L3,+ decimal Ok(addr),48,64,94.1,
+detlog_syscalls,336,L0,hex only,3,4,1.2,
+detlog_syscalls,336,L1,+ dtid,5,168,50.0,
+detlog_syscalls,336,L2,+ syscall ordinal,5,287,85.4,
+detlog_syscalls,336,L3,+ decimal Ok(addr),48,298,88.7,
+notsc,96,L0-kvm,hex only (KVM calibration),9,84,87.5,KVM for comparison
+notsc,96,L3-kvm,+ all three (KVM calibration),48,92,95.8,DBI at L3 (93.8) is comparable to KVM at L3 (95.8)
+bin_true,68,L0-kvm,hex only (KVM calibration),5,55,80.9,
+bin_true,68,L3-kvm,+ all three (KVM calibration),48,64,94.1,
