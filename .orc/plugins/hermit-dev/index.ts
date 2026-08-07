@@ -1,3 +1,44 @@
+// hermit-dev — canonical dev-hermit coordinator policy plugin.
+//
+// ---------------------------------------------------------------------------
+// POST-1.0 ORC CONTRACT — read this before adding any orc.* call.
+//
+// TWO CONTEXTS, TWO SURFACES. The engine evaluates this module twice, and the
+// second time it is NOT the same `orc`:
+//
+//   * plugin load — full capability. Every registration effect is available.
+//   * workflow restart — the engine re-evaluates this module from the
+//     `module_path` recorded in the workflow spec, under the reduced `workflow`
+//     capability preset. `orc.pluginDir()` and the stdlib `orc.registerSkill()`
+//     still work there; the config-write registration effects DO NOT.
+//
+// Calling an absent name does not return `undefined` — the call reaches the
+// host and fails the dispatch with
+//
+//     Error converting from js 'undefined' into type 'function':
+//     orc.<name> is not a function
+//
+// which crashes the restarting workflow, which restarts, which re-evaluates
+// this module, which crashes… until the engine gives up ("exhausted N
+// restarts") and the heartbeat is silently dead. Both workflows in this plugin
+// died exactly that way. The originally-reported name, `readEvalModulePath`,
+// was never a published API — but it was only the FIRST such call in the file.
+// Removing it just moved the crash to `orc.registerScript`.
+//
+// Rules that follow:
+//   1. Never name an orc.* API outside `orc.listEffects()` / the shipped stdlib
+//      (registerSkill, activateSkill, exposeFunction, session* live in the
+//      stdlib, which is why they are absent from ~/.orc/orc.d.ts yet alive).
+//   2. `typeof orc.<name> === "function"` is NOT a capability probe — it passes
+//      for names the host does not publish. Use `hasOrcSurface()`, and read its
+//      caveat: the registry is a PARTIAL authority (measured — it does not
+//      enumerate `exposeFunction` or `registerStartup`, both of which work).
+//   3. Every side effect at module scope belongs inside
+//      `registerPluginSurface()`, which is invoked through the reduced-context
+//      guard at the bottom of this file. Anything you add outside that function
+//      runs again on every workflow restart, in the reduced context.
+// ---------------------------------------------------------------------------
+
 const PLUGIN_NAME = "hermit-dev";
 const SKILL_NAME = "hermit-dev";
 const SPECULATIVE_ATTACK_SKILL_NAME = "hermit-parallel-speculative-attack";
@@ -5,50 +46,76 @@ const URGENT_VALIDATION_SKILL_NAME =
   "hermit-urgent-critical-path-fix-validation";
 const POLICY_CACHE_KEY = "hermit-dev.agents-policy";
 const WORKSPACE_SUBPATH = "work/dev-hermit";
+const PLUGIN_SUBPATH = ".orc/plugins/hermit-dev";
+const POLICY_FILE = "AGENTS.md";
+const SPECULATIVE_ATTACK_SKILL_FILE = "parallel-speculative-attack.md";
+const URGENT_VALIDATION_SKILL_FILE = "urgent-critical-path-fix-validation.md";
+const ISSUE_CREATE_WRAPPER_FILE = "gh-issue-create";
 
-function currentEvalDirectory(): string | null {
-  const readModulePath = (orc as any).readEvalModulePath;
-  const modulePath = typeof readModulePath === "function"
-    ? String(readModulePath() || "")
-    : "";
-  const separator = modulePath.lastIndexOf("/");
-  return separator > 0 ? modulePath.slice(0, separator) : null;
-}
+// orc.* names this plugin depends on that the runtime registry can actually
+// attest, checked live at startup so a future removal reports itself instead of
+// crash-looping. Deliberately NOT the full dependency list: `exposeFunction` and
+// `registerStartup` are used by this plugin and work, yet neither
+// orc.listEffects() nor orc.listUserFunctions() enumerates them on this build
+// (measured). Listing them here produces two false positives, and a self-check
+// that cries wolf is worse than none. Their removal would fail loudly at plugin
+// load rather than silently, which is the failure mode this check exists for.
+const REQUIRED_ORC_SURFACE = [
+  "activateSkill",
+  "killWorkflow",
+  "kvGet",
+  "kvSet",
+  "listAgents",
+  "log",
+  "pluginDir",
+  "readFile",
+  "registerScript",
+  "registerSkill",
+  "sendWakeup",
+  "userInfo",
+  "workflow",
+];
 
+// Used only by this plugin, not enumerable — see REQUIRED_ORC_SURFACE.
+const UNVERIFIABLE_ORC_SURFACE = ["exposeFunction", "registerStartup"];
+
+// A dispatch against a name the current context does not publish fails with
+// this phrase. It is the only way to tell the reduced workflow-restart context
+// from a genuine registration bug, so it is matched deliberately and narrowly.
+const ABSENT_NAME_SIGNATURE = "is not a function";
+
+// orc.pluginDir() is null whenever this plugin is loaded by `import` from the
+// project .orc/config.js instead of being registered as a plugin — which is how
+// dev-hermit loads it today (the boot record shows plugins: [], plugin_count: 0).
+// Everything downstream must therefore survive null; resolveSources() does the
+// real work asynchronously, off the module top level.
 const REGISTERED_PLUGIN_DIRECTORY = orc.pluginDir();
-const CONFIG_DIRECTORY = currentEvalDirectory();
-const SOURCE_DIRECTORY = REGISTERED_PLUGIN_DIRECTORY ||
-  (CONFIG_DIRECTORY ? CONFIG_DIRECTORY + "/plugins/hermit-dev" : null);
-const WORKSPACE_ROOT = REGISTERED_PLUGIN_DIRECTORY
+const PLUGIN_DIR_WORKSPACE_ROOT = REGISTERED_PLUGIN_DIRECTORY
   ? REGISTERED_PLUGIN_DIRECTORY + "/../../.."
-  : CONFIG_DIRECTORY
-  ? CONFIG_DIRECTORY + "/.."
-  : "$HOME/work/dev-hermit";
-const RELATIVE_POLICY_PATH = WORKSPACE_ROOT + "/AGENTS.md";
-const SPECULATIVE_ATTACK_SKILL_PATH =
-  (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
-  "/parallel-speculative-attack.md";
-const URGENT_VALIDATION_SKILL_PATH =
-  (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
-  "/urgent-critical-path-fix-validation.md";
-const ISSUE_CREATE_WRAPPER =
-  (SOURCE_DIRECTORY || WORKSPACE_ROOT + "/.orc/plugins/hermit-dev") +
-  "/gh-issue-create";
-const PR_STATUS_COMMAND = 'cd "' + WORKSPACE_ROOT + '" && ./ci-hub/ci-hub health';
+  : null;
+
+// Registered scripts are run by a shell, so an unexpanded $HOME is fine there.
+// orc.readFile() gets no shell — file reads go through resolveSources() and its
+// concrete, verified root instead.
+const SHELL_WORKSPACE_ROOT = PLUGIN_DIR_WORKSPACE_ROOT ||
+  ("$HOME/" + WORKSPACE_SUBPATH);
+
+const PR_STATUS_COMMAND = 'cd "' + SHELL_WORKSPACE_ROOT +
+  '" && ./ci-hub/ci-hub health';
 const OPERATIONAL_TICK_SCRIPT_NAME = "hermitOperationalTick";
 const OPERATIONAL_TICK_COMMAND =
-  'cd "' + WORKSPACE_ROOT + '" && ' +
+  'cd "' + SHELL_WORKSPACE_ROOT + '" && ' +
   'HERMIT_AGENT_SNAPSHOT_JSON="$1" ./ci-hub/bin/health-tick --flush --no-header';
 const OPERATIONAL_TICK_INTERVAL_MS = 5 * 60 * 1000;
 const OPERATIONAL_TICK_WORKFLOW_NAME = "hermit-dev-operational-health-v1";
 const SPECULATIVE_LAND_SCRIPT_NAME = "hermitSpeculativeLandObligations";
 const SPECULATIVE_LAND_COMMAND =
-  'cd "' + WORKSPACE_ROOT + '" && ' +
+  'cd "' + SHELL_WORKSPACE_ROOT + '" && ' +
   'python3 ci-hub/remediation/land_and_arm.py recover --observe-timeout 5 && ' +
   './ci-hub/ci-hub watch-obligations --once --gate';
 const SPECULATIVE_LAND_WAKE_SCRIPT_NAME = "hermitSpeculativeLandWakeSent";
 const SPECULATIVE_LAND_WAKE_COMMAND =
-  'cd "' + WORKSPACE_ROOT + '" && ' +
+  'cd "' + SHELL_WORKSPACE_ROOT + '" && ' +
   './ci-hub/ci-hub record-obligation-wake --target "$1" --source orc';
 const SPECULATIVE_LAND_INTERVAL_MS = 15 * 1000;
 const SPECULATIVE_LAND_WORKFLOW_NAME =
@@ -56,6 +123,17 @@ const SPECULATIVE_LAND_WORKFLOW_NAME =
 const SPECULATIVE_LAND_ALERT_CACHE_KEY =
   "hermit-dev.speculative-land-remediation-alert";
 const LEGACY_PR_HEALTH_WORKFLOW_NAME = "hermit-dev-pr-health";
+
+// Both heartbeats are load-bearing for the self-healing fleet, and cold boot
+// routinely restarts them for reasons that have nothing to do with this plugin
+// ("restore: timed out waiting for restored effect registration" hit ~14
+// workflows in the crash-loop boot). The stock policy burned all four attempts
+// inside one second and left the heartbeat permanently dead; back off instead.
+const HEARTBEAT_RESTARTABLE = Object.freeze({
+  maxRestarts: 100,
+  backoffMs: 5_000,
+  maxBackoffMs: 120_000,
+});
 
 const SKILL_DESCRIPTION = "Project-specific coordination, fork-only issue, " +
   "Git/PR, Reverie API, and product-vision policies for dev-hermit.";
@@ -94,9 +172,66 @@ const URGENT_VALIDATION_SKILL_TRIGGERS = [
   "\\btight local test loop\\b",
 ];
 
-let resolvedPolicyPath: string = RELATIVE_POLICY_PATH;
+interface HermitDevSources {
+  workspaceRoot: string;
+  sourceDirectory: string;
+  policyPath: string;
+  policy: string;
+}
 
-async function readPolicyIfPresent(path: string): Promise<string | null> {
+let resolvedSources: HermitDevSources | null = null;
+let lastSurfaceGap: string[] = [];
+
+// The only safe capability probe on this build: ask the runtime what it
+// publishes rather than poking a name at the host object. Returns null when
+// introspection itself is unavailable, so callers can tell "absent" from
+// "unknown" instead of silently treating one as the other.
+function orcSurfaceNames(): Set<string> | null {
+  const names = new Set<string>();
+  let sawAny = false;
+  const collect = (entries: unknown) => {
+    if (!Array.isArray(entries)) {
+      return;
+    }
+    sawAny = true;
+    for (const entry of entries) {
+      const name = entry && (entry as { name?: unknown }).name;
+      if (typeof name === "string") {
+        names.add(name);
+      }
+    }
+  };
+  try {
+    collect(orc.listEffects({ all: true }));
+  } catch (_err) {
+    // Effect introspection is itself an effect; tolerate its absence.
+  }
+  try {
+    collect(orc.listUserFunctions());
+  } catch (_err) {
+    // Stdlib helpers (registerSkill, exposeFunction, …) surface here.
+  }
+  return sawAny ? names : null;
+}
+
+function hasOrcSurface(name: string): boolean {
+  const names = orcSurfaceNames();
+  return names === null ? false : names.has(name);
+}
+
+// Names this plugin depends on that the running build does not publish. Empty
+// when the surface is intact; also empty (not "everything missing") when
+// introspection is unavailable — an unreadable registry is not evidence of
+// removal, and failing closed on a probe is the bug this plugin just had.
+function missingOrcSurface(): string[] {
+  const names = orcSurfaceNames();
+  if (names === null) {
+    return [];
+  }
+  return REQUIRED_ORC_SURFACE.filter((required) => !names.has(required));
+}
+
+async function readFileIfPresent(path: string): Promise<string | null> {
   try {
     const text = String(await orc.readFile(path));
     return text.trim().length > 0 ? text : null;
@@ -105,27 +240,72 @@ async function readPolicyIfPresent(path: string): Promise<string | null> {
   }
 }
 
-async function resolvePolicy(): Promise<{ path: string; instructions: string }> {
-  const candidates: string[] = [RELATIVE_POLICY_PATH];
+// Candidate workspace roots, most authoritative first. Each is a concrete
+// filesystem path — never a shell-expandable one, because orc.readFile() has no
+// shell to expand it.
+async function candidateWorkspaceRoots(): Promise<string[]> {
+  const roots: string[] = [];
+  const add = (root: string | null | undefined) => {
+    if (root && roots.indexOf(root) === -1) {
+      roots.push(root);
+    }
+  };
+
+  add(PLUGIN_DIR_WORKSPACE_ROOT);
   try {
     const info = await orc.userInfo();
     if (info && info.homeDir) {
-      candidates.push(info.homeDir + "/" + WORKSPACE_SUBPATH + "/AGENTS.md");
+      add(info.homeDir + "/" + WORKSPACE_SUBPATH);
     }
   } catch (_err) {
     // userInfo may be unavailable in constrained plugin tests.
   }
-
-  for (const path of candidates) {
-    const instructions = await readPolicyIfPresent(path);
-    if (instructions !== null) {
-      resolvedPolicyPath = path;
-      return { path, instructions };
+  if (hasOrcSurface("repoRoot")) {
+    try {
+      const repoRoot = await orc.repoRoot();
+      if (repoRoot) {
+        add(String(repoRoot));
+      }
+    } catch (_err) {
+      // Not every session has a repo root.
     }
+  }
+  return roots;
+}
+
+// A root only counts when it carries BOTH the policy file and this plugin's own
+// skill sources. AGENTS.md alone is a proxy — plenty of repositories have one —
+// and accepting it would let the plugin activate someone else's policy.
+async function resolveSources(): Promise<HermitDevSources> {
+  const roots = await candidateWorkspaceRoots();
+  const tried: string[] = [];
+
+  for (const workspaceRoot of roots) {
+    const policyPath = workspaceRoot + "/" + POLICY_FILE;
+    const sourceDirectory = REGISTERED_PLUGIN_DIRECTORY ||
+      (workspaceRoot + "/" + PLUGIN_SUBPATH);
+    tried.push(policyPath);
+
+    const policy = await readFileIfPresent(policyPath);
+    if (policy === null) {
+      continue;
+    }
+    const skillProbe = await readFileIfPresent(
+      sourceDirectory + "/" + SPECULATIVE_ATTACK_SKILL_FILE,
+    );
+    if (skillProbe === null) {
+      continue;
+    }
+
+    resolvedSources = { workspaceRoot, sourceDirectory, policyPath, policy };
+    return resolvedSources;
   }
 
   throw new Error(
-    "hermit-dev policy file not found or empty. Tried: " + candidates.join(", "),
+    "hermit-dev sources not found. Every candidate must carry both " +
+      POLICY_FILE + " and " + PLUGIN_SUBPATH + "/" +
+      SPECULATIVE_ATTACK_SKILL_FILE + ". Tried: " +
+      (tried.length > 0 ? tried.join(", ") : "(no candidate roots resolved)"),
   );
 }
 
@@ -146,17 +326,6 @@ function registerSpeculativeAttackSkill(instructions: string): void {
   });
 }
 
-async function loadSpeculativeAttackSkill(): Promise<void> {
-  const instructions = await readPolicyIfPresent(SPECULATIVE_ATTACK_SKILL_PATH);
-  if (instructions === null) {
-    throw new Error(
-      "hermit-dev coordinator skill not found or empty: " +
-        SPECULATIVE_ATTACK_SKILL_PATH,
-    );
-  }
-  registerSpeculativeAttackSkill(instructions);
-}
-
 function registerUrgentValidationSkill(instructions: string): void {
   orc.registerSkill(URGENT_VALIDATION_SKILL_NAME, {
     description: URGENT_VALIDATION_SKILL_DESCRIPTION,
@@ -165,27 +334,39 @@ function registerUrgentValidationSkill(instructions: string): void {
   });
 }
 
-async function loadUrgentValidationSkill(): Promise<void> {
-  const instructions = await readPolicyIfPresent(URGENT_VALIDATION_SKILL_PATH);
+async function loadCoordinatorSkill(
+  sources: HermitDevSources,
+  fileName: string,
+  register: (instructions: string) => void,
+): Promise<void> {
+  const path = sources.sourceDirectory + "/" + fileName;
+  const instructions = await readFileIfPresent(path);
   if (instructions === null) {
     throw new Error(
-      "hermit-dev coordinator skill not found or empty: " +
-        URGENT_VALIDATION_SKILL_PATH,
+      "hermit-dev coordinator skill not found or empty: " + path,
     );
   }
-  registerUrgentValidationSkill(instructions);
+  register(instructions);
 }
 
 async function activateHermitDevPolicies(): Promise<string> {
-  const { path, instructions } = await resolvePolicy();
+  const sources = await resolveSources();
 
   // Re-registering replaces the placeholder or previous policy atomically.
-  registerHermitDevSkill(instructions);
-  await loadSpeculativeAttackSkill();
-  await loadUrgentValidationSkill();
+  registerHermitDevSkill(sources.policy);
+  await loadCoordinatorSkill(
+    sources,
+    SPECULATIVE_ATTACK_SKILL_FILE,
+    registerSpeculativeAttackSkill,
+  );
+  await loadCoordinatorSkill(
+    sources,
+    URGENT_VALIDATION_SKILL_FILE,
+    registerUrgentValidationSkill,
+  );
 
-  if (orc.kvGet(POLICY_CACHE_KEY) === instructions) {
-    return "hermit-dev policies already activated from " + path;
+  if (orc.kvGet(POLICY_CACHE_KEY) === sources.policy) {
+    return "hermit-dev policies already activated from " + sources.policyPath;
   }
 
   const result = String(await orc.activateSkill(SKILL_NAME));
@@ -193,8 +374,8 @@ async function activateHermitDevPolicies(): Promise<string> {
     throw new Error("Failed to activate hermit-dev skill: " + result);
   }
 
-  orc.kvSet(POLICY_CACHE_KEY, instructions);
-  return "hermit-dev policies activated from " + path;
+  orc.kvSet(POLICY_CACHE_KEY, sources.policy);
+  return "hermit-dev policies activated from " + sources.policyPath;
 }
 
 function actionableTickLines(report: string): string[] {
@@ -321,111 +502,176 @@ export async function speculativeLandRemediationHeartbeat(
   });
 }
 
-// Top-level plugin evaluation registers the placeholder skill and durable
-// PR-health heartbeat. Startup replaces the placeholder with current policy.
-registerHermitDevSkill(
-  "The canonical dev-hermit policies are loaded from AGENTS.md during startup.",
-);
-registerSpeculativeAttackSkill(
-  "The parallel speculative attack protocol is loaded during plugin startup.",
-);
-registerUrgentValidationSkill(
-  "The urgent critical-path validation protocol is loaded during plugin " +
-    "startup.",
-);
+// --- registration ----------------------------------------------------------
+// Every side effect this module has lives in here, and it is reached only
+// through the reduced-context guard at the bottom of the file. Nothing above
+// this point touches the host except the one `orc.pluginDir()` that the
+// workflow-restart context is known to serve.
 
-orc.registerScript(OPERATIONAL_TICK_SCRIPT_NAME, {
-  script: OPERATIONAL_TICK_COMMAND,
-  description: "Run the version-pinned dev-hermit tick-hub operational poll",
-  timeoutSec: 180,
-});
+function registerPluginSurface(): void {
+  // ORDER IS LOAD-BEARING — orc.registerScript goes FIRST because it is the
+  // effect the reduced workflow-restart context does not publish, so the guard
+  // below aborts this function here rather than one step later. The step after
+  // it re-registers PLACEHOLDER skill text, and the reduced context DOES serve
+  // orc.registerSkill (measured: three registerSkill calls succeeded there).
+  // Letting a restart reach that step would quietly replace the activated
+  // AGENTS.md policy with the "loaded during startup" stub and leave the
+  // coordinator running on a placeholder until the next activation — a silent
+  // policy downgrade, worse than the crash it replaced. Do not reorder.
+  orc.registerScript(OPERATIONAL_TICK_SCRIPT_NAME, {
+    script: OPERATIONAL_TICK_COMMAND,
+    description: "Run the version-pinned dev-hermit tick-hub operational poll",
+    timeoutSec: 180,
+  });
 
-orc.registerScript(SPECULATIVE_LAND_SCRIPT_NAME, {
-  script: SPECULATIVE_LAND_COMMAND,
-  description: "Poll exact-SHA speculative-land obligations for immediate remediation",
-  timeoutSec: 240,
-});
+  orc.registerScript(SPECULATIVE_LAND_SCRIPT_NAME, {
+    script: SPECULATIVE_LAND_COMMAND,
+    description: "Poll exact-SHA speculative-land obligations for immediate remediation",
+    timeoutSec: 240,
+  });
 
-orc.registerScript(SPECULATIVE_LAND_WAKE_SCRIPT_NAME, {
-  script: SPECULATIVE_LAND_WAKE_COMMAND,
-  description: "Record an ORC wake as sent but not yet acknowledged",
-  timeoutSec: 30,
-});
+  orc.registerScript(SPECULATIVE_LAND_WAKE_SCRIPT_NAME, {
+    script: SPECULATIVE_LAND_WAKE_COMMAND,
+    description: "Record an ORC wake as sent but not yet acknowledged",
+    timeoutSec: 30,
+  });
 
-orc.exposeFunction(
-  PLUGIN_NAME + ".activate",
-  activateHermitDevPolicies,
-  {
-    description: "Reload AGENTS.md and activate the canonical dev-hermit policies",
-    params: [],
-    sig: "await orc.hermit-dev.activate()",
-  },
-);
+  // Placeholders only; startup replaces all three with the real policy text.
+  registerHermitDevSkill(
+    "The canonical dev-hermit policies are loaded from AGENTS.md during startup.",
+  );
+  registerSpeculativeAttackSkill(
+    "The parallel speculative attack protocol is loaded during plugin startup.",
+  );
+  registerUrgentValidationSkill(
+    "The urgent critical-path validation protocol is loaded during plugin " +
+      "startup.",
+  );
 
-orc.exposeFunction(
-  PLUGIN_NAME + ".status",
-  function hermitDevStatus() {
-    const cachedPolicy = orc.kvGet(POLICY_CACHE_KEY);
-    return {
-      plugin: PLUGIN_NAME,
-      skill: SKILL_NAME,
-      coordinatorSkills: [
-        SPECULATIVE_ATTACK_SKILL_NAME,
-        URGENT_VALIDATION_SKILL_NAME,
-      ],
-      policyPath: resolvedPolicyPath,
-      speculativeAttackSkillPath: SPECULATIVE_ATTACK_SKILL_PATH,
-      urgentValidationSkillPath: URGENT_VALIDATION_SKILL_PATH,
-      policyLoaded: typeof cachedPolicy === "string",
-      policyBytes: typeof cachedPolicy === "string" ? cachedPolicy.length : 0,
-      workspace: WORKSPACE_ROOT,
-      hermitPrimary: "rrnewton/hermit",
-      hermitUpstream: "facebookexperimental/hermit",
-      reverieIssueRepo: "rrnewton/reverie",
-      issueCreateWrapper: ISSUE_CREATE_WRAPPER,
-      prStatusCommand: PR_STATUS_COMMAND,
-      operationalTickCommand: OPERATIONAL_TICK_COMMAND,
-      operationalTickConfig: WORKSPACE_ROOT + "/ci-hub/health/tick-hub.yaml",
-      operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
-      speculativeLandCommand: SPECULATIVE_LAND_COMMAND,
-      speculativeLandWakeCommand: SPECULATIVE_LAND_WAKE_COMMAND,
-      speculativeLandPollIntervalSeconds: SPECULATIVE_LAND_INTERVAL_MS / 1000,
-      maxParkedSlots: 5,
-      maxActiveWorktrees: 12,
-      maxAgents: 15,
-    };
-  },
-  {
-    description: "Report hermit-dev plugin registration and policy source state",
-    params: [],
-    sig: "orc.hermit-dev.status()",
-  },
-);
+  orc.exposeFunction(
+    PLUGIN_NAME + ".activate",
+    activateHermitDevPolicies,
+    {
+      description: "Reload AGENTS.md and activate the canonical dev-hermit policies",
+      params: [],
+      sig: "await orc.hermit-dev.activate()",
+    },
+  );
 
-orc.workflow(
-  operationalHealthHeartbeat,
-  "Run tick-hub operational checks and hard-warn the coordinator on failures",
-  {
-    name: OPERATIONAL_TICK_WORKFLOW_NAME,
-    restartable: {} as any,
-  },
-);
+  orc.exposeFunction(
+    PLUGIN_NAME + ".status",
+    function hermitDevStatus() {
+      const cachedPolicy = orc.kvGet(POLICY_CACHE_KEY);
+      const sources = resolvedSources;
+      const sourceDirectory = sources
+        ? sources.sourceDirectory
+        : (REGISTERED_PLUGIN_DIRECTORY ||
+          SHELL_WORKSPACE_ROOT + "/" + PLUGIN_SUBPATH);
+      return {
+        plugin: PLUGIN_NAME,
+        skill: SKILL_NAME,
+        coordinatorSkills: [
+          SPECULATIVE_ATTACK_SKILL_NAME,
+          URGENT_VALIDATION_SKILL_NAME,
+        ],
+        sourcesResolved: sources !== null,
+        policyPath: sources ? sources.policyPath : null,
+        speculativeAttackSkillPath: sourceDirectory + "/" +
+          SPECULATIVE_ATTACK_SKILL_FILE,
+        urgentValidationSkillPath: sourceDirectory + "/" +
+          URGENT_VALIDATION_SKILL_FILE,
+        policyLoaded: typeof cachedPolicy === "string",
+        policyBytes: typeof cachedPolicy === "string" ? cachedPolicy.length : 0,
+        workspace: sources ? sources.workspaceRoot : SHELL_WORKSPACE_ROOT,
+        registeredPluginDirectory: REGISTERED_PLUGIN_DIRECTORY,
+        requiredOrcSurface: REQUIRED_ORC_SURFACE,
+        missingOrcSurface: missingOrcSurface(),
+        missingOrcSurfaceAtStartup: lastSurfaceGap,
+        unverifiableOrcSurface: UNVERIFIABLE_ORC_SURFACE,
+        hermitPrimary: "rrnewton/hermit",
+        hermitUpstream: "facebookexperimental/hermit",
+        reverieIssueRepo: "rrnewton/reverie",
+        issueCreateWrapper: sourceDirectory + "/" + ISSUE_CREATE_WRAPPER_FILE,
+        prStatusCommand: PR_STATUS_COMMAND,
+        operationalTickCommand: OPERATIONAL_TICK_COMMAND,
+        operationalTickConfig: SHELL_WORKSPACE_ROOT +
+          "/ci-hub/health/tick-hub.yaml",
+        operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
+        speculativeLandCommand: SPECULATIVE_LAND_COMMAND,
+        speculativeLandWakeCommand: SPECULATIVE_LAND_WAKE_COMMAND,
+        speculativeLandPollIntervalSeconds: SPECULATIVE_LAND_INTERVAL_MS / 1000,
+        heartbeatRestartPolicy: HEARTBEAT_RESTARTABLE,
+        maxParkedSlots: 5,
+        maxActiveWorktrees: 12,
+        maxAgents: 15,
+      };
+    },
+    {
+      description: "Report hermit-dev plugin registration and policy source state",
+      params: [],
+      sig: "orc.hermit-dev.status()",
+    },
+  );
 
-orc.workflow(
-  speculativeLandRemediationHeartbeat,
-  "Hard-warn immediately when an exact-SHA speculative-land verifier fails",
-  {
-    name: SPECULATIVE_LAND_WORKFLOW_NAME,
-    restartable: {} as any,
-  },
-);
+  orc.workflow(
+    operationalHealthHeartbeat,
+    "Run tick-hub operational checks and hard-warn the coordinator on failures",
+    {
+      name: OPERATIONAL_TICK_WORKFLOW_NAME,
+      restartable: HEARTBEAT_RESTARTABLE,
+    },
+  );
 
-orc.registerStartup(PLUGIN_NAME + ".startup", async function hermitDevStartup() {
-  try {
-    await orc.killWorkflow(LEGACY_PR_HEALTH_WORKFLOW_NAME);
-  } catch (_err) {
-    // The legacy workflow is absent in new sessions.
+  orc.workflow(
+    speculativeLandRemediationHeartbeat,
+    "Hard-warn immediately when an exact-SHA speculative-land verifier fails",
+    {
+      name: SPECULATIVE_LAND_WORKFLOW_NAME,
+      restartable: HEARTBEAT_RESTARTABLE,
+    },
+  );
+
+  orc.registerStartup(PLUGIN_NAME + ".startup", async function hermitDevStartup() {
+    lastSurfaceGap = missingOrcSurface();
+    if (lastSurfaceGap.length > 0) {
+      // Report the gap; do not throw. A named-but-absent API is what crash-looped
+      // this plugin, and a startup hook that dies takes the policies with it.
+      orc.log(
+        "error",
+        "hermit-dev: the running ORC build no longer publishes " +
+          lastSurfaceGap.length + " required API(s): " +
+          lastSurfaceGap.join(", ") +
+          ". Update .orc/plugins/hermit-dev/index.ts against orc.listEffects().",
+      );
+    }
+    if (hasOrcSurface("killWorkflow")) {
+      try {
+        await orc.killWorkflow(LEGACY_PR_HEALTH_WORKFLOW_NAME);
+      } catch (_err) {
+        // The legacy workflow is absent in new sessions.
+      }
+    }
+    const result = await activateHermitDevPolicies();
+    orc.log("info", result);
+  });
+}
+
+// --- module entry ------------------------------------------------------------
+// Plugin load reaches this with the full capability surface and registers
+// everything. The workflow-restart path reaches it with the reduced `workflow`
+// preset, where the first registration effect it meets does not exist; that is
+// expected and must not propagate, because the restart is only re-evaluating
+// this module to resolve the exported heartbeat function — which is already
+// defined, above, with no registration required.
+//
+// The catch is deliberately narrow. Only the host's absent-name dispatch failure
+// is swallowed; anything else is a genuine registration bug and is re-thrown so
+// plugin load fails loudly instead of coming up half-registered.
+try {
+  registerPluginSurface();
+} catch (err) {
+  const message = String((err && (err as { message?: unknown }).message) || err);
+  if (message.indexOf(ABSENT_NAME_SIGNATURE) === -1) {
+    throw err;
   }
-  const result = await activateHermitDevPolicies();
-  orc.log("info", result);
-});
+}
