@@ -7,6 +7,7 @@
 //! ```
 
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -22,9 +23,21 @@ same field name made a denominator change look like a 10x real drop. A count
 whose counted set is not recorded beside it is not a measurement, so --repos is
 required and `open_prs` has exactly one permitted meaning.
 
+THE MAPPING IS AN ACTIVITY REPORT, NOT AN OWNERSHIP LEDGER. The 2026-08-07T01:00
+entry listed 19 workstreams for 7 agents -- hermit-w3 seven times -- and not one
+of the 19 was active work: 16 were tagged `implemented` (one already closed) and
+3 were still OPEN/BACKLOG. Every task a name still owns is not every task it is
+doing, so --mapping-json carries exactly ONE genuinely in-flight task per agent,
+each task is dereferenced against live TaskGraph rather than believed, and work
+that is implemented-awaiting-landing goes in --awaiting-landing-json where it
+stays visible without being counted as activity.
+
 Required:
-  --mapping-json JSON    Object mapping each workstream slug to
-                         {"agent":"NAME","task":"TASK-ID"}.
+  --mapping-json JSON    ACTIVE work only. Object mapping each workstream slug
+                         to {"agent":"NAME","task":"TASK-ID","cwd":"PATH"}.
+                         At most one entry per agent. Slugs are stable
+                         descriptive major-goal/sub-goal, e.g.
+                         backend-parity/dbi-stack-hash-determinism.
   --repos LIST           Comma-separated owner/name repositories that every
                          count below was taken over, e.g.
                          rrnewton/hermit,rrnewton/reverie. This is the
@@ -39,6 +52,17 @@ Status input:
                          When omitted, read the full text from stdin.
 
 Other:
+  --awaiting-landing-json JSON
+                         OPTIONAL, and a DISTINCT field. Same shape as
+                         --mapping-json, for tasks tagged `implemented` that
+                         are waiting to land. Recorded as
+                         `awaiting_landing_to_worker`; never counted as active
+                         work. Its tasks MUST be implemented-awaiting-landing,
+                         which is the mirror image of the active check.
+  --task-states-json PATH
+                         Read task states from a JSON file instead of querying
+                         TaskGraph: {"task-id":{"status":"IN_PROGRESS",
+                         "tags":["implemented"]}}. For tests and offline use.
   --ready-prs N          OPTIONAL, and a DISTINCT field. The ready/non-draft
                          subset. Recorded as `ready_prs`, never as `open_prs`.
   --open-prs-basis B     Assert the basis of --open-prs. The only accepted
@@ -55,7 +79,8 @@ Other:
 
 Example:
   printf 'Fleet healthy; 3 PRs open.\n' | scripts/status-log.rs \
-    --mapping-json '{"pr-landing":{"agent":"hermit-coord","task":"landing-watch"}}' \
+    --mapping-json '{"pr-landing/open-pr-drain":{"agent":"hermit-coord",
+      "task":"drain-open-prs-older-than-12h","cwd":"worktrees/lander/hermit"}}' \
     --repos rrnewton/hermit,rrnewton/reverie \
     --open-prs 3 --genuine-reds 0 --fleet-count 8
 "#;
@@ -64,13 +89,75 @@ Example:
 const BASIS_TOTAL_OPEN: &str = "total-open-including-drafts";
 /// The basis recorded for the distinct `ready_prs` field.
 const BASIS_READY: &str = "ready-non-draft";
-/// Entries at this schema carry `count_semantics`; anything lower does not and
-/// is therefore of unknown denominator.
-const SCHEMA_VERSION: u64 = 2;
+/// Entries from this schema on carry `count_semantics`; anything lower does not
+/// and is therefore of unknown denominator.
+const COUNT_SEMANTICS_SCHEMA: u64 = 2;
+/// Schema 3 adds the per-worker `cwd` field, one-workstream-per-agent, and the
+/// separate `awaiting_landing_to_worker` field.
+const SCHEMA_VERSION: u64 = 3;
+
+/// The tag that marks a task complete-and-awaiting-landing. Such a task is a
+/// LANDING obligation, not activity, and must never be reported as in-flight
+/// work; that conflation is what turned one agent into seven bullets.
+const IMPLEMENTED_TAG: &str = "implemented";
+
+/// Values that look like an answer but assert nothing. `"none"` reached the log
+/// as an agent name because the old check only required a non-empty string.
+const PLACEHOLDER_VALUES: &[&str] = &[
+    "",
+    "-",
+    "--",
+    "?",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "nil",
+    "tbd",
+    "todo",
+    "unknown",
+    "unassigned",
+    "someone",
+    "agent",
+    "various",
+    "multiple",
+    "misc",
+    "other",
+    "pending",
+];
+
+/// Slug segments that number a thing instead of naming it. AGENTS.md bans these
+/// outright: a workstream slug must survive the next update unchanged, and
+/// `phase-1` cannot.
+const ORDINAL_PREFIXES: &[&str] = &[
+    "phase",
+    "step",
+    "round",
+    "wave",
+    "option",
+    "batch",
+    "part",
+    "stage",
+    "iteration",
+    "attempt",
+    "pass",
+    "try",
+    "run",
+    "week",
+    "day",
+    "sprint",
+    "milestone",
+    "item",
+    "task",
+    "slot",
+    "group",
+];
 
 #[derive(Default)]
 struct Args {
     mapping_json: Option<String>,
+    awaiting_landing_json: Option<String>,
+    task_states_json: Option<PathBuf>,
     repos: Option<String>,
     open_prs: Option<u64>,
     open_prs_basis: Option<String>,
@@ -80,6 +167,391 @@ struct Args {
     status_file: Option<PathBuf>,
     log_file: Option<PathBuf>,
     describe_log: bool,
+}
+
+/// One validated workstream row: a slug, and the agent/task/workspace triple it
+/// resolves to.
+#[derive(Clone, Debug, PartialEq)]
+struct Workstream {
+    slug: String,
+    agent: String,
+    task: String,
+    cwd: String,
+}
+
+/// What TaskGraph actually says about a task, as opposed to what the caller
+/// remembered about it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TaskState {
+    /// Non-terminal and NOT tagged `implemented`: genuinely being worked now.
+    Active,
+    /// Non-terminal but tagged `implemented`: finished, waiting to land.
+    AwaitingLanding,
+    /// Terminal.
+    Closed,
+    /// No such task in TaskGraph.
+    Missing,
+}
+
+impl TaskState {
+    fn describe(self) -> &'static str {
+        match self {
+            TaskState::Active => "active (in flight)",
+            TaskState::AwaitingLanding => "IMPLEMENTED, awaiting landing -- not active work",
+            TaskState::Closed => "CLOSED",
+            TaskState::Missing => "NOT PRESENT in TaskGraph",
+        }
+    }
+}
+
+/// Classify a task from its live TaskGraph row. `implemented` wins over the
+/// status because the status of implemented-awaiting-landing work is still
+/// `in_progress` by policy -- which is exactly why reading status alone
+/// produced seven simultaneous activities for an agent doing none.
+fn classify_task(status: &str, tags: &[String]) -> TaskState {
+    if tags
+        .iter()
+        .any(|t| t.trim().eq_ignore_ascii_case(IMPLEMENTED_TAG))
+    {
+        return TaskState::AwaitingLanding;
+    }
+    match status.trim().to_ascii_lowercase().as_str() {
+        "closed" | "resolved" | "done" | "complete" | "completed" => TaskState::Closed,
+        _ => TaskState::Active,
+    }
+}
+
+fn is_placeholder(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    PLACEHOLDER_VALUES.contains(&normalized.as_str())
+}
+
+/// Normalize a slug or task id for comparison: case, and `_`/`/` both folded to
+/// `-`, so `foo/bar_baz` and `Foo-Bar-Baz` are recognised as the same string.
+fn normalize_identifier(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', '/', ' '], "-")
+}
+
+/// Is this segment a bare ordinal -- `phase-1`, `round-2`, `wave-x`, `v3`?
+fn is_ordinal_segment(segment: &str) -> bool {
+    if segment.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    // `v3`, `v10`
+    if let Some(rest) = segment.strip_prefix('v') {
+        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+    }
+    for prefix in ORDINAL_PREFIXES {
+        if let Some(rest) = segment.strip_prefix(prefix) {
+            let rest = rest.trim_start_matches('-');
+            // `phase`, `phase-1`, `phase-n`, `wave-x`, `option-a`
+            if rest.is_empty()
+                || rest.chars().all(|c| c.is_ascii_digit())
+                || (rest.len() == 1 && rest.chars().all(|c| c.is_ascii_alphabetic()))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A workstream slug must be a STABLE DESCRIPTIVE `major-goal/sub-goal`: it
+/// names the outcome, it reads the same next hour, and it tells the owner what
+/// the work is without them having to look the task id up.
+fn validate_slug(slug: &str, task: &str) -> Result<(), String> {
+    if slug.trim().is_empty() {
+        return Err("workstream slugs must not be empty".to_string());
+    }
+    if slug != slug.trim() {
+        return Err(format!(
+            "workstream slug {slug:?} has leading or trailing whitespace"
+        ));
+    }
+    let segments: Vec<&str> = slug.split('/').collect();
+    if segments.len() < 2 {
+        return Err(format!(
+            "workstream slug {slug:?} is flat; use a stable descriptive major-goal/sub-goal, \
+             e.g. backend-parity/dbi-stack-hash-determinism. A bare id does not tell the owner \
+             what the work is."
+        ));
+    }
+    for segment in &segments {
+        if segment.is_empty() {
+            return Err(format!(
+                "workstream slug {slug:?} has an empty path segment"
+            ));
+        }
+        if !segment
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
+            return Err(format!(
+                "workstream slug segment {segment:?} in {slug:?} must be lowercase-hyphenated \
+                 ([a-z0-9-])"
+            ));
+        }
+        if segment.starts_with('-') || segment.ends_with('-') {
+            return Err(format!(
+                "workstream slug segment {segment:?} in {slug:?} must not start or end with '-'"
+            ));
+        }
+        if is_placeholder(segment) {
+            return Err(format!(
+                "workstream slug segment {segment:?} in {slug:?} is a placeholder, not a name"
+            ));
+        }
+        if is_ordinal_segment(segment) {
+            return Err(format!(
+                "workstream slug segment {segment:?} in {slug:?} is a bare ordinal/placeholder. \
+                 Name the work or outcome (btrfs-flood-fix), never its position in a sequence; \
+                 enumerate variants by suffix instead."
+            ));
+        }
+        if segment.len() < 3 {
+            return Err(format!(
+                "workstream slug segment {segment:?} in {slug:?} is too short to be descriptive"
+            ));
+        }
+    }
+    if normalize_identifier(slug) == normalize_identifier(task) {
+        return Err(format!(
+            "workstream slug {slug:?} is just a restatement of task id {task:?}. The slug names the \
+             workstream the owner cares about; the task id is recorded separately in the same row."
+        ));
+    }
+    Ok(())
+}
+
+/// Validate one mapping row into a `Workstream`. Every field the owner needs to
+/// act -- which agent, which task, which workspace -- is mandatory, because a
+/// bullet missing any of them cannot be followed up on.
+fn validate_workstream(slug: &str, worker: &Value) -> Result<Workstream, String> {
+    let worker = worker
+        .as_object()
+        .ok_or_else(|| format!("mapping value for {slug:?} must be an object"))?;
+    let mut fields = Vec::new();
+    for field in ["agent", "task", "cwd"] {
+        let value = worker
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("mapping value for {slug:?} must contain a string {field:?} field")
+            })?
+            .trim();
+        if value.is_empty() {
+            return Err(format!("mapping {field:?} for {slug:?} must not be empty"));
+        }
+        if is_placeholder(value) {
+            return Err(format!(
+                "mapping {field:?} for {slug:?} is the placeholder {value:?}; a bullet that names \
+                 no real {field} cannot be acted on"
+            ));
+        }
+        fields.push(value.to_string());
+    }
+    let (agent, task, cwd) = (fields[0].clone(), fields[1].clone(), fields[2].clone());
+    if !cwd.contains('/') {
+        return Err(format!(
+            "mapping \"cwd\" for {slug:?} is {cwd:?}, which is not a slot or working directory \
+             path; give the agent's actual workspace, e.g. worktrees/<slot>/hermit"
+        ));
+    }
+    validate_slug(slug, &task)?;
+    Ok(Workstream {
+        slug: slug.to_string(),
+        agent,
+        task,
+        cwd,
+    })
+}
+
+/// Parse a mapping object into validated rows, ordered by slug for stable
+/// messages.
+fn parse_mapping(value: &Value) -> Result<Vec<Workstream>, String> {
+    let mapping = value
+        .as_object()
+        .ok_or_else(|| "mapping must be a JSON object".to_string())?;
+    let mut rows = Vec::new();
+    for (slug, worker) in mapping {
+        rows.push(validate_workstream(slug, worker)?);
+    }
+    rows.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(rows)
+}
+
+/// ONE WORKSTREAM PER AGENT. This is the rule the 01:00 report broke seven ways
+/// at once: an agent is a worker, not a portfolio, so it gets exactly one
+/// current bullet.
+fn validate_one_workstream_per_agent(rows: &[Workstream]) -> Result<(), String> {
+    let mut seen: Vec<(String, Vec<String>)> = Vec::new();
+    for row in rows {
+        match seen.iter_mut().find(|(agent, _)| agent == &row.agent) {
+            Some((_, slugs)) => slugs.push(row.slug.clone()),
+            None => seen.push((row.agent.clone(), vec![row.slug.clone()])),
+        }
+    }
+    let mut offenders: Vec<String> = seen
+        .into_iter()
+        .filter(|(_, slugs)| slugs.len() > 1)
+        .map(|(agent, slugs)| {
+            format!(
+                "{agent} claims {} workstreams: {}",
+                slugs.len(),
+                slugs.join(", ")
+            )
+        })
+        .collect();
+    if offenders.is_empty() {
+        return Ok(());
+    }
+    offenders.sort();
+    Err(format!(
+        "an agent reports exactly ONE current workstream, but {}. Report the single task each \
+         agent is working on right now; everything else it still owns is either awaiting landing \
+         (--awaiting-landing-json) or not started, and neither is activity.",
+        offenders.join("; ")
+    ))
+}
+
+/// Dereference every task against live TaskGraph state and refuse rows whose
+/// real state contradicts the field they were placed in. `expect_active` picks
+/// which side of the mirror we are checking.
+fn validate_task_states(
+    rows: &[Workstream],
+    states: &BTreeMap<String, TaskState>,
+    expect_active: bool,
+    field: &str,
+) -> Result<(), String> {
+    let mut problems = Vec::new();
+    for row in rows {
+        let state = states.get(&row.task).copied().unwrap_or(TaskState::Missing);
+        let ok = if expect_active {
+            state == TaskState::Active
+        } else {
+            state == TaskState::AwaitingLanding
+        };
+        if !ok {
+            problems.push(format!(
+                "{} -> {} (agent {}) is {}",
+                row.slug,
+                row.task,
+                row.agent,
+                state.describe()
+            ));
+        }
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    problems.sort();
+    let remedy = if expect_active {
+        "--mapping-json is ACTIVE work only. Move implemented-awaiting-landing tasks to \
+         --awaiting-landing-json, drop closed and not-started ones, and report what the agent is \
+         actually doing now."
+    } else {
+        "--awaiting-landing-json holds ONLY tasks tagged `implemented` that have not landed."
+    };
+    Err(format!(
+        "{field} disagrees with live TaskGraph: {}. {remedy}",
+        problems.join("; ")
+    ))
+}
+
+/// Read task states from TaskGraph itself. A state copied from the caller would
+/// be a cache of the authority, not the authority, and this whole defect is a
+/// stale cache; so the states are dereferenced here on every run.
+fn load_task_states_from_taskgraph(ids: &[String]) -> Result<BTreeMap<String, TaskState>, String> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let quoted: Vec<String> = ids
+        .iter()
+        .map(|id| format!("'{}'", id.replace('\'', "''")))
+        .collect();
+    let query = format!(
+        "SELECT local_id, status, tags FROM tasks WHERE local_id IN ({})",
+        quoted.join(",")
+    );
+    let output = Command::new("tg")
+        .args(["sql", &query])
+        .output()
+        .map_err(|e| format!("run `tg sql` to dereference task states: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`tg sql` failed while dereferencing task states: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok(parse_tg_sql_rows(&text))
+}
+
+/// Parse `tg sql`'s pipe-separated table. Rows that do not parse are simply
+/// absent, which classifies as `Missing` and therefore refuses -- the safe
+/// direction.
+fn parse_tg_sql_rows(text: &str) -> BTreeMap<String, TaskState> {
+    let mut states = BTreeMap::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed.starts_with("local_id")
+            || trimmed.starts_with('-')
+            || trimmed.starts_with('(')
+        {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('|').map(str::trim).collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let tags: Vec<String> = serde_json::from_str::<Vec<String>>(parts[2]).unwrap_or_default();
+        states.insert(parts[0].to_string(), classify_task(parts[1], &tags));
+    }
+    states
+}
+
+/// Read task states from a JSON fixture instead of TaskGraph, for tests and for
+/// running without a TaskGraph on the box.
+fn parse_task_states_json(text: &str) -> Result<BTreeMap<String, TaskState>, String> {
+    let value: Value =
+        serde_json::from_str(text).map_err(|e| format!("parse task-states JSON: {e}"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "task-states JSON must be an object keyed by task id".to_string())?;
+    let mut states = BTreeMap::new();
+    for (id, row) in object {
+        let status = row.get("status").and_then(Value::as_str).unwrap_or("open");
+        let tags: Vec<String> = row
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        states.insert(id.clone(), classify_task(status, &tags));
+    }
+    Ok(states)
+}
+
+/// Render the validated rows back to the JSON recorded in the log.
+fn rows_to_json(rows: &[Workstream]) -> Value {
+    let mut object = serde_json::Map::new();
+    for row in rows {
+        object.insert(
+            row.slug.clone(),
+            json!({"agent": row.agent, "task": row.task, "cwd": row.cwd}),
+        );
+    }
+    Value::Object(object)
 }
 
 /// Parse and validate the repository scope. This is the denominator, so an
@@ -154,9 +626,7 @@ fn describe_entry(index: usize, entry: &Value) -> String {
         .get("open_prs")
         .map(|v| v.to_string())
         .unwrap_or_else(|| "<absent>".to_string());
-    let semantics = entry
-        .get("count_semantics")
-        .and_then(|s| s.get("open_prs"));
+    let semantics = entry.get("count_semantics").and_then(|s| s.get("open_prs"));
     match semantics {
         Some(open) => {
             let basis = open
@@ -177,7 +647,7 @@ fn describe_entry(index: usize, entry: &Value) -> String {
         }
         None => format!(
             "{index} {timestamp} open_prs={open_prs} basis=unknown repos=unknown \
-             denominator=unknown pre-schema-{SCHEMA_VERSION}-entry"
+             denominator=unknown pre-schema-{COUNT_SEMANTICS_SCHEMA}-entry"
         ),
     }
 }
@@ -208,6 +678,12 @@ fn parse_args() -> Args {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--mapping-json" => parsed.mapping_json = Some(take_value(&arg, &mut args)),
+            "--awaiting-landing-json" => {
+                parsed.awaiting_landing_json = Some(take_value(&arg, &mut args))
+            }
+            "--task-states-json" => {
+                parsed.task_states_json = Some(take_value(&arg, &mut args).into())
+            }
             "--repos" => parsed.repos = Some(take_value(&arg, &mut args)),
             "--open-prs" => parsed.open_prs = Some(parse_count(&arg, take_value(&arg, &mut args))),
             "--open-prs-basis" => parsed.open_prs_basis = Some(take_value(&arg, &mut args)),
@@ -260,31 +736,14 @@ fn timestamp_from_date() -> String {
         .to_owned()
 }
 
-fn validate_mapping(value: &Value) {
-    let mapping = value
-        .as_object()
-        .unwrap_or_else(|| die("--mapping-json must be a JSON object"));
-    for (slug, worker) in mapping {
-        if slug.is_empty() {
-            die("workstream slugs must not be empty");
-        }
-        let worker = worker
-            .as_object()
-            .unwrap_or_else(|| die(&format!("mapping value for {slug:?} must be an object")));
-        for field in ["agent", "task"] {
-            let field_value = worker
-                .get(field)
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| {
-                    die(&format!(
-                        "mapping value for {slug:?} must contain a string {field:?} field"
-                    ))
-                });
-            if field_value.is_empty() {
-                die(&format!("mapping {field:?} for {slug:?} must not be empty"));
-            }
-        }
-    }
+/// Parse one mapping flag into validated rows, applying the structural rules
+/// that do not need TaskGraph.
+fn parse_mapping_flag(flag: &str, raw: &str) -> Vec<Workstream> {
+    let value: Value =
+        serde_json::from_str(raw).unwrap_or_else(|e| die(&format!("parse {flag}: {e}")));
+    let rows = parse_mapping(&value).unwrap_or_else(|e| die(&format!("{flag}: {e}")));
+    validate_one_workstream_per_agent(&rows).unwrap_or_else(|e| die(&format!("{flag}: {e}")));
+    rows
 }
 
 fn read_status_text(status_file: Option<&Path>) -> String {
@@ -333,14 +792,56 @@ fn main() {
         .mapping_json
         .as_deref()
         .unwrap_or_else(|| die("missing --mapping-json"));
-    let mapping: Value = serde_json::from_str(mapping_json)
-        .unwrap_or_else(|e| die(&format!("parse --mapping-json: {e}")));
-    validate_mapping(&mapping);
-
-    let repos_raw = args
-        .repos
+    let active = parse_mapping_flag("--mapping-json", mapping_json);
+    let awaiting = args
+        .awaiting_landing_json
         .as_deref()
-        .unwrap_or_else(|| die("missing --repos: a count without its counted set is not a measurement"));
+        .map(|raw| parse_mapping_flag("--awaiting-landing-json", raw))
+        .unwrap_or_default();
+
+    // A slug names one workstream; the same slug on both sides would say the
+    // work is simultaneously in flight and finished.
+    for row in &awaiting {
+        if active.iter().any(|a| a.slug == row.slug) {
+            die(&format!(
+                "workstream {:?} appears in BOTH --mapping-json and --awaiting-landing-json; \
+                 it is either in flight or waiting to land, not both",
+                row.slug
+            ));
+        }
+    }
+
+    // Dereference the authority. A task state copied from the caller is a cache,
+    // and a stale cache is exactly the defect this guard exists for.
+    let mut ids: Vec<String> = active
+        .iter()
+        .chain(awaiting.iter())
+        .map(|r| r.task.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    let states = match &args.task_states_json {
+        Some(path) => {
+            let text = fs::read_to_string(path)
+                .unwrap_or_else(|e| die(&format!("read task states {}: {e}", path.display())));
+            parse_task_states_json(&text).unwrap_or_else(|e| die(&e))
+        }
+        // Fails closed: no verification means no entry, rather than an entry
+        // that silently asserts states nobody checked.
+        None => load_task_states_from_taskgraph(&ids).unwrap_or_else(|e| {
+            die(&format!(
+                "{e}\n\nTask states could not be dereferenced, so the mapping cannot be \
+                 verified. Pass --task-states-json PATH to supply them explicitly."
+            ))
+        }),
+    };
+    validate_task_states(&active, &states, true, "--mapping-json").unwrap_or_else(|e| die(&e));
+    validate_task_states(&awaiting, &states, false, "--awaiting-landing-json")
+        .unwrap_or_else(|e| die(&e));
+
+    let repos_raw = args.repos.as_deref().unwrap_or_else(|| {
+        die("missing --repos: a count without its counted set is not a measurement")
+    });
     let repos = parse_repos(repos_raw).unwrap_or_else(|e| die(&e));
     validate_open_prs_basis(args.open_prs_basis.as_deref().unwrap_or(BASIS_TOTAL_OPEN))
         .unwrap_or_else(|e| die(&e));
@@ -369,7 +870,7 @@ fn main() {
     let mut entry = json!({
         "schema_version": SCHEMA_VERSION,
         "timestamp": timestamp_from_date(),
-        "workstream_to_worker": mapping,
+        "workstream_to_worker": rows_to_json(&active),
         "open_prs": open_prs,
         "genuine_reds": genuine_reds,
         "fleet_count": fleet_count,
@@ -384,6 +885,10 @@ fn main() {
             "includes_drafts": false,
             "repos": repos,
         });
+    }
+    // Recorded, but in its OWN field so it can never be mistaken for activity.
+    if !awaiting.is_empty() {
+        entry["awaiting_landing_to_worker"] = rows_to_json(&awaiting);
     }
     entry["count_semantics"] = count_semantics;
     let line = serde_json::to_string(&entry)
@@ -405,6 +910,389 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // =====================================================================
+    // THE MAPPING IS AN ACTIVITY REPORT, NOT AN OWNERSHIP LEDGER
+    //
+    // Regression source: ai_docs/status-log/status-log.jsonl entry
+    // 2026-08-07T01:00:36Z. 19 workstreams, 7 agents, hermit-w3 seven times,
+    // and zero of the 19 tasks genuinely active.
+    // =====================================================================
+
+    fn worker(agent: &str, task: &str, cwd: &str) -> Value {
+        json!({"agent": agent, "task": task, "cwd": cwd})
+    }
+
+    /// The seven tasks the real report attributed to hermit-w3 simultaneously.
+    /// Every one of them is tagged `implemented` in live TaskGraph.
+    const W3_IMPLEMENTED_TASKS: &[&str] = &[
+        "adversarial_review_claude_pr",
+        "correct_pr_1147_claims",
+        "demo-presentation-cycle",
+        "enforce_typed_fail_closed",
+        "mutation-test-the-fixtures-can-they-fail",
+        "resolve-parent-main-divergence-7-ahead-4-behind",
+        "spawn-conflates-cli-type-with-model-selection-claude-got-gpt-model",
+    ];
+
+    fn implemented_states() -> BTreeMap<String, TaskState> {
+        W3_IMPLEMENTED_TASKS
+            .iter()
+            .map(|t| (t.to_string(), TaskState::AwaitingLanding))
+            .collect()
+    }
+
+    // ---- POSITIVE: a well-formed one-per-agent mapping is accepted ----
+
+    #[test]
+    fn a_descriptive_one_per_agent_mapping_is_accepted() {
+        let mapping = json!({
+            "backend-parity/dbi-stack-hash-determinism":
+                worker("hermit-w6", "dbi_detlog_stack_hashes", "worktrees/w6dbistack/reverie"),
+            "fleet-observability/hourly-status-synthesis":
+                worker("hermit-w3", "hourly-status-workstreams", "worktrees/w3/hermit"),
+        });
+        let rows = parse_mapping(&mapping).expect("well-formed mapping must parse");
+        assert_eq!(rows.len(), 2);
+        validate_one_workstream_per_agent(&rows).expect("distinct agents must be accepted");
+
+        // Every bullet carries agent + task + workspace, which is what the
+        // owner needs to follow one up.
+        for row in &rows {
+            assert!(!row.agent.is_empty() && !row.task.is_empty() && !row.cwd.is_empty());
+            assert!(
+                row.cwd.contains('/'),
+                "cwd must be a workspace path: {row:?}"
+            );
+            assert!(
+                row.slug.contains('/'),
+                "slug must be major-goal/sub-goal: {row:?}"
+            );
+        }
+
+        let states: BTreeMap<String, TaskState> = rows
+            .iter()
+            .map(|r| (r.task.clone(), TaskState::Active))
+            .collect();
+        validate_task_states(&rows, &states, true, "--mapping-json")
+            .expect("genuinely active tasks must be accepted");
+    }
+
+    #[test]
+    fn distinct_agents_stay_distinct() {
+        let mapping = json!({
+            "aaa-goal/one": worker("hermit-w1", "task-one", "worktrees/w1/hermit"),
+            "bbb-goal/two": worker("hermit-w2", "task-two", "worktrees/w2/hermit"),
+            "ccc-goal/three": worker("hermit-w3", "task-three", "worktrees/w3/hermit"),
+        });
+        let rows = parse_mapping(&mapping).unwrap();
+        validate_one_workstream_per_agent(&rows).unwrap();
+        let agents: Vec<&str> = rows.iter().map(|r| r.agent.as_str()).collect();
+        assert_eq!(agents, vec!["hermit-w1", "hermit-w2", "hermit-w3"]);
+    }
+
+    // ---- NEGATIVE: THE regression -- one agent, many stale owned tasks ----
+
+    /// The exact shape that produced seven hermit-w3 bullets. Rendering the
+    /// agent's whole ownership set is refused, and the refusal names the agent
+    /// and every slug it claimed so the coordinator can see what to collapse.
+    #[test]
+    fn one_agent_owning_seven_tasks_cannot_emit_seven_active_bullets() {
+        let mut mapping = serde_json::Map::new();
+        for (i, task) in W3_IMPLEMENTED_TASKS.iter().enumerate() {
+            mapping.insert(
+                format!(
+                    "fleet-work/stale-claim-{}",
+                    ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"][i]
+                ),
+                worker("hermit-w3", task, "worktrees/w3/hermit"),
+            );
+        }
+        let rows = parse_mapping(&Value::Object(mapping)).unwrap();
+        assert_eq!(rows.len(), 7, "fixture must reproduce the 7-row shape");
+
+        let err = validate_one_workstream_per_agent(&rows)
+            .expect_err("seven bullets for one agent must be refused");
+        assert!(err.contains("hermit-w3"), "must name the agent: {err}");
+        assert!(err.contains("7 workstreams"), "must give the count: {err}");
+        assert!(
+            err.contains("--awaiting-landing-json"),
+            "must say where the implemented work belongs: {err}"
+        );
+
+        // ...and independently, every one of those tasks is implemented, so
+        // even ONE of them is not active work.
+        let states = implemented_states();
+        let single = vec![rows[0].clone()];
+        let err = validate_task_states(&single, &states, true, "--mapping-json")
+            .expect_err("an implemented task is not activity");
+        assert!(err.contains("IMPLEMENTED"), "{err}");
+    }
+
+    /// After the fix, the same agent emits EXACTLY ONE active bullet, and its
+    /// stale ownership is still recorded -- just not as activity.
+    #[test]
+    fn the_corrected_report_emits_exactly_one_active_bullet_per_agent() {
+        let active = json!({
+            "fleet-observability/hourly-status-synthesis":
+                worker("hermit-w3", "hourly-status-workstreams", "worktrees/w3/hermit"),
+        });
+        let awaiting = json!({
+            "review-drain/claude-pr-adversarial-review":
+                worker("hermit-w3", "adversarial_review_claude_pr", "worktrees/w3/hermit"),
+            "review-drain/pr-1147-claim-correction":
+                worker("hermit-w3", "correct_pr_1147_claims", "worktrees/w3/hermit"),
+        });
+        let active_rows = parse_mapping(&active).unwrap();
+        let awaiting_rows = parse_mapping(&awaiting).unwrap();
+
+        // EXACTLY ONE active bullet for hermit-w3.
+        assert_eq!(active_rows.len(), 1);
+        validate_one_workstream_per_agent(&active_rows).unwrap();
+
+        let mut states = implemented_states();
+        states.insert("hourly-status-workstreams".to_string(), TaskState::Active);
+        validate_task_states(&active_rows, &states, true, "--mapping-json").unwrap();
+        // The awaiting side accepts precisely what the active side refuses.
+        validate_task_states(&awaiting_rows, &states, false, "--awaiting-landing-json").unwrap();
+
+        // The recorded JSON keeps agent + task + cwd on every row.
+        let recorded = rows_to_json(&active_rows);
+        let row = &recorded["fleet-observability/hourly-status-synthesis"];
+        assert_eq!(row["agent"], "hermit-w3");
+        assert_eq!(row["task"], "hourly-status-workstreams");
+        assert_eq!(row["cwd"], "worktrees/w3/hermit");
+    }
+
+    // ---- NEGATIVE: the awaiting-landing field is not a dumping ground ----
+
+    #[test]
+    fn an_active_task_is_refused_in_the_awaiting_landing_field() {
+        let rows = parse_mapping(&json!({
+            "fleet-observability/hourly-status-synthesis":
+                worker("hermit-w3", "still-working", "worktrees/w3/hermit"),
+        }))
+        .unwrap();
+        let states: BTreeMap<String, TaskState> =
+            [("still-working".to_string(), TaskState::Active)]
+                .into_iter()
+                .collect();
+        let err = validate_task_states(&rows, &states, false, "--awaiting-landing-json")
+            .expect_err("active work is not awaiting landing");
+        assert!(err.contains("--awaiting-landing-json"), "{err}");
+    }
+
+    #[test]
+    fn closed_and_missing_tasks_are_refused_as_active() {
+        // fix-post-1.0-codex-invalid-sandbox-flag really was CLOSED when the
+        // 01:00 report listed it as a live workstream.
+        let rows = parse_mapping(&json!({
+            "codex-startup/invalid-sandbox-flag":
+                worker("hermit-w4", "fix-post-1.0-codex-invalid-sandbox-flag", "worktrees/w4/hermit"),
+            "backend-rename/dbi-to-dbt":
+                worker("hermit-w1", "rename-dbi-to-dbt-backend", "worktrees/w1/hermit"),
+        }))
+        .unwrap();
+        let states: BTreeMap<String, TaskState> = [(
+            "fix-post-1.0-codex-invalid-sandbox-flag".to_string(),
+            TaskState::Closed,
+        )]
+        .into_iter()
+        .collect();
+        let err = validate_task_states(&rows, &states, true, "--mapping-json").unwrap_err();
+        assert!(
+            err.contains("CLOSED"),
+            "a closed task is not activity: {err}"
+        );
+        assert!(
+            err.contains("NOT PRESENT in TaskGraph"),
+            "an unknown task id must not pass silently: {err}"
+        );
+    }
+
+    // ---- SLUGS: descriptive and stable, positive and negative ----
+
+    #[test]
+    fn descriptive_major_goal_sub_goal_slugs_are_accepted() {
+        for slug in [
+            "backend-parity/dbi-stack-hash-determinism",
+            "pr-landing/open-pr-drain",
+            "fleet-observability/hourly-status-synthesis",
+            "btrfs-flood-fix/claude-agent",
+            "validate/box-quarantine-recovery",
+        ] {
+            validate_slug(slug, "some-unrelated-task-id")
+                .unwrap_or_else(|e| panic!("{slug:?} should be accepted: {e}"));
+        }
+    }
+
+    #[test]
+    fn a_flat_slug_is_refused_because_it_is_not_a_workstream() {
+        // Every slug in all 50 logged entries is flat today.
+        let err = validate_slug(
+            "dbi-detlog-stack-hash-nondeterminism",
+            "dbi_detlog_stack_hashes",
+        )
+        .unwrap_err();
+        assert!(err.contains("major-goal/sub-goal"), "{err}");
+    }
+
+    #[test]
+    fn bare_ordinal_and_placeholder_slugs_are_refused() {
+        for slug in [
+            "phase-1/do-the-thing",
+            "rollout/wave-x",
+            "options/option-a",
+            "drain/round-2",
+            "drain/batch",
+            "cleanup/v2",
+            "cleanup/3",
+            "tbd/something-real",
+            "unknown/whatever-goes-here",
+        ] {
+            validate_slug(slug, "unrelated-task").expect_err(&format!("{slug:?} must be refused"));
+        }
+    }
+
+    #[test]
+    fn a_slug_that_merely_restates_the_task_id_is_refused() {
+        // 107 rows in the existing log have slug == task id.
+        let err = validate_slug(
+            "demo5-prefix-parity/depth-ratchet",
+            "demo5_prefix_parity_depth_ratchet",
+        )
+        .unwrap_err();
+        assert!(err.contains("restatement"), "{err}");
+        assert!(
+            err.contains("demo5"),
+            "must quote the offending pair: {err}"
+        );
+    }
+
+    #[test]
+    fn malformed_slug_segments_are_refused() {
+        for slug in [
+            "Backend-Parity/dbi",       // uppercase
+            "backend parity/dbi-stack", // space
+            "backend_parity/dbi-stack", // underscore
+            "backend-parity/",          // empty segment
+            "/dbi-stack",               // empty segment
+            "backend-parity/-leading",  // leading hyphen
+            "backend-parity/trailing-", // trailing hyphen
+            "backend-parity/ab",        // too short to be descriptive
+        ] {
+            assert!(
+                validate_slug(slug, "unrelated-task").is_err(),
+                "{slug:?} must be refused"
+            );
+        }
+    }
+
+    // ---- WORKER FIELDS: agent + slot/cwd are mandatory and real ----
+
+    #[test]
+    fn a_missing_cwd_is_refused_so_every_bullet_names_a_workspace() {
+        let err = validate_workstream(
+            "backend-parity/dbi-stack-hash-determinism",
+            &json!({"agent": "hermit-w6", "task": "dbi_detlog_stack_hashes"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("cwd"), "{err}");
+    }
+
+    #[test]
+    fn a_cwd_that_is_not_a_path_is_refused() {
+        let err = validate_workstream(
+            "backend-parity/dbi-stack-hash-determinism",
+            &json!({"agent": "hermit-w6", "task": "dbi_detlog_stack_hashes", "cwd": "w6dbistack"}),
+        )
+        .unwrap_err();
+        assert!(err.contains("slot or working directory"), "{err}");
+    }
+
+    /// `{"agent":"none"}` is in the real log at 2026-08-07T01:19:42Z: it passed
+    /// because the old check only asked for a non-empty string.
+    #[test]
+    fn placeholder_agents_and_tasks_are_refused() {
+        for bad in ["none", "unknown", "n/a", "-", "TBD", "various", "pending"] {
+            validate_workstream(
+                "ci-hub/compile-repair",
+                &json!({"agent": bad, "task": "ci_hub_is_fleet", "cwd": "worktrees/ci/hermit"}),
+            )
+            .expect_err(&format!("agent {bad:?} must be refused"));
+            assert!(
+                validate_workstream(
+                    "ci-hub/compile-repair",
+                    &json!({"agent": "hermit-w5", "task": bad, "cwd": "worktrees/ci/hermit"}),
+                )
+                .is_err(),
+                "task {bad:?} must be refused"
+            );
+        }
+    }
+
+    // ---- TASK STATE CLASSIFICATION ----
+
+    #[test]
+    fn implemented_beats_in_progress_because_that_is_the_policy_shape() {
+        // Policy: implemented work KEEPS status in_progress until it lands, so
+        // reading status alone is exactly how ownership became "activity".
+        assert_eq!(
+            classify_task("IN_PROGRESS", &["determinism".into(), "implemented".into()]),
+            TaskState::AwaitingLanding
+        );
+        assert_eq!(
+            classify_task("IN_PROGRESS", &["determinism".into()]),
+            TaskState::Active
+        );
+        assert_eq!(classify_task("OPEN", &[]), TaskState::Active);
+        assert_eq!(classify_task("CLOSED", &[]), TaskState::Closed);
+        // Terminal wins over nothing else; an implemented+closed row is still
+        // not active, which is the property that matters.
+        assert_ne!(
+            classify_task("CLOSED", &["implemented".into()]),
+            TaskState::Active
+        );
+    }
+
+    #[test]
+    fn task_states_are_read_from_the_authority_not_from_the_caller() {
+        // Exactly the `tg sql` table shape.
+        let table = "\
+local_id | status | tags
+---------------------------------------------
+adversarial_review_claude_pr | IN_PROGRESS | [\"review\",\"implemented\"]
+liteinst_in_guest_backend | OPEN | []
+fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
+
+(3 rows)";
+        let states = parse_tg_sql_rows(table);
+        assert_eq!(
+            states["adversarial_review_claude_pr"],
+            TaskState::AwaitingLanding
+        );
+        assert_eq!(states["liteinst_in_guest_backend"], TaskState::Active);
+        assert_ne!(
+            states["fix-post-1.0-codex-invalid-sandbox-flag"],
+            TaskState::Active
+        );
+        assert_eq!(
+            states.len(),
+            3,
+            "header/rule/footer lines must not become rows"
+        );
+    }
+
+    #[test]
+    fn a_task_states_fixture_round_trips() {
+        let states = parse_task_states_json(
+            r#"{"a":{"status":"IN_PROGRESS","tags":["implemented"]},
+                "b":{"status":"IN_PROGRESS","tags":[]}}"#,
+        )
+        .unwrap();
+        assert_eq!(states["a"], TaskState::AwaitingLanding);
+        assert_eq!(states["b"], TaskState::Active);
+    }
 
     // ---- POSITIVE: total-open with an explicit repo scope is accepted ----
 
@@ -431,8 +1319,14 @@ mod tests {
     #[test]
     fn ready_only_basis_is_refused_under_open_prs_and_names_the_right_field() {
         for basis in [
-            "ready", "ready-only", "ready_non_draft", "non-draft", "nondraft",
-            "no-drafts", "excluding-drafts", "READY",
+            "ready",
+            "ready-only",
+            "ready_non_draft",
+            "non-draft",
+            "nondraft",
+            "no-drafts",
+            "excluding-drafts",
+            "READY",
         ] {
             let err = validate_open_prs_basis(basis)
                 .expect_err(&format!("{basis:?} is a subset and must be refused"));
@@ -452,7 +1346,15 @@ mod tests {
 
     #[test]
     fn a_missing_or_malformed_repo_scope_is_refused() {
-        for bad in ["", "   ", "hermit", "rrnewton/", "/hermit", "a/b/c", "rrnewton/hermit,"] {
+        for bad in [
+            "",
+            "   ",
+            "hermit",
+            "rrnewton/",
+            "/hermit",
+            "a/b/c",
+            "rrnewton/hermit,",
+        ] {
             assert!(
                 parse_repos(bad).is_err(),
                 "{bad:?} is not a usable denominator and must be refused"
@@ -497,7 +1399,10 @@ mod tests {
         let line = describe_entry(8, &new);
         assert!(line.contains(BASIS_TOTAL_OPEN), "{line}");
         assert!(line.contains("rrnewton/hermit+rrnewton/reverie"), "{line}");
-        assert!(!line.contains("unknown"), "a scoped row must not read unknown: {line}");
+        assert!(
+            !line.contains("unknown"),
+            "a scoped row must not read unknown: {line}"
+        );
     }
 
     /// THE REGRESSION THIS EXISTS FOR: 105 and 10 nineteen minutes apart looked
@@ -521,7 +1426,9 @@ mod tests {
         });
         let a = describe_entry(0, &total);
         let b = describe_entry(1, &ready_as_its_own_field);
-        assert!(a.contains("open_prs=105") && b.contains("open_prs=105"),
-            "the comparable quantity now agrees: {a} / {b}");
+        assert!(
+            a.contains("open_prs=105") && b.contains("open_prs=105"),
+            "the comparable quantity now agrees: {a} / {b}"
+        );
     }
 }
