@@ -171,8 +171,8 @@ build four times from one prepared tree in four different root paths, `native N1
 per-package control, `hermit A vs B` as the arm. Each package is its own control, so it is
 meaningful at small M.
 
-> **29 of 29 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — out of **35
-> attempted**, with all 35 native controls firing. **[C]**
+> **34 of 34 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — out of **36
+> attempted**, with all 36 native controls firing. **[C]**
 > Wrap: `hermit run --strict --no-rcb-time`. Every "hermit identical" cell has a native control
 > that diverged, so none is vacuous.
 
@@ -189,7 +189,7 @@ but **no cross-executor claim is supported either.**
 **An earlier figure of 13/13 in this report was inflated by a defect in the lane's own
 `summarize.sh`**, which counted every arm against the native denominator, silently crediting a
 package still building in one arm to another. The lane found and fixed it; each arm now reports its
-own completed denominator and the table is regenerated from `results.csv`. The 29/29 above is the
+own completed denominator and the table is regenerated from `results.csv`. The 34/34 above is the
 corrected figure.
 
 **The 29/29 replaced an earlier 7/13, and that correction is itself a result.** Both arms are
@@ -241,7 +241,7 @@ bitwise-identical 68,896-byte `.deb` (`55306cc9…`, `cmp` = 0) at L1. Unblocked
 the minimized regression went from a 120 s timeout after 432,359 repeated interceptions to passing
 in 0.01 s. **[C]**
 
-**Denominator discipline: 29/29 controlled wins of 35 attempted, and 29/8,688 against the paper's target set.**
+**Denominator discipline: 34/34 controlled wins of 36 attempted, and 34/8,688 against the paper's target set.** The default arm (no `--no-rcb-time`) is 28/34 and remains labelled confounded.
 The harness records **no** per-package durations, deliberately: any duration printed by a build
 under Hermit is virtual time, so **no overhead or slowdown factor may be derived from this
 experiment.** This
@@ -429,6 +429,13 @@ longer exists.
 7. **Small N**: 10 / 3 / 2 / 1 depending on arm. `bash_random` at 3/10 then 5/10 shows N=10 can
    miss a sub-10%-per-run regime.
 8. **`/nix` is chef-ephemeral** on this host.
+9. **`du` is not a disk measurement on this filesystem.** Run roots are `cp -a --reflink=auto`
+   copies on btrfs, so `du` counts every reflinked copy in full: a directory reading **94 GB by
+   `du`** measured **4.09 GiB total / 0.23 GiB exclusive** under `btrfs filesystem du -s`. The
+   coordinator raised a false disk alarm against the wrong lane on a `du` number and withdrew it;
+   the real consumers are the five Rust `target/` trees at ~71 GiB exclusive. `worktree-gc.sh`'s
+   own header documents this ~3.9x overstatement and was not consulted. **The authority is
+   `btrfs filesystem du -s` and its Exclusive column.**
 9. **Timing numbers printed *by a wrapped build* are virtual, not wall.** nixpkgs' stdenv times
    phases with bash's `$SECONDS`, which under the wrap reads Hermit's **virtual** clock. Measured:
    `sleep 1` under Hermit prints `SECONDS=3`. So every *"completed in N minutes"* line in a wrapped
