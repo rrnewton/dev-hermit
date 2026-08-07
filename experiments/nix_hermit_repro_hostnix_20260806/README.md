@@ -44,12 +44,13 @@ need it?
      **FIFO** blocking at `wait_for_partner` (**still open** — this is what keeps
      N=0). My first diagnosis ("pipe EOF not delivered") was **wrong and is
      retracted in place**, along with the invalid `/proc` evidence behind it.
-5. **Both blockers are now fixed, and a real package got much further.** With
-   #1851 and #1864, `nixpkgs.lensfun` — the one real on-machine
-   nondeterministic package found — completed configure, build and install
-   under the wrap and reached `fixupPhase`; previously it never cleared cmake
-   configure. Whether its N=3 canonical rebuild finishes is recorded in
-   `results.csv` under `lensfun-epollfix`.
+5. **N = 0, and the distance to N = 1 is one known bug.** `nixpkgs.lensfun` —
+   the one real on-machine nondeterministic package found, root cause confirmed
+   (`date +%s` → `$out/share/lensfun/version_1/timestamp.txt`) — now **clears
+   configure, build and install** under the wrap and hangs in `fixupPhase`.
+   Before tonight it never cleared cmake configure. That is a precise
+   distance-to-goal, not a failure: one open bug (instance 3 below), with its
+   stopped task, held turn, queued partner and settling check all recorded.
 6. **CA store: crisp negative.** `nix --check` does **not** detect nondeterminism
    in a `__contentAddressed` derivation on nix 2.30.2 (nix#5336 reproduces), so
    CA cannot be the oracle. Hermit *does* collapse a CA derivation onto one
@@ -537,35 +538,91 @@ still block, and says so in the code.
 past cmake configure. With the fix it completed configure, build **and install**
 and reached `fixupPhase`.
 
-**The pattern, named.** Three instances were found, with three *different*
-proximate causes. That is why fixing them one at a time is the wrong shape:
+**The pattern, named — this is the generalizable finding, worth more than any
+single fix:**
 
 > **A Detcore handler that lets the guest execute an indefinitely-blocking
 > syscall while holding the scheduler turn deadlocks whenever the only task that
 > can unblock it is queued behind.**
 
+**The audit criterion, stated so it can be acted on:**
+
+> **Every syscall that can block indefinitely must either yield the scheduler
+> turn or be modeled in the `BlockedPool`.**
+
+Detcore marks many such syscalls with `(MAYHANG)` comments, but the marking is
+not the safety property. Two kinds of gap survive it:
+
+1. **Unmarked blockers.** `openat` on a FIFO blocks in-kernel at
+   `wait_for_partner` and carries no `(MAYHANG)` marking at all.
+2. **Marked-and-routed, but only correct when upstream metadata happens to be
+   right.** `handle_read` *does* route pipes to the turn-yielding path — it just
+   dispatches on `FdType`, and `openat` was typing fds by pathname string, so a
+   pipe reached via `/dev/fd/63` was labelled `Regular` and took the blocking
+   branch. The handler was correct; its input was not.
+
+The tree already documents the underlying hazard, in `helpers.rs`, and the note
+is worth reading before anyone attempts instance 3: *"a pipe reader and its
+paired writer are not independent, so descheduling the reader as 'external
+blocking IO' deadlocks the sequentialized scheduler (the documented R/R pipe
+hang)"*.
+
+### The four instances
+
 | # | syscall | why it blocked while holding the turn | status |
 |---|---|---|---|
-| 1 | `epoll_pwait` | **no nonblocking path exists.** `handle_epoll_wait` has one; `epoll_pwait` had none — and glibc routes `epoll_wait(2)` to `epoll_pwait`, so nothing reached the correct handler | fixed, [#1864](https://github.com/rrnewton/hermit/pull/1864) |
-| 2 | `read` on a pipe | **a nonblocking path exists but was not taken.** `handle_read` dispatches on `FdType`; `handle_openat` classified by *pathname string*, so `/dev/fd/63` — bash process substitution, a PIPE — became `FdType::Regular` and took the blocking branch | fixed (patch on [#1850](https://github.com/rrnewton/hermit/issues/1850); commit blocked, see below) |
-| 3 | `openat` on a **FIFO** | **no nonblocking path exists.** Opening a FIFO blocks in the kernel at `wait_for_partner` until the other end is opened | **OPEN — this is what still keeps N=0** |
+| 1 | `epoll_pwait` | **no nonblocking path existed.** `handle_epoll_wait` had one; glibc implements `epoll_wait(2)` as `epoll_pwait`, so nothing reached the correct handler | fixed, [#1864](https://github.com/rrnewton/hermit/pull/1864) |
+| 2 | `read` on a pipe | **path existed, not taken.** `openat` typed fds by *pathname string*, so `/dev/fd/63` (bash process substitution — a PIPE) became `FdType::Regular` | fixed (patch on [#1850](https://github.com/rrnewton/hermit/issues/1850)) |
+| 3 | `openat` on a **FIFO** | **no nonblocking form exists at the kernel level**; blocks at `wait_for_partner` | **OPEN — needs new machinery; design below** |
+| 4 | `epoll_pwait2` | **not fixed by #1864, and #1864 makes its doc comment false.** Same pre-fix shape, marked `(MAYHANG)`, and its own comment records that *recent glibc routes `epoll_wait`/`epoll_pwait` through it* — so on such a glibc/kernel, #1864 is bypassed and the deadlock returns | **OPEN** (flagged on #1864) |
 
-Instance 2 is the same proxy trap as everything else here: *a pathname is a proxy
-for a file's type; the authority is the kernel's `S_IFMT`.* Detcore already
-classifies correctly on the SaBRe fallback path
-(`discover_fd_from_current_process`, via `S_IFIFO`/`S_IFSOCK`); `openat` had
-simply never been brought in line. Before the fix, the string `Pipe` appears
-**zero times** in 30 MB of debug log.
+Instance 4 is a reachability *risk*, not an observed failure: this host's traces
+show plain `epoll_pwait`, so #1864 does engage here. I did not measure a host
+where glibc selects `epoll_pwait2`.
 
-The audit criterion is enumerable, and worth more than three individual fixes:
-**every syscall that can block indefinitely must either yield the turn or be
-modeled in the `BlockedPool`.** Detcore already marks many with `(MAYHANG)`
-comments; the gap is the ones that can block and are not marked, plus the ones
-routed correctly only when upstream metadata happens to be right.
+### Instance 3 — measured semantics and why it is not a flag flip
 
-**Where instance 3 stops, exactly — so the next person starts here.** Reproducer
-is `nix/nondet-demo.nix` with `fixupPhase` enabled (~1 s of real build), under
-the seam, with #1864 and the instance-2 patch applied:
+Which side blocks, decoded from the scheduler log rather than assumed: `arg2:
+577` = `O_WRONLY|O_CREAT|O_TRUNC`, the **write** side.
+
+`harness/fifo-open-semantics.c` measures what `O_NONBLOCK` actually does:
+
+| probe | result |
+|---|---|
+| `O_WRONLY\|O_NONBLOCK`, no reader | **ENXIO** |
+| `O_WRONLY\|O_NONBLOCK`, reader present | succeeds |
+| `O_WRONLY`, no reader | hangs (the bug) |
+| `O_RDONLY\|O_NONBLOCK`, no writer | succeeds immediately |
+| ...then clear `O_NONBLOCK` and `read()` | **returns 0 — spurious EOF** |
+| `O_RDONLY`, no writer | hangs |
+
+- **Write side is convertible**: `ENXIO` is a precise "no reader yet", so a
+  yield-and-retry loop returns at exactly the moment a blocking open would.
+  And this is the side that deadlocks here.
+- **Read side is not**: the `O_NONBLOCK` open returns a descriptor whose first
+  `read()` reports EOF, so a guest that should have waited sees end-of-input.
+  Linux has no non-consuming "does this FIFO have a writer?" probe.
+
+**Why it was not implemented**, from the source rather than guessed:
+
+1. **The turn-yielding framework is fd-keyed and `open` has no fd yet.**
+   `ioaction_based_on_fd_status` begins
+   `get_fd(wrapped).unwrap_or_else(|| panic!(...))`; `get_fd` has no `Openat`
+   arm. `open`/`openat` *create* descriptors, so they cannot enter
+   `execute_nonblockable_fd_syscall` at all.
+2. **Every would-block predicate keys on `EAGAIN`/`EWOULDBLOCK`**
+   (`syscall_would_have_blocked`). FIFO write-open signals `ENXIO`, which none
+   of them match.
+
+So it needs a new open-specific retry path (write side) and `BlockedPool`
+modelling (read side) — more than is safe to land unvalidated. Recommended
+design is on [#1850](https://github.com/rrnewton/hermit/issues/1850).
+
+### Where instance 3 stops, exactly
+
+Reproducer is `nix/nondet-demo.nix` with `fixupPhase` enabled — **~1 second of
+real build**, not 25 minutes — under the seam, with #1864 and the instance-2
+patch applied:
 
 ```
 bash  state=t  ptrace_stop  sysc=56 (clone)
@@ -578,11 +635,10 @@ COMMIT turn 2261, dettid 107 using resources {Path(".../tmp.XXXXXXXX/elf"): R}
 <end of log>
 ```
 
-- **Stopped task**: dtid 107, blocked in `openat` on a FIFO at `wait_for_partner`.
-- **Held turn**: 2261, committed to dtid 107.
+- **Stopped task**: dtid 107, `openat` on a FIFO, kernel wchan `wait_for_partner`, flags `O_WRONLY|O_CREAT|O_TRUNC`.
+- **Held turn**: 2261, `queue len 3`.
 - **Queued task**: dtid 109, inbound `openat` on the same FIFO — the partner.
-- **Settling check**: `hermit --log=debug --log-file=…`; confirm turn 2262 is
-  never committed and dtid 109 never gets one.
+- **Settling check**: `hermit --log=debug`; confirm turn 2262 never commits and dtid 109 never receives one.
 
 **Commit blocked, not abandoned.** `ci/run-reverie-pin-check.sh` blocks every
 commit fleet-wide: `main` pins reverie `6144323c` while reverie main has moved to
@@ -757,11 +813,12 @@ mechanism".
 |---|---|---|---|---|
 | R3a chown/uid | [#1851](https://github.com/rrnewton/hermit/pull/1851) | `58c737b847d2493e351a9090dba4a2abda6c815c` | **FAIL** — `lint.rustfmt` | **mine**: I did not run `cargo fmt`. Fix is cosmetic (import order + one loop collapse), prepared and posted on the PR, but **cannot be committed** — see below |
 | R3b-1 `epoll_pwait` | [#1864](https://github.com/rrnewton/hermit/pull/1864) | `b0bfb1c635e81e4210f63ecdc2749edb633d9072` | **FAIL** — `test: strict-compat` only | not this change: `Reverie dependency pin equals latest main`. Everything exercising the change passed |
-| R3b-2 `openat` fd type | patch only, on [#1850](https://github.com/rrnewton/hermit/issues/1850) | — | not run | same pin lint blocks the commit |
+| R3b-2 `openat` fd type | patch only, on [#1850](https://github.com/rrnewton/hermit/issues/1850) | — | not run | pin lint blocked the commit at the time; the pin has since caught up (`038e9939`), so this is now openable |
 
-**The common blocker.** `ci/run-reverie-pin-check.sh` runs as a pre-commit hook
-and fails every commit in the repository: `main` pins reverie `6144323c` while
-reverie main has moved to `038e9939`. Two workarounds were available and both
+**The common blocker (since cleared).** `ci/run-reverie-pin-check.sh` runs as a
+pre-commit hook and, for several hours, failed every commit in the repository:
+`main` pinned reverie `6144323c` while reverie main had moved to `038e9939`.
+Main has since caught up, so this no longer blocks. Two workarounds were available and both
 were declined deliberately — bumping the pin inside a product change buries an
 unrelated pin advance, and `--no-verify` waives a versioned gate that is not this
 task's to waive. Both patches are preserved as text
@@ -854,6 +911,7 @@ stops the harness before it fills the disk.
 | `harness/dose-sweep.sh` | minimum-dose sweep over namespace/clock flag sets |
 | `harness/screen-batch.sh` | two-step real-package triage (native, then hermit) |
 | `harness/spawn-cost.sh` | per-process cost of the seam |
+| `harness/fifo-open-semantics.c` | measures the FIFO `O_NONBLOCK` read/write asymmetry that decides instance 3's design |
 | `harness/pipe-wakeup-probe.c` | six-probe pipe-edge differential with a must-hang control; refuted the first #1850 diagnosis |
 | `harness/cmake-hang-repro.sh` | 90-second reproducer for the scheduler deadlock (#1850) |
 | `harness/namespace-refusal-probe.sh` | why the seam wraps the builder and not `nix` (with the false-discriminator warning) |

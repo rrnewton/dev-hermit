@@ -348,7 +348,7 @@
       "status": "PATTERN; 2 of 3 instances fixed, instance 3 OPEN and is what keeps N=0",
       "issue": "https://github.com/rrnewton/hermit/issues/1850",
       "statement": "A Detcore handler that lets the guest execute an indefinitely-blocking syscall while holding the scheduler turn deadlocks whenever the only task that can unblock it is queued behind.",
-      "audit_criterion": "every syscall that can block indefinitely must either yield the turn or be modeled in the BlockedPool. Detcore marks many with (MAYHANG) comments; the gap is the ones that can block and are not marked, plus the ones routed correctly only when upstream metadata (e.g. FdType) happens to be right.",
+      "audit_criterion": "EVERY SYSCALL THAT CAN BLOCK INDEFINITELY MUST EITHER YIELD THE SCHEDULER TURN OR BE MODELED IN THE BlockedPool. (MAYHANG) comments mark many but the marking is not the safety property. Two kinds of gap survive it: (1) UNMARKED blockers -- openat on a FIFO blocks at wait_for_partner with no marking at all; (2) MARKED AND ROUTED but correct only when upstream metadata happens to be right -- handle_read does route pipes to the yielding path, but dispatches on FdType, and openat typed fds by pathname string, so a pipe reached via /dev/fd/63 was labelled Regular and took the blocking branch. The handler was correct; its input was not.",
       "instances": [
         {
           "n": 1,
@@ -377,9 +377,35 @@
             "queued_task": "dtid 109, inbound openat on the same FIFO -- the partner that would release it",
             "settling_check": "hermit --log=debug; confirm turn 2262 is never committed and dtid 109 never receives one"
           },
-          "reproducer": "nix/nondet-demo.nix with fixupPhase enabled, under the exec-builder seam; ~1s of real build then hangs"
+          "reproducer": "nix/nondet-demo.nix with fixupPhase enabled, under the exec-builder seam; ~1s of real build then hangs",
+          "measured_fifo_semantics": {
+            "blocked_side": "O_WRONLY (log arg2=577 = O_WRONLY|O_CREAT|O_TRUNC), decoded not assumed",
+            "probe": "harness/fifo-open-semantics.c",
+            "O_WRONLY|O_NONBLOCK no reader": "ENXIO",
+            "O_WRONLY|O_NONBLOCK reader present": "succeeds",
+            "O_RDONLY|O_NONBLOCK no writer": "succeeds immediately",
+            "then clear O_NONBLOCK and read()": "returns 0 -- SPURIOUS EOF; this is why the read side is not convertible"
+          },
+          "why_not_implemented": [
+            "the turn-yielding framework is FD-KEYED and open has no fd yet: ioaction_based_on_fd_status begins get_fd(wrapped).unwrap_or_else(|| panic!(...)) and get_fd has no Openat arm, so open/openat cannot enter execute_nonblockable_fd_syscall at all",
+            "every would-block predicate keys on EAGAIN/EWOULDBLOCK (syscall_would_have_blocked); FIFO write-open signals ENXIO, which none match"
+          ],
+          "recommended_design": {
+            "write_side": "in handle_openat, when a host stat of the resolved path says S_IFIFO and the access mode is O_WRONLY without O_NONBLOCK, inject with O_NONBLOCK and retry on ENXIO, yielding the turn between attempts via a ResourceID::InternalIOPolling request, then fcntl(F_SETFL) the flag back off. Needs a new would_block == ENXIO predicate.",
+            "read_side": "model it in the BlockedPool: register the task as blocked on a FIFO-partner resource keyed by the FIFO's identity, deschedule, and wake when another task opens the opposite end. Only option that preserves wait-for-writer semantics.",
+            "judgement": "more than is safe to land unvalidated in the hottest syscall handler; stopped at the design per coordinator instruction"
+          }
+        },
+        {
+          "n": 4,
+          "syscall": "epoll_pwait2",
+          "status": "OPEN",
+          "cause": "handle_epoll_pwait2 on main is byte-for-byte the pre-#1864 shape (empty resource_request then record_or_replay), is marked (MAYHANG), and its own doc comment says 'Detcore treats it exactly like epoll_pwait' -- which #1864 makes FALSE.",
+          "reachability_risk": "that same comment records that recent glibc routes epoll_wait/epoll_pwait through epoll_pwait2. On such a glibc/kernel, #1864 is bypassed and the deadlock returns. NOT observed here: this host's traces show plain epoll_pwait, so #1864 does engage. Flagged as a risk not ruled out.",
+          "note": "its timeout is a struct timespec* rather than int-milliseconds, so it needs its own timeout conversion, not a copy of the epoll_pwait arm"
         }
-      ]
+      ],
+      "prior_art_in_tree": "helpers.rs already documents the hazard: 'a pipe reader and its paired writer are not independent, so descheduling the reader as external blocking IO deadlocks the sequentialized scheduler (the documented R/R pipe hang)'. Read this before attempting instance 3's BlockedPool route."
     }
   ]
 }
