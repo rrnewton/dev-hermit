@@ -199,7 +199,7 @@ fi
 printf '%-24s %8s %8s %5s %5s %5s %7s  %s\n' SLOT du_GB incr_GB busy clean pushed idle_h status
 total=0
 orphan_gb=0; orphan_list=""
-declare -A SLOT_GB SLOT_INCR SLOT_BUSY SLOT_STATE
+declare -A SLOT_GB SLOT_BUSY SLOT_STATE
 for slot_dir in "${SLOTS[@]}"; do
     slot=$(basename "$slot_dir")
     gb=$(du_gb "$slot_dir"); total=$((total+gb))
@@ -208,7 +208,7 @@ for slot_dir in "${SLOTS[@]}"; do
         < <(find "$slot_dir" -type d -path '*/target/*/incremental' 2>/dev/null)
     busy=no; slot_busy "$slot_dir" && busy=YES
     st=$(slot_state "$slot"); [[ -z $st ]] && st="unreg"
-    SLOT_GB[$slot]=$gb; SLOT_INCR[$slot]=$incr; SLOT_BUSY[$slot]=$busy; SLOT_STATE[$slot]=$st
+    SLOT_GB[$slot]=$gb; SLOT_BUSY[$slot]=$busy; SLOT_STATE[$slot]=$st
     flag=""; (( gb > SLOT_BUDGET_GB )) && flag=" <<OVER-BUDGET"
     wt_all_clean=yes
     for c in hermit reverie liteinst2; do wt_clean "$slot_dir/$c" || wt_all_clean=no; done

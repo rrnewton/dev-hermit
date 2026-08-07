@@ -180,22 +180,44 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@command -v rustfmt >/dev/null 2>&1 || { echo 'ERROR: rustfmt is required.' >&2; exit 1; }
 	@command -v shellcheck >/dev/null 2>&1 || { echo 'ERROR: shellcheck is required.' >&2; exit 1; }
 	@command -v python3 >/dev/null 2>&1 || { echo 'ERROR: python3 is required.' >&2; exit 1; }
-	rustfmt --edition 2021 --check scripts/*.rs
-	shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push \
-	    .orc/plugins/hermit-dev/gh-issue-create \
-	    .orc/plugins/hermit-dev/gh-coord-comment \
-	    .orc/plugins/hermit-dev/gh-coord-pr-create
-	python3 -m py_compile scripts/*.py
-	python3 -m unittest discover -s scripts -p 'test_*.py'
-	@$(MAKE) --no-print-directory check-rust-error-string-proxies
-	@scripts/check-parent-gitmodules.sh
-	@scripts/check-agent-utils-pin.rs
-	@scripts/primary_checkout.py check
-	@$(MAKE) --no-print-directory check-codex-setup
-	@$(MAKE) --no-print-directory check-claude-md-size
-	@$(MAKE) --no-print-directory check-portability
-	@$(MAKE) --no-print-directory check-harness-help
-	@$(MAKE) --no-print-directory check-compat-envelope-tests
+	@# EVERY GATE RUNS. Make aborts a recipe at the first nonzero line, which made
+	@# this target report only its earliest failure and silently skip everything
+	@# after it -- measured 2026-08-07: rustfmt failed on 6 unformatted scripts/*.rs,
+	@# so shellcheck never ran, and the 133 discovered scripts/test_*.py tests never
+	@# ran either. Newly wired tests were nominal, not enforced. A lint target that
+	@# hides its own coverage is worse than a slow one, so each gate is run through
+	@# `gate`, which records the failure and continues; the target still exits
+	@# nonzero, with EVERY failing gate named at the end rather than just the first.
+	@set -u; failures=''; \
+	gate() { \
+	  name="$$1"; shift; \
+	  printf '\n===== lint gate: %s =====\n' "$$name"; \
+	  if sh -c "$$*"; then \
+	    printf 'lint gate OK       : %s\n' "$$name"; \
+	  else \
+	    rc=$$?; printf 'lint gate FAILED   : %s (rc=%s)\n' "$$name" "$$rc"; \
+	    failures="$$failures $$name"; \
+	  fi; \
+	}; \
+	gate rustfmt         'rustfmt --edition 2021 --check scripts/*.rs'; \
+	gate shellcheck      'shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create'; \
+	gate py-compile      'python3 -m py_compile scripts/*.py'; \
+	gate py-unittest     'python3 -m unittest discover -s scripts -p "test_*.py"'; \
+	gate error-proxies   '$(MAKE) --no-print-directory check-rust-error-string-proxies'; \
+	gate gitmodules      'scripts/check-parent-gitmodules.sh'; \
+	gate agent-utils-pin 'scripts/check-agent-utils-pin.rs'; \
+	gate primary-fresh   'scripts/primary_checkout.py check'; \
+	gate codex-setup     '$(MAKE) --no-print-directory check-codex-setup'; \
+	gate claude-md-size  '$(MAKE) --no-print-directory check-claude-md-size'; \
+	gate portability     '$(MAKE) --no-print-directory check-portability'; \
+	gate harness-help    '$(MAKE) --no-print-directory check-harness-help'; \
+	gate compat-envelope '$(MAKE) --no-print-directory check-compat-envelope-tests'; \
+	echo; \
+	if [ -n "$$failures" ]; then \
+	  echo "lint: FAILED gates:$$failures"; \
+	  exit 1; \
+	fi; \
+	echo 'lint: all gates passed'
 
 check-compat-envelope-tests: ## Run the compat-envelope renderer unit tests (fixture-only; no hermit build)
 	@compat-envelope/tests/run-all.sh
