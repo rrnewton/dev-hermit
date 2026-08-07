@@ -1,0 +1,103 @@
+:: Run1...
+:: Run2...
+:: Comparing logs... /tmp/run1_log_fXtMO and /tmp/run2_log_3ys10
+Logs contain 72 | 72 messages total
+Logs contain 70 | 70 detcore-specific messages
+Logs contain 72 | 72 INFO messages
+Logs contain 59 | 59 DETLOG & scheduler COMMIT messages
+Canonicalizing host addresses (ordinal by first appearance); comparing everything else exactly...
+  Comparing INFO messages...
+
+(INFO) Mismatch at log messages 49 (run 1) and 49 (run 2): [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok([0m[1;48;5;52;31m1[0m[31m)"[0m
+[32m>"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok([0m[1;48;5;22;32m2[0m[32m)"[0m
+(INFO) Original entries before normalization: [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok([0m[1;48;5;52;31m1[0m[31m)"[0m
+[32m>"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok([0m[1;48;5;22;32m2[0m[32m)"[0m
+Divergent syscall context:
+  run 1, log message 49: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(1)
+  run 2, log message 49: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(2)
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #14: brk(0x4e6d80) = Ok(5139840)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #15: brk(0x4e7000) = Ok(5140480)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #14: brk(0x4e6d80) = Ok(5139840)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #15: brk(0x4e7000) = Ok(5140480)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+
+(INFO) Mismatch at log messages 52 (run 1) and 52 (run 2): [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;52;31m1[0m[31m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?"[0m
+[32m>"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;22;32m2[0m[32m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?"[0m
+(INFO) Original entries before normalization: [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;52;31m1[0m[31m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?"[0m
+[32m>"INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;22;32m2[0m[32m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?"[0m
+Divergent syscall context:
+  run 1, log message 52: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> "/tmp/w2path_mut_path_1", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?
+  run 2, log message 52: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> "/tmp/w2path_mut_path_2", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #20: close(3) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(2)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #20: close(3) = Ok(0)
+
+(INFO) Mismatch at log messages 53 (run 1) and 53 (run 2): [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore::scheduler: [sched-step5] >>>>>>>\n\n COMMIT turn 3, dettid 3 using resources {Path(\"/tmp/w2path_mut_path_[0m[1;48;5;52;31m1[0m[31m\"): R}, on previously committed 1_767_225_600.216_762_500s"[0m
+[32m>"INFO detcore::scheduler: [sched-step5] >>>>>>>\n\n COMMIT turn 3, dettid 3 using resources {Path(\"/tmp/w2path_mut_path_[0m[1;48;5;22;32m2[0m[32m\"): R}, on previously committed 1_767_225_600.216_762_500s"[0m
+(INFO) Original entries before normalization: [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore::scheduler: [sched-step5] >>>>>>>\n\n COMMIT turn 3, dettid 3 using resources {Path(\"/tmp/w2path_mut_path_[0m[1;48;5;52;31m1[0m[31m\"): R}, on previously committed 1_767_225_600.216_762_500s"[0m
+[32m>"INFO detcore::scheduler: [sched-step5] >>>>>>>\n\n COMMIT turn 3, dettid 3 using resources {Path(\"/tmp/w2path_mut_path_[0m[1;48;5;22;32m2[0m[32m\"): R}, on previously committed 1_767_225_600.216_762_500s"[0m
+Divergent syscall context:
+  run 1, log message 52: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> "/tmp/w2path_mut_path_1", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?
+  run 2, log message 52: INFO detcore: DETLOG [syscall][detcore, dtid 3] inbound syscall: openat(-100, 0x7fffffffeaa0 -> "/tmp/w2path_mut_path_2", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = ?
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #20: close(3) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(2)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #20: close(3) = Ok(0)
+
+(INFO) Mismatch at log messages 55 (run 1) and 55 (run 2): [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #21: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;52;31m1[0m[31m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)"[0m
+[32m>"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #21: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;22;32m2[0m[32m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)"[0m
+(INFO) Original entries before normalization: [1mDiff[0m [31m< left[0m / [32mright >[0m :
+[31m<"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #21: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;52;31m1[0m[31m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)"[0m
+[32m>"INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #21: openat(-100, 0x7fffffffeaa0 -> \"/tmp/w2path_mut_path_[0m[1;48;5;22;32m2[0m[32m\", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)"[0m
+Divergent syscall context:
+  run 1, log message 55: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #21: openat(-100, 0x7fffffffeaa0 -> "/tmp/w2path_mut_path_1", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+  run 2, log message 55: INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #21: openat(-100, 0x7fffffffeaa0 -> "/tmp/w2path_mut_path_2", OFlag(O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+  Prior completed syscalls for run 1:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #20: close(3) = Ok(0)
+  Prior completed syscalls for run 2:
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #16: mprotect(0x4b9000, 16384, ProtFlags(PROT_READ)) = Ok(0)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #17: openat(-100, 0x490010 -> "/tmp/w2state_mut_path", OFlag(O_APPEND | O_CREAT | O_RDWR), Mode(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) = Ok(3)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #18: write(3, 0x490031, 1) = Ok(1)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #19: lseek(3, 0, SEEK_END) = Ok(2)
+    INFO detcore: DETLOG [syscall][detcore, dtid 3] finish syscall #20: close(3) = Ok(0)
+
+Done processing logs, differences found.
+:: Log differences found between runs.
+:: Respective Logs retained for further inspection: /tmp/run1_log_fXtMO /tmp/run2_log_3ys10
+:: Failure: nondeterministic.
+Error: Mismatch between run 1 and run 2 outputs (logs retained).
