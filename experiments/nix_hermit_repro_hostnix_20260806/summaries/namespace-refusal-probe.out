@@ -1,0 +1,13 @@
+== FALSE DISCRIMINATOR: bare unshare(CLONE_NEWNS) ==
+  native                                                     -> rc=-1 errno=1
+  hermit run --tmp=/tmp --no-rcb-time --max-timeslice disabled -> rc=-1 errno=1
+  ^ EPERM BOTH WAYS. Proves nothing about hermit.
+
+== DISCRIMINATING: unprivileged user+mount unshare (what nix's sandbox does) ==
+  native   unshare --mount --user --map-root-user            -> OK
+  hermit   unshare --mount --user --map-root-user            -> EPERM (refused)
+
+CONCLUSION: nix's sandboxed builder path unshares before every build, so
+nix cannot run INSIDE hermit and build. The exec-builder seam is correct
+BECAUSE it inverts the nesting: nix does its namespace work on the host and
+execve's a builder that hermit then owns.

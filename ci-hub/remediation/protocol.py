@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -17,6 +18,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ci-hub"))
@@ -30,7 +32,60 @@ from nonzero_result import is_zero_test_green
 
 DEFAULT_REPO = "rrnewton/hermit"
 DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
-DEFAULT_WORKFLOW_FILE = "ci-portable.yml"
+DEFAULT_WORKFLOW_FILE = ".github/workflows/ci-portable.yml"
+PRIVILEGED_WORKFLOW = "CI (privileged)"
+PRIVILEGED_WORKFLOW_FILE = ".github/workflows/ci-privileged.yml"
+REVERIE_REPO = "rrnewton/reverie"
+REVERIE_WORKFLOW = "Rust"
+REVERIE_WORKFLOW_FILE = ".github/workflows/ci.yml"
+VERIFICATION_POLICY_SCHEMA_VERSION = 2
+_CURRENT_VERIFICATION_POLICY_VERSION = {
+    # v3 makes the owner-authorized Hermit hosted authority the portable job;
+    # retain v2 below so already-open obligations keep their frozen 2-job policy.
+    DEFAULT_REPO: 3,
+    REVERIE_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
+}
+# Each tuple is (exact workflow path, exact workflow name, exact job name).
+# The positive count is persisted beside this complete set and must equal its
+# cardinality.  Workflow-level conclusions are deliberately absent: only the
+# exact-SHA jobs below are hosted authority.
+_VERSIONED_REPO_GITHUB_JOBS = {
+    (DEFAULT_REPO, 2): (
+        (
+            DEFAULT_WORKFLOW_FILE,
+            DEFAULT_WORKFLOW,
+            "Regular tests (GitHub-managed portable)",
+        ),
+        (
+            PRIVILEGED_WORKFLOW_FILE,
+            PRIVILEGED_WORKFLOW,
+            "Privileged capability and E2E tests",
+        ),
+    ),
+    (DEFAULT_REPO, 3): (
+        (
+            DEFAULT_WORKFLOW_FILE,
+            DEFAULT_WORKFLOW,
+            "Regular tests (GitHub-managed portable)",
+        ),
+    ),
+    (REVERIE_REPO, 2): (
+        (
+            REVERIE_WORKFLOW_FILE,
+            REVERIE_WORKFLOW,
+            "Regular tests (GitHub-hosted)",
+        ),
+        (
+            REVERIE_WORKFLOW_FILE,
+            REVERIE_WORKFLOW,
+            "Host-dependent tests (self-hosted)",
+        ),
+    ),
+}
+_DEFAULT_REPO_SOURCES = {
+    DEFAULT_REPO: ROOT / "hermit",
+    REVERIE_REPO: ROOT / "reverie",
+}
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
 DEFAULT_NETWORK_TIMEOUT = float(
@@ -50,7 +105,7 @@ DEFAULT_NETWORK_TIMEOUT = float(
 #
 # The fix is a WALL BUDGET the gate honours ITSELF, so it always returns under
 # its own power with a typed result instead of being killed with none. Measured
-# 2026-08-07 on devbig014: the work is ~1.7s of user CPU; the tail is blocking
+# 2026-08-07 on the shared dev host: the work is ~1.7s of user CPU; the tail is blocking
 # network wait (a 31.9s run showed 6144 voluntary context switches against ~600
 # on fast runs, with flat CPU). So the budget is not a guess about how long the
 # work takes -- it is the outer bound minus measured startup and the
@@ -75,6 +130,19 @@ _LOCAL_INFRA_EXITS = frozenset((137, 143))
 DEFAULT_LOCAL_REDISPATCH_LIMIT = int(
     os.environ.get("CI_HUB_LOCAL_REDISPATCH_LIMIT", "2")
 )
+LAUNCH_REGISTRATION_TIMEOUT = float(
+    os.environ.get("CI_HUB_LAUNCH_REGISTRATION_TIMEOUT", "10")
+)
+LOCAL_RECEIPT_AUTHORITY = ROOT / "ci-hub/ci-hub"
+LOCAL_RECEIPT_CANONICALIZATION = "serde_json::to_vec(HistoryRow)-v1"
+LOCAL_RECEIPT_COUNT_DERIVATION = (
+    "selected_tests=executed_tests;discovered_tests=executed_tests+filtered_tests"
+)
+LOCAL_SCHEMA4_COVERAGE_BASIS = "legacy-schema4-full-gates-and-aggregate-counts"
+LOCAL_DECLARED_COVERAGE_BASIS = "declared-per-node"
+LOCAL_SCHEMA4_COVERAGE_STATUS = "grandfathered-unknown"
+LOCAL_DECLARED_COVERAGE_STATUS = "satisfied"
+LOCAL_POLICY_SKIP_AUTHORITY = "ci-hub-local-receipt-policy-v1"
 
 # A clean nonzero exit is NOT automatically a failing answer. Tonight three
 # separate ENVIRONMENTAL failures — a sandbox EPERM on a re-validate, a
@@ -323,6 +391,616 @@ class ProtocolError(RuntimeError):
     """The dual-verification protocol could not be armed or polled."""
 
 
+def _local_receipt_problem(
+    report: object,
+    *,
+    repo: str,
+    sha: str,
+    returncode: int,
+) -> str | None:
+    """Validate the envelope returned by the sole receipt authority.
+
+    The semantic predicate itself deliberately remains single-sourced in
+    ``ci-hub validate-status``.  This consumer proves that it invoked that
+    authority for the exact SHA and received a non-vacuous dereferenced
+    qualifying record instead of trusting ``validate.sh``'s process exit.
+    """
+    if returncode != 0:
+        return f"canonical verifier exited {returncode}"
+    if repo != DEFAULT_REPO:
+        return (
+            f"canonical local receipt authority is bound to {DEFAULT_REPO}, not {repo}"
+        )
+    if not isinstance(report, Mapping):
+        return "canonical verifier report is not an object"
+    if type(report.get("schema_version")) is not int or report["schema_version"] != 1:
+        return "canonical verifier report schema is unsupported"
+    if report.get("repo") != repo:
+        return "canonical verifier report is not bound to the repository"
+    if report.get("sha") != sha:
+        return "canonical verifier report is not bound to the landed SHA"
+    if (
+        report.get("verdict") != "VALIDATED"
+        or type(report.get("exit_code")) is not int
+        or report["exit_code"] != 0
+    ):
+        return "canonical verifier did not return VALIDATED/0"
+    qualifying_count = report.get("qualifying_count")
+    if type(qualifying_count) is not int or qualifying_count <= 0:
+        return "canonical verifier reported no qualifying counted receipt"
+    disqualified_count = report.get("disqualified_count")
+    if type(disqualified_count) is not int or disqualified_count < 0:
+        return "canonical verifier reported an invalid disqualified count"
+    newest = report.get("newest_qualifying")
+    if not isinstance(newest, Mapping) or not newest:
+        return "canonical verifier did not dereference a qualifying receipt"
+    qualifying_receipts = report.get("qualifying_receipts")
+    if (
+        not isinstance(qualifying_receipts, list)
+        or len(qualifying_receipts) != qualifying_count
+        or newest not in qualifying_receipts
+    ):
+        return "canonical verifier did not carry its complete qualifying receipt set"
+    if newest.get("repo") != repo:
+        return "qualifying receipt is not repository-bound"
+    if newest.get("sha") != sha or newest.get("commit") != sha:
+        return "qualifying receipt is not exact-SHA-bound"
+    schema_version = newest.get("schema_version")
+    if type(schema_version) is not int or schema_version < 4:
+        return "qualifying receipt schema is unsupported"
+    tree = newest.get("tree")
+    if not isinstance(tree, str) or not obligations.SHA_RE.fullmatch(tree):
+        return "qualifying receipt has no exact tree identity"
+    if (
+        newest.get("commit_anchored") is not True
+        or newest.get("tree_dirty") is not False
+    ):
+        return "qualifying receipt is not clean and commit-anchored"
+    if newest.get("profile") != "full" or newest.get("selection_mode") != "full":
+        return "qualifying receipt is not full/full"
+    if (
+        newest.get("result") != "pass"
+        or newest.get("raw_result") != "pass"
+        or type(newest.get("exit_code")) is not int
+        or newest["exit_code"] != 0
+        or type(newest.get("failures")) is not int
+        or newest["failures"] != 0
+    ):
+        return "qualifying receipt does not carry a zero-failure pass"
+
+    checks = newest.get("checks")
+    gates_run = newest.get("gates_run")
+    gates_expected = newest.get("gates_expected")
+    gates = newest.get("gates")
+    if (
+        type(checks) is not int
+        or type(gates_run) is not int
+        or type(gates_expected) is not int
+        or gates_expected <= 0
+        or gates_run < gates_expected
+        or checks != gates_run
+        or not isinstance(gates, list)
+        or gates_run != len(gates)
+    ):
+        return "qualifying receipt has inconsistent gate coverage"
+    for gate in gates:
+        if (
+            not isinstance(gate, Mapping)
+            or not isinstance(gate.get("name"), str)
+            or not gate["name"].strip()
+            or gate.get("result") != "pass"
+            or type(gate.get("exit_code")) is not int
+            or gate["exit_code"] != 0
+        ):
+            return "qualifying receipt has a non-passing or unidentified gate"
+
+    executed = newest.get("executed_tests")
+    filtered = newest.get("filtered_tests")
+    selected = newest.get("selected_tests")
+    discovered = newest.get("discovered_tests")
+    if (
+        type(executed) is not int
+        or type(filtered) is not int
+        or type(selected) is not int
+        or type(discovered) is not int
+        or executed <= 0
+        or filtered < 0
+        or selected != executed
+        or discovered != executed + filtered
+        or newest.get("count_derivation") != LOCAL_RECEIPT_COUNT_DERIVATION
+    ):
+        return "qualifying receipt has invalid or unbound test counts"
+
+    coverage = newest.get("coverage")
+    coverage_basis = newest.get("coverage_basis")
+    if coverage_basis == LOCAL_SCHEMA4_COVERAGE_BASIS:
+        if (
+            schema_version != 4
+            or coverage is not None
+            or newest.get("coverage_satisfied") is not None
+            or newest.get("coverage_status") != LOCAL_SCHEMA4_COVERAGE_STATUS
+        ):
+            return "legacy coverage basis is not bound to a schema-4 receipt"
+    elif coverage_basis == LOCAL_DECLARED_COVERAGE_BASIS:
+        if (
+            newest.get("coverage_satisfied") is not True
+            or newest.get("coverage_status") != LOCAL_DECLARED_COVERAGE_STATUS
+            or not isinstance(coverage, Mapping)
+        ):
+            return "declared coverage basis has no coverage record"
+        if (
+            type(coverage.get("planned_test_nodes")) is not int
+            or coverage["planned_test_nodes"] <= 0
+            or coverage.get("zero_executed_nodes") != []
+            or coverage.get("absent_nodes") != []
+        ):
+            return "declared per-node coverage is incomplete"
+    else:
+        return "qualifying receipt has an unsupported coverage basis"
+
+    for field in ("finished_at", "host", "slot", "log_file"):
+        if not isinstance(newest.get(field), str) or not newest[field].strip():
+            return f"qualifying receipt has no durable {field}"
+    identity = newest.get("receipt_identity")
+    if not isinstance(identity, Mapping):
+        return "qualifying receipt has no receipt identity"
+    digest = identity.get("digest")
+    if (
+        identity.get("digest_algorithm") != "sha256"
+        or identity.get("canonicalization") != LOCAL_RECEIPT_CANONICALIZATION
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        return "qualifying receipt has an invalid canonical digest"
+    identity_tuple = identity.get("tuple")
+    expected_tuple = {
+        "repo": repo,
+        "sha": sha,
+        "tree": tree,
+        "finished_at": newest["finished_at"],
+        "host": newest["host"],
+        "slot": newest["slot"],
+        "log_file": newest["log_file"],
+    }
+    if identity_tuple != expected_tuple:
+        return "qualifying receipt identity tuple does not match its evidence"
+    if not isinstance(report.get("ledger"), str) or not report["ledger"]:
+        return "canonical verifier report has no ledger provenance"
+    return None
+
+
+def _persisted_local_receipt_problem(
+    evidence: object, *, repo: str, sha: str
+) -> str | None:
+    if not isinstance(evidence, Mapping) or evidence.get("state") != "verified":
+        return "persisted local receipt is not verified evidence"
+    command = evidence.get("command")
+    expected_command = [
+        str(LOCAL_RECEIPT_AUTHORITY),
+        "validate-status",
+        "--sha",
+        sha,
+        "--repo",
+        repo,
+        "--json",
+    ]
+    if command != expected_command or evidence.get("repo") != repo:
+        return "persisted local receipt is not bound to the requested repo and SHA"
+    report = evidence.get("report")
+    returncode = evidence.get("returncode")
+    if type(returncode) is not int:
+        return "persisted local receipt has no integer verifier return code"
+    report_problem = _local_receipt_problem(
+        report, repo=repo, sha=sha, returncode=returncode
+    )
+    if report_problem is not None:
+        return report_problem
+    if not isinstance(report, Mapping):
+        return "persisted local receipt has no canonical verifier report"
+    canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+    if evidence.get("report_sha256") != hashlib.sha256(canonical).hexdigest():
+        return "persisted local receipt report hash does not match its cached report"
+    return None
+
+
+def _dereference_current_local_receipt(
+    repo: str, sha: str
+) -> tuple[bool, dict[str, Any]]:
+    """Call the one canonical exact-SHA local receipt verifier."""
+    return verify_local_receipt(repo, sha)
+
+
+def _compare_persisted_local_receipt(
+    evidence: object, *, repo: str, sha: str
+) -> tuple[bool, dict[str, Any], str | None]:
+    """Compare cached evidence with a fresh canonical selected receipt.
+
+    ``report_sha256`` only detects corruption of the cached outer report.  It is
+    not keyed authority: a writer can change that report and recompute the hash.
+    Every green/durability consumer therefore dereferences ``validate-status``
+    again and requires the exact selected receipt object (including its
+    canonical digest and bound fields) to match the persisted selection.
+    """
+    persisted_problem = _persisted_local_receipt_problem(evidence, repo=repo, sha=sha)
+    current_verified, current = _dereference_current_local_receipt(repo, sha)
+    if persisted_problem is not None:
+        return False, current, persisted_problem
+    if not current_verified:
+        return (
+            False,
+            current,
+            "fresh canonical local receipt refused: "
+            f"{current.get('reason') or 'unknown reason'}",
+        )
+    current_problem = _persisted_local_receipt_problem(current, repo=repo, sha=sha)
+    if current_problem is not None:
+        return (
+            False,
+            current,
+            f"fresh canonical local receipt is invalid: {current_problem}",
+        )
+
+    assert isinstance(evidence, Mapping)
+    persisted_report = evidence["report"]
+    current_report = current["report"]
+    assert isinstance(persisted_report, Mapping)
+    assert isinstance(current_report, Mapping)
+    persisted_selected = persisted_report.get("newest_qualifying")
+    current_receipts = current_report.get("qualifying_receipts")
+    if not isinstance(persisted_selected, Mapping) or not isinstance(
+        current_receipts, list
+    ):
+        return False, current, "selected receipt comparison has no receipt object"
+    current_selected = next(
+        (
+            candidate
+            for candidate in current_receipts
+            if isinstance(candidate, Mapping) and candidate == persisted_selected
+        ),
+        None,
+    )
+    if current_selected is None:
+        return (
+            False,
+            current,
+            "persisted selected receipt is absent from the fresh canonical "
+            "qualifying receipt set",
+        )
+    persisted_identity = persisted_selected.get("receipt_identity")
+    current_identity = current_selected.get("receipt_identity")
+    if not isinstance(persisted_identity, Mapping) or not isinstance(
+        current_identity, Mapping
+    ):
+        return False, current, "selected receipt comparison has no canonical digest"
+    if persisted_identity.get("digest") != current_identity.get("digest"):
+        return False, current, "selected receipt canonical digest changed"
+    return True, current, None
+
+
+def _persisted_local_receipt_valid(evidence: object, *, repo: str, sha: str) -> bool:
+    matches, _current, _problem = _compare_persisted_local_receipt(
+        evidence, repo=repo, sha=sha
+    )
+    return matches
+
+
+def verify_local_receipt(
+    repo: str,
+    sha: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Dereference and persist the canonical counted exact-SHA receipt verdict."""
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid local receipt SHA {sha!r}")
+    command = [
+        str(LOCAL_RECEIPT_AUTHORITY),
+        "validate-status",
+        "--sha",
+        sha,
+        "--repo",
+        repo,
+        "--json",
+    ]
+    checked_at = obligations.utc_now()
+    try:
+        result = _run(tuple(command), check=False, timeout=DEFAULT_NETWORK_TIMEOUT)
+    except ProtocolError as error:
+        return False, {
+            "state": "error",
+            "authority": "ci-hub-validate-status",
+            "repo": repo,
+            "command": command,
+            "checked_at": checked_at,
+            "returncode": None,
+            "report": None,
+            "report_sha256": None,
+            "reason": str(error),
+        }
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        parsed = None
+    problem = _local_receipt_problem(
+        parsed, repo=repo, sha=sha, returncode=result.returncode
+    )
+    canonical = (
+        json.dumps(parsed, sort_keys=True, separators=(",", ":")).encode()
+        if isinstance(parsed, Mapping)
+        else None
+    )
+    evidence = {
+        "state": "verified" if problem is None else "refused",
+        "authority": "ci-hub-validate-status",
+        "repo": repo,
+        "command": command,
+        "checked_at": checked_at,
+        "returncode": result.returncode,
+        "report": dict(parsed) if isinstance(parsed, Mapping) else None,
+        "report_sha256": hashlib.sha256(canonical).hexdigest() if canonical else None,
+        "reason": problem,
+    }
+    return problem is None, evidence
+
+
+def _local_policy_skip_patch(repo: str) -> dict[str, Any]:
+    """Persist the explicit no-local-authority policy for non-Hermit repos."""
+    if repo != REVERIE_REPO:
+        raise ProtocolError(f"no local receipt skip policy exists for {repo}")
+    recorded_at = obligations.utc_now()
+    return {
+        "state": "no_result",
+        "started_at": None,
+        "finished_at": None,
+        "pid": None,
+        "launch_token": None,
+        "registered_at": None,
+        "receipt_verification": None,
+        "classification_reason": "local-receipt-policy-skipped",
+        "policy_skip": {
+            "schema_version": 1,
+            "authority": LOCAL_POLICY_SKIP_AUTHORITY,
+            "repo": repo,
+            "canonical_repo": DEFAULT_REPO,
+            "outcome": "skipped",
+            "reason": "canonical-local-receipt-authority-unsupported-repository",
+            "recorded_at": recorded_at,
+        },
+    }
+
+
+def _local_policy_skip_valid(record: Mapping[str, Any]) -> bool:
+    local = record.get("local")
+    if (
+        record.get("repo") != REVERIE_REPO
+        or not isinstance(local, Mapping)
+        or local.get("state") != "no_result"
+        or local.get("classification_reason") != "local-receipt-policy-skipped"
+    ):
+        return False
+    policy_skip = local.get("policy_skip")
+    return (
+        isinstance(policy_skip, Mapping)
+        and type(policy_skip.get("schema_version")) is int
+        and policy_skip["schema_version"] == 1
+        and policy_skip.get("authority") == LOCAL_POLICY_SKIP_AUTHORITY
+        and policy_skip.get("repo") == REVERIE_REPO
+        and policy_skip.get("canonical_repo") == DEFAULT_REPO
+        and policy_skip.get("outcome") == "skipped"
+        and policy_skip.get("reason")
+        == "canonical-local-receipt-authority-unsupported-repository"
+        and isinstance(policy_skip.get("recorded_at"), str)
+        and bool(policy_skip["recorded_at"].strip())
+        and local.get("pid") is None
+        and local.get("launch_token") is None
+        and local.get("registered_at") is None
+        and local.get("started_at") is None
+        and local.get("finished_at") is None
+        and local.get("receipt_verification") is None
+    )
+
+
+def bind_local_receipt_authority(
+    obligation_id: str, store_path: Path
+) -> dict[str, Any]:
+    """Bind the local leg to its repository's canonical receipt authority."""
+    record = obligations.get_record(obligation_id, store_path)
+    repo, sha = str(record["repo"]), str(record["landed_sha"])
+    if repo != DEFAULT_REPO:
+        if _local_policy_skip_valid(record):
+            return record
+        return obligations.transition(
+            obligation_id,
+            "local-policy-skipped",
+            {"local": _local_policy_skip_patch(repo)},
+            store_path,
+        )
+    local = record.get("local")
+    if not isinstance(local, Mapping) or local.get("state") != "green":
+        return record
+    matches, current, comparison_problem = _compare_persisted_local_receipt(
+        local.get("receipt_verification"), repo=repo, sha=sha
+    )
+    if matches:
+        return record
+    patch: dict[str, Any] = {
+        "receipt_verification": current,
+        "state": "no_result",
+        "classification_reason": (
+            "persisted-receipt-refused:"
+            f"{comparison_problem or 'unknown persisted/live mismatch'}"
+        ),
+    }
+    return obligations.transition(
+        obligation_id,
+        "local-persisted-receipt-refused",
+        {"local": patch},
+        store_path,
+    )
+
+
+def verification_policy_for_repo(repo: str) -> dict[str, Any]:
+    """Return the only supported exact-SHA verification policy for ``repo``.
+
+    Repository identity is load-bearing: a workflow file/name from another
+    repository is not a missing result, but an invalid verification request.
+    Keep the policy versioned and persist it with each obligation so consumers
+    observe the binding instead of inferring it from a global default.
+    """
+    try:
+        schema_version = _CURRENT_VERIFICATION_POLICY_VERSION[repo]
+        required_jobs = _VERSIONED_REPO_GITHUB_JOBS[(repo, schema_version)]
+    except KeyError as error:
+        supported = ", ".join(sorted(_CURRENT_VERIFICATION_POLICY_VERSION))
+        raise ProtocolError(
+            f"unsupported post-land verification repository {repo!r}; "
+            f"supported repositories: {supported}"
+        ) from error
+    return {
+        "schema_version": schema_version,
+        "repo": repo,
+        "github": {
+            "required_jobs": [
+                {
+                    "workflow_file": workflow_file,
+                    "workflow_name": workflow_name,
+                    "job_name": job_name,
+                }
+                for workflow_file, workflow_name, job_name in required_jobs
+            ],
+            "required_positive_count": len(required_jobs),
+        },
+    }
+
+
+def validate_verification_policy(
+    policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    repo = policy.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError("verification policy has no repository identity")
+    schema_version = policy.get("schema_version")
+    if type(schema_version) is not int:
+        raise ProtocolError("verification policy has no integer schema version")
+    try:
+        required_jobs = _VERSIONED_REPO_GITHUB_JOBS[(repo, schema_version)]
+    except KeyError as error:
+        raise ProtocolError(
+            f"unsupported verification policy version {schema_version} for {repo!r}"
+        ) from error
+    expected = {
+        "schema_version": schema_version,
+        "repo": repo,
+        "github": {
+            "required_jobs": [
+                {
+                    "workflow_file": workflow_file,
+                    "workflow_name": workflow_name,
+                    "job_name": job_name,
+                }
+                for workflow_file, workflow_name, job_name in required_jobs
+            ],
+            "required_positive_count": len(required_jobs),
+        },
+    }
+    if policy != expected:
+        raise ProtocolError(f"invalid verification policy for {repo!r}")
+    return expected
+
+
+def _verification_policy_from_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    repo = record.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError("obligation has no repository identity")
+    persisted = record.get("verification_policy")
+    if persisted is None:
+        # Pre-policy legacy events are migrated once, append-only, using the
+        # repository's current registered policy. New opened events never take
+        # this path because create_obligation stores their policy atomically.
+        return verification_policy_for_repo(repo)
+    if not isinstance(persisted, Mapping):
+        raise ProtocolError("obligation verification policy is not an object")
+    policy = validate_verification_policy(persisted)
+    if policy["repo"] != repo:
+        raise ProtocolError(
+            f"obligation {record.get('obligation_id', '<unknown>')} has a "
+            f"verification policy that does not match {repo!r}"
+        )
+    return policy
+
+
+def bind_verification_policy(
+    obligation_id: str,
+    store_path: Path,
+    *,
+    requested_policy: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Persist the repository policy, migrating legacy obligations append-only."""
+    record = obligations.get_record(obligation_id, store_path)
+    repo = record.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError("obligation has no repository identity")
+    requested = (
+        None
+        if requested_policy is None
+        else validate_verification_policy(requested_policy)
+    )
+    if requested is not None and requested["repo"] != repo:
+        raise ProtocolError(
+            "requested verification policy repository does not match obligation"
+        )
+    if record.get("verification_policy") is None:
+        policy = requested or verification_policy_for_repo(repo)
+        record = obligations.transition(
+            obligation_id,
+            "verification-policy-bound",
+            {"verification_policy": policy},
+            store_path,
+        )
+    else:
+        policy = _verification_policy_from_record(record)
+        if requested is not None and requested != policy:
+            raise ProtocolError(
+                "existing open obligation uses a different verification policy"
+            )
+    return record, policy
+
+
+def _record_policy_investigation(
+    record: Mapping[str, Any], error: ProtocolError, store_path: Path
+) -> dict[str, Any]:
+    if (
+        record.get("overall_state") == "investigation_required"
+        and record.get("failure_source") == "verification_policy"
+    ):
+        return dict(record)
+    now = obligations.utc_now()
+    summary = f"invalid persisted verification policy: {error}"
+    updated = obligations.transition(
+        str(record["obligation_id"]),
+        "verification-policy-error",
+        {
+            "overall_state": "investigation_required",
+            "first_terminal_at": record.get("first_terminal_at") or now,
+            "failure_source": "verification_policy",
+            "failure_summary": summary,
+            "recommendation": None,
+            "alert": {"state": "raised", "raised_at": now},
+            "remediation": {"state": "not_required"},
+            "github": {
+                "state": "error",
+                "finished_at": now,
+                "last_poll_error": str(error),
+            },
+        },
+        store_path,
+    )
+    print(
+        f"HARD WARNING: obligation {record['obligation_id']} policy invalid: {error}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return updated
+
+
 def _percentile(values: Sequence[float], fraction: float) -> float:
     ordered = sorted(values)
     if not ordered:
@@ -403,6 +1081,74 @@ def _run(
         else:
             detail = str(error)
         raise ProtocolError(f"command failed: {' '.join(command)}: {detail}") from error
+
+
+_GITHUB_PATH_COMPONENT = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def _github_repo_from_remote(remote: str) -> str | None:
+    """Return ``owner/repo`` only for an exact, structurally valid GitHub URL.
+
+    Git's common SSH remote is scp-like rather than a URI, so it gets one fully
+    anchored parser.  URI forms use ``urlsplit`` and bind the hostname itself;
+    substring searches incorrectly accepted hosts such as ``evilgithub.com``.
+    """
+    value = remote.strip()
+    scp = re.fullmatch(
+        r"git@(?P<host>[^:/\s]+):(?P<path>[^?#\s]+)",
+        value,
+    )
+    if scp is not None:
+        if scp.group("host").lower() != "github.com":
+            return None
+        repo_path = scp.group("path")
+    else:
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError:
+            return None
+        if parsed.scheme not in {"https", "ssh"}:
+            return None
+        if parsed.hostname is None or parsed.hostname.lower() != "github.com":
+            return None
+        if parsed.query or parsed.fragment or parsed.password is not None:
+            return None
+        if parsed.scheme == "https":
+            if parsed.username is not None or port not in (None, 443):
+                return None
+        elif parsed.username != "git" or port not in (None, 22):
+            return None
+        repo_path = parsed.path.removeprefix("/")
+
+    repo_path = repo_path.removesuffix("/").removesuffix(".git")
+    parts = repo_path.split("/")
+    if len(parts) != 2 or not all(
+        _GITHUB_PATH_COMPONENT.fullmatch(part) for part in parts
+    ):
+        return None
+    return "/".join(parts)
+
+
+def resolve_repo_source(repo: str, source: Path | None) -> Path:
+    """Resolve a repository-specific donor checkout and prove its origin binding."""
+    verification_policy_for_repo(repo)
+    candidate = source if source is not None else _DEFAULT_REPO_SOURCES[repo]
+    candidate = candidate.expanduser().resolve()
+    if not candidate.is_dir():
+        raise ProtocolError(f"source checkout for {repo!r} is missing: {candidate}")
+    result = _run(
+        ("git", "-C", str(candidate), "remote", "get-url", "origin"),
+        check=True,
+    )
+    origin = result.stdout.strip()
+    observed = _github_repo_from_remote(origin)
+    if observed != repo:
+        raise ProtocolError(
+            f"source checkout {candidate} origin is {origin or '<missing>'!r}, "
+            f"not required repository {repo!r}"
+        )
+    return candidate
 
 
 def _fetch_target(source: Path, target: str) -> str:
@@ -602,6 +1348,49 @@ def _resolve_raw_sha(source: Path, reference: str) -> str:
     return commit
 
 
+def _commit_parents(source: Path, commit: str) -> list[str]:
+    """Return the exact commit's parents from the local object database."""
+    result = _run(
+        (
+            "git",
+            "-C",
+            str(source),
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            commit,
+        ),
+        check=True,
+    )
+    fields = result.stdout.strip().lower().split()
+    if not fields or fields[0] != commit:
+        raise ProtocolError(f"cannot inspect commit parents for {commit}")
+    parents = fields[1:]
+    if any(not obligations.SHA_RE.fullmatch(parent) for parent in parents):
+        raise ProtocolError(f"commit {commit} has malformed parent identity")
+    return parents
+
+
+def _commit_tree(source: Path, commit: str) -> str:
+    """Return the exact tree identity carried by ``commit``."""
+    result = _run(
+        (
+            "git",
+            "-C",
+            str(source),
+            "rev-parse",
+            "--verify",
+            f"{commit}^{{tree}}",
+        ),
+        check=True,
+    )
+    tree = result.stdout.strip().lower()
+    if not obligations.SHA_RE.fullmatch(tree):
+        raise ProtocolError(f"cannot inspect tree identity for {commit}")
+    return tree
+
+
 def _resolve_claimed_oid(
     source: Path,
     claimed_oid: str,
@@ -692,20 +1481,10 @@ def _claim_fields(
 
 
 def verify_landing(args: argparse.Namespace) -> int:
-    source = args.source.expanduser().resolve()
     item = getattr(args, "item", None)
     claimed_oid = getattr(args, "claimed_oid", None)
-    if not source.is_dir():
-        return _print_landing_verdict(
-            state="unverifiable",
-            rc=2,
-            reference=args.reference,
-            target_ref=f"origin/{args.target}",
-            json_output=args.json,
-            reason=f"source checkout is missing: {source}",
-        )
-
     try:
+        source = resolve_repo_source(args.repo, args.source)
         target_ref = _fetch_target(source, args.target)
         reference = args.reference.lower()
         if claimed_oid and not item:
@@ -826,42 +1605,202 @@ def verify_landing(args: argparse.Namespace) -> int:
         )
 
 
-def _parse_github_runs(output: str, sha: str) -> list[dict[str, Any]]:
+def _required_github_jobs(
+    policy: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    validated = validate_verification_policy(policy)
+    return [dict(job) for job in validated["github"]["required_jobs"]]
+
+
+def _required_workflows(policy: Mapping[str, Any]) -> list[tuple[str, str]]:
+    workflows: list[tuple[str, str]] = []
+    for job in _required_github_jobs(policy):
+        identity = (job["workflow_file"], job["workflow_name"])
+        if identity not in workflows:
+            workflows.append(identity)
+    return workflows
+
+
+def _parse_github_runs(
+    output: str, sha: str, policy: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    policy = validate_verification_policy(policy)
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid exact-SHA GitHub query {sha!r}")
     try:
         payload = json.loads(output)
     except json.JSONDecodeError as error:
-        raise ProtocolError("gh run list returned invalid JSON") from error
-    if not isinstance(payload, list):
-        raise ProtocolError("gh run list returned a non-list payload")
-    return select_latest_workflow_attempts(
-        payload,
-        head_sha=sha,
-        workflows=(DEFAULT_WORKFLOW,),
+        raise ProtocolError("GitHub workflow-runs API returned invalid JSON") from error
+    if not isinstance(payload, Mapping) or not isinstance(
+        payload.get("workflow_runs"), list
+    ):
+        raise ProtocolError("GitHub workflow-runs API returned an invalid payload")
+    raw_runs = payload["workflow_runs"]
+    total_count = payload.get("total_count")
+    if type(total_count) is not int or total_count != len(raw_runs):
+        raise ProtocolError(
+            "GitHub workflow-runs response is truncated or has an invalid exact count"
+        )
+
+    expected_by_file = dict(_required_workflows(policy))
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for raw in raw_runs:
+        if not isinstance(raw, Mapping):
+            raise ProtocolError("GitHub workflow-runs response contains a non-object")
+        run_sha = str(raw.get("head_sha") or "").lower()
+        if run_sha != sha:
+            raise ProtocolError(
+                f"GitHub workflow run is for {run_sha or '<missing>'}, "
+                f"expected exact SHA {sha}"
+            )
+        workflow_file = str(raw.get("path") or "")
+        if workflow_file not in expected_by_file:
+            continue
+        workflow_name = str(raw.get("name") or "")
+        expected_name = expected_by_file[workflow_file]
+        if workflow_name != expected_name:
+            raise ProtocolError(
+                f"GitHub workflow {workflow_file!r} is named "
+                f"{workflow_name or '<missing>'!r}, expected {expected_name!r}"
+            )
+        try:
+            run_id = int(raw["id"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ProtocolError("GitHub workflow run has no integer id") from error
+        normalized = {
+            "databaseId": run_id,
+            "headSha": run_sha,
+            "workflowFile": workflow_file,
+            "workflowName": workflow_name,
+            "status": raw.get("status"),
+            "conclusion": raw.get("conclusion"),
+            "createdAt": raw.get("created_at"),
+            "startedAt": raw.get("run_started_at"),
+            "updatedAt": raw.get("updated_at"),
+            "url": raw.get("html_url"),
+            "event": raw.get("event"),
+            "runAttempt": raw.get("run_attempt"),
+        }
+        grouped.setdefault((workflow_file, workflow_name), []).append(normalized)
+
+    selected: list[dict[str, Any]] = []
+    for identity in _required_workflows(policy):
+        candidates = grouped.get(identity, [])
+        if not candidates:
+            continue
+        attempts = select_latest_workflow_attempts(
+            candidates,
+            head_sha=sha,
+            workflows=(identity[1],),
+        )
+        if attempts:
+            selected.append(attempts[0])
+    return selected
+
+
+def _parse_github_jobs(
+    output: str,
+    *,
+    run: Mapping[str, Any],
+    sha: str,
+) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise ProtocolError("GitHub jobs API returned invalid JSON") from error
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("jobs"), list):
+        raise ProtocolError("GitHub jobs API returned an invalid payload")
+    raw_jobs = payload["jobs"]
+    total_count = payload.get("total_count")
+    if type(total_count) is not int or total_count != len(raw_jobs):
+        raise ProtocolError(
+            "GitHub jobs response is truncated or has an invalid exact count"
+        )
+    run_id = int(run["databaseId"])
+    jobs: list[dict[str, Any]] = []
+    seen_job_ids: set[int] = set()
+    for raw in raw_jobs:
+        if not isinstance(raw, Mapping):
+            raise ProtocolError("GitHub jobs response contains a non-object")
+        job_sha = str(raw.get("head_sha") or "").lower()
+        if job_sha != sha:
+            raise ProtocolError(
+                f"GitHub job is for {job_sha or '<missing>'}, expected exact SHA {sha}"
+            )
+        observed_run_id = raw.get("run_id")
+        if type(observed_run_id) is not int or observed_run_id != run_id:
+            raise ProtocolError(
+                f"GitHub job belongs to run {observed_run_id!r}, expected {run_id}"
+            )
+        raw_job_id = raw.get("id")
+        job_id = raw_job_id if type(raw_job_id) is int and raw_job_id > 0 else None
+        if job_id is not None:
+            if job_id in seen_job_ids:
+                raise ProtocolError(
+                    f"GitHub jobs response repeats job identity ({run_id}, {job_id})"
+                )
+            seen_job_ids.add(job_id)
+        jobs.append(
+            {
+                "id": job_id,
+                "run_id": observed_run_id,
+                "head_sha": job_sha,
+                "name": str(raw.get("name") or ""),
+                "status": raw.get("status"),
+                "conclusion": raw.get("conclusion"),
+                "started_at": raw.get("started_at"),
+                "completed_at": raw.get("completed_at"),
+                "html_url": raw.get("html_url"),
+            }
+        )
+    return jobs
+
+
+def github_runs(
+    repo: str,
+    sha: str,
+    *,
+    policy: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    selected_policy = (
+        verification_policy_for_repo(repo)
+        if policy is None
+        else validate_verification_policy(policy)
     )
-
-
-def github_runs(repo: str, sha: str) -> list[dict[str, Any]]:
+    if selected_policy["repo"] != repo:
+        raise ProtocolError(
+            f"verification policy for {selected_policy['repo']!r} cannot query {repo!r}"
+        )
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid exact-SHA GitHub query {sha!r}")
     result = _run(
         (
             "with-proxy",
             "gh",
-            "run",
-            "list",
-            "-R",
-            repo,
-            "--commit",
-            sha,
-            "--workflow",
-            DEFAULT_WORKFLOW_FILE,
-            "--limit",
-            "20",
-            "--json",
-            "databaseId,status,conclusion,createdAt,startedAt,updatedAt,url,event,headSha,workflowName",
+            "api",
+            f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100",
         ),
         check=True,
         timeout=DEFAULT_NETWORK_TIMEOUT,
     )
-    return _parse_github_runs(result.stdout, sha)
+    runs = _parse_github_runs(result.stdout, sha, selected_policy)
+    for run in runs:
+        jobs_result = _run(
+            (
+                "with-proxy",
+                "gh",
+                "api",
+                f"repos/{repo}/actions/runs/{run['databaseId']}/jobs?filter=latest&per_page=100",
+            ),
+            check=True,
+            timeout=DEFAULT_NETWORK_TIMEOUT,
+        )
+        run["jobs"] = _parse_github_jobs(
+            jobs_result.stdout,
+            run=run,
+            sha=sha,
+        )
+    return runs
 
 
 def github_main_sha(repo: str) -> str:
@@ -877,6 +1816,16 @@ def github_main_sha(repo: str) -> str:
 
 
 def _github_state(run: Mapping[str, Any]) -> str:
+    status = str(run.get("status") or "").lower()
+    if status in {"requested", "waiting", "queued", "pending"}:
+        return "pending"
+    if status == "in_progress":
+        return "running"
+    # A conclusion without a completed producer status is not a verdict.  In
+    # particular, accepting ``status=None, conclusion=success`` would let a
+    # partial/malformed API object manufacture a positive authority record.
+    if status != "completed":
+        return "no_result"
     outcome = classify_check(run.get("status"), run.get("conclusion"))
     if outcome is CheckOutcome.PASSED:
         return "green"
@@ -885,37 +1834,227 @@ def _github_state(run: Mapping[str, Any]) -> str:
     return "no_result"
 
 
-def _github_patch(run: Mapping[str, Any]) -> dict[str, Any]:
-    state = _github_state(run)
+def _github_patch(
+    runs: Sequence[Mapping[str, Any]], sha: str, policy: Mapping[str, Any]
+) -> dict[str, Any]:
+    policy = validate_verification_policy(policy)
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError(f"invalid exact-SHA GitHub observation {sha!r}")
+    expected_jobs = _required_github_jobs(policy)
+    expected_count = policy["github"]["required_positive_count"]
+    if expected_count != len(expected_jobs) or expected_count <= 0:
+        raise ProtocolError("verification policy has a vacuous positive count")
+
+    runs_by_workflow: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    run_workflows: dict[int, tuple[str, str]] = {}
+    for run in runs:
+        run_sha = str(run.get("headSha") or "").lower()
+        if run_sha != sha:
+            raise ProtocolError(
+                f"GitHub run is for {run_sha or '<missing>'}, expected exact SHA {sha}"
+            )
+        identity = (
+            str(run.get("workflowFile") or ""),
+            str(run.get("workflowName") or ""),
+        )
+        if identity not in _required_workflows(policy):
+            raise ProtocolError(f"unexpected GitHub workflow identity {identity!r}")
+        run_id = run.get("databaseId")
+        if type(run_id) is not int or run_id <= 0:
+            raise ProtocolError("GitHub workflow evidence has no positive run id")
+        previous_identity = run_workflows.get(run_id)
+        if previous_identity is not None and previous_identity != identity:
+            raise ProtocolError(
+                f"GitHub run {run_id} is reused for workflow identities "
+                f"{previous_identity!r} and {identity!r}"
+            )
+        run_workflows[run_id] = identity
+        runs_by_workflow.setdefault(identity, []).append(run)
+
+    observed_jobs: list[dict[str, Any]] = []
+    run_ids: list[int] = []
+    selected_job_identities: set[tuple[int, int]] = set()
+    urls: list[str] = []
+    reasons: list[str] = []
+    for expected in expected_jobs:
+        workflow_identity = (
+            expected["workflow_file"],
+            expected["workflow_name"],
+        )
+        workflow_runs = runs_by_workflow.get(workflow_identity, [])
+        if len(workflow_runs) > 1:
+            raise ProtocolError(
+                f"duplicate latest workflow evidence for {workflow_identity!r}"
+            )
+        if not workflow_runs:
+            observed_jobs.append(
+                {
+                    **expected,
+                    "state": "no_result",
+                    "reason": "no dereferenced workflow producer",
+                }
+            )
+            reasons.append(
+                f"no workflow producer {expected['workflow_file']} / "
+                f"{expected['workflow_name']}"
+            )
+            continue
+        run = workflow_runs[0]
+        run_id = int(run["databaseId"])
+        if run_id not in run_ids:
+            run_ids.append(run_id)
+        run_url = str(run.get("url") or "")
+        if run_url and run_url not in urls:
+            urls.append(run_url)
+        jobs = run.get("jobs")
+        if not isinstance(jobs, list):
+            raise ProtocolError(f"GitHub run {run_id} has no dereferenced jobs list")
+        matches = [job for job in jobs if job.get("name") == expected["job_name"]]
+        if len(matches) > 1:
+            raise ProtocolError(
+                f"duplicate required GitHub job {expected['job_name']!r} in run {run_id}"
+            )
+        if not matches:
+            run_state = _github_state(run)
+            reason = f"required job missing from {run_state} workflow run"
+            observed_jobs.append(
+                {
+                    **expected,
+                    "run_id": run_id,
+                    "state": "no_result",
+                    "status": run.get("status"),
+                    "reason": reason,
+                }
+            )
+            reasons.append(f"{expected['job_name']}: {reason}")
+            continue
+        job = matches[0]
+        job_sha = str(job.get("head_sha") or "").lower()
+        if job_sha != sha:
+            raise ProtocolError(
+                f"GitHub job is for {job_sha or '<missing>'}, expected exact SHA {sha}"
+            )
+        job_run_id = job.get("run_id")
+        if type(job_run_id) is not int or job_run_id <= 0 or job_run_id != run_id:
+            raise ProtocolError(
+                f"GitHub job {job.get('id')} is not bound to selected run {run_id}"
+            )
+        job_id = job.get("id")
+        if type(job_id) is not int or job_id <= 0:
+            reason = "required job has no positive dereferenced job identity"
+            observed_jobs.append(
+                {
+                    **expected,
+                    "run_id": run_id,
+                    "state": "no_result",
+                    "status": job.get("status"),
+                    "conclusion": job.get("conclusion"),
+                    "url": str(job.get("html_url") or ""),
+                    "reason": reason,
+                }
+            )
+            reasons.append(f"{expected['job_name']}: {reason}")
+            continue
+        job_identity = (run_id, job_id)
+        if job_identity in selected_job_identities:
+            raise ProtocolError(
+                f"required GitHub evidence repeats job identity {job_identity!r}"
+            )
+        selected_job_identities.add(job_identity)
+        state = _github_state(job)
+        reason = None
+        if state == "no_result":
+            reason = (
+                f"required job completed without a verdict "
+                f"(conclusion={job.get('conclusion') or '<missing>'})"
+            )
+            reasons.append(f"{expected['job_name']}: {reason}")
+        job_url = str(job.get("html_url") or "")
+        if job_url and job_url not in urls:
+            urls.append(job_url)
+        observed_jobs.append(
+            {
+                **expected,
+                "run_id": run_id,
+                "job_id": job_id,
+                "state": state,
+                "status": job.get("status"),
+                "conclusion": job.get("conclusion"),
+                "url": job_url,
+                "reason": reason,
+            }
+        )
+
+    states = [job["state"] for job in observed_jobs]
+    positive_count = sum(state == "green" for state in states)
+    if "red" in states:
+        state = "red"
+    elif positive_count == expected_count and len(observed_jobs) == expected_count:
+        state = "green"
+    elif "running" in states:
+        state = "running"
+    elif "pending" in states:
+        state = "pending"
+    else:
+        state = "no_result"
+    started = [
+        str(run.get("startedAt") or run.get("createdAt"))
+        for run in runs
+        if run.get("startedAt") or run.get("createdAt")
+    ]
+    finished = [str(run.get("updatedAt")) for run in runs if run.get("updatedAt")]
     return {
         "github": {
             "state": state,
-            "started_at": run.get("startedAt") or run.get("createdAt"),
+            "started_at": min(started) if started else None,
             "finished_at": (
-                run.get("updatedAt") if state in TERMINAL_VERIFICATION_STATES else None
+                max(finished)
+                if finished
+                and (state in TERMINAL_VERIFICATION_STATES or state == "no_result")
+                else None
             ),
-            "run_ids": [int(run["databaseId"])],
-            "urls": [str(run.get("url") or "")],
-            "workflow_name": DEFAULT_WORKFLOW,
-            "event": run.get("event"),
-            "last_poll_error": None,
+            "run_ids": run_ids,
+            "urls": urls,
+            "workflow_name": ", ".join(
+                workflow_name for _, workflow_name in _required_workflows(policy)
+            ),
+            "event": ", ".join(
+                sorted({str(run.get("event")) for run in runs if run.get("event")})
+            )
+            or None,
+            "required_positive_count": expected_count,
+            "positive_count": positive_count,
+            "jobs": observed_jobs,
+            "last_poll_error": "; ".join(reasons) or None,
         }
     }
 
 
-def _latest_resolved_github_run(
-    runs: Sequence[Mapping[str, Any]],
-) -> Mapping[str, Any] | None:
-    """Return the newest run only when that run produced a real verdict.
-
-    ``github_runs`` is sorted newest-first at one exact head. Looking past a
-    newest NO_RESULT would revive stale pass/fail evidence and make duplicate
-    same-head runs order-dependent.
-    """
-    if not runs:
-        return None
-    latest = runs[0]
-    return latest if _github_state(latest) in {"green", "red"} else None
+def hosted_status(args: argparse.Namespace) -> int:
+    """Dereference the repository's exact-head hosted landing authority."""
+    sha = args.sha.lower()
+    if not obligations.SHA_RE.fullmatch(sha):
+        raise ProtocolError("--sha must be a full 40-character commit SHA")
+    policy = verification_policy_for_repo(args.repo)
+    runs = github_runs(args.repo, sha, policy=policy)
+    evidence = _github_patch(runs, sha, policy)["github"]
+    report = {
+        "schema_version": 1,
+        "authority": "github-actions-exact-head-jobs",
+        "repo": args.repo,
+        "sha": sha,
+        "policy_schema_version": policy["schema_version"],
+        **evidence,
+    }
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        print(
+            f"HOSTED {str(evidence['state']).upper()} {args.repo}@{sha} "
+            f"positive={evidence['positive_count']}/"
+            f"{evidence['required_positive_count']}"
+        )
+    return {"green": 0, "red": 3}.get(str(evidence["state"]), 4)
 
 
 def ensure_github_verification(
@@ -927,19 +2066,23 @@ def ensure_github_verification(
     allow_dispatch: bool = True,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    record = obligations.get_record(obligation_id, store_path)
+    record, policy = bind_verification_policy(obligation_id, store_path)
     repo, sha = record["repo"], record["landed_sha"]
     deadline = time.monotonic() + wait_seconds
     dispatched = False
+    latest_patch = _github_patch([], sha, policy)
     while True:
-        runs = github_runs(repo, sha)
-        # Classify only the newest exact-head run. A cancelled/skipped/stale run
-        # is a HOLE, not permission to fall through to an older opposite answer.
-        usable = _latest_resolved_github_run(runs)
-        if usable is not None:
-            obligations.transition(
-                obligation_id, "github-observed", _github_patch(usable), store_path
+        runs = github_runs(repo, sha, policy=policy)
+        latest_patch = _github_patch(runs, sha, policy)
+        record = obligations.get_record(obligation_id, store_path)
+        if record.get("github") != latest_patch["github"]:
+            record = obligations.transition(
+                obligation_id,
+                "github-observed",
+                latest_patch,
+                store_path,
             )
+        if latest_patch["github"]["state"] in {"green", "red"}:
             return evaluate_obligation(obligation_id, store_path=store_path)
         if time.monotonic() >= deadline:
             break
@@ -949,27 +2092,33 @@ def ensure_github_verification(
             and deadline - time.monotonic() <= max(0, wait_seconds - 30)
         ):
             if github_main_sha(repo) == sha:
-                _run(
-                    (
-                        "with-proxy",
-                        "gh",
-                        "workflow",
-                        "run",
-                        DEFAULT_WORKFLOW_FILE,
-                        "-R",
-                        repo,
-                        "--ref",
-                        "main",
-                    ),
-                    check=True,
-                    timeout=DEFAULT_NETWORK_TIMEOUT,
-                )
+                for workflow_file, _ in _required_workflows(policy):
+                    _run(
+                        (
+                            "with-proxy",
+                            "gh",
+                            "workflow",
+                            "run",
+                            workflow_file,
+                            "-R",
+                            repo,
+                            "--ref",
+                            "main",
+                        ),
+                        check=True,
+                        timeout=DEFAULT_NETWORK_TIMEOUT,
+                    )
                 dispatched = True
         sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
 
+    active = _github_verification_in_flight(latest_patch["github"])
+    if active:
+        # A real queued/in-progress producer remains durable and watchable. It is
+        # not collapsed into no_result just because the synchronous arm wait ended.
+        return evaluate_obligation(obligation_id, store_path=store_path)
     summary = (
-        f"no resolved {DEFAULT_WORKFLOW!r} run appeared for exact SHA {sha} within "
-        f"{wait_seconds}s (only cancelled/superseded/no-result runs, if any)"
+        f"required hosted job set did not produce {policy['github']['required_positive_count']} "
+        f"exact-SHA positives for {sha} within {wait_seconds}s"
     )
     # A missing or unresolved GitHub result is NOT a failure: it leaves the leg in
     # no_result so a locally-green land is never reverted purely because its hosted
@@ -982,6 +2131,9 @@ def ensure_github_verification(
             "github": {
                 "state": "no_result",
                 "finished_at": None,
+                "required_positive_count": policy["github"]["required_positive_count"],
+                "positive_count": latest_patch["github"]["positive_count"],
+                "jobs": latest_patch["github"]["jobs"],
                 "last_poll_error": summary,
             }
         },
@@ -1006,8 +2158,14 @@ def _failure_details(record: Mapping[str, Any]) -> tuple[str, str]:
             f"exit={verification.get('exit_code')} log={verification.get('log_path')}"
         )
     else:
+        expected_workflow = ", ".join(
+            workflow_name
+            for _, workflow_name in _required_workflows(
+                _verification_policy_from_record(record)
+            )
+        )
         summary = (
-            f"GitHub {verification.get('workflow_name') or DEFAULT_WORKFLOW} "
+            f"GitHub {verification.get('workflow_name') or expected_workflow} "
             f"state={verification.get('state')} urls={','.join(verification.get('urls') or [])}"
         )
     return source, summary
@@ -1036,15 +2194,17 @@ def remediation_recommendation(
 
 
 def _legs_disagree(record: Mapping[str, Any]) -> bool:
-    """A local red beside a GREEN GitHub leg for the same SHA.
+    """One exact-SHA verifier is green while the other is genuinely red.
 
     This is a THIRD outcome, neither a confirmed regression nor a clean pass: the
-    authoritative hosted verifier PASSED the exact SHA the local verifier failed.
-    It is never an auto-revert (the local leg alone cannot overrule a green
-    authoritative leg); it is surfaced for a human to investigate — a genuine
-    local-only regression, or a local-environment artifact the hosted leg avoided.
+    authorities contradict each other for the same commit. It is symmetric and
+    never reaches the actuator; a passing authority cannot be silently overruled
+    by a failing one from a different execution environment.
     """
-    return record["local"]["state"] == "red" and record["github"]["state"] == "green"
+    return {record["local"]["state"], record["github"]["state"]} == {
+        "green",
+        "red",
+    }
 
 
 def _local_red_uncorroborated(record: Mapping[str, Any]) -> bool:
@@ -1077,12 +2237,13 @@ def _remediation_ready(record: Mapping[str, Any]) -> bool:
     """Whether a failing answer is CONFIRMED enough to revert a landed tip.
 
     Sequencing comes first: never arm a revert while EITHER verifier is still
-    ``running``. A leg in flight may be the tool's OWN exoneration arriving — the
+    ``starting`` or ``running``. A leg in flight may be the tool's OWN exoneration arriving — the
     incident that armed ``action=revert`` on a local red while the GitHub verify
     run (30873193855) was still executing (obligation 20260804-025419-0f891e43).
     A revert decision is never made on a partial picture. (``pending`` — a leg not
     yet dispatched — does not block the authoritative GitHub-red path below, which
-    is the intended safe revert; only an in-flight ``running`` answer is waited on.)
+    is the intended safe revert; only an active ``starting``/``running`` answer is
+    waited on.)
 
     Once both legs have reported, ONLY an authoritative GitHub red arms a revert —
     hosted CI does not flake the way a loaded local box does, and cancelled/absent
@@ -1106,7 +2267,7 @@ def _remediation_ready(record: Mapping[str, Any]) -> bool:
     """
     local = record["local"]["state"]
     github = record["github"]["state"]
-    if "running" in (local, github):
+    if {local, github}.intersection({"starting", "running"}):
         return False
     if github == "red":
         return True
@@ -1124,6 +2285,17 @@ def evaluate_obligation(
     main_sha: str | None = None,
 ) -> dict[str, Any]:
     record = obligations.get_record(obligation_id, store_path)
+    try:
+        # Evaluation is an authority consumer, so a legacy record must first
+        # acquire its repository policy in the append-only ledger. Merely
+        # deriving a default in memory would let a green satisfy an unbound fact.
+        record, _ = bind_verification_policy(obligation_id, store_path)
+    except ProtocolError as error:
+        return _record_policy_investigation(record, error, store_path)
+    # Older obligation rows may carry local.state=green solely from
+    # validate.sh's process exit. Re-dereference them once through the counted
+    # exact-SHA authority; a refusal becomes no_result, never a preserved green.
+    record = bind_local_receipt_authority(obligation_id, store_path)
     states = (record["local"]["state"], record["github"]["state"])
     now = obligations.utc_now()
     first_terminal_at = record.get("first_terminal_at")
@@ -1131,6 +2303,60 @@ def evaluate_obligation(
         state in TERMINAL_VERIFICATION_STATES for state in states
     ):
         first_terminal_at = now
+
+    if _legs_disagree(record):
+        failed_source = "local" if record["local"]["state"] == "red" else "github"
+        passed_source = "github" if failed_source == "local" else "local"
+        summary = (
+            f"{failed_source} verifier red but {passed_source} verifier green for "
+            f"the same SHA {record['landed_sha']}; NOT actuating — investigate "
+            "the contradictory exact-SHA authorities"
+        )
+        if record.get("overall_state") != "investigation_required":
+            record = obligations.transition(
+                obligation_id,
+                "verification-disagreement",
+                {
+                    "overall_state": "investigation_required",
+                    "first_terminal_at": first_terminal_at,
+                    "failure_source": failed_source,
+                    "failure_summary": summary,
+                    "recommendation": None,
+                    "alert": {
+                        "state": "raised",
+                        "raised_at": now,
+                        "severity": "P0",
+                        "action": "investigate",
+                    },
+                    "remediation": {"state": "not_required"},
+                },
+                store_path,
+            )
+            print(
+                f"HARD WARNING: obligation {obligation_id} legs DISAGREE: {summary}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return record
+
+    # One exact-SHA green is authoritative. The other source may still be
+    # pending, running, absent/no_result, or independently green; none is a
+    # failing answer, so waiting for it would turn a supplemental source into an
+    # AND gate. A known red was handled as DISAGREEMENT above.
+    if "green" in states:
+        if record.get("overall_state") != "satisfied":
+            record = obligations.transition(
+                obligation_id,
+                "satisfied",
+                {
+                    "overall_state": "satisfied",
+                    "first_terminal_at": first_terminal_at,
+                    "satisfied_at": now,
+                    "remediation": {"state": "not_required"},
+                },
+                store_path,
+            )
+        return record
 
     if _remediation_ready(record):
         source, summary = _failure_details(record)
@@ -1170,49 +2396,6 @@ def evaluate_obligation(
                 flush=True,
             )
         return trigger_remediation(record, store_path=store_path)
-
-    if states == ("green", "green"):
-        if record.get("overall_state") != "satisfied":
-            record = obligations.transition(
-                obligation_id,
-                "satisfied",
-                {
-                    "overall_state": "satisfied",
-                    "first_terminal_at": first_terminal_at,
-                    "satisfied_at": now,
-                    "remediation": {"state": "not_required"},
-                },
-                store_path,
-            )
-        return record
-
-    if _legs_disagree(record):
-        summary = (
-            "local validate red but authoritative GitHub leg green for the same "
-            f"SHA {record['landed_sha']}; NOT reverting — investigate before any "
-            "manual revert (genuine local-only regression, or a local-env artifact)"
-        )
-        if record.get("overall_state") != "investigation_required":
-            record = obligations.transition(
-                obligation_id,
-                "verification-disagreement",
-                {
-                    "overall_state": "investigation_required",
-                    "first_terminal_at": first_terminal_at,
-                    "failure_source": "local",
-                    "failure_summary": summary,
-                    "recommendation": None,
-                    "alert": {"state": "raised", "raised_at": now},
-                    "remediation": {"state": "not_required"},
-                },
-                store_path,
-            )
-            print(
-                f"HARD WARNING: obligation {obligation_id} legs DISAGREE: {summary}",
-                file=sys.stderr,
-                flush=True,
-            )
-        return record
 
     if _local_red_uncorroborated(record):
         summary = (
@@ -1471,7 +2654,22 @@ def _spawn_detached(arguments: Sequence[str], log_path: Path) -> int:
     return process.pid
 
 
-def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
+def _local_run(
+    obligation_id: str,
+    source: Path,
+    store_path: Path,
+    *,
+    launch_token: str | None = None,
+) -> int:
+    if launch_token is not None and not _register_local_runner(
+        obligation_id, launch_token, store_path
+    ):
+        print(
+            f"ci-hub obligation={obligation_id} local launch token is stale; exiting",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 0
     record = obligations.get_record(obligation_id, store_path)
     workspace = ROOT / "ignored/ci-hub/obligations" / obligation_id
     checkout = workspace / "hermit"
@@ -1481,6 +2679,12 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
     cost_path = Path(cost["record_path"])
     started = time.monotonic()
     exit_code = 2
+    classification_reason = "verification setup did not complete"
+    receipt_verification: dict[str, Any] = {
+        "state": "not_checked",
+        "authority": "ci-hub-validate-status",
+        "reason": "validate.sh did not complete",
+    }
     # A setup that never reaches validate.sh (clone/checkout/submodule failure)
     # is infrastructure, not a product verdict: leave the leg no_result so it is
     # re-dispatched, never reverted on.
@@ -1575,13 +2779,25 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
         )
         exit_code = result.returncode
         output = _read_local_output(log_path, log_offset)
-        state, reason = _classify_local(exit_code, output)
+        state, classification_reason = _classify_local(exit_code, output)
+        receipt_ok, receipt_verification = verify_local_receipt(
+            record["repo"], record["landed_sha"]
+        )
+        if state == "green" and not receipt_ok:
+            # A bare validate.sh rc=0 is only a proxy.  The canonical ledger
+            # verifier must dereference a counted clean full/full receipt for
+            # this exact SHA before the local leg carries a green authority.
+            state = "no_result"
+            classification_reason = (
+                "canonical-receipt-refused:"
+                f"{receipt_verification.get('reason') or 'unknown reason'}"
+            )
         # Log every classification so an environmental downgrade is auditable and
         # an unattributed zero-test-failure red surfaces a candidate missing
         # signature (task cancellation_taxonomy_distinguish_self).
         print(
             f"ci-hub obligation={obligation_id} local classification: "
-            f"state={state} reason={reason} exit={exit_code}",
+            f"state={state} reason={classification_reason} exit={exit_code}",
             flush=True,
         )
         try:
@@ -1593,6 +2809,8 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
         measured_cost["record_path"] = str(cost_path)
     except ProtocolError as error:
         print(f"local verification setup failed: {error}", file=sys.stderr, flush=True)
+        state = "no_result"
+        classification_reason = f"verification-setup-failed:{error}"
         measured_cost = cost
     finished_at = obligations.utc_now()
     obligations.transition(
@@ -1606,6 +2824,8 @@ def _local_run(obligation_id: str, source: Path, store_path: Path) -> int:
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "log_path": str(log_path),
                 "cost": measured_cost,
+                "classification_reason": classification_reason,
+                "receipt_verification": receipt_verification,
             }
         },
         store_path,
@@ -1626,22 +2846,596 @@ def _pid_alive(raw_pid: object) -> bool:
     return True
 
 
+class LaunchBusy(ProtocolError):
+    """Another live process owns this obligation's launch reconciliation."""
+
+
+def _register_local_runner(
+    obligation_id: str,
+    launch_token: str,
+    store_path: Path,
+    *,
+    pid: int | None = None,
+) -> bool:
+    runner_pid = os.getpid() if pid is None else pid
+    return (
+        obligations.transition_if_matches(
+            obligation_id,
+            "local-runner-registered",
+            {
+                "local": {
+                    "state": "running",
+                    "pid": runner_pid,
+                    "registered_at": obligations.utc_now(),
+                }
+            },
+            {
+                "local": {
+                    "state": "starting",
+                    "launch_token": launch_token,
+                }
+            },
+            store_path,
+        )
+        is not None
+    )
+
+
+def _register_watcher(
+    obligation_id: str,
+    launch_token: str,
+    store_path: Path,
+    *,
+    pid: int | None = None,
+) -> bool:
+    watcher_pid = os.getpid() if pid is None else pid
+    return (
+        obligations.transition_if_matches(
+            obligation_id,
+            "watcher-registered",
+            {
+                "watcher": {
+                    "state": "running",
+                    "pid": watcher_pid,
+                    "started_at": obligations.utc_now(),
+                }
+            },
+            {
+                "watcher": {
+                    "state": "starting",
+                    "launch_token": launch_token,
+                }
+            },
+            store_path,
+        )
+        is not None
+    )
+
+
+def _complete_watcher(obligation_id: str, launch_token: str, store_path: Path) -> None:
+    obligations.transition_if_matches(
+        obligation_id,
+        "watcher-completed",
+        {
+            "watcher": {
+                "state": "completed",
+                "pid": None,
+                "exit_code": 0,
+                "finished_at": obligations.utc_now(),
+            }
+        },
+        {
+            "watcher": {
+                "state": "running",
+                "launch_token": launch_token,
+                "pid": os.getpid(),
+            }
+        },
+        store_path,
+    )
+
+
+def _fail_watcher(
+    obligation_id: str,
+    launch_token: str,
+    store_path: Path,
+    error: BaseException,
+) -> None:
+    obligations.transition_if_matches(
+        obligation_id,
+        "watcher-failed",
+        {
+            "watcher": {
+                "state": "failed",
+                "pid": None,
+                "exit_code": 2,
+                "finished_at": obligations.utc_now(),
+                "last_error": str(error),
+            }
+        },
+        {
+            "watcher": {
+                "state": "running",
+                "launch_token": launch_token,
+                "pid": os.getpid(),
+            }
+        },
+        store_path,
+    )
+
+
+def _local_launch_durable(record: Mapping[str, Any]) -> bool:
+    local = record.get("local")
+    if not isinstance(local, Mapping):
+        return False
+    if _local_policy_skip_valid(record):
+        return True
+    state = local.get("state")
+    if state == "running":
+        registered = bool(local.get("registered_at"))
+        legacy_registered = local.get("launch_token") is None and bool(
+            local.get("started_at")
+        )
+        return (registered or legacy_registered) and _pid_alive(local.get("pid"))
+    terminal_is_registered = (
+        all(
+            isinstance(local.get(field), str) and bool(local[field].strip())
+            for field in ("launch_token", "registered_at", "started_at", "finished_at")
+        )
+        and type(local.get("pid")) is int
+        and local["pid"] > 0
+    )
+    if not terminal_is_registered:
+        return False
+    if state == "green":
+        return (
+            isinstance(record.get("repo"), str)
+            and isinstance(record.get("landed_sha"), str)
+            and _persisted_local_receipt_valid(
+                local.get("receipt_verification"),
+                repo=str(record["repo"]),
+                sha=str(record["landed_sha"]),
+            )
+        )
+    return state in {"red", "no_result", "error"}
+
+
+def _watcher_launch_durable(record: Mapping[str, Any]) -> bool:
+    watcher = record.get("watcher")
+    if not isinstance(watcher, Mapping):
+        return False
+    state = watcher.get("state")
+    # Compatibility for records written before watcher.state existed: a live,
+    # timestamped PID is still observable producer evidence.
+    if state in {None, "running"}:
+        return bool(watcher.get("started_at")) and _pid_alive(watcher.get("pid"))
+    return (
+        state == "completed"
+        and bool(watcher.get("started_at") and watcher.get("finished_at"))
+        and watcher.get("exit_code") == 0
+        and _watch_complete(record)
+    )
+
+
+def _components_launch_durable(record: Mapping[str, Any]) -> bool:
+    return _local_launch_durable(record) and _watcher_launch_durable(record)
+
+
+def obligation_launch_durable(record: Mapping[str, Any]) -> bool:
+    launch = record.get("launch")
+    return (
+        isinstance(launch, Mapping)
+        and launch.get("state") == "armed"
+        and _components_launch_durable(record)
+    )
+
+
+def _claim_obligation_launch(
+    obligation_id: str, store_path: Path
+) -> tuple[str, dict[str, Any], str | None]:
+    for _ in range(4):
+        record = obligations.get_record(obligation_id, store_path)
+        if obligation_launch_durable(record):
+            return "armed", record, None
+        launch = record.get("launch")
+        launch = launch if isinstance(launch, Mapping) else {}
+        launcher_pid = launch.get("launcher_pid")
+        if launch.get("state") == "launching" and _pid_alive(launcher_pid):
+            raise LaunchBusy(
+                f"obligation {obligation_id} launch is owned by live pid {launcher_pid}"
+            )
+        token = uuid.uuid4().hex
+        claimed = obligations.transition_if_matches(
+            obligation_id,
+            "launch-claimed",
+            {
+                "launch": {
+                    "state": "launching",
+                    "token": token,
+                    "launcher_pid": os.getpid(),
+                    "attempt": int(launch.get("attempt") or 0) + 1,
+                    "started_at": obligations.utc_now(),
+                    "armed_at": None,
+                    "last_error": None,
+                }
+            },
+            {"event_id": record["event_id"]},
+            store_path,
+        )
+        if claimed is not None:
+            return "owner", claimed, token
+    raise ProtocolError(f"could not atomically claim obligation {obligation_id}")
+
+
+def _release_obligation_launch(
+    obligation_id: str,
+    launch_token: str,
+    store_path: Path,
+    error: BaseException,
+) -> None:
+    obligations.transition_if_matches(
+        obligation_id,
+        "launch-repairable",
+        {
+            "launch": {
+                "state": "repairable",
+                "launcher_pid": None,
+                "last_error": str(error),
+            }
+        },
+        {"launch": {"state": "launching", "token": launch_token}},
+        store_path,
+    )
+
+
+def _wait_for_registration(
+    obligation_id: str,
+    component: str,
+    launch_token: str,
+    store_path: Path,
+    *,
+    timeout: float = LAUNCH_REGISTRATION_TIMEOUT,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while True:
+        record = obligations.get_record(obligation_id, store_path)
+        observed = record.get(component)
+        if not isinstance(observed, Mapping):
+            raise ProtocolError(f"obligation {obligation_id} has no {component} state")
+        if observed.get("launch_token") != launch_token:
+            raise ProtocolError(
+                f"obligation {obligation_id} {component} launch token was superseded"
+            )
+        if observed.get("state") in {
+            "running",
+            "completed",
+            "green",
+            "red",
+            "no_result",
+            "error",
+        }:
+            return record
+        if time.monotonic() >= deadline:
+            raise ProtocolError(
+                f"obligation {obligation_id} {component} did not register within {timeout}s"
+            )
+        sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+
+
+def _ensure_local_launched(
+    obligation_id: str, source: Path, store_path: Path
+) -> dict[str, Any]:
+    record = obligations.get_record(obligation_id, store_path)
+    if record.get("repo") != DEFAULT_REPO:
+        if _local_policy_skip_valid(record):
+            return record
+        skipped = obligations.transition_if_matches(
+            obligation_id,
+            "local-policy-skipped",
+            {"local": _local_policy_skip_patch(str(record.get("repo")))},
+            {"event_id": record["event_id"]},
+            store_path,
+        )
+        if skipped is None:
+            return _ensure_local_launched(obligation_id, source, store_path)
+        return skipped
+    if _local_launch_durable(record):
+        return record
+    workspace = ROOT / "ignored/ci-hub/obligations" / obligation_id
+    local_log = workspace / "local-validate.log"
+    local_cost = workspace / "local-validate-cost.json"
+    cost = record.get("local", {}).get("cost") or {}
+    estimate = cost.get("estimate") or estimate_local_validate_cost()
+    launch_token = uuid.uuid4().hex
+    prepared = obligations.transition_if_matches(
+        obligation_id,
+        "local-prepared",
+        {
+            "local": {
+                "state": "starting",
+                "started_at": obligations.utc_now(),
+                "finished_at": None,
+                "pid": None,
+                "launch_token": launch_token,
+                "registered_at": None,
+                "log_path": str(local_log),
+                "workspace": str(workspace / "hermit"),
+                "source": str(source),
+                "redispatch_count": int(
+                    record.get("local", {}).get("redispatch_count") or 0
+                ),
+                "receipt_verification": None,
+                "cost": {
+                    "estimate": estimate,
+                    "actual": None,
+                    "record_path": str(local_cost),
+                },
+            }
+        },
+        {"event_id": record["event_id"]},
+        store_path,
+    )
+    if prepared is None:
+        return _ensure_local_launched(obligation_id, source, store_path)
+    _spawn_detached(
+        (
+            "_local-run",
+            obligation_id,
+            "--launch-token",
+            launch_token,
+            "--source",
+            str(source),
+            "--store",
+            str(store_path),
+        ),
+        local_log,
+    )
+    return _wait_for_registration(obligation_id, "local", launch_token, store_path)
+
+
+def _ensure_watcher_launched(
+    obligation_id: str, store_path: Path, poll_seconds: int
+) -> dict[str, Any]:
+    record = obligations.get_record(obligation_id, store_path)
+    if _watcher_launch_durable(record):
+        return record
+    workspace = ROOT / "ignored/ci-hub/obligations" / obligation_id
+    watcher_log = workspace / "watcher.log"
+    launch_token = uuid.uuid4().hex
+    prepared = obligations.transition_if_matches(
+        obligation_id,
+        "watcher-prepared",
+        {
+            "watcher": {
+                "state": "starting",
+                "pid": None,
+                "launch_token": launch_token,
+                "log_path": str(watcher_log),
+                "started_at": None,
+                "finished_at": None,
+            }
+        },
+        {"event_id": record["event_id"]},
+        store_path,
+    )
+    if prepared is None:
+        return _ensure_watcher_launched(obligation_id, store_path, poll_seconds)
+    _spawn_detached(
+        (
+            "watch",
+            "--id",
+            obligation_id,
+            "--launch-token",
+            launch_token,
+            "--poll-seconds",
+            str(poll_seconds),
+            "--store",
+            str(store_path),
+        ),
+        watcher_log,
+    )
+    return _wait_for_registration(obligation_id, "watcher", launch_token, store_path)
+
+
+def resume_obligation_launch(
+    obligation_id: str,
+    *,
+    source: Path,
+    store_path: Path,
+    github_wait_seconds: int,
+    poll_seconds: int,
+    allow_dispatch: bool,
+) -> tuple[dict[str, Any], ProtocolError | None]:
+    status, record, launch_token = _claim_obligation_launch(obligation_id, store_path)
+    if status == "armed":
+        return record, None
+    assert launch_token is not None
+    github_error: ProtocolError | None = None
+    try:
+        _ensure_local_launched(obligation_id, source, store_path)
+        _ensure_watcher_launched(obligation_id, store_path, poll_seconds)
+        try:
+            ensure_github_verification(
+                obligation_id,
+                store_path=store_path,
+                wait_seconds=github_wait_seconds,
+                allow_dispatch=allow_dispatch,
+            )
+        except ProtocolError as error:
+            github_error = error
+            obligations.transition(
+                obligation_id,
+                "github-arm-error",
+                {
+                    "github": {
+                        "state": "no_result",
+                        "finished_at": None,
+                        "last_poll_error": str(error),
+                    }
+                },
+                store_path,
+            )
+            evaluate_obligation(obligation_id, store_path=store_path)
+        record = obligations.get_record(obligation_id, store_path)
+        if not _components_launch_durable(record):
+            raise ProtocolError(
+                f"obligation {obligation_id} verifier/watcher launch is not durable"
+            )
+        armed = obligations.transition_if_matches(
+            obligation_id,
+            "launch-armed",
+            {
+                "launch": {
+                    "state": "armed",
+                    "launcher_pid": None,
+                    "armed_at": obligations.utc_now(),
+                    "last_error": str(github_error) if github_error else None,
+                }
+            },
+            {"launch": {"state": "launching", "token": launch_token}},
+            store_path,
+        )
+        if armed is None:
+            raise ProtocolError(
+                f"obligation {obligation_id} lost its launch ownership token"
+            )
+        return armed, github_error
+    except BaseException as error:
+        _release_obligation_launch(obligation_id, launch_token, store_path, error)
+        raise
+
+
+def _github_verification_in_flight(github: object) -> bool:
+    if not isinstance(github, Mapping) or github.get("state") not in {
+        "pending",
+        "running",
+    }:
+        return False
+    run_ids = github.get("run_ids")
+    jobs = github.get("jobs")
+    dereferenced_run_ids = (
+        {run_id for run_id in run_ids if type(run_id) is int and run_id > 0}
+        if isinstance(run_ids, list)
+        else set()
+    )
+    if not dereferenced_run_ids or not isinstance(jobs, list):
+        return False
+    for job in jobs:
+        if not isinstance(job, Mapping):
+            continue
+        state = job.get("state")
+        status = str(job.get("status") or "").lower()
+        producer_status_matches = (
+            state == "pending"
+            and status in {"requested", "waiting", "queued", "pending"}
+        ) or (state == "running" and status == "in_progress")
+        if (
+            producer_status_matches
+            and type(job.get("run_id")) is int
+            and job["run_id"] in dereferenced_run_ids
+            and type(job.get("job_id")) is int
+            and job["job_id"] > 0
+        ):
+            return True
+    return False
+
+
+def _verification_in_flight(record: Mapping[str, Any]) -> bool:
+    local = record.get("local")
+    local_registered = isinstance(local, Mapping) and (
+        bool(local.get("registered_at"))
+        or (local.get("launch_token") is None and bool(local.get("started_at")))
+    )
+    local_in_flight = (
+        isinstance(local, Mapping)
+        and local.get("state") == "running"
+        and local_registered
+        and isinstance(local.get("pid"), int)
+        and local["pid"] > 0
+        and _pid_alive(local["pid"])
+    )
+    return local_in_flight or _github_verification_in_flight(record.get("github"))
+
+
+def _verification_state_needs_reconcile(record: Mapping[str, Any]) -> bool:
+    """A producer-looking state without observable producer identity."""
+    local = record.get("local")
+    github = record.get("github")
+    local_state = local.get("state") if isinstance(local, Mapping) else None
+    github_state = github.get("state") if isinstance(github, Mapping) else None
+    looks_active = local_state in {
+        "pending",
+        "starting",
+        "running",
+    } or github_state in {
+        "pending",
+        "running",
+    }
+    return looks_active and not _verification_in_flight(record)
+
+
 def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
     record = obligations.get_record(obligation_id, store_path)
-    if record["overall_state"] in obligations.CLOSED_STATES:
+    if record["overall_state"] in obligations.CLOSED_STATES and not (
+        record["overall_state"] == "satisfied"
+        and (
+            _verification_in_flight(record)
+            or _verification_state_needs_reconcile(record)
+        )
+    ):
         return record
-    if record["github"]["state"] not in TERMINAL_VERIFICATION_STATES:
+    if (
+        record.get("overall_state") == "investigation_required"
+        and record.get("failure_source") == "verification_policy"
+    ):
+        return record
+    policy: dict[str, Any] | None = None
+    try:
+        record, policy = bind_verification_policy(obligation_id, store_path)
+    except ProtocolError as error:
+        return _record_policy_investigation(record, error, store_path)
+    if (
+        policy is not None
+        and record["github"]["state"] not in TERMINAL_VERIFICATION_STATES
+    ):
         try:
-            runs = github_runs(record["repo"], record["landed_sha"])
-            if runs:
+            runs = github_runs(record["repo"], record["landed_sha"], policy=policy)
+            patch = _github_patch(runs, record["landed_sha"], policy)
+            if record.get("github") != patch["github"]:
                 record = obligations.transition(
-                    obligation_id, "github-polled", _github_patch(runs[0]), store_path
+                    obligation_id,
+                    "github-polled",
+                    patch,
+                    store_path,
                 )
         except ProtocolError as error:
             record = obligations.transition(
                 obligation_id,
                 "github-poll-error",
                 {"github": {"last_poll_error": str(error)}},
+                store_path,
+            )
+    if record["local"]["state"] in {"pending", "starting"}:
+        launch = record.get("launch")
+        launch = launch if isinstance(launch, Mapping) else {}
+        if not (
+            launch.get("state") == "launching"
+            and _pid_alive(launch.get("launcher_pid"))
+        ):
+            record = obligations.transition(
+                obligation_id,
+                "local-producer-absent",
+                {
+                    "local": {
+                        "state": "no_result",
+                        "finished_at": obligations.utc_now(),
+                        "exit_code": 2,
+                        "classification_reason": (
+                            "pending/starting state had no durable live producer"
+                        ),
+                    }
+                },
                 store_path,
             )
     if record["local"]["state"] == "running" and not _pid_alive(
@@ -1680,6 +3474,15 @@ def _maybe_redispatch_local(
     a revert).
     """
     local = record["local"]
+    if record.get("repo") != DEFAULT_REPO:
+        if _local_policy_skip_valid(record):
+            return dict(record)
+        return obligations.transition(
+            obligation_id,
+            "local-policy-skipped",
+            {"local": _local_policy_skip_patch(str(record.get("repo")))},
+            store_path,
+        )
     state = local.get("state")
     if state not in {"no_result", "red"}:
         return dict(record)
@@ -1697,10 +3500,31 @@ def _maybe_redispatch_local(
         local.get("log_path")
         or ROOT / "ignored/ci-hub/obligations" / obligation_id / "local-validate.log"
     )
-    pid = _spawn_detached(
+    launch_token = uuid.uuid4().hex
+    claimed = obligations.transition_if_matches(
+        obligation_id,
+        "local-redispatch-claimed",
+        {
+            "local": {
+                "state": "starting",
+                "pid": None,
+                "launch_token": launch_token,
+                "registered_at": None,
+                "finished_at": None,
+                "redispatch_count": spent + 1,
+            }
+        },
+        {"event_id": record["event_id"]},
+        store_path,
+    )
+    if claimed is None:
+        return obligations.get_record(obligation_id, store_path)
+    _spawn_detached(
         (
             "_local-run",
             obligation_id,
+            "--launch-token",
+            launch_token,
             "--source",
             str(source),
             "--store",
@@ -1715,26 +3539,28 @@ def _maybe_redispatch_local(
     )
     print(
         f"LOCAL RE-DISPATCH: obligation={obligation_id} attempt={spent + 1} "
-        f"reason={reason} pid={pid}",
+        f"reason={reason} token={launch_token}",
         file=sys.stderr,
         flush=True,
     )
-    return obligations.transition(
+    return _wait_for_registration(
         obligation_id,
-        "local-redispatched",
-        {
-            "local": {
-                "state": "running",
-                "pid": pid,
-                "finished_at": None,
-                "redispatch_count": spent + 1,
-            }
-        },
+        "local",
+        launch_token,
         store_path,
     )
 
 
 def _watch_complete(record: Mapping[str, Any]) -> bool:
+    if (
+        record.get("overall_state") == "investigation_required"
+        and record.get("failure_source") == "verification_policy"
+    ):
+        return True
+    if record["overall_state"] == "satisfied":
+        return not _verification_in_flight(
+            record
+        ) and not _verification_state_needs_reconcile(record)
     if record["overall_state"] in obligations.CLOSED_STATES:
         return True
     return all(
@@ -1790,7 +3616,19 @@ def watch(
         records = (
             [obligations.get_record(obligation_id, store_path)]
             if obligation_id
-            else obligations.unresolved_records(store_path)
+            else sorted(
+                (
+                    record
+                    for record in obligations.latest_records(store_path).values()
+                    if record.get("overall_state") not in obligations.CLOSED_STATES
+                    or _verification_in_flight(record)
+                    or _verification_state_needs_reconcile(record)
+                ),
+                key=lambda record: (
+                    str(record.get("opened_at", "")),
+                    record["obligation_id"],
+                ),
+            )
         )
         updated, planned, timed_out = _poll_within_budget(
             records, store_path, deadline
@@ -1962,140 +3800,113 @@ def print_status(
     return 2 if remediation else 1 if unresolved else 0
 
 
+def recoverable_obligation(
+    repo: str, sha: str, store_path: Path
+) -> dict[str, Any] | None:
+    """Newest same-SHA record whose launch/peer work still needs ownership."""
+    matches = [
+        record
+        for record in obligations.latest_records(store_path).values()
+        if record.get("repo") == repo
+        and record.get("landed_sha") == sha
+        and (
+            record.get("overall_state") not in obligations.CLOSED_STATES
+            or _verification_in_flight(record)
+            or not obligation_launch_durable(record)
+        )
+    ]
+    if not matches:
+        return None
+    return max(
+        matches,
+        key=lambda record: (
+            str(record.get("updated_at") or ""),
+            str(record.get("opened_at") or ""),
+            str(record.get("obligation_id") or ""),
+        ),
+    )
+
+
 def arm(args: argparse.Namespace) -> int:
+    # Resolve repository policy before touching the append-only store or starting
+    # either verifier. Unsupported repositories must never acquire an obligation
+    # that no consumer can verify.
+    raw_policy = getattr(args, "verification_policy_json", None)
+    if raw_policy is None:
+        policy = verification_policy_for_repo(args.repo)
+    else:
+        try:
+            parsed_policy = json.loads(raw_policy)
+        except json.JSONDecodeError as error:
+            raise ProtocolError("--verification-policy-json is invalid JSON") from error
+        if not isinstance(parsed_policy, Mapping):
+            raise ProtocolError("--verification-policy-json must be an object")
+        policy = validate_verification_policy(parsed_policy)
+        if policy["repo"] != args.repo:
+            raise ProtocolError(
+                "--verification-policy-json repository does not match --repo"
+            )
     store_path = args.store.expanduser().resolve()
-    source = args.source.expanduser().resolve()
+    source = resolve_repo_source(args.repo, args.source)
     sha = resolve_landed_sha(source, args.sha, repo=args.repo, pr=args.pr)
-    try:
-        record = obligations.create_obligation(
-            repo=args.repo,
-            landed_sha=sha,
-            land_mode=args.land_mode,
-            verification_scope="total",
-            actor=args.actor,
-            path=store_path,
+    record = recoverable_obligation(args.repo, sha, store_path)
+    if record is not None:
+        bind_verification_policy(
+            record["obligation_id"], store_path, requested_policy=policy
         )
-    except obligations.DuplicateOpenObligation as error:
-        record = error.record
-        print(str(error), file=sys.stderr)
-        return print_status(
-            store_path, include_closed=False, json_output=False, gate=False
+        print(
+            f"resuming obligation {record['obligation_id']} for {args.repo}@{sha}",
+            file=sys.stderr,
         )
-
+    else:
+        try:
+            record = obligations.create_obligation(
+                repo=args.repo,
+                landed_sha=sha,
+                land_mode=args.land_mode,
+                verification_scope="total",
+                verification_policy=policy,
+                actor=args.actor,
+                path=store_path,
+            )
+        except obligations.DuplicateOpenObligation as error:
+            record = error.record
+            bind_verification_policy(
+                record["obligation_id"], store_path, requested_policy=policy
+            )
+            print(str(error), file=sys.stderr)
+    # Creation is not arming. Every path, including DuplicateOpen recovery,
+    # enters the same claim/register reconciler and returns successfully only
+    # after both the verifier and watcher have durable producer evidence.
     obligation_id = record["obligation_id"]
-    workspace = ROOT / "ignored/ci-hub/obligations" / obligation_id
-    local_log = workspace / "local-validate.log"
-    local_cost = workspace / "local-validate-cost.json"
-    watcher_log = workspace / "watcher.log"
-    cost_estimate = estimate_local_validate_cost()
-    obligations.transition(
+    record, github_error = resume_obligation_launch(
         obligation_id,
-        "local-prepared",
-        {
-            "local": {
-                "state": "starting",
-                "started_at": obligations.utc_now(),
-                "log_path": str(local_log),
-                "workspace": str(workspace / "hermit"),
-                # Persisted so a watcher poll can re-dispatch the local leg (fill a
-                # no_result hole / reproduce a provisional red) without the donor
-                # checkout being re-supplied. redispatch_count bounds those re-runs.
-                "source": str(source),
-                "redispatch_count": 0,
-                "cost": {
-                    "estimate": cost_estimate,
-                    "actual": None,
-                    "record_path": str(local_cost),
-                },
-            }
-        },
-        store_path,
+        source=source,
+        store_path=store_path,
+        github_wait_seconds=args.github_wait_seconds,
+        poll_seconds=args.poll_seconds,
+        allow_dispatch=not args.no_dispatch,
     )
-    local_pid = _spawn_detached(
-        (
-            "_local-run",
-            obligation_id,
-            "--source",
-            str(source),
-            "--store",
-            str(store_path),
-        ),
-        local_log,
-    )
-    obligations.transition(
-        obligation_id,
-        "local-started",
-        {
-            "local": {
-                "state": "running",
-                "pid": local_pid,
-            }
-        },
-        store_path,
-    )
-    github_error: ProtocolError | None = None
-    try:
-        ensure_github_verification(
-            obligation_id,
-            store_path=store_path,
-            wait_seconds=args.github_wait_seconds,
-            allow_dispatch=not args.no_dispatch,
-        )
-    except ProtocolError as error:
-        github_error = error
-        # A network/tooling error reaching GitHub is the ABSENCE of a hosted
-        # verdict, not a failing one: leave the leg no_result so it is re-polled,
-        # never reverted on.
-        obligations.transition(
-            obligation_id,
-            "github-arm-error",
-            {
-                "github": {
-                    "state": "no_result",
-                    "finished_at": None,
-                    "last_poll_error": str(error),
-                }
-            },
-            store_path,
-        )
-        evaluate_obligation(obligation_id, store_path=store_path)
-
-    watcher_pid = _spawn_detached(
-        (
-            "watch",
-            "--id",
-            obligation_id,
-            "--poll-seconds",
-            str(args.poll_seconds),
-            "--store",
-            str(store_path),
-        ),
-        watcher_log,
-    )
-    record = obligations.transition(
-        obligation_id,
-        "watcher-started",
-        {
-            "watcher": {
-                "pid": watcher_pid,
-                "log_path": str(watcher_log),
-                "started_at": obligations.utc_now(),
-            }
-        },
-        store_path,
-    )
+    if not obligation_launch_durable(record):
+        raise ProtocolError(f"obligation {obligation_id} did not durably arm")
     print(f"OPEN OBLIGATION: {obligation_id} {args.repo}@{sha}")
-    print(f"  local: pid={local_pid} log={local_log}")
     print(
-        "  local estimate: "
-        f"wall={cost_estimate['wall_seconds']:.0f}s cpu={cost_estimate['cpu_seconds']:.0f}s "
-        f"basis={cost_estimate['basis']}"
+        f"  launch: state={record['launch']['state']} "
+        f"armed_at={record['launch'].get('armed_at')}"
+    )
+    print(
+        f"  local: state={record['local']['state']} pid={record['local'].get('pid')} "
+        f"log={record['local'].get('log_path')}"
     )
     print(
         "  github: "
-        f"state={record['github']['state']} runs={','.join(map(str, record['github']['run_ids'])) or 'pending'}"
+        f"state={record['github']['state']} "
+        f"runs={','.join(map(str, record['github']['run_ids'])) or 'none'}"
     )
-    print(f"  watcher: pid={watcher_pid} log={watcher_log}")
+    print(
+        f"  watcher: state={record['watcher']['state']} "
+        f"pid={record['watcher'].get('pid')} log={record['watcher'].get('log_path')}"
+    )
     return 2 if github_error else 0
 
 
@@ -2103,8 +3914,100 @@ def resolve_obligation(args: argparse.Namespace) -> int:
     ref = args.ref.lower()
     if not obligations.SHA_RE.fullmatch(ref):
         raise ProtocolError("--ref must be a full 40-character commit SHA")
+    store_path = args.store.expanduser().resolve()
+    record = obligations.get_record(args.id, store_path)
+    if record.get("overall_state") != "remediation_required":
+        raise ProtocolError(
+            f"obligation {args.id!r} is not in remediation_required state"
+        )
+    event_id = record.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        raise ProtocolError(f"obligation {args.id!r} has no durable event identity")
+    recommendation = record.get("recommendation")
+    durable_action = (
+        recommendation.get("action")
+        if isinstance(recommendation, Mapping)
+        else None
+    )
+    if durable_action not in {"fix-forward", "revert"}:
+        raise ProtocolError(
+            f"obligation {args.id!r} has no concrete remediation recommendation"
+        )
+    remediation = record.get("remediation")
+    if not isinstance(remediation, Mapping) or remediation.get("state") != "triggered":
+        raise ProtocolError(f"obligation {args.id!r} remediation is not triggered")
+    if remediation.get("kind") != durable_action:
+        raise ProtocolError(
+            f"obligation {args.id!r} durable remediation kind does not match its "
+            "recommendation"
+        )
+    if args.kind != durable_action:
+        raise ProtocolError(
+            f"--kind {args.kind!r} contradicts durable recommendation "
+            f"{durable_action!r}"
+        )
+    repo = record.get("repo")
+    if not isinstance(repo, str):
+        raise ProtocolError(f"obligation {args.id!r} has no repository identity")
+    if ref == record.get("landed_sha"):
+        raise ProtocolError("--ref must identify a repair commit, not the failed land")
+
+    # Resolution is itself a load-bearing authority. Freshly fetch this
+    # obligation's repository-bound main ref, prove the exact repair object
+    # exists there, and carry that proof into the append-only transition.
+    source = resolve_repo_source(repo, args.source)
+    target_ref = _fetch_target(source, "main")
+    target_tip = _resolve_raw_sha(source, target_ref)
+    resolved = _resolve_raw_sha(source, ref)
+    if resolved != ref:
+        raise ProtocolError(f"--ref resolved to {resolved}, not exact repair SHA {ref}")
+    if not _is_target_ancestor(source, resolved, target_tip):
+        raise ProtocolError(
+            f"repair {resolved} is not reachable from freshly fetched {repo}:main"
+        )
+    landed_sha = record.get("landed_sha")
+    if not isinstance(landed_sha, str) or not obligations.SHA_RE.fullmatch(landed_sha):
+        raise ProtocolError(f"obligation {args.id!r} has no exact landed SHA")
+    if not _is_target_ancestor(source, landed_sha, resolved):
+        raise ProtocolError(
+            f"repair {resolved} does not descend from failed land {landed_sha}"
+        )
+    kind_verification: dict[str, object] = {
+        "kind": durable_action,
+        "durable_recommendation_matches": True,
+    }
+    if durable_action == "revert":
+        repair_parents = _commit_parents(source, resolved)
+        if repair_parents != [landed_sha]:
+            raise ProtocolError(
+                "revert repair must be the direct single-parent child of the "
+                f"failed land {landed_sha}"
+            )
+        failed_land_parents = _commit_parents(source, landed_sha)
+        if len(failed_land_parents) != 1:
+            raise ProtocolError(
+                f"failed land {landed_sha} is not a single-parent commit; "
+                "resolve it as a reviewed fix-forward"
+            )
+        failed_land_parent = failed_land_parents[0]
+        repair_tree = _commit_tree(source, resolved)
+        restored_tree = _commit_tree(source, failed_land_parent)
+        if repair_tree != restored_tree:
+            raise ProtocolError(
+                f"revert repair {resolved} does not restore failed land parent "
+                f"tree {restored_tree}"
+            )
+        kind_verification.update(
+            {
+                "repair_parent_sha": landed_sha,
+                "failed_land_parent_sha": failed_land_parent,
+                "repair_tree_sha": repair_tree,
+                "failed_land_parent_tree_sha": restored_tree,
+                "tree_restored": True,
+            }
+        )
     now = obligations.utc_now()
-    obligations.transition(
+    updated = obligations.transition_if_matches(
         args.id,
         "remediated",
         {
@@ -2115,10 +4018,33 @@ def resolve_obligation(args: argparse.Namespace) -> int:
                 "ref": ref,
                 "started_at": args.started_at or now,
                 "completed_at": now,
+                "landing_verification": {
+                    "authority": "fresh-repository-main-ancestry-v1",
+                    "repo": repo,
+                    "repair_sha": resolved,
+                    "target_ref": target_ref,
+                    "target_tip_sha": target_tip,
+                    "repair_is_ancestor_of_target_tip": True,
+                    "failed_land_sha": landed_sha,
+                    "failed_land_is_ancestor_of_repair": True,
+                    "kind_verification": kind_verification,
+                    "source": str(source),
+                    "checked_at": now,
+                },
             },
         },
-        args.store,
+        {
+            "event_id": event_id,
+            "overall_state": "remediation_required",
+            "recommendation": {"action": durable_action},
+            "remediation": {"state": "triggered", "kind": durable_action},
+        },
+        store_path,
     )
+    if updated is None:
+        raise ProtocolError(
+            f"obligation {args.id!r} changed while repair ancestry was verified"
+        )
     return 0
 
 
@@ -2132,11 +4058,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     arm_parser.add_argument("sha")
     arm_parser.add_argument("--repo", default=DEFAULT_REPO)
     arm_parser.add_argument(
+        "--verification-policy-json",
+        help=argparse.SUPPRESS,
+    )
+    arm_parser.add_argument(
         "--pr",
         type=int,
         help="resolve a rebase-merged PR head to GitHub's replay SHA",
     )
-    arm_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    arm_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     arm_parser.add_argument(
         "--land-mode", choices=("admin", "speculative"), default="speculative"
     )
@@ -2168,14 +4103,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="OID originally reported for a PR landing (requires --item)",
     )
     verify_landing_parser.add_argument("--repo", default=DEFAULT_REPO)
-    verify_landing_parser.add_argument("--source", type=Path, default=ROOT / "hermit")
+    verify_landing_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches --repo (defaults by supported repo)",
+    )
     verify_landing_parser.add_argument("--target", default="main")
     verify_landing_parser.add_argument("--json", action="store_true")
+
+    hosted_status_parser = subparsers.add_parser(
+        "hosted-status",
+        help="verify the registered exact-head GitHub job authority",
+    )
+    hosted_status_parser.add_argument("--repo", default=DEFAULT_REPO)
+    hosted_status_parser.add_argument("--sha", required=True)
+    hosted_status_parser.add_argument("--json", action="store_true")
 
     watch_parser = subparsers.add_parser(
         "watch", help="poll open obligations and record transitions"
     )
     watch_parser.add_argument("--id")
+    watch_parser.add_argument("--launch-token", help=argparse.SUPPRESS)
     watch_parser.add_argument("--once", action="store_true")
     watch_parser.add_argument("--gate", action="store_true")
     watch_parser.add_argument("--poll-seconds", type=int, default=DEFAULT_POLL_SECONDS)
@@ -2234,11 +4183,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     resolve_parser.add_argument("--ref", required=True)
     resolve_parser.add_argument("--started-at")
     resolve_parser.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="checkout whose origin matches the obligation repository",
+    )
+    resolve_parser.add_argument(
         "--store", type=Path, default=obligations.default_store_path()
     )
 
     local_parser = subparsers.add_parser("_local-run", help=argparse.SUPPRESS)
     local_parser.add_argument("id")
+    local_parser.add_argument("--launch-token", help=argparse.SUPPRESS)
     local_parser.add_argument("--source", type=Path, required=True)
     local_parser.add_argument("--store", type=Path, required=True)
     return parser.parse_args(argv)
@@ -2255,19 +4211,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             return arm(args)
         if args.command in ("verify-landing", "verify-landed-pr"):
             return verify_landing(args)
+        if args.command == "hosted-status":
+            return hosted_status(args)
         if args.command == "watch":
             if args.poll_seconds <= 0:
                 raise ProtocolError("--poll-seconds must be positive")
-            result = watch(
-                store_path=args.store,
-                obligation_id=args.id,
-                once=args.once,
-                poll_seconds=args.poll_seconds,
-                # Only bound the ONE-SHOT gate path. A long-lived `watch` (no
-                # --once) is a deliberate foreground poll with no outer
-                # guillotine over it, and must not acquire one here.
-                budget_secs=args.budget_secs if args.once else None,
-            )
+            if args.launch_token is not None:
+                if args.id is None:
+                    raise ProtocolError("a launched watcher requires --id")
+                if not _register_watcher(args.id, args.launch_token, args.store):
+                    return 0
+            try:
+                result = watch(
+                    store_path=args.store,
+                    obligation_id=args.id,
+                    once=args.once,
+                    poll_seconds=args.poll_seconds,
+                    # Only bound the ONE-SHOT gate path. A long-lived `watch`
+                    # (no --once) is a deliberate foreground poll with no outer
+                    # guillotine over it, and must not acquire one here.
+                    budget_secs=args.budget_secs if args.once else None,
+                )
+            except BaseException as error:
+                if args.launch_token is not None:
+                    _fail_watcher(args.id, args.launch_token, args.store, error)
+                raise
+            else:
+                if args.launch_token is not None:
+                    _complete_watcher(args.id, args.launch_token, args.store)
             if args.gate:
                 return print_status(
                     args.store, include_closed=False, json_output=False, gate=True
@@ -2294,7 +4265,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "resolve":
             return resolve_obligation(args)
         if args.command == "_local-run":
-            return _local_run(args.id, args.source, args.store)
+            return _local_run(
+                args.id,
+                args.source,
+                args.store,
+                launch_token=args.launch_token,
+            )
     except (ProtocolError, obligations.StoreError) as error:
         print(f"ci-hub speculative-land: {error}", file=sys.stderr)
         return 2

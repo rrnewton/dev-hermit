@@ -1,5 +1,12 @@
 # Compat-Envelope Scorecard — Full-Corpus Denominator
 
+> **SUPERSEDED for current numbers (2026-08-06).** This is a 2026-08-04 analysis
+> of the denominator question. For the current rendering of every CSV in this
+> directory — with the column schema, interpretation rules, provenance, and the
+> stripped-vs-bitwise certification limit — read
+> [`SCORECARD-CURRENT.md`](SCORECARD-CURRENT.md). The corpus reasoning below
+> still stands; the tables are stale.
+
 Machine-readable cross-backend compatibility measurement, rendered in the owner's
 two-table format. The ptrace denominator is the **FULL e2e manifest corpus**, not
 the portable-CI subset.
@@ -217,7 +224,7 @@ Fresh triage of every `lane=privileged` test (task
 compat-envelope/collect-envelope.rs --mode regression --lane portable \
   --repo <hermit-checkout> --backends ptrace,dbi,sabre --with-parity \
   --csv compat-envelope/scorecard.csv
-compat-envelope/render-scorecard.rs --csv compat-envelope/scorecard.csv --all
+compat-envelope/render-scorecard.rs --csv compat-envelope/scorecard.csv --latest
 ```
 
 **Table 2** (Reverie Guest/Tool boundary — a *separate* producer and a *separate*

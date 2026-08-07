@@ -16,12 +16,17 @@ message that names *which* condition refused it.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import socket
+import threading
 import datetime
 import importlib.util
 import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "orc-hermit-msg.py"
@@ -40,13 +45,30 @@ def _load_module():
 
 ohm = _load_module()
 
+
+@contextlib.contextmanager
+def _patched(module, **attrs):
+    """Temporarily replace module attributes, restoring them on exit.
+
+    Used to stand in for tmux so the delivery branches can be driven directly.
+    Nothing here touches a socket, a pane, or a live coordinator.
+    """
+    saved = {name: getattr(module, name) for name in attrs}
+    for name, value in attrs.items():
+        setattr(module, name, value)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(module, name, value)
+
 ORC_START = (
-    '"if [ -f \'/home/newton/.orc/tmux.conf\' ]; then tmux source-file '
-    "'/home/newton/.orc/tmux.conf'; fi; exec '/home/newton/orc-bin/orc' "
+    '"if [ -f \'/home/test/.orc/tmux.conf\' ]; then tmux source-file '
+    "'/home/test/.orc/tmux.conf'; fi; exec '/home/test/orc-bin/orc' "
     "'--db' 'hermit' '--resume' '--tui'\""
 )
 AGENT_START = (
-    '"cd /home/newton/work/dev-hermit && exec env AGENT=orc claude '
+    '"cd /home/test/work/dev-hermit && exec env AGENT=orc claude '
     '--permission-mode acceptEdits"'
 )
 
@@ -114,7 +136,7 @@ class TestCoordinatorSelection(DiscoveryTestCase):
 
     def test_coordinator_without_a_db_flag_falls_back_to_session_name(self):
         panes = pane_line(
-            "orc-hermit", "orc", "%0", "orc", '"exec /home/newton/orc-bin/orc --tui"'
+            "orc-hermit", "orc", "%0", "orc", '"exec /home/test/orc-bin/orc --tui"'
         )
         self.assertEqual(self.find(panes=panes).pane_id, "%0")
 
@@ -214,7 +236,7 @@ class TestLivePaneParsing(unittest.TestCase):
         self.assertEqual([pane.pane_id for pane in parsed], ["%0", "%1", "%2"])
 
     def test_command_is_reduced_to_its_basename(self):
-        panes = pane_line("orc-hermit", "orc", "%0", "/home/newton/orc-bin/orc", ORC_START)
+        panes = pane_line("orc-hermit", "orc", "%0", "/home/test/orc-bin/orc", ORC_START)
         self.assertTrue(ohm.parse_live_panes(panes, ["orc-hermit"])[0].is_orc)
 
 
@@ -744,5 +766,337 @@ class TestExitStatusAndLog(DeliveryTestCase):
         self.assertEqual(len(records), 1)
 
 
+
+class VerifyInjectedConsumptionTests(unittest.TestCase):
+    """An empty composer is ambiguous; the scrollback is what disambiguates it.
+
+    `verify_injected` used to read "composer empty and probe not on screen" as
+    non-delivery. That is only one of its two meanings: the other is that Orc
+    took the draft before the relay looked, which is DELIVERY. The 2026-08-07
+    T03:00Z hourly wake hit the ambiguous state, was reported relay-rc=1, and
+    its hour was released -- so a later run would have sent the whole status
+    again. These tests drive the three states directly, with tmux replaced, so
+    the branch is exercised deterministically rather than by racing a pane.
+    """
+
+    RULE = "-" * 40
+    PROBE = "theexactmessageprobe"
+
+    def _screen(self, draft: str = "") -> str:
+        return "\n".join([self.RULE, f"> {draft}", self.RULE])
+
+    def _patch(self, screen: str, transcript: str):
+        calls = []
+
+        def fake_capture(socket, pane_id, *, scrollback: int = 0) -> str:
+            calls.append(scrollback)
+            return transcript if scrollback else screen
+
+        return fake_capture, calls
+
+    def test_a_populated_composer_needs_no_scrollback_lookup(self):
+        capture, calls = self._patch(self._screen("some draft"), "")
+        with _patched(ohm, capture_pane=capture):
+            outcome = ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+        self.assertEqual(outcome, ohm.INJECTED_IN_COMPOSER)
+        self.assertEqual(calls, [0], "must not read scrollback when the box is full")
+
+    def test_an_empty_composer_with_the_message_in_scrollback_is_a_delivery(self):
+        # THE CASE THAT USED TO DOUBLE-SEND.
+        capture, calls = self._patch(self._screen(""), f"[user]\n{self.PROBE}\n")
+        with _patched(ohm, capture_pane=capture, INJECT_ATTEMPTS=2, INJECT_RETRY_SLEEP=0.0):
+            outcome = ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+        self.assertEqual(outcome, ohm.INJECTED_ALREADY_CONSUMED)
+        self.assertIn(ohm.TRANSCRIPT_SCROLLBACK_LINES, calls, "scrollback must be consulted")
+
+    def test_an_empty_composer_with_nothing_anywhere_still_fails(self):
+        # The genuine non-delivery must NOT have been converted into a success.
+        capture, _ = self._patch(self._screen(""), "[user]\nsomething entirely else\n")
+        with _patched(
+            ohm, capture_pane=capture, INJECT_ATTEMPTS=2, INJECT_RETRY_SLEEP=0.0,
+            clear_composer=lambda *a, **k: True,
+        ):
+            with self.assertRaises(ohm.OrcMessageError) as caught:
+                ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+        self.assertIn("did not reach the Orc composer", str(caught.exception))
+
+    def test_the_two_outcomes_differ_only_by_the_scrollback(self):
+        """Identical screens, opposite verdicts -- the transcript decides."""
+        screen = self._screen("")
+        for transcript, expected in (
+            (f"[user]\n{self.PROBE}\n", ohm.INJECTED_ALREADY_CONSUMED),
+            ("[user]\nunrelated turn\n", None),
+        ):
+            capture, _ = self._patch(screen, transcript)
+            with _patched(
+                ohm, capture_pane=capture, INJECT_ATTEMPTS=2, INJECT_RETRY_SLEEP=0.0,
+                clear_composer=lambda *a, **k: True,
+            ):
+                if expected is None:
+                    with self.assertRaises(ohm.OrcMessageError):
+                        ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+                else:
+                    self.assertEqual(
+                        ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE),
+                        expected,
+                    )
+
+    def test_a_consumed_draft_is_never_given_an_enter(self):
+        """send_message must not submit something Orc already holds."""
+        sent_keys = []
+
+        def fake_run_tmux(socket, *args):
+            sent_keys.append(args)
+            return ""
+
+        capture, _ = self._patch(self._screen(""), f"[user]\n{self.PROBE}\n")
+        with _patched(
+            ohm,
+            capture_pane=capture,
+            run_tmux=fake_run_tmux,
+            inject_message=lambda *a, **k: None,
+            wait_for_ready_composer=lambda *a, **k: ohm.Composer(text="", state="idle"),
+            message_probe=lambda _m: self.PROBE,
+            INJECT_ATTEMPTS=2,
+            INJECT_RETRY_SLEEP=0.0,
+        ):
+            ack = ohm.send_message(Path("/nonexistent"), "%0", "irrelevant body")
+        self.assertTrue(ack.consumed_without_submit)
+        self.assertEqual(ack.evidence, "consumed-before-submit+echo")
+        self.assertFalse(
+            any("Enter" in a for call in sent_keys for a in call),
+            f"Enter must not be sent for an already-consumed draft: {sent_keys}",
+        )
+
+
+class _InertReceiver:
+    """A real HTTP server on a Unix socket that records what it was sent.
+
+    Inert by construction: it is a socket in a temp directory with no route to
+    any coordinator, agent, or chat surface. Nothing here can deliver a
+    user-facing message; the point is to prove the relay binds success to a
+    RECEIVER'S ACKNOWLEDGEMENT rather than to its own write succeeding.
+    """
+
+    def __init__(self, path, status=200, body='{"status":"accepted","message_id":"m-1"}'):
+        self.path = str(path)
+        self.status = status
+        self.body = body
+        self.requests: list[str] = []
+        self._stop = False
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.bind(self.path)
+        self._sock.listen(8)
+        self._sock.settimeout(0.25)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        while not self._stop:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                continue
+            with conn:
+                conn.settimeout(2.0)
+                try:
+                    raw = b""
+                    while b"\r\n\r\n" not in raw:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        raw += chunk
+                    head, _, rest = raw.partition(b"\r\n\r\n")
+                    length = 0
+                    for line in head.decode("latin1").split("\r\n"):
+                        if line.lower().startswith("content-length:"):
+                            length = int(line.split(":", 1)[1].strip())
+                    while len(rest) < length:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        rest += chunk
+                    self.requests.append(rest.decode("utf-8", errors="replace"))
+                    payload = self.body.encode()
+                    conn.sendall(
+                        f"HTTP/1.1 {self.status} X\r\nContent-Type: application/json\r\n"
+                        f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode()
+                        + payload
+                    )
+                except OSError:
+                    pass
+
+    def stop(self):
+        self._stop = True
+        with contextlib.suppress(OSError):
+            self._sock.close()
+        self._thread.join(timeout=2)
+        with contextlib.suppress(OSError):
+            os.unlink(self.path)
+
+
+class ApiDeliveryTests(unittest.TestCase):
+    """Delivery must bind to the receiver's acknowledgement.
+
+    The tmux path infers delivery from a rendered TUI, which is why this file
+    has a history of ambiguous outcomes. Here the receiver answers, so success
+    is a reply from the thing that will consume the message.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="ohm-api-"))
+        self.sock = self.tmp / "recv.sock"
+        self.receiver = None
+
+    def tearDown(self):
+        if self.receiver is not None:
+            self.receiver.stop()
+
+    def test_a_live_receiver_acknowledges_the_exact_payload_once(self):
+        self.receiver = _InertReceiver(self.sock)
+        ack = ohm.deliver_via_api(self.sock, "the exact hourly wake body")
+        self.assertEqual(ack.status, 200)
+        self.assertEqual(ack.ack_id, "m-1")
+        self.assertEqual(ack.evidence, "api-accepted:m-1")
+        # EXACTLY ONE request, carrying EXACTLY the payload.
+        self.assertEqual(len(self.receiver.requests), 1)
+        self.assertEqual(
+            json.loads(self.receiver.requests[0])["message"],
+            "the exact hourly wake body",
+        )
+
+    def test_a_missing_receiver_refuses_and_sends_nothing(self):
+        # Fail-closed: no socket means nothing can accept the message. The relay
+        # must not silently fall back to typing, which is how a refusal becomes
+        # a blind write.
+        with self.assertRaises(ohm.OrcMessageError) as caught:
+            ohm.deliver_via_api(self.tmp / "absent.sock", "must not be delivered")
+        self.assertIn("no Orc receiver", str(caught.exception))
+
+    def test_a_receiver_that_refuses_is_not_reported_as_delivered(self):
+        self.receiver = _InertReceiver(self.sock, status=503, body='{"error":"busy"}')
+        with self.assertRaises(ohm.OrcMessageError) as caught:
+            ohm.deliver_via_api(self.sock, "rejected body")
+        self.assertIn("503", str(caught.exception))
+        # It still reached the receiver once; the point is that a non-2xx is
+        # never laundered into success.
+        self.assertEqual(len(self.receiver.requests), 1)
+
+    def test_a_restarted_receiver_does_not_receive_a_duplicate(self):
+        """One send per invocation, across a receiver restart.
+
+        The dangerous shape is a relay that retries after an ambiguous outcome:
+        an unanswered POST may still have been processed, so a retry is how the
+        owner gets the same status twice. Each invocation posts exactly once.
+        """
+        self.receiver = _InertReceiver(self.sock)
+        ohm.deliver_via_api(self.sock, "before restart")
+        self.assertEqual(len(self.receiver.requests), 1)
+
+        # Restart the receiver on the same path, as a coordinator relaunch would.
+        self.receiver.stop()
+        self.receiver = _InertReceiver(self.sock)
+        self.assertEqual(len(self.receiver.requests), 0, "a fresh receiver starts empty")
+
+        ohm.deliver_via_api(self.sock, "after restart")
+        self.assertEqual(
+            len(self.receiver.requests), 1,
+            "the second invocation must post ONCE, not replay the first",
+        )
+        self.assertEqual(
+            json.loads(self.receiver.requests[0])["message"], "after restart"
+        )
+
+    def test_a_receiver_that_vanishes_mid_flight_refuses_without_retrying(self):
+        # Bound to the socket then gone: the relay must report failure rather
+        # than reconnect-and-resend.
+        self.receiver = _InertReceiver(self.sock)
+        self.receiver.stop()
+        self.sock.touch()  # path exists, nothing listening
+        with self.assertRaises(ohm.OrcMessageError) as caught:
+            ohm.deliver_via_api(self.sock, "nobody is listening")
+        self.assertIn("did not answer", str(caught.exception))
+
+    def test_an_acknowledgement_without_an_id_is_still_an_acknowledgement(self):
+        # A 2xx IS the ack; the id is extra provenance, and its absence must not
+        # invent a failure.
+        self.receiver = _InertReceiver(self.sock, body='{"status":"queued"}')
+        ack = ohm.deliver_via_api(self.sock, "no id in the reply")
+        self.assertIsNone(ack.ack_id)
+        self.assertEqual(ack.evidence, "api-accepted")
+
+    def test_the_ack_id_is_read_from_the_shapes_orc_actually_uses(self):
+        for body, expected in (
+            ('{"message_id":"a"}', "a"),
+            ('{"id":123}', "123"),
+            ('{"data":{"request_id":"r"}}', "r"),
+            ('{"result":{"queue_id":"q"}}', "q"),
+            ("not json at all", None),
+            ('["a","list"]', None),
+        ):
+            self.assertEqual(ohm._api_ack_id(body), expected, body)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSelfTestCannotReachAUser(unittest.TestCase):
+    """A self-test that can reach a person is a production side effect.
+
+    This has already happened twice -- `RELAY SELF-TEST from hermit-w12...` and
+    a socket-fallback probe both landed in front of the owner. The guard is
+    checked here structurally: the refusal happens on the DESTINATION, before
+    anything is composed or typed, so it cannot be defeated by a test that
+    merely intends not to send.
+
+    Bracketed both directions. Negatives alone would be satisfied by a guard
+    that refuses every self-test, which would make self-testing impossible
+    rather than safe -- so the inert-fixture positive is load-bearing.
+    """
+
+    def test_negative_self_test_without_an_explicit_socket_is_refused(self):
+        # No --socket means the LIVE coordinator, which is exactly the leak.
+        reason = ohm.self_test_destination_refusal(None)
+        self.assertIsNotNone(reason)
+        self.assertIn("explicit --socket", reason)
+
+    def test_negative_self_test_against_the_live_socket_is_refused(self):
+        reason = ohm.self_test_destination_refusal(ohm.DEFAULT_SOCKET)
+        self.assertIsNotNone(reason)
+        self.assertIn("live coordinator socket", reason)
+
+    def test_negative_any_socket_in_the_live_runtime_dir_is_refused(self):
+        """Naming a sibling server explicitly must not buy a way in.
+
+        Real orc servers are published under the runtime dir, so a socket there
+        is presumed user-facing even if it is not the default one.
+        """
+        sibling = ohm.LIVE_SOCKET_DIR / f"tmux-{ohm.UID}" / "some-other-server"
+        reason = ohm.self_test_destination_refusal(sibling)
+        self.assertIsNotNone(reason)
+        self.assertIn(str(ohm.LIVE_SOCKET_DIR), reason)
+
+    def test_positive_an_inert_fixture_socket_is_allowed(self):
+        """The guard must still permit a real self-test against a fixture."""
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture-server"
+            self.assertIsNone(ohm.self_test_destination_refusal(fixture))
+
+    def test_dry_run_is_not_accepted_as_a_substitute_for_an_inert_target(self):
+        """Dry-run promises not to type; it still touches the live pane.
+
+        The earlier leak came from a probe that was expected not to deliver, so
+        'well-behaved on the happy path' is not the property being enforced.
+        """
+        reason = ohm.self_test_destination_refusal(None)
+        self.assertIsNotNone(reason, "dry-run must not exempt the destination check")
+
+    def test_cli_refuses_a_self_test_aimed_at_the_live_coordinator(self):
+        """End to end through argparse: exit before any tmux call happens."""
+        argv = ["orc-hermit-msg", "--self-test", "hello"]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(ohm, "run_tmux") as never_called:
+            with self.assertRaises(SystemExit) as caught:
+                ohm.parse_args()
+        self.assertEqual(2, caught.exception.code, "argparse error exit")
+        never_called.assert_not_called()

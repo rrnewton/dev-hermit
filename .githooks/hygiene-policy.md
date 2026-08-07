@@ -79,6 +79,52 @@ snapshot. Dirty primaries are preserved and skipped with a warning. Tick-hub
 runs this same strict routine every five minutes; it hard-warns instead of
 publishing if any cleanliness, branch, freshness, pin, or parent-main gate fails.
 
+### The freshness invariant (`make check-primary-freshness`)
+
+`check` above is advisory and product-scoped. The **invariant** is stated once,
+in `primary_checkout.py`, and evaluated over **every primary including the
+parent**:
+
+> A primary is FRESH iff it is initialized, **not bare-flipped**, on `main` (not
+> detached, not another branch), **exactly equal** to that branch on `origin`,
+> and clean. A product checkout's commit differing from the parent gitlink is
+> classified by that product's own check rather than treated as parent dirt;
+> a staged gitlink update is still parent dirt and is never hidden.
+
+Drift is reported by class — `bare`, `detached`, `wrong-branch`, `behind`,
+`ahead`, `diverged`, `dirty`, `uninitialized`, `unknown` — naming *which* primary
+and *how*, each with the exact command to fix it. Exit `0` fresh, `1` drift,
+`2` at least one primary could not be evaluated (**nothing proven is not a
+pass**).
+
+Three properties are deliberate:
+
+- **`behind`, `ahead` and `diverged` are separate classes.** "HEAD differs from
+  origin/main" is not actionable; the three need different responses, and a
+  relationship is only asserted when the remote commit is present locally to
+  prove it. Otherwise the class is `unclassified-drift` and the tool says to
+  fetch.
+- **Nothing is reset, forced or fast-forwarded automatically.** A fast-forward
+  moves the working tree of a shared integration surface with live sibling
+  processes and ~126 dependent worktrees. `--restore-safe` repairs exactly one
+  class, the accidental `core.bare` flip, because it rewrites a single config
+  flag and touches no ref, index or file content.
+- **Dirt is reported, never remedied.** The changes may be another agent's
+  (Invariant 5), so the remediation is "attribute the changes first".
+
+**Why the bare flip kept escaping.** Under `core.bare=true` the directory still
+has `.git`, `branch --show-current` still answers and `rev-parse HEAD` still
+answers, so a refs-only check sees a healthy primary while every work-tree
+operation fails. The binding observation is
+`git rev-parse --is-bare-repository`; note `git -c core.bare=false …` does **not**
+override it.
+
+**The reachable-accident root shape is documented, not yet normalized.**
+`hermit/.git` is an in-tree repository directory hosting ~126 worktrees, with no
+`.git/modules/hermit` — unlike `reverie`, `liteinst2` and `agent-utils`, which
+use the standard gitfile + `.git/modules/<name>` layout and have never drifted.
+Until that is normalized, the guard above is what re-asserts `core.bare=false`.
+
 ## The shared index: never `git commit` bare in the parent
 
 Every agent in this parent shares one working tree and therefore **one

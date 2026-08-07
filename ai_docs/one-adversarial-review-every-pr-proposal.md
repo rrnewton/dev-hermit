@@ -47,8 +47,8 @@ Labels that actually exist on `rrnewton/hermit` (verified via `gh label list`):
 | --- | --- | --- |
 | `hermit/scripts/core-review-protocol-lint.sh` (ENFORCED) | any `post-facto-human-review` PR = **all 4 triggers** | — (this is ground truth) |
 | `hermit/CLAUDE.md`/AGENTS.md (dual-approval labels enforced by the gate) | **all 4 triggers** | ✅ |
-| PARENT `.claude/skills/post-facto-review.md` §2 (L62-67) | **all 4 triggers** ("Every PR carrying `post-facto-human-review` requires two independent adversarial reviews") | ✅ |
-| PARENT `.claude/skills/backend-reality-reviewer.md` (L20-21) | defers to post-facto-review | ✅ |
+| PARENT `.claude/skills/post-facto-review/SKILL.md` §2 (L62-67) | **all 4 triggers** ("Every PR carrying `post-facto-human-review` requires two independent adversarial reviews") | ✅ |
+| PARENT `.claude/skills/backend-reality-reviewer/SKILL.md` (L20-21) | defers to post-facto-review | ✅ |
 | HERMIT `.claude/skills/post-facto-review/SKILL.md` §2 (L108-121) | **triggers 3 & 4 only** ("triggers 3 and 4, and any clock/time-virtualization change"); triggers 1 & 2 keep "the standard single-reviewer bar" | ❌ contradicts the lint it cites |
 | HERMIT `.claude/skills/backend-reality-reviewer/SKILL.md` (L50-53) | **triggers 3 & 4 only** | ❌ |
 
@@ -63,12 +63,12 @@ is the blocking contradiction.
 ### 1c. Why they drift
 
 `hermit/.claude/skills/{post-facto-review,backend-reality-reviewer}/` are real
-directories, **not symlinks** (verified). The parent flat skills are generated
-1-1 from ORC source memories (`$MEMDIR/{post-facto-review,backend-reality-reviewer}.md`,
-`core_memory: true`, `core_skill:` path) via `scripts/sync-memory-skill.rs`;
-`scripts/lint-memory-skill-sync.rs` enforces the 1-1 mapping and forbids nested
-skill directories in the parent. There is **no channel** keeping the hermit copy
-and the parent copy in agreement — they were hand-edited independently and drifted.
+directories, **not symlinks** (verified). The parent also has independent,
+repository-authoritative packages. Optional ORC memories may mirror those
+parent packages via explicit repository-to-memory export, but are not an
+authority and do not synchronize the Hermit copies. There is **no channel**
+keeping the Hermit and parent packages in agreement — they were hand-edited
+independently and drifted.
 
 ### 1d. The obsolete-label / stale-reference items
 
@@ -300,14 +300,15 @@ pre-land gate — post-facto landing still applies after review + CI green.
 
 ## 4. Proposed changes to the other files
 
-### 4a. PARENT `post-facto-review` (source memory → regenerated skill)
+### 4a. PARENT `post-facto-review` (repository-authoritative package)
 
-Because the parent skill is generated from `$MEMDIR/post-facto-review.md`, edit
-the **memory** and re-run `scripts/sync-memory-skill.rs`; do not hand-edit the
-flat skill. New memory body = a pointer + coordinator land-time duties:
+Edit and review the versioned parent package directly. Afterward, optionally
+export it to `$MEMDIR/post-facto-review.md` with explicit `--adopt-skill`; the
+local memory never writes policy. New package body = a pointer + coordinator
+land-time duties:
 
 - One-line: "Canonical protocol: `hermit/.claude/skills/post-facto-review/SKILL.md`
-  (co-located with its `core-review-protocol` lint). This memory carries only the
+  (co-located with its `core-review-protocol` lint). This package carries only the
   coordinator's land-time responsibilities; all trigger/label/review-count rules
   live in the canonical hermit skill."
 - Keep: coordinator applies labels + lands only after §2A/§2B review is resolved
@@ -315,7 +316,8 @@ flat skill. New memory body = a pointer + coordinator land-time duties:
   `pre-land-human-review`; never alter `human-approved`.
 - Update the `description` frontmatter to match the new policy (one review every
   PR; dual for the four triggers).
-- Run `scripts/sync-memory-skill.rs` then `scripts/lint-memory-skill-sync.rs`.
+- Run the package checker and linter; preview any optional memory export before
+  allowing it.
 
 ### 4b. HERMIT + PARENT `backend-reality-reviewer` — generalize the posture
 
@@ -328,9 +330,10 @@ flat skill. New memory body = a pointer + coordinator land-time duties:
   reviewer's mandate (`post-facto-review` §0: prove the claim, do not confirm it;
   a moved goalpost is itself a finding). The same posture applies to every PR;
   this checklist is what 'prove it' means for a backend claim."
-- PARENT `backend-reality-reviewer.md` (via its memory): keep as-is except update
+- PARENT `backend-reality-reviewer/SKILL.md`: keep as-is except update
   the review-count reference to point at the canonical hermit skill, and add the
-  same one-line generalizing framing. Re-run the memory sync.
+  same one-line generalizing framing. Optionally refresh its local mirror after
+  review.
 
 ### 4c. Fix the stale `human-review-first` reference
 
@@ -366,9 +369,9 @@ lint/CI change under this task.
 | File | Change |
 | --- | --- |
 | `hermit/.claude/skills/post-facto-review/SKILL.md` | **Canonical rewrite** (§3 above): one review every PR + dual for 4 triggers; add reviewer mandate §0; codify comment protocol; drop human-review-first activation path. |
-| `$MEMDIR/post-facto-review.md` (→ parent flat skill via sync) | Shrink to pointer + coordinator land-time duties; update description; re-sync. |
+| Parent `.claude/skills/post-facto-review/SKILL.md` | Shrink to pointer + coordinator land-time duties; update description; optionally export to local memory after review. |
 | `hermit/.claude/skills/backend-reality-reviewer/SKILL.md` | Delete "3 & 4 only"; add generalizing framing line; point review-count at canonical. |
-| `$MEMDIR/backend-reality-reviewer.md` (→ parent flat skill via sync) | Same framing + point review-count at canonical; re-sync. |
+| Parent `.claude/skills/backend-reality-reviewer/SKILL.md` | Same framing + point review-count at canonical; optionally export to local memory after review. |
 | `hermit/.claude/skills/human-review-first/SKILL.md` | Archive/remove to match parent (owner confirm). |
 | `hermit/scripts/core-review-protocol-lint.sh` | (Follow-up only) universal single-review gate — see §5. |
 

@@ -1,0 +1,24 @@
+{
+  "question": "Does the COMMIT-turn prefix-parity depth measured on one guest generalise, and does it hold after reverie#402?",
+  "answer": "reverie#402 is NOT LANDED, so the post-landing half is unanswerable. On the pre-402 pin the depth is GUEST-INVARIANT: KVM Y=2 on 8 of 8 cleanly-measurable guests while Z ranges 5..27.",
+  "hermit_binary": "scratch/p4/bin/hermit",
+  "hermit_version": "hermit 0.2.0 (2026-08-07, g590fcc9eeb03) CLEAN",
+  "hermit_binary_sha256_prefix": "14813a81140c98b9",
+  "reverie_pin_measured": "038e993926e45514264d30367b70df9b6ac3b9b8",
+  "reverie_pin_is_pre_402": true,
+  "reverie_402_state": "OPEN, head 867fce5b6cd6fb936cb6aa72daba837ec5e807c6, mergeCommit null",
+  "metric": "Y = longest identical leading run of `COMMIT turn` records; Z = golden ptrace COMMIT count; 0x hex normalised. Normalization copied verbatim from ci-hub/parity/prefix_depth.sh.",
+  "metric_caveat": "NOT the same metric as reverie#402's evidence, which counts COMPLETED SYSCALLS. Record 20 and record 2 are records of different kinds.",
+  "command": "hermit --log=info --log-file=L run --backend <be> --base-env minimal -- GUEST",
+  "backends": "ptrace (golden) vs kvm",
+  "relaxations": "none",
+  "host": "shared devbig, 316 cores",
+  "controls": {
+    "self_vs_self": "5/5 == Z",
+    "perturb_record_4": "4",
+    "perturb_record_3": "3",
+    "perturb_record_1": "1",
+    "truncate_to_3": "3",
+    "recorded_rung_reproduction": "true 5/5 kvm 2, echo 6/6 kvm 2, wc 7/7 kvm 2 -- exact match to prefix-parity-commit-turn-2_20260807"
+  }
+}

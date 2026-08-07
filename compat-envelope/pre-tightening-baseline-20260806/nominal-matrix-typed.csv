@@ -1,0 +1,1176 @@
+bucket,test_id,backend,absence_class,outcome,deterministic,stdout_parity,reason
+applications,applications/example-timed-progress-bar,dbi,measured,pass,1,1,
+applications,applications/timed-progress-bar,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+backend-parity-c,backend-parity-c/cpuid-probe,dbi,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pid-probe,dbi,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pthread-lifecycle,dbi,measured,pass,1,1,
+bin-c,bin-c/posix-timer-test,dbi,measured,pass,1,1,
+bin-c,bin-c/robust-futex-test,dbi,reference-unusable-verify,timeout,0,,dbi-verify-timeout-120s
+c-programs,c-programs/acct-refusal-probe,dbi,measured,pass,1,1,
+c-programs,c-programs/add-key-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/adjtimex-deterministic,dbi,measured,pass,1,1,
+c-programs,c-programs/arch-prctl-determinism,dbi,measured,diverge,0,0,dbi-verify-fail-exit40
+c-programs,c-programs/bpf-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/cachestat-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/clock-adjtime-deterministic,dbi,measured,pass,1,1,
+c-programs,c-programs/clone,dbi,measured,pass,1,1,
+c-programs,c-programs/copy-file-range-refusal-probe,dbi,measured,pass,1,1,
+c-programs,c-programs/dbi-copied-tiocgpgrp,dbi,measured,pass,1,1,
+c-programs,c-programs/dbi-exec-failure,dbi,measured,pass,1,1,
+c-programs,c-programs/dbi-execveat-unsupported,dbi,measured,pass,1,0,
+c-programs,c-programs/dbi-mmap-exec,dbi,measured,pass,1,1,
+c-programs,c-programs/dbi-pid-virtualization,dbi,reference-unusable-runleg,pass,1,,
+c-programs,c-programs/dbi-prlimit-self,dbi,measured,pass,1,1,
+c-programs,c-programs/dbi-self-sigqueue,dbi,measured,pass,1,1,
+c-programs,c-programs/dbi-unsupported-syscall,dbi,measured,diverge,0,0,dbi-verify-fail-exit101
+c-programs,c-programs/dbi-wait-lifecycle,dbi,reference-unusable-verify,pass,1,,
+c-programs,c-programs/epoll-determinism,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/fp-reduction-nondeterminism,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+c-programs,c-programs/futex-requeue-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/futex-waitv-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/futex-wake-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-child,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/get-robust-list-self,dbi,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-thread,dbi,measured,pass,1,1,
+c-programs,c-programs/getcpu,dbi,measured,pass,1,1,
+c-programs,c-programs/getitimer-determinism-probe,dbi,measured,pass,1,1,
+c-programs,c-programs/getsockopt-null,dbi,measured,pass,1,1,
+c-programs,c-programs/hello-alarm,dbi,measured,pass,1,1,
+c-programs,c-programs/hello-nostdlib,dbi,measured,pass,1,1,
+c-programs,c-programs/hello-signals,dbi,measured,pass,1,1,
+c-programs,c-programs/io-uring-fallback,dbi,measured,pass,1,1,
+c-programs,c-programs/io-uring-ring-determinism,dbi,measured,pass,1,1,
+c-programs,c-programs/ioctl-fioclex,dbi,measured,pass,1,1,
+c-programs,c-programs/ioctl-siocethtool,dbi,measured,pass,1,1,
+c-programs,c-programs/ipc-determinism,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/just-spin,dbi,measured,pass,1,1,
+c-programs,c-programs/kcmp-eperm,dbi,measured,pass,1,1,
+c-programs,c-programs/keyctl-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/keyctl-passthrough,dbi,measured,pass,1,1,
+c-programs,c-programs/listmount-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/liteinst-advanced,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/lsm-get-self-attr-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/lsm-list-modules-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/lsm-set-self-attr-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/madvise-determinism,dbi,measured,pass,1,1,
+c-programs,c-programs/map-shadow-stack-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/memfd-secret-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/meminfo-available-deterministic,dbi,measured,pass,1,1,
+c-programs,c-programs/meminfo-cached-deterministic,dbi,measured,pass,1,1,
+c-programs,c-programs/meminfo-free-deterministic,dbi,measured,pass,1,1,
+c-programs,c-programs/memorypress,dbi,measured,pass,1,1,
+c-programs,c-programs/mmap-determinism,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/mmap-stress-determinism,dbi,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-at-eopnotsupp,dbi,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-directory-eopnotsupp,dbi,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-empty-path-eopnotsupp,dbi,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-regular-eopnotsupp,dbi,measured,pass,1,1,
+c-programs,c-programs/nanosleep-par,dbi,measured,pass,1,1,
+c-programs,c-programs/nanosleep-threads-nocrash,dbi,measured,pass,1,1,
+c-programs,c-programs/nanosleep-threads-simple,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+c-programs,c-programs/netlink-autobind-generic,dbi,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-route,dbi,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-usersock,dbi,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp4,dbi,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp6,dbi,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-udp4,dbi,measured,pass,1,1,
+c-programs,c-programs/perf-event-hardware-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/perf-event-open-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/perf-event-software-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/perf-event-watchpoint-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/periodic-setitimer-delivery,dbi,measured,pass,1,1,
+c-programs,c-programs/pidfd-open-self,dbi,measured,pass,1,1,
+c-programs,c-programs/pidfd-poll-self,dbi,measured,pass,1,1,
+c-programs,c-programs/pidfd-waitid-child,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/ppoll-readv,dbi,measured,pass,1,1,
+c-programs,c-programs/ppoll-simulation,dbi,measured,pass,1,1,
+c-programs,c-programs/prctl-dumpable,dbi,measured,pass,1,1,
+c-programs,c-programs/pread64-nostdlib,dbi,measured,pass,1,1,
+c-programs,c-programs/print-memaddrs,dbi,measured,pass,1,0,
+c-programs,c-programs/printf-with-threads,dbi,measured,pass,1,1,
+c-programs,c-programs/proc-fd-link-aliases,dbi,measured,pass,1,1,
+c-programs,c-programs/proc-fdinfo,dbi,measured,pass,1,1,
+c-programs,c-programs/proc-locks,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/process-mrelease-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/process-vm-readv-refusal-probe,dbi,measured,pass,1,1,
+c-programs,c-programs/process-vm-writev-refusal-probe,dbi,measured,pass,1,1,
+c-programs,c-programs/procfs-positioned-probe,dbi,measured,pass,1,1,
+c-programs,c-programs/prodcons-determinism,dbi,measured,pass,1,1,
+c-programs,c-programs/pselect6-simulation,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/ptrace-attach-eperm,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/ptrace-eperm,dbi,measured,pass,1,1,
+c-programs,c-programs/ptrace-seize-eperm,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/ptrace-traceme-eperm,dbi,measured,pass,1,1,
+c-programs,c-programs/pty-nr-count,dbi,measured,pass,1,1,
+c-programs,c-programs/racewrite-nostdlib,dbi,measured,pass,1,1,
+c-programs,c-programs/random-sources,dbi,measured,pass,1,0,
+c-programs,c-programs/rcx-canonicalization,dbi,measured,pass,1,1,
+c-programs,c-programs/record-replay-fd-close,dbi,measured,pass,1,1,
+c-programs,c-programs/record-replay-file-state,dbi,measured,pass,1,1,
+c-programs,c-programs/record-replay-lseek-seek-cur,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/record-replay-setsockopt,dbi,measured,pass,1,1,
+c-programs,c-programs/recvmsg-scm-rights-mmap,dbi,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-anonymous-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-memfd-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-tmpfile-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/request-key-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/resource-determinism,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/sched-setattr-batch,dbi,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-idle,dbi,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-other,dbi,measured,pass,1,1,
+c-programs,c-programs/sched-yield-progress,dbi,measured,pass,1,1,
+c-programs,c-programs/scheduler-policy-queries,dbi,measured,pass,1,1,
+c-programs,c-programs/setitimer-determinism,dbi,measured,pass,1,0,
+c-programs,c-programs/sigmask-preemption,dbi,measured,pass,1,1,
+c-programs,c-programs/signal-determinism,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/sigpipe-siginfo,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/sigtimedwait-no-timeout,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+c-programs,c-programs/sigtimedwait-timeout-0s,dbi,measured,pass,1,1,
+c-programs,c-programs/sigtimedwait-timeout-1s,dbi,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-tcp4,dbi,measured,diverge,0,1,dbi-verify-fail-exit1
+c-programs,c-programs/so-incoming-cpu-tcp6,dbi,measured,diverge,0,1,dbi-verify-fail-exit1
+c-programs,c-programs/so-incoming-cpu-udp4,dbi,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-tcp,dbi,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-udp,dbi,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-unix,dbi,measured,pass,1,1,
+c-programs,c-programs/socket-ioctl-timestamp,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+c-programs,c-programs/socket-timestamp-edge-cases,dbi,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timespec,dbi,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timeval,dbi,measured,pass,1,1,
+c-programs,c-programs/splice-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/statmount-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/syscall-file-io,dbi,measured,pass,1,1,
+c-programs,c-programs/syscall-file-metadata,dbi,measured,pass,1,1,
+c-programs,c-programs/syscall-quick-wins,dbi,measured,pass,1,0,
+c-programs,c-programs/sysfs-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/sysinfo,dbi,measured,pass,1,0,
+c-programs,c-programs/sysinfo-uptime,dbi,measured,pass,1,0,
+c-programs,c-programs/syslog-deterministic,dbi,measured,pass,1,1,
+c-programs,c-programs/sysv-sem-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/sysv-shm-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept4,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/tcp-info-accept6,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/tcp-info-client4,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+c-programs,c-programs/tee-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/thread-self-procfs-handoff,dbi,measured,pass,1,1,
+c-programs,c-programs/thread-sync-determinism,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit2
+c-programs,c-programs/threadexhaustion,dbi,measured,pass,1,1,
+c-programs,c-programs/timer-create-determinism,dbi,measured,pass,1,1,
+c-programs,c-programs/uname,dbi,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-dgram,dbi,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-seqpacket,dbi,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-stream,dbi,measured,pass,1,1,
+c-programs,c-programs/ustat-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/vforkexec,dbi,measured,pass,1,0,
+c-programs,c-programs/vmsplice-enosys,dbi,measured,pass,1,1,
+c-programs,c-programs/wait-on-child,dbi,measured,pass,1,0,
+c-programs,c-programs/writev-determinism,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+chaos-c,chaos-c/lock-granularity,dbi,measured,pass,1,1,
+data-handling,data-handling/archive-roundtrip,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+data-handling,data-handling/shell-pipeline,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+debugger-c,debugger-c/debuggee,dbi,measured,pass,1,1,
+determinism-stress,determinism-stress/example-race,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+determinism-stress,determinism-stress/order-violation,dbi,measured,pass,1,1,
+determinism-stress,determinism-stress/process-chains,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+determinism-stress,determinism-stress/thread-contention,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+determinism-stress,determinism-stress/thread-output,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/fork-tree,dbi,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/lock-free,dbi,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/mmap-fork-shared,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+determinism-stress-c,determinism-stress-c/pid-tid,dbi,measured,pass,1,0,
+determinism-stress-c,determinism-stress-c/pipe-chain,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pipe-prefill,dbi,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/producer-consumer,dbi,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/signal-order,dbi,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/thread-contention,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/thread-stress,dbi,measured,pass,1,1,
+language-runtimes,language-runtimes/bash-loop-pipe-time,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+language-runtimes,language-runtimes/example-python-random,dbi,measured,pass,1,1,
+language-runtimes,language-runtimes/gawk-random,dbi,measured,pass,1,1,
+language-runtimes,language-runtimes/perl-io-subprocess-time,dbi,measured,diverge,0,0,dbi-verify-fail-exit1
+language-runtimes,language-runtimes/python-hash-determinism,dbi,measured,pass,1,0,
+language-runtimes,language-runtimes/python-io-subprocess-time,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+language-runtimes,language-runtimes/python-random,dbi,measured,pass,1,0,
+performance,performance/barrier-rounds,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/barrier-yield-rounds,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/clock-query-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-baton,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-signal-baton,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/dup-close-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/epoll-eventfd-ring,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/eventfd-roundtrip,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/fork-wait-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/futex-baton,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/getrandom-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mmap-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mutex-contention,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/nanosleep-yield,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/open-read-close-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-fd-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-nonblock-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-roundtrip,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/poll-pipe-ring,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-contention,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-mixed-contention,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/semaphore-baton,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/sigmask-toggle,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-dgram-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-roundtrip,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/spin-trylock-contention,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/syscall-mix,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/thread-churn,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/trylock-contention,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/yield-storm,dbi,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+shared-futex-c,shared-futex-c/qemu-exec-init,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-hello,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit7
+shared-futex-c,shared-futex-c/qemu-init,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-net-init,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+system-utils,system-utils/clock-determinism,dbi,measured,pass,1,1,
+system-utils,system-utils/date-nanoseconds,dbi,measured,timeout,0,0,dbi-verify-timeout-120s
+system-utils,system-utils/example-date,dbi,measured,pass,1,0,
+system-utils,system-utils/example-devrand,dbi,measured,pass,1,1,
+system-utils,system-utils/openssl-passwd,dbi,measured,pass,1,0,
+system-utils,system-utils/proc-uptime,dbi,measured,pass,1,0,
+system-utils,system-utils/random-device,dbi,measured,pass,1,1,
+system-utils,system-utils/record-getpid,dbi,measured,pass,1,1,
+util-c,util-c/pmu-skid,dbi,reference-unusable-verify,diverge,0,,dbi-verify-fail-exit1
+applications,applications/example-timed-progress-bar,e9patch,measured,pass,1,1,
+applications,applications/timed-progress-bar,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+backend-parity-c,backend-parity-c/cpuid-probe,e9patch,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pid-probe,e9patch,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pthread-lifecycle,e9patch,measured,pass,1,1,
+bin-c,bin-c/posix-timer-test,e9patch,measured,pass,1,1,
+bin-c,bin-c/robust-futex-test,e9patch,reference-unusable-verify,timeout,0,,e9patch-verify-timeout-120s
+c-programs,c-programs/acct-refusal-probe,e9patch,measured,pass,1,1,
+c-programs,c-programs/add-key-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/adjtimex-deterministic,e9patch,measured,pass,1,1,
+c-programs,c-programs/arch-prctl-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/bpf-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/cachestat-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/clock-adjtime-deterministic,e9patch,measured,pass,1,1,
+c-programs,c-programs/clone,e9patch,measured,pass,1,1,
+c-programs,c-programs/copy-file-range-refusal-probe,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-copied-tiocgpgrp,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-exec-failure,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-execveat-unsupported,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-mmap-exec,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-pid-virtualization,e9patch,reference-unusable-runleg,timeout,0,,e9patch-verify-timeout-120s
+c-programs,c-programs/dbi-prlimit-self,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-self-sigqueue,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-unsupported-syscall,e9patch,measured,pass,1,1,
+c-programs,c-programs/dbi-wait-lifecycle,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/epoll-determinism,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/fp-reduction-nondeterminism,e9patch,measured,pass,1,1,
+c-programs,c-programs/futex-requeue-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/futex-waitv-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/futex-wake-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-child,e9patch,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-self,e9patch,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-thread,e9patch,measured,pass,1,1,
+c-programs,c-programs/getcpu,e9patch,measured,pass,1,1,
+c-programs,c-programs/getitimer-determinism-probe,e9patch,measured,pass,1,1,
+c-programs,c-programs/getsockopt-null,e9patch,measured,pass,1,1,
+c-programs,c-programs/hello-alarm,e9patch,measured,pass,1,1,
+c-programs,c-programs/hello-nostdlib,e9patch,measured,pass,1,1,
+c-programs,c-programs/hello-signals,e9patch,measured,pass,1,1,
+c-programs,c-programs/io-uring-fallback,e9patch,measured,pass,1,1,
+c-programs,c-programs/io-uring-ring-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/ioctl-fioclex,e9patch,measured,pass,1,1,
+c-programs,c-programs/ioctl-siocethtool,e9patch,measured,pass,1,1,
+c-programs,c-programs/ipc-determinism,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/just-spin,e9patch,measured,pass,1,1,
+c-programs,c-programs/kcmp-eperm,e9patch,measured,pass,1,1,
+c-programs,c-programs/keyctl-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/keyctl-passthrough,e9patch,measured,pass,1,1,
+c-programs,c-programs/listmount-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/liteinst-advanced,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/lsm-get-self-attr-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/lsm-list-modules-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/lsm-set-self-attr-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/madvise-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/map-shadow-stack-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/memfd-secret-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/meminfo-available-deterministic,e9patch,measured,pass,1,1,
+c-programs,c-programs/meminfo-cached-deterministic,e9patch,measured,pass,1,1,
+c-programs,c-programs/meminfo-free-deterministic,e9patch,measured,pass,1,1,
+c-programs,c-programs/memorypress,e9patch,measured,pass,1,1,
+c-programs,c-programs/mmap-determinism,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/mmap-stress-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-at-eopnotsupp,e9patch,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-directory-eopnotsupp,e9patch,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-empty-path-eopnotsupp,e9patch,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-regular-eopnotsupp,e9patch,measured,pass,1,1,
+c-programs,c-programs/nanosleep-par,e9patch,measured,pass,1,1,
+c-programs,c-programs/nanosleep-threads-nocrash,e9patch,measured,pass,1,1,
+c-programs,c-programs/nanosleep-threads-simple,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/netlink-autobind-generic,e9patch,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-route,e9patch,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-usersock,e9patch,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp4,e9patch,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp6,e9patch,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-udp4,e9patch,measured,pass,1,1,
+c-programs,c-programs/perf-event-hardware-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/perf-event-open-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/perf-event-software-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/perf-event-watchpoint-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/periodic-setitimer-delivery,e9patch,measured,pass,1,1,
+c-programs,c-programs/pidfd-open-self,e9patch,measured,pass,1,1,
+c-programs,c-programs/pidfd-poll-self,e9patch,measured,pass,1,1,
+c-programs,c-programs/pidfd-waitid-child,e9patch,measured,pass,1,1,
+c-programs,c-programs/ppoll-readv,e9patch,measured,pass,1,1,
+c-programs,c-programs/ppoll-simulation,e9patch,measured,pass,1,1,
+c-programs,c-programs/prctl-dumpable,e9patch,measured,pass,1,1,
+c-programs,c-programs/pread64-nostdlib,e9patch,measured,pass,1,1,
+c-programs,c-programs/print-memaddrs,e9patch,measured,pass,1,1,
+c-programs,c-programs/printf-with-threads,e9patch,measured,pass,1,1,
+c-programs,c-programs/proc-fd-link-aliases,e9patch,measured,pass,1,1,
+c-programs,c-programs/proc-fdinfo,e9patch,measured,pass,1,1,
+c-programs,c-programs/proc-locks,e9patch,measured,pass,1,1,
+c-programs,c-programs/process-mrelease-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/process-vm-readv-refusal-probe,e9patch,measured,pass,1,1,
+c-programs,c-programs/process-vm-writev-refusal-probe,e9patch,measured,pass,1,1,
+c-programs,c-programs/procfs-positioned-probe,e9patch,measured,pass,1,1,
+c-programs,c-programs/prodcons-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/pselect6-simulation,e9patch,measured,pass,1,1,
+c-programs,c-programs/ptrace-attach-eperm,e9patch,measured,pass,1,1,
+c-programs,c-programs/ptrace-eperm,e9patch,measured,pass,1,1,
+c-programs,c-programs/ptrace-seize-eperm,e9patch,measured,pass,1,1,
+c-programs,c-programs/ptrace-traceme-eperm,e9patch,measured,pass,1,1,
+c-programs,c-programs/pty-nr-count,e9patch,measured,pass,1,1,
+c-programs,c-programs/racewrite-nostdlib,e9patch,measured,pass,1,1,
+c-programs,c-programs/random-sources,e9patch,measured,pass,1,1,
+c-programs,c-programs/rcx-canonicalization,e9patch,measured,diverge,0,0,e9patch-verify-fail-exit1
+c-programs,c-programs/record-replay-fd-close,e9patch,measured,pass,1,1,
+c-programs,c-programs/record-replay-file-state,e9patch,measured,pass,1,1,
+c-programs,c-programs/record-replay-lseek-seek-cur,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/record-replay-setsockopt,e9patch,measured,pass,1,1,
+c-programs,c-programs/recvmsg-scm-rights-mmap,e9patch,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-anonymous-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-memfd-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-tmpfile-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/request-key-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/resource-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-batch,e9patch,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-idle,e9patch,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-other,e9patch,measured,pass,1,1,
+c-programs,c-programs/sched-yield-progress,e9patch,measured,pass,1,1,
+c-programs,c-programs/scheduler-policy-queries,e9patch,measured,pass,1,1,
+c-programs,c-programs/setitimer-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/sigmask-preemption,e9patch,measured,pass,1,1,
+c-programs,c-programs/signal-determinism,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/sigpipe-siginfo,e9patch,measured,pass,1,1,
+c-programs,c-programs/sigtimedwait-no-timeout,e9patch,measured,pass,1,1,
+c-programs,c-programs/sigtimedwait-timeout-0s,e9patch,measured,pass,1,1,
+c-programs,c-programs/sigtimedwait-timeout-1s,e9patch,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-tcp4,e9patch,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-tcp6,e9patch,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-udp4,e9patch,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-tcp,e9patch,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-udp,e9patch,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-unix,e9patch,measured,pass,1,1,
+c-programs,c-programs/socket-ioctl-timestamp,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/socket-timestamp-edge-cases,e9patch,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timespec,e9patch,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timeval,e9patch,measured,pass,1,1,
+c-programs,c-programs/splice-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/statmount-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/syscall-file-io,e9patch,measured,pass,1,1,
+c-programs,c-programs/syscall-file-metadata,e9patch,measured,pass,1,1,
+c-programs,c-programs/syscall-quick-wins,e9patch,measured,pass,1,1,
+c-programs,c-programs/sysfs-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/sysinfo,e9patch,measured,pass,1,1,
+c-programs,c-programs/sysinfo-uptime,e9patch,measured,pass,1,1,
+c-programs,c-programs/syslog-deterministic,e9patch,measured,pass,1,1,
+c-programs,c-programs/sysv-sem-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/sysv-shm-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept4,e9patch,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept6,e9patch,measured,pass,1,1,
+c-programs,c-programs/tcp-info-client4,e9patch,measured,pass,1,1,
+c-programs,c-programs/tee-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/thread-self-procfs-handoff,e9patch,measured,pass,1,1,
+c-programs,c-programs/thread-sync-determinism,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+c-programs,c-programs/threadexhaustion,e9patch,measured,pass,1,1,
+c-programs,c-programs/timer-create-determinism,e9patch,measured,pass,1,1,
+c-programs,c-programs/uname,e9patch,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-dgram,e9patch,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-seqpacket,e9patch,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-stream,e9patch,measured,pass,1,1,
+c-programs,c-programs/ustat-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/vforkexec,e9patch,measured,pass,1,1,
+c-programs,c-programs/vmsplice-enosys,e9patch,measured,pass,1,1,
+c-programs,c-programs/wait-on-child,e9patch,measured,pass,1,1,
+c-programs,c-programs/writev-determinism,e9patch,measured,pass,1,1,
+chaos-c,chaos-c/lock-granularity,e9patch,measured,pass,1,1,
+data-handling,data-handling/archive-roundtrip,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+data-handling,data-handling/shell-pipeline,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+debugger-c,debugger-c/debuggee,e9patch,measured,pass,1,1,
+determinism-stress,determinism-stress/example-race,e9patch,measured,pass,1,1,
+determinism-stress,determinism-stress/order-violation,e9patch,measured,pass,1,1,
+determinism-stress,determinism-stress/process-chains,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+determinism-stress,determinism-stress/thread-contention,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+determinism-stress,determinism-stress/thread-output,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/fork-tree,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/lock-free,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/mmap-fork-shared,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/pid-tid,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/pipe-chain,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/pipe-prefill,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/producer-consumer,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/signal-order,e9patch,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/thread-contention,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/thread-stress,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/bash-loop-pipe-time,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/example-python-random,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/gawk-random,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/perl-io-subprocess-time,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/python-hash-determinism,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/python-io-subprocess-time,e9patch,measured,pass,1,1,
+language-runtimes,language-runtimes/python-random,e9patch,measured,pass,1,1,
+performance,performance/barrier-rounds,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/barrier-yield-rounds,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/clock-query-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-baton,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-signal-baton,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/dup-close-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/epoll-eventfd-ring,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/eventfd-roundtrip,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/fork-wait-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/futex-baton,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/getrandom-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mmap-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mutex-contention,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/nanosleep-yield,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/open-read-close-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-fd-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-nonblock-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-roundtrip,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/poll-pipe-ring,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-contention,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-mixed-contention,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/semaphore-baton,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/sigmask-toggle,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-dgram-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-roundtrip,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/spin-trylock-contention,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/syscall-mix,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/thread-churn,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/trylock-contention,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/yield-storm,e9patch,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+shared-futex-c,shared-futex-c/qemu-exec-init,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-hello,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-init,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-net-init,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+system-utils,system-utils/clock-determinism,e9patch,measured,pass,1,1,
+system-utils,system-utils/date-nanoseconds,e9patch,measured,pass,1,1,
+system-utils,system-utils/example-date,e9patch,measured,pass,1,1,
+system-utils,system-utils/example-devrand,e9patch,measured,pass,1,1,
+system-utils,system-utils/openssl-passwd,e9patch,measured,pass,1,1,
+system-utils,system-utils/proc-uptime,e9patch,measured,pass,1,1,
+system-utils,system-utils/random-device,e9patch,measured,pass,1,1,
+system-utils,system-utils/record-getpid,e9patch,measured,pass,1,1,
+util-c,util-c/pmu-skid,e9patch,reference-unusable-verify,diverge,0,,e9patch-verify-fail-exit1
+applications,applications/example-timed-progress-bar,liteinst,measured,pass,1,1,
+applications,applications/timed-progress-bar,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+backend-parity-c,backend-parity-c/cpuid-probe,liteinst,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pid-probe,liteinst,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pthread-lifecycle,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+bin-c,bin-c/posix-timer-test,liteinst,measured,pass,1,1,
+bin-c,bin-c/robust-futex-test,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/acct-refusal-probe,liteinst,measured,pass,1,1,
+c-programs,c-programs/add-key-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/adjtimex-deterministic,liteinst,measured,pass,1,1,
+c-programs,c-programs/arch-prctl-determinism,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/bpf-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/cachestat-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/clock-adjtime-deterministic,liteinst,measured,pass,1,1,
+c-programs,c-programs/clone,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/copy-file-range-refusal-probe,liteinst,measured,pass,1,1,
+c-programs,c-programs/dbi-copied-tiocgpgrp,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/dbi-exec-failure,liteinst,measured,pass,1,1,
+c-programs,c-programs/dbi-execveat-unsupported,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/dbi-mmap-exec,liteinst,measured,pass,1,1,
+c-programs,c-programs/dbi-pid-virtualization,liteinst,reference-unusable-runleg,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/dbi-prlimit-self,liteinst,measured,pass,1,1,
+c-programs,c-programs/dbi-self-sigqueue,liteinst,measured,pass,1,1,
+c-programs,c-programs/dbi-unsupported-syscall,liteinst,measured,pass,1,1,
+c-programs,c-programs/dbi-wait-lifecycle,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/epoll-determinism,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/fp-reduction-nondeterminism,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/futex-requeue-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/futex-waitv-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/futex-wake-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-child,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/get-robust-list-self,liteinst,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-thread,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/getcpu,liteinst,measured,pass,1,1,
+c-programs,c-programs/getitimer-determinism-probe,liteinst,measured,pass,1,1,
+c-programs,c-programs/getsockopt-null,liteinst,measured,pass,1,1,
+c-programs,c-programs/hello-alarm,liteinst,measured,pass,1,1,
+c-programs,c-programs/hello-nostdlib,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/hello-signals,liteinst,measured,pass,1,1,
+c-programs,c-programs/io-uring-fallback,liteinst,measured,pass,1,1,
+c-programs,c-programs/io-uring-ring-determinism,liteinst,measured,pass,1,1,
+c-programs,c-programs/ioctl-fioclex,liteinst,measured,pass,1,1,
+c-programs,c-programs/ioctl-siocethtool,liteinst,measured,pass,1,1,
+c-programs,c-programs/ipc-determinism,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/just-spin,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/kcmp-eperm,liteinst,measured,pass,1,1,
+c-programs,c-programs/keyctl-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/keyctl-passthrough,liteinst,measured,pass,1,1,
+c-programs,c-programs/listmount-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/liteinst-advanced,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/lsm-get-self-attr-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/lsm-list-modules-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/lsm-set-self-attr-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/madvise-determinism,liteinst,measured,pass,1,1,
+c-programs,c-programs/map-shadow-stack-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/memfd-secret-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/meminfo-available-deterministic,liteinst,measured,pass,1,1,
+c-programs,c-programs/meminfo-cached-deterministic,liteinst,measured,pass,1,1,
+c-programs,c-programs/meminfo-free-deterministic,liteinst,measured,pass,1,1,
+c-programs,c-programs/memorypress,liteinst,measured,pass,1,1,
+c-programs,c-programs/mmap-determinism,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/mmap-stress-determinism,liteinst,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-at-eopnotsupp,liteinst,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-directory-eopnotsupp,liteinst,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-empty-path-eopnotsupp,liteinst,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-regular-eopnotsupp,liteinst,measured,pass,1,1,
+c-programs,c-programs/nanosleep-par,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/nanosleep-threads-nocrash,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/nanosleep-threads-simple,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/netlink-autobind-generic,liteinst,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-route,liteinst,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-usersock,liteinst,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp4,liteinst,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp6,liteinst,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-udp4,liteinst,measured,pass,1,1,
+c-programs,c-programs/perf-event-hardware-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/perf-event-open-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/perf-event-software-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/perf-event-watchpoint-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/periodic-setitimer-delivery,liteinst,measured,pass,1,1,
+c-programs,c-programs/pidfd-open-self,liteinst,measured,pass,1,1,
+c-programs,c-programs/pidfd-poll-self,liteinst,measured,pass,1,1,
+c-programs,c-programs/pidfd-waitid-child,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/ppoll-readv,liteinst,measured,pass,1,1,
+c-programs,c-programs/ppoll-simulation,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/prctl-dumpable,liteinst,measured,pass,1,1,
+c-programs,c-programs/pread64-nostdlib,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/print-memaddrs,liteinst,measured,pass,1,0,
+c-programs,c-programs/printf-with-threads,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/proc-fd-link-aliases,liteinst,measured,pass,1,1,
+c-programs,c-programs/proc-fdinfo,liteinst,measured,pass,1,0,
+c-programs,c-programs/proc-locks,liteinst,measured,pass,1,1,
+c-programs,c-programs/process-mrelease-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/process-vm-readv-refusal-probe,liteinst,measured,pass,1,1,
+c-programs,c-programs/process-vm-writev-refusal-probe,liteinst,measured,pass,1,1,
+c-programs,c-programs/procfs-positioned-probe,liteinst,measured,pass,1,1,
+c-programs,c-programs/prodcons-determinism,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/pselect6-simulation,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/ptrace-attach-eperm,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/ptrace-eperm,liteinst,measured,pass,1,1,
+c-programs,c-programs/ptrace-seize-eperm,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/ptrace-traceme-eperm,liteinst,measured,pass,1,1,
+c-programs,c-programs/pty-nr-count,liteinst,measured,pass,1,1,
+c-programs,c-programs/racewrite-nostdlib,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/random-sources,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/rcx-canonicalization,liteinst,measured,pass,1,1,
+c-programs,c-programs/record-replay-fd-close,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/record-replay-file-state,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/record-replay-lseek-seek-cur,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/record-replay-setsockopt,liteinst,measured,pass,1,1,
+c-programs,c-programs/recvmsg-scm-rights-mmap,liteinst,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-anonymous-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-memfd-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-tmpfile-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/request-key-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/resource-determinism,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/sched-setattr-batch,liteinst,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-idle,liteinst,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-other,liteinst,measured,pass,1,1,
+c-programs,c-programs/sched-yield-progress,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/scheduler-policy-queries,liteinst,measured,pass,1,1,
+c-programs,c-programs/setitimer-determinism,liteinst,measured,pass,1,1,
+c-programs,c-programs/sigmask-preemption,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/signal-determinism,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/sigpipe-siginfo,liteinst,measured,pass,1,1,
+c-programs,c-programs/sigtimedwait-no-timeout,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/sigtimedwait-timeout-0s,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/sigtimedwait-timeout-1s,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/so-incoming-cpu-tcp4,liteinst,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-tcp6,liteinst,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-udp4,liteinst,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-tcp,liteinst,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-udp,liteinst,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-unix,liteinst,measured,pass,1,1,
+c-programs,c-programs/socket-ioctl-timestamp,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/socket-timestamp-edge-cases,liteinst,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timespec,liteinst,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timeval,liteinst,measured,pass,1,1,
+c-programs,c-programs/splice-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/statmount-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/syscall-file-io,liteinst,measured,pass,1,1,
+c-programs,c-programs/syscall-file-metadata,liteinst,measured,pass,1,1,
+c-programs,c-programs/syscall-quick-wins,liteinst,measured,pass,1,1,
+c-programs,c-programs/sysfs-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/sysinfo,liteinst,measured,pass,1,0,
+c-programs,c-programs/sysinfo-uptime,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/syslog-deterministic,liteinst,measured,pass,1,1,
+c-programs,c-programs/sysv-sem-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/sysv-shm-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept4,liteinst,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept6,liteinst,measured,pass,1,1,
+c-programs,c-programs/tcp-info-client4,liteinst,measured,pass,1,1,
+c-programs,c-programs/tee-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/thread-self-procfs-handoff,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/thread-sync-determinism,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+c-programs,c-programs/threadexhaustion,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/timer-create-determinism,liteinst,measured,pass,1,1,
+c-programs,c-programs/uname,liteinst,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-dgram,liteinst,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-seqpacket,liteinst,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-stream,liteinst,measured,pass,1,1,
+c-programs,c-programs/ustat-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/vforkexec,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/vmsplice-enosys,liteinst,measured,pass,1,1,
+c-programs,c-programs/wait-on-child,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+c-programs,c-programs/writev-determinism,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+chaos-c,chaos-c/lock-granularity,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+data-handling,data-handling/archive-roundtrip,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+data-handling,data-handling/shell-pipeline,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+debugger-c,debugger-c/debuggee,liteinst,measured,pass,1,1,
+determinism-stress,determinism-stress/example-race,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress,determinism-stress/order-violation,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress,determinism-stress/process-chains,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+determinism-stress,determinism-stress/thread-contention,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+determinism-stress,determinism-stress/thread-output,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/fork-tree,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/lock-free,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/mmap-fork-shared,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pid-tid,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pipe-chain,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pipe-prefill,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/producer-consumer,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/signal-order,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/thread-contention,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/thread-stress,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+language-runtimes,language-runtimes/bash-loop-pipe-time,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+language-runtimes,language-runtimes/example-python-random,liteinst,measured,pass,1,1,
+language-runtimes,language-runtimes/gawk-random,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+language-runtimes,language-runtimes/perl-io-subprocess-time,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+language-runtimes,language-runtimes/python-hash-determinism,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+language-runtimes,language-runtimes/python-io-subprocess-time,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+language-runtimes,language-runtimes/python-random,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+performance,performance/barrier-rounds,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/barrier-yield-rounds,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/clock-query-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-baton,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-signal-baton,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/dup-close-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/epoll-eventfd-ring,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/eventfd-roundtrip,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/fork-wait-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/futex-baton,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/getrandom-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mmap-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mutex-contention,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/nanosleep-yield,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/open-read-close-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-fd-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-nonblock-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-roundtrip,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/poll-pipe-ring,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-contention,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-mixed-contention,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/semaphore-baton,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/sigmask-toggle,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-dgram-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-roundtrip,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/spin-trylock-contention,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/syscall-mix,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/thread-churn,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/trylock-contention,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/yield-storm,liteinst,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+shared-futex-c,shared-futex-c/qemu-exec-init,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-hello,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-init,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-net-init,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+system-utils,system-utils/clock-determinism,liteinst,measured,pass,1,1,
+system-utils,system-utils/date-nanoseconds,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+system-utils,system-utils/example-date,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+system-utils,system-utils/example-devrand,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+system-utils,system-utils/openssl-passwd,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+system-utils,system-utils/proc-uptime,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+system-utils,system-utils/random-device,liteinst,measured,diverge,0,0,liteinst-verify-fail-exit1
+system-utils,system-utils/record-getpid,liteinst,measured,pass,1,1,
+util-c,util-c/pmu-skid,liteinst,reference-unusable-verify,diverge,0,,liteinst-verify-fail-exit1
+applications,applications/example-timed-progress-bar,ptrace,measured,pass,1,,
+applications,applications/timed-progress-bar,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+backend-parity-c,backend-parity-c/cpuid-probe,ptrace,measured,pass,1,,
+backend-parity-c,backend-parity-c/pid-probe,ptrace,measured,pass,1,,
+backend-parity-c,backend-parity-c/pthread-lifecycle,ptrace,measured,pass,1,,
+bin-c,bin-c/posix-timer-test,ptrace,measured,pass,1,,
+bin-c,bin-c/robust-futex-test,ptrace,measured,timeout,0,,ptrace-verify-timeout-120s
+c-programs,c-programs/acct-refusal-probe,ptrace,measured,pass,1,,
+c-programs,c-programs/add-key-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/adjtimex-deterministic,ptrace,measured,pass,1,,
+c-programs,c-programs/arch-prctl-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/bpf-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/cachestat-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/clock-adjtime-deterministic,ptrace,measured,pass,1,,
+c-programs,c-programs/clone,ptrace,measured,pass,1,,
+c-programs,c-programs/copy-file-range-refusal-probe,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-copied-tiocgpgrp,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-exec-failure,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-execveat-unsupported,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-mmap-exec,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-pid-virtualization,ptrace,measured,pass,1,,ptrace-run-fail-exit124
+c-programs,c-programs/dbi-prlimit-self,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-self-sigqueue,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-unsupported-syscall,ptrace,measured,pass,1,,
+c-programs,c-programs/dbi-wait-lifecycle,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/epoll-determinism,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/fp-reduction-nondeterminism,ptrace,measured,pass,1,,
+c-programs,c-programs/futex-requeue-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/futex-waitv-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/futex-wake-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/get-robust-list-child,ptrace,measured,pass,1,,
+c-programs,c-programs/get-robust-list-self,ptrace,measured,pass,1,,
+c-programs,c-programs/get-robust-list-thread,ptrace,measured,pass,1,,
+c-programs,c-programs/getcpu,ptrace,measured,pass,1,,
+c-programs,c-programs/getitimer-determinism-probe,ptrace,measured,pass,1,,
+c-programs,c-programs/getsockopt-null,ptrace,measured,pass,1,,
+c-programs,c-programs/hello-alarm,ptrace,measured,pass,1,,
+c-programs,c-programs/hello-nostdlib,ptrace,measured,pass,1,,
+c-programs,c-programs/hello-signals,ptrace,measured,pass,1,,
+c-programs,c-programs/io-uring-fallback,ptrace,measured,pass,1,,
+c-programs,c-programs/io-uring-ring-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/ioctl-fioclex,ptrace,measured,pass,1,,
+c-programs,c-programs/ioctl-siocethtool,ptrace,measured,pass,1,,
+c-programs,c-programs/ipc-determinism,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/just-spin,ptrace,measured,pass,1,,
+c-programs,c-programs/kcmp-eperm,ptrace,measured,pass,1,,
+c-programs,c-programs/keyctl-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/keyctl-passthrough,ptrace,measured,pass,1,,
+c-programs,c-programs/listmount-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/liteinst-advanced,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/lsm-get-self-attr-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/lsm-list-modules-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/lsm-set-self-attr-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/madvise-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/map-shadow-stack-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/memfd-secret-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/meminfo-available-deterministic,ptrace,measured,pass,1,,
+c-programs,c-programs/meminfo-cached-deterministic,ptrace,measured,pass,1,,
+c-programs,c-programs/meminfo-free-deterministic,ptrace,measured,pass,1,,
+c-programs,c-programs/memorypress,ptrace,measured,pass,1,,
+c-programs,c-programs/mmap-determinism,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/mmap-stress-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/name-to-handle-at-eopnotsupp,ptrace,measured,pass,1,,
+c-programs,c-programs/name-to-handle-directory-eopnotsupp,ptrace,measured,pass,1,,
+c-programs,c-programs/name-to-handle-empty-path-eopnotsupp,ptrace,measured,pass,1,,
+c-programs,c-programs/name-to-handle-regular-eopnotsupp,ptrace,measured,pass,1,,
+c-programs,c-programs/nanosleep-par,ptrace,measured,pass,1,,
+c-programs,c-programs/nanosleep-threads-nocrash,ptrace,measured,pass,1,,
+c-programs,c-programs/nanosleep-threads-simple,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/netlink-autobind-generic,ptrace,measured,pass,1,,
+c-programs,c-programs/netlink-autobind-route,ptrace,measured,pass,1,,
+c-programs,c-programs/netlink-autobind-usersock,ptrace,measured,pass,1,,
+c-programs,c-programs/netns-cookie-tcp4,ptrace,measured,pass,1,,
+c-programs,c-programs/netns-cookie-tcp6,ptrace,measured,pass,1,,
+c-programs,c-programs/netns-cookie-udp4,ptrace,measured,pass,1,,
+c-programs,c-programs/perf-event-hardware-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/perf-event-open-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/perf-event-software-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/perf-event-watchpoint-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/periodic-setitimer-delivery,ptrace,measured,pass,1,,
+c-programs,c-programs/pidfd-open-self,ptrace,measured,pass,1,,
+c-programs,c-programs/pidfd-poll-self,ptrace,measured,pass,1,,
+c-programs,c-programs/pidfd-waitid-child,ptrace,measured,pass,1,,
+c-programs,c-programs/ppoll-readv,ptrace,measured,pass,1,,
+c-programs,c-programs/ppoll-simulation,ptrace,measured,pass,1,,
+c-programs,c-programs/prctl-dumpable,ptrace,measured,pass,1,,
+c-programs,c-programs/pread64-nostdlib,ptrace,measured,pass,1,,
+c-programs,c-programs/print-memaddrs,ptrace,measured,pass,1,,
+c-programs,c-programs/printf-with-threads,ptrace,measured,pass,1,,
+c-programs,c-programs/proc-fd-link-aliases,ptrace,measured,pass,1,,
+c-programs,c-programs/proc-fdinfo,ptrace,measured,pass,1,,
+c-programs,c-programs/proc-locks,ptrace,measured,pass,1,,
+c-programs,c-programs/process-mrelease-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/process-vm-readv-refusal-probe,ptrace,measured,pass,1,,
+c-programs,c-programs/process-vm-writev-refusal-probe,ptrace,measured,pass,1,,
+c-programs,c-programs/procfs-positioned-probe,ptrace,measured,pass,1,,
+c-programs,c-programs/prodcons-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/pselect6-simulation,ptrace,measured,pass,1,,
+c-programs,c-programs/ptrace-attach-eperm,ptrace,measured,pass,1,,
+c-programs,c-programs/ptrace-eperm,ptrace,measured,pass,1,,
+c-programs,c-programs/ptrace-seize-eperm,ptrace,measured,pass,1,,
+c-programs,c-programs/ptrace-traceme-eperm,ptrace,measured,pass,1,,
+c-programs,c-programs/pty-nr-count,ptrace,measured,pass,1,,
+c-programs,c-programs/racewrite-nostdlib,ptrace,measured,pass,1,,
+c-programs,c-programs/random-sources,ptrace,measured,pass,1,,
+c-programs,c-programs/rcx-canonicalization,ptrace,measured,pass,1,,
+c-programs,c-programs/record-replay-fd-close,ptrace,measured,pass,1,,
+c-programs,c-programs/record-replay-file-state,ptrace,measured,pass,1,,
+c-programs,c-programs/record-replay-lseek-seek-cur,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/record-replay-setsockopt,ptrace,measured,pass,1,,
+c-programs,c-programs/recvmsg-scm-rights-mmap,ptrace,measured,pass,1,,
+c-programs,c-programs/remap-file-pages-anonymous-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/remap-file-pages-memfd-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/remap-file-pages-tmpfile-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/request-key-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/resource-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/sched-setattr-batch,ptrace,measured,pass,1,,
+c-programs,c-programs/sched-setattr-idle,ptrace,measured,pass,1,,
+c-programs,c-programs/sched-setattr-other,ptrace,measured,pass,1,,
+c-programs,c-programs/sched-yield-progress,ptrace,measured,pass,1,,
+c-programs,c-programs/scheduler-policy-queries,ptrace,measured,pass,1,,
+c-programs,c-programs/setitimer-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/sigmask-preemption,ptrace,measured,pass,1,,
+c-programs,c-programs/signal-determinism,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/sigpipe-siginfo,ptrace,measured,pass,1,,
+c-programs,c-programs/sigtimedwait-no-timeout,ptrace,measured,pass,1,,
+c-programs,c-programs/sigtimedwait-timeout-0s,ptrace,measured,pass,1,,
+c-programs,c-programs/sigtimedwait-timeout-1s,ptrace,measured,pass,1,,
+c-programs,c-programs/so-incoming-cpu-tcp4,ptrace,measured,pass,1,,
+c-programs,c-programs/so-incoming-cpu-tcp6,ptrace,measured,pass,1,,
+c-programs,c-programs/so-incoming-cpu-udp4,ptrace,measured,pass,1,,
+c-programs,c-programs/socket-cookie-tcp,ptrace,measured,pass,1,,
+c-programs,c-programs/socket-cookie-udp,ptrace,measured,pass,1,,
+c-programs,c-programs/socket-cookie-unix,ptrace,measured,pass,1,,
+c-programs,c-programs/socket-ioctl-timestamp,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/socket-timestamp-edge-cases,ptrace,measured,pass,1,,
+c-programs,c-programs/socket-timestamp-timespec,ptrace,measured,pass,1,,
+c-programs,c-programs/socket-timestamp-timeval,ptrace,measured,pass,1,,
+c-programs,c-programs/splice-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/statmount-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/syscall-file-io,ptrace,measured,pass,1,,
+c-programs,c-programs/syscall-file-metadata,ptrace,measured,pass,1,,
+c-programs,c-programs/syscall-quick-wins,ptrace,measured,pass,1,,
+c-programs,c-programs/sysfs-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/sysinfo,ptrace,measured,pass,1,,
+c-programs,c-programs/sysinfo-uptime,ptrace,measured,pass,1,,
+c-programs,c-programs/syslog-deterministic,ptrace,measured,pass,1,,
+c-programs,c-programs/sysv-sem-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/sysv-shm-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/tcp-info-accept4,ptrace,measured,pass,1,,
+c-programs,c-programs/tcp-info-accept6,ptrace,measured,pass,1,,
+c-programs,c-programs/tcp-info-client4,ptrace,measured,pass,1,,
+c-programs,c-programs/tee-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/thread-self-procfs-handoff,ptrace,measured,pass,1,,
+c-programs,c-programs/thread-sync-determinism,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+c-programs,c-programs/threadexhaustion,ptrace,measured,pass,1,,
+c-programs,c-programs/timer-create-determinism,ptrace,measured,pass,1,,
+c-programs,c-programs/uname,ptrace,measured,pass,1,,
+c-programs,c-programs/unix-autobind-dgram,ptrace,measured,pass,1,,
+c-programs,c-programs/unix-autobind-seqpacket,ptrace,measured,pass,1,,
+c-programs,c-programs/unix-autobind-stream,ptrace,measured,pass,1,,
+c-programs,c-programs/ustat-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/vforkexec,ptrace,measured,pass,1,,
+c-programs,c-programs/vmsplice-enosys,ptrace,measured,pass,1,,
+c-programs,c-programs/wait-on-child,ptrace,measured,pass,1,,
+c-programs,c-programs/writev-determinism,ptrace,measured,pass,1,,
+chaos-c,chaos-c/lock-granularity,ptrace,measured,pass,1,,
+data-handling,data-handling/archive-roundtrip,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+data-handling,data-handling/shell-pipeline,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+debugger-c,debugger-c/debuggee,ptrace,measured,pass,1,,
+determinism-stress,determinism-stress/example-race,ptrace,measured,pass,1,,
+determinism-stress,determinism-stress/order-violation,ptrace,measured,pass,1,,
+determinism-stress,determinism-stress/process-chains,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+determinism-stress,determinism-stress/thread-contention,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+determinism-stress,determinism-stress/thread-output,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/fork-tree,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/lock-free,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/mmap-fork-shared,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/pid-tid,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/pipe-chain,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/pipe-prefill,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/producer-consumer,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/signal-order,ptrace,measured,pass,1,,
+determinism-stress-c,determinism-stress-c/thread-contention,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/thread-stress,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/bash-loop-pipe-time,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/example-python-random,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/gawk-random,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/perl-io-subprocess-time,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/python-hash-determinism,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/python-io-subprocess-time,ptrace,measured,pass,1,,
+language-runtimes,language-runtimes/python-random,ptrace,measured,pass,1,,
+performance,performance/barrier-rounds,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/barrier-yield-rounds,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/clock-query-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-baton,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-signal-baton,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/dup-close-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/epoll-eventfd-ring,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/eventfd-roundtrip,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/fork-wait-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/futex-baton,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/getrandom-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mmap-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mutex-contention,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/nanosleep-yield,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/open-read-close-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-fd-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-nonblock-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-roundtrip,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/poll-pipe-ring,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-contention,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-mixed-contention,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/semaphore-baton,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/sigmask-toggle,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-dgram-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-roundtrip,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/spin-trylock-contention,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/syscall-mix,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/thread-churn,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/trylock-contention,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/yield-storm,ptrace,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+shared-futex-c,shared-futex-c/qemu-exec-init,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-hello,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-init,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-net-init,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+system-utils,system-utils/clock-determinism,ptrace,measured,pass,1,,
+system-utils,system-utils/date-nanoseconds,ptrace,measured,pass,1,,
+system-utils,system-utils/example-date,ptrace,measured,pass,1,,
+system-utils,system-utils/example-devrand,ptrace,measured,pass,1,,
+system-utils,system-utils/openssl-passwd,ptrace,measured,pass,1,,
+system-utils,system-utils/proc-uptime,ptrace,measured,pass,1,,
+system-utils,system-utils/random-device,ptrace,measured,pass,1,,
+system-utils,system-utils/record-getpid,ptrace,measured,pass,1,,
+util-c,util-c/pmu-skid,ptrace,measured,diverge,0,,ptrace-verify-fail-exit1
+applications,applications/example-timed-progress-bar,sabre,measured,pass,1,1,
+applications,applications/timed-progress-bar,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+backend-parity-c,backend-parity-c/cpuid-probe,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+backend-parity-c,backend-parity-c/pid-probe,sabre,measured,pass,1,1,
+backend-parity-c,backend-parity-c/pthread-lifecycle,sabre,measured,pass,1,1,
+bin-c,bin-c/posix-timer-test,sabre,measured,pass,1,1,
+bin-c,bin-c/robust-futex-test,sabre,reference-unusable-verify,timeout,0,,sabre-verify-timeout-120s
+c-programs,c-programs/acct-refusal-probe,sabre,measured,pass,1,1,
+c-programs,c-programs/add-key-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/adjtimex-deterministic,sabre,measured,pass,1,1,
+c-programs,c-programs/arch-prctl-determinism,sabre,measured,pass,1,1,
+c-programs,c-programs/bpf-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/cachestat-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/clock-adjtime-deterministic,sabre,measured,pass,1,1,
+c-programs,c-programs/clone,sabre,measured,timeout,0,0,sabre-verify-timeout-120s
+c-programs,c-programs/copy-file-range-refusal-probe,sabre,measured,pass,1,1,
+c-programs,c-programs/dbi-copied-tiocgpgrp,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/dbi-exec-failure,sabre,measured,pass,1,1,
+c-programs,c-programs/dbi-execveat-unsupported,sabre,measured,pass,1,1,
+c-programs,c-programs/dbi-mmap-exec,sabre,measured,pass,1,1,
+c-programs,c-programs/dbi-pid-virtualization,sabre,reference-unusable-runleg,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/dbi-prlimit-self,sabre,measured,pass,1,1,
+c-programs,c-programs/dbi-self-sigqueue,sabre,measured,pass,1,1,
+c-programs,c-programs/dbi-unsupported-syscall,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/dbi-wait-lifecycle,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/epoll-determinism,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/fp-reduction-nondeterminism,sabre,measured,timeout,0,0,sabre-verify-timeout-120s
+c-programs,c-programs/futex-requeue-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/futex-waitv-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/futex-wake-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-child,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/get-robust-list-self,sabre,measured,pass,1,1,
+c-programs,c-programs/get-robust-list-thread,sabre,measured,pass,1,1,
+c-programs,c-programs/getcpu,sabre,measured,pass,1,1,
+c-programs,c-programs/getitimer-determinism-probe,sabre,measured,pass,1,1,
+c-programs,c-programs/getsockopt-null,sabre,measured,pass,1,1,
+c-programs,c-programs/hello-alarm,sabre,measured,pass,1,1,
+c-programs,c-programs/hello-nostdlib,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/hello-signals,sabre,measured,pass,1,1,
+c-programs,c-programs/io-uring-fallback,sabre,measured,pass,1,1,
+c-programs,c-programs/io-uring-ring-determinism,sabre,measured,pass,1,1,
+c-programs,c-programs/ioctl-fioclex,sabre,measured,pass,1,1,
+c-programs,c-programs/ioctl-siocethtool,sabre,measured,pass,1,1,
+c-programs,c-programs/ipc-determinism,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/just-spin,sabre,measured,pass,1,1,
+c-programs,c-programs/kcmp-eperm,sabre,measured,pass,1,1,
+c-programs,c-programs/keyctl-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/keyctl-passthrough,sabre,measured,pass,1,1,
+c-programs,c-programs/listmount-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/liteinst-advanced,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/lsm-get-self-attr-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/lsm-list-modules-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/lsm-set-self-attr-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/madvise-determinism,sabre,measured,pass,1,1,
+c-programs,c-programs/map-shadow-stack-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/memfd-secret-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/meminfo-available-deterministic,sabre,measured,pass,1,1,
+c-programs,c-programs/meminfo-cached-deterministic,sabre,measured,pass,1,1,
+c-programs,c-programs/meminfo-free-deterministic,sabre,measured,pass,1,1,
+c-programs,c-programs/memorypress,sabre,measured,pass,1,1,
+c-programs,c-programs/mmap-determinism,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/mmap-stress-determinism,sabre,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-at-eopnotsupp,sabre,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-directory-eopnotsupp,sabre,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-empty-path-eopnotsupp,sabre,measured,pass,1,1,
+c-programs,c-programs/name-to-handle-regular-eopnotsupp,sabre,measured,pass,1,1,
+c-programs,c-programs/nanosleep-par,sabre,measured,pass,1,1,
+c-programs,c-programs/nanosleep-threads-nocrash,sabre,measured,pass,1,1,
+c-programs,c-programs/nanosleep-threads-simple,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/netlink-autobind-generic,sabre,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-route,sabre,measured,pass,1,1,
+c-programs,c-programs/netlink-autobind-usersock,sabre,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp4,sabre,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-tcp6,sabre,measured,pass,1,1,
+c-programs,c-programs/netns-cookie-udp4,sabre,measured,pass,1,1,
+c-programs,c-programs/perf-event-hardware-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/perf-event-open-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/perf-event-software-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/perf-event-watchpoint-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/periodic-setitimer-delivery,sabre,measured,pass,1,1,
+c-programs,c-programs/pidfd-open-self,sabre,measured,pass,1,1,
+c-programs,c-programs/pidfd-poll-self,sabre,measured,pass,1,1,
+c-programs,c-programs/pidfd-waitid-child,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/ppoll-readv,sabre,measured,pass,1,1,
+c-programs,c-programs/ppoll-simulation,sabre,measured,pass,1,1,
+c-programs,c-programs/prctl-dumpable,sabre,measured,pass,1,1,
+c-programs,c-programs/pread64-nostdlib,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/print-memaddrs,sabre,measured,pass,1,0,
+c-programs,c-programs/printf-with-threads,sabre,measured,pass,1,1,
+c-programs,c-programs/proc-fd-link-aliases,sabre,measured,pass,1,1,
+c-programs,c-programs/proc-fdinfo,sabre,measured,pass,1,0,
+c-programs,c-programs/proc-locks,sabre,measured,pass,1,1,
+c-programs,c-programs/process-mrelease-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/process-vm-readv-refusal-probe,sabre,measured,pass,1,1,
+c-programs,c-programs/process-vm-writev-refusal-probe,sabre,measured,pass,1,1,
+c-programs,c-programs/procfs-positioned-probe,sabre,measured,pass,1,1,
+c-programs,c-programs/prodcons-determinism,sabre,measured,pass,1,1,
+c-programs,c-programs/pselect6-simulation,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/ptrace-attach-eperm,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/ptrace-eperm,sabre,measured,pass,1,1,
+c-programs,c-programs/ptrace-seize-eperm,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/ptrace-traceme-eperm,sabre,measured,pass,1,1,
+c-programs,c-programs/pty-nr-count,sabre,measured,pass,1,1,
+c-programs,c-programs/racewrite-nostdlib,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/random-sources,sabre,measured,pass,1,0,
+c-programs,c-programs/rcx-canonicalization,sabre,measured,pass,1,1,
+c-programs,c-programs/record-replay-fd-close,sabre,measured,pass,1,1,
+c-programs,c-programs/record-replay-file-state,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/record-replay-lseek-seek-cur,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/record-replay-setsockopt,sabre,measured,pass,1,1,
+c-programs,c-programs/recvmsg-scm-rights-mmap,sabre,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-anonymous-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-memfd-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/remap-file-pages-tmpfile-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/request-key-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/resource-determinism,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/sched-setattr-batch,sabre,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-idle,sabre,measured,pass,1,1,
+c-programs,c-programs/sched-setattr-other,sabre,measured,pass,1,1,
+c-programs,c-programs/sched-yield-progress,sabre,measured,pass,1,1,
+c-programs,c-programs/scheduler-policy-queries,sabre,measured,pass,1,1,
+c-programs,c-programs/setitimer-determinism,sabre,measured,pass,1,0,
+c-programs,c-programs/sigmask-preemption,sabre,measured,pass,1,1,
+c-programs,c-programs/signal-determinism,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/sigpipe-siginfo,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/sigtimedwait-no-timeout,sabre,measured,timeout,0,0,sabre-verify-timeout-120s
+c-programs,c-programs/sigtimedwait-timeout-0s,sabre,measured,pass,1,1,
+c-programs,c-programs/sigtimedwait-timeout-1s,sabre,measured,pass,1,0,
+c-programs,c-programs/so-incoming-cpu-tcp4,sabre,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-tcp6,sabre,measured,pass,1,1,
+c-programs,c-programs/so-incoming-cpu-udp4,sabre,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-tcp,sabre,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-udp,sabre,measured,pass,1,1,
+c-programs,c-programs/socket-cookie-unix,sabre,measured,pass,1,1,
+c-programs,c-programs/socket-ioctl-timestamp,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/socket-timestamp-edge-cases,sabre,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timespec,sabre,measured,pass,1,1,
+c-programs,c-programs/socket-timestamp-timeval,sabre,measured,pass,1,1,
+c-programs,c-programs/splice-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/statmount-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/syscall-file-io,sabre,measured,pass,1,1,
+c-programs,c-programs/syscall-file-metadata,sabre,measured,pass,1,1,
+c-programs,c-programs/syscall-quick-wins,sabre,measured,pass,1,1,
+c-programs,c-programs/sysfs-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/sysinfo,sabre,measured,pass,1,0,
+c-programs,c-programs/sysinfo-uptime,sabre,measured,pass,1,0,
+c-programs,c-programs/syslog-deterministic,sabre,measured,pass,1,1,
+c-programs,c-programs/sysv-sem-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/sysv-shm-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept4,sabre,measured,pass,1,1,
+c-programs,c-programs/tcp-info-accept6,sabre,measured,pass,1,1,
+c-programs,c-programs/tcp-info-client4,sabre,measured,pass,1,1,
+c-programs,c-programs/tee-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/thread-self-procfs-handoff,sabre,measured,pass,1,1,
+c-programs,c-programs/thread-sync-determinism,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+c-programs,c-programs/threadexhaustion,sabre,measured,pass,1,1,
+c-programs,c-programs/timer-create-determinism,sabre,measured,pass,1,1,
+c-programs,c-programs/uname,sabre,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-dgram,sabre,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-seqpacket,sabre,measured,pass,1,1,
+c-programs,c-programs/unix-autobind-stream,sabre,measured,pass,1,1,
+c-programs,c-programs/ustat-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/vforkexec,sabre,measured,timeout,0,0,sabre-verify-timeout-120s
+c-programs,c-programs/vmsplice-enosys,sabre,measured,pass,1,1,
+c-programs,c-programs/wait-on-child,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+c-programs,c-programs/writev-determinism,sabre,measured,timeout,0,0,sabre-verify-timeout-120s
+chaos-c,chaos-c/lock-granularity,sabre,measured,pass,1,1,
+data-handling,data-handling/archive-roundtrip,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+data-handling,data-handling/shell-pipeline,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+debugger-c,debugger-c/debuggee,sabre,measured,pass,1,1,
+determinism-stress,determinism-stress/example-race,sabre,measured,pass,1,1,
+determinism-stress,determinism-stress/order-violation,sabre,measured,pass,1,1,
+determinism-stress,determinism-stress/process-chains,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+determinism-stress,determinism-stress/thread-contention,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+determinism-stress,determinism-stress/thread-output,sabre,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/fork-tree,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/lock-free,sabre,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/mmap-fork-shared,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pid-tid,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pipe-chain,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/pipe-prefill,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/producer-consumer,sabre,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/signal-order,sabre,measured,pass,1,1,
+determinism-stress-c,determinism-stress-c/thread-contention,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+determinism-stress-c,determinism-stress-c/thread-stress,sabre,measured,pass,1,1,
+language-runtimes,language-runtimes/bash-loop-pipe-time,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+language-runtimes,language-runtimes/example-python-random,sabre,measured,diverge,0,1,sabre-verify-fail-exit1
+language-runtimes,language-runtimes/gawk-random,sabre,measured,pass,1,1,
+language-runtimes,language-runtimes/perl-io-subprocess-time,sabre,measured,pass,1,0,
+language-runtimes,language-runtimes/python-hash-determinism,sabre,measured,pass,1,0,
+language-runtimes,language-runtimes/python-io-subprocess-time,sabre,measured,timeout,0,0,sabre-verify-timeout-120s
+language-runtimes,language-runtimes/python-random,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+performance,performance/barrier-rounds,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/barrier-yield-rounds,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/clock-query-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-baton,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/condvar-signal-baton,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/dup-close-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/epoll-eventfd-ring,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/eventfd-roundtrip,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/fork-wait-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/futex-baton,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/getrandom-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mmap-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/mutex-contention,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/nanosleep-yield,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/open-read-close-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-fd-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-nonblock-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/pipe-roundtrip,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/poll-pipe-ring,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-contention,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/rwlock-mixed-contention,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/semaphore-baton,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/sigmask-toggle,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-dgram-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/socketpair-roundtrip,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/spin-trylock-contention,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/syscall-mix,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/thread-churn,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/trylock-contention,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+performance,performance/yield-storm,sabre,fixture-source-missing,,,,guest source absent at the measured hermit SHA; no row was emitted by the collector
+shared-futex-c,shared-futex-c/qemu-exec-init,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-hello,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-init,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+shared-futex-c,shared-futex-c/qemu-net-init,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1
+system-utils,system-utils/clock-determinism,sabre,measured,pass,1,0,
+system-utils,system-utils/date-nanoseconds,sabre,measured,diverge,0,0,sabre-verify-fail-exit1
+system-utils,system-utils/example-date,sabre,measured,pass,1,0,
+system-utils,system-utils/example-devrand,sabre,measured,pass,1,1,
+system-utils,system-utils/openssl-passwd,sabre,measured,pass,1,0,
+system-utils,system-utils/proc-uptime,sabre,measured,pass,1,1,
+system-utils,system-utils/random-device,sabre,measured,pass,1,1,
+system-utils,system-utils/record-getpid,sabre,measured,pass,1,1,
+util-c,util-c/pmu-skid,sabre,reference-unusable-verify,diverge,0,,sabre-verify-fail-exit1

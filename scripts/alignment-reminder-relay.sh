@@ -31,7 +31,7 @@
 # the whole point; without it a silent stop reads as health again.
 set -uo pipefail
 
-ROOT=/home/newton/work/dev-hermit
+ROOT="${ALIGNMENT_RELAY_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 MESSAGE_FILE="$ROOT/alignment_reminder_prompt.md"
 RELAY="$ROOT/scripts/orc-hermit-msg.py"
 INVLOG="${ALIGNMENT_RELAY_INVLOG:-$HOME/.local/state/alignment-reminder-relay-invocations.log}"

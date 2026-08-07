@@ -1,0 +1,59 @@
+{
+  "experiment": "gvisor-blog-repro-v2",
+  "question": "Separate Hermit's syscall-interception (instrumentation) cost from its deterministic-scheduling (sequentialization) cost, and compare both against native and FULL gVisor measured on the same host in the same core box.",
+  "captured_utc": "2026-08-07T06:32:48Z",
+  "supersedes": "experiments/gvisor-systrap-benchmark-repro-20260802 (compared local Hermit against BLOG-PUBLISHED gVisor numbers from a different host; its own README retracts the resulting cross-host ordering)",
+  "repositories": {
+    "hermit": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+    "reverie": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+    "parent": "f9b89fca47294899e4e65f512504a67e7831433f"
+  },
+  "binaries": {
+    "hermit": "scratch/w14-baseline/hermit/target/release/hermit (cargo build --release -p hermit --bin hermit --features third-party-backends)",
+    "runsc": "ignored/gvisor-runsc-same-host/bin/runsc-release-20260727.0",
+    "runsc_version": "runsc version release-20260727.0",
+    "guest_single_threaded": "ignored/gvisor-runsc-same-host/bin/getpid-loop",
+    "guest_multi_threaded": "scripts/getpid-threads.c (added for this experiment; gcc -O2 -lpthread)"
+  },
+  "method": {
+    "instrumentation": "exp1: single-threaded getpid, ALL arms in a K=1 core box; ns/syscall = median over 5 reps of (T(300k)-T(100k))/200k",
+    "why_a_slope": "cancels fixed startup (process exec / Sentry boot / backend attach); a plain wall/N would have measured Sentry boot and reported gVisor ~100x worse",
+    "sequentialization": "exp2: 4-thread getpid at N=200000, K=1 vs K=4, BOTH through the same core-box helper so its cost is common-mode, then the measured calibration median is subtracted from each side",
+    "core_box": "scratch/run-on-k-free-cores.py \u2014 sched_setaffinity fallback (cpuset controller not delegated in this sandbox); picks the K least-busy free cores, never a fixed id",
+    "helper_calibration_s": {
+      "k1": 0.412,
+      "k4": 0.413,
+      "spread": 0.029,
+      "samples": 10
+    },
+    "reps": 5,
+    "timeout_s": 300,
+    "run_timeout_s": 90,
+    "verify_timeout_s": 120
+  },
+  "population": {
+    "rows": 194,
+    "by_experiment": {
+      "calib": 10,
+      "exp1": 92,
+      "exp2": 92
+    },
+    "arms_attempted": 10,
+    "arms_with_results": 9,
+    "no_result": {
+      "hermit-kvm": "hangs on this host; rc=124 at a 45s probe and at the 300s bound; recorded as an explicit no-result, never a zero"
+    }
+  },
+  "environment": {
+    "host_kind": "shared devbig, multi-tenant",
+    "cpu": "AMD EPYC 9D85 158-Core Processor",
+    "logical_cpus": "316",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "load_during_collection": "1-min load averaged roughly 50-83 across the run",
+    "caveat": "contended box; medians over 5 reps mitigate but do not remove this"
+  },
+  "commands": {
+    "bench": "scripts/bench.sh",
+    "analyze": "scripts/analyze.py"
+  }
+}

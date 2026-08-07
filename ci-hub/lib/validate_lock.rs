@@ -30,9 +30,8 @@ use thiserror::Error;
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
     capture_and_freeze_residuals, cgroup_population, current_host, enable_child_subreaper,
-    exact_process_liveness, exit_status_code, heartbeat_test_helper_delay, print_cleanup_record,
-    payload_cgroup_anchor, process_group_exists,
-    process_start_ticks, reap_exited_children,
+    exact_process_liveness, exit_status_code, heartbeat_test_helper_delay, payload_cgroup_anchor,
+    print_cleanup_record, process_group_exists, process_start_ticks, reap_exited_children,
     remove_cleanup_record, safe_ci_slice_for, signal_group, spawn_gated_child, suffix,
     verify_cleanup_record, write_cleanup_record, CgroupCensus, CleanupPhase, CleanupRecord,
     CleanupVerification, GatedChild, ProcessIdentity, ResidualCapture,
@@ -2177,12 +2176,23 @@ fn census_disposition(
 
 /// How a supervised `run` child ended.
 enum ChildOutcome {
-    Exited { status: ExitStatus, pgid: u32 },
-    TimedOut { pgid: u32 },
+    Exited {
+        status: ExitStatus,
+        pgid: u32,
+    },
+    TimedOut {
+        pgid: u32,
+    },
     /// The SUPERVISOR was signalled (systemd stopping the unit TERMs the whole
     /// control group, so this is the common death path — not an exotic one).
-    Signalled { pgid: u32, signal: i32 },
-    Uncertain { pgid: u32, reason: String },
+    Signalled {
+        pgid: u32,
+        signal: i32,
+    },
+    Uncertain {
+        pgid: u32,
+        reason: String,
+    },
 }
 
 impl ChildOutcome {
@@ -2590,7 +2600,7 @@ wait
             .run(
                 RunArgs {
                     agent: "stubborn-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-stubborn".into(),
                     no_wait: false,
                     wait: 0,
@@ -2667,7 +2677,10 @@ wait
             CTX,
         )
         .unwrap();
-        assert!(ok.contains("PROVEN") && !ok.contains("ATTESTED"), "got: {ok}");
+        assert!(
+            ok.contains("PROVEN") && !ok.contains("ATTESTED"),
+            "got: {ok}"
+        );
     }
 
     // A live domain is refused by DEFAULT: no attestation, no discharge.
@@ -2681,7 +2694,10 @@ wait
         )
         .expect_err("a populated domain must not discharge on its own");
         assert!(refusal.contains("NOT empty"), "got: {refusal}");
-        assert!(refusal.contains("11,22"), "must name the occupants, got: {refusal}");
+        assert!(
+            refusal.contains("11,22"),
+            "must name the occupants, got: {refusal}"
+        );
     }
 
     // An override IS possible -- refusing outright would create a NEW
@@ -2703,7 +2719,10 @@ wait
             "an override must be labelled as one, got: {ok}"
         );
         assert!(ok.contains("11,22"), "must carry the occupants, got: {ok}");
-        assert!(!ok.contains("PROVEN"), "must never read as mechanical: {ok}");
+        assert!(
+            !ok.contains("PROVEN"),
+            "must never read as mechanical: {ok}"
+        );
     }
 
     // ...and an anonymous override is still refused.
@@ -2732,7 +2751,10 @@ wait
         .unwrap_err();
         assert!(refusal.contains("no cgroup anchor"), "got: {refusal}");
         assert!(refusal.contains("--attest-domain-empty"), "got: {refusal}");
-        assert!(refusal.contains(CTX), "must state what DID pass, got: {refusal}");
+        assert!(
+            refusal.contains(CTX),
+            "must state what DID pass, got: {refusal}"
+        );
     }
 
     // The attestation must stay auditable; an anonymous one is still refused.
@@ -2760,8 +2782,14 @@ wait
         )
         .unwrap();
         assert!(ok.contains("ATTESTED"), "got: {ok}");
-        assert!(ok.contains("safe-ci.slice 0 procs"), "evidence must be echoed: {ok}");
-        assert!(!ok.contains("PROVEN:"), "must not claim mechanical proof: {ok}");
+        assert!(
+            ok.contains("safe-ci.slice 0 procs"),
+            "evidence must be echoed: {ok}"
+        );
+        assert!(
+            !ok.contains("PROVEN:"),
+            "must not claim mechanical proof: {ok}"
+        );
     }
 
     // LEGACY FALLBACK PRESERVED: a record written before cgroup anchoring has
@@ -2901,7 +2929,10 @@ while :; do sleep 60; done
         let publish_probe = identity_path.clone();
         let flagger = thread::spawn(move || {
             for _ in 0..600 {
-                if fs::metadata(&publish_probe).map(|m| m.len() > 0).unwrap_or(false) {
+                if fs::metadata(&publish_probe)
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
+                {
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
@@ -3009,7 +3040,10 @@ while :; do sleep 60; done
         let _ = fs::remove_file(&stub);
 
         let code = result.expect("an ordinary child exit must complete cleanup");
-        assert_eq!(code, 7, "an unsignalled run must report the child's own code");
+        assert_eq!(
+            code, 7,
+            "an unsignalled run must report the child's own code"
+        );
         assert_ne!(
             code,
             128 + libc::SIGTERM,
@@ -3043,7 +3077,7 @@ wait
             .run(
                 RunArgs {
                     agent: "escaped-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "sha-escaped".into(),
                     no_wait: false,
                     wait: 0,
@@ -3165,15 +3199,11 @@ wait
         let ready = root.join("supervisor-ready");
         let marker = root.join("payload-started");
         let target = "hard-death";
-        crate::landing_lock::install_run_hard_death_hook(
-            &format!("validate:{target}"),
-            point,
-            ready,
-        );
+        crate::landing_lock::install_run_hard_death_hook(&format!("bench:{target}"), point, ready);
         let result = ValidateLock { paths }.run(
             RunArgs {
                 agent: "hard-death-validate".into(),
-                kind: Kind::Validate,
+                kind: Kind::Bench,
                 target: target.into(),
                 no_wait: false,
                 wait: 0,
@@ -3288,12 +3318,12 @@ wait
             };
             let marker = paths.lock.parent().unwrap().join("payload-started");
             let target = format!("crash-{index}");
-            crate::landing_lock::install_run_crash_hook(&format!("validate:{target}"), point);
+            crate::landing_lock::install_run_crash_hook(&format!("bench:{target}"), point);
             let error = lock
                 .run(
                     RunArgs {
                         agent: "crash-validate".into(),
-                        kind: Kind::Validate,
+                        kind: Kind::Bench,
                         target: target.clone(),
                         no_wait: false,
                         wait: 0,
@@ -3416,7 +3446,7 @@ exit 0
             .run(
                 RunArgs {
                     agent: "normal-exit-validate".into(),
-                    kind: Kind::Validate,
+                    kind: Kind::Bench,
                     target: "normal-exit".into(),
                     no_wait: false,
                     wait: 0,

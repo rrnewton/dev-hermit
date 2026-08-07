@@ -1,0 +1,36 @@
+build_slot,hermit_sha,reverie_pin,guest,backend,bound_s,rc,wall_s,cgroup_cpu_s,cpu_pct_of_wall,outcome,note
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,/bin/true,kvm,120,0,0.49,NA,NA,COMPLETED,no hang
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,/bin/true,kvm-nostrict,120,0,0.46,NA,NA,COMPLETED,no hang
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,ptrace,60,0,0.08,0.06,74,PASS,uniq-ok
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,ptrace,30,0,0.25,0.06,24,PASS,uniq-ok
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm,30,2,3.35,2.65,79,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm,30,2,3.09,2.77,90,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm,30,2,3.29,2.92,89,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm,30,2,2.82,2.52,89,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm,30,2,3.41,2.71,79,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm,30,2,3.55,2.89,81,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-concurrent6,30,2,6.76,5.86,87,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-concurrent6,30,2,7.19,6.02,84,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-concurrent6,30,2,7.22,6.03,83,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-concurrent6,30,2,7.23,5.78,80,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-concurrent6,30,2,7.23,5.84,81,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-concurrent6,30,2,7.27,5.89,81,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,ptrace-verify,60,0,0.23,0.19,81,PASS,compared 4141|4141
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-verify,60,1,3.10,2.98,96,ZERO-QUALIFYING-TRIALS,Run1 errored; no Run2
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,ptrace-stdout-pipe,30,0,0.09,NA,NA,PASS,uniq-ok
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,pipeline-uniq,kvm-stdout-pipe,30,0,2.48,NA,NA,FAIL-FAST,EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,minimal-pipe,ptrace,25,0,NA,NA,NA,PASS,a|b
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,minimal-pipe,kvm,25,1,NA,NA,NA,FAIL-FAST,cat: -: EAGAIN
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,procsub-only,ptrace,25,0,NA,NA,NA,PASS,psub-ok
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,procsub-only,kvm,25,0,NA,NA,NA,PASS,psub-ok
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,stdin-dash,ptrace,25,0,NA,NA,NA,PASS,dash-ok
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,stdin-dash,kvm,25,9,NA,NA,NA,PANIC,scheduler.rs:2174 ESRCH
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,nonblock-probe,ptrace,25,0,NA,NA,NA,PASS,fl=0x0 NONBLOCK=0 bytes=4 eagain=0
+w2,77951bcdf6c766390090fcdc626545bed192d872,038e9939,nonblock-probe,kvm,25,0,NA,NA,NA,DEFECT,fl=0x0 NONBLOCK=0 bytes=0 eagain=4
+primary,f89c69766371806d3c9b2c3003531df2d59d6118-dirty,d973a85b,/bin/true,kvm,120,137,120.01,NA,NA,HANG-KILLED,exit 137
+primary,f89c69766371806d3c9b2c3003531df2d59d6118-dirty,d973a85b,minimal-pipe,kvm,25,137,NA,NA,NA,HANG-KILLED,exit 137
+cc,9c233ed0bfd6,d973a85b,/bin/true,kvm,30,137,30.01,NA,NA,HANG-KILLED,exit 137
+certify,16cbdbb11925,d973a85b,/bin/true,kvm,30,137,30.01,NA,NA,HANG-KILLED,exit 137
+clone,9cf96a4d9c56,d973a85b,/bin/true,kvm,30,137,30.01,NA,NA,HANG-KILLED,exit 137
+det1,f93109f2e1e9,d973a85b,/bin/true,kvm,30,137,30.01,NA,NA,HANG-KILLED,exit 137
+cc,9c233ed0bfd6,d973a85b,/bin/true,kvm-cgroup-accounted,30,137,30.12,29.76,99,HANG-KILLED-LIVELOCK,cpu==wall

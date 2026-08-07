@@ -48,8 +48,9 @@ use std::process::{exit, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// Shared 19-column contract. Keep in sync with the other collectors/renderer.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,candidate_sites,mapped_sites,reach_state";
+// Shared comparison/provenance contract plus the e9patch reach tail. Keep the
+// common prefix in sync with the other collectors and the renderer.
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier,candidate_sites,mapped_sites,reach_state";
 const RUN_MODE: &str = "e9patch";
 const BUCKET: &str = "e9patch-corpus";
 // Single mode token: "run the freestanding raw-syscall guest under strict verify".
@@ -57,6 +58,8 @@ const MODE: &str = "verify";
 const FREESTANDING_FLAGS: &[&str] =
     &["-nostdlib", "-static", "-ffreestanding", "-O0", "-fno-pie", "-no-pie"];
 const L2_NEEDLE: &str = "Determinism verified";
+const PINNED_GUEST_ENV_ARGS: &[&str] =
+    &["--base-env", "minimal", "-e", "LC_ALL=C", "-e", "TZ=UTC"];
 
 fn die(msg: &str) -> ! {
     eprintln!("collect-e9patch-compat: {msg}");
@@ -240,6 +243,12 @@ fn hermit_argv(hermit: &Path, e9: bool, verify: bool, guest: &Path) -> Vec<Strin
     }
     v.push("run".into());
     v.push("--strict".into());
+    // `--base-env host` (the default) makes the ambient collector environment
+    // part of the guest's initial stack. That invalidates comparisons across
+    // invocations as soon as they include a stack-derived observable. Use the
+    // same fixed guest environment as the other scorecard collectors instead:
+    // Hermit's minimal PATH/HOSTNAME/HOME plus explicit locale and timezone.
+    v.extend(PINNED_GUEST_ENV_ARGS.iter().map(|arg| (*arg).to_string()));
     if verify {
         v.push("--verify".into());
     }
@@ -249,6 +258,81 @@ fn hermit_argv(hermit: &Path, e9: bool, verify: bool, guest: &Path) -> Vec<Strin
     v.push("--".into());
     v.push(guest.to_string_lossy().into_owned());
     v
+}
+
+#[cfg(test)]
+mod guest_env_pin_tests {
+    use super::*;
+
+    fn projected_env_args(argv: &[String]) -> Option<Vec<String>> {
+        let separator = argv.iter().position(|arg| arg == "--")?;
+        let mut projected = Vec::new();
+        let mut index = 0;
+        while index < separator {
+            match argv[index].as_str() {
+                "--base-env" | "-e" | "--env" => {
+                    if index + 1 >= separator {
+                        return None;
+                    }
+                    projected.push(argv[index].clone());
+                    projected.push(argv[index + 1].clone());
+                    index += 2;
+                }
+                arg if arg.starts_with("--base-env=")
+                    || arg.starts_with("--env=")
+                    || (arg.starts_with("-e") && arg.len() > 2) =>
+                {
+                    projected.push(arg.to_string());
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+        }
+        Some(projected)
+    }
+
+    fn has_exact_pin(argv: &[String]) -> bool {
+        projected_env_args(argv)
+            == Some(PINNED_GUEST_ENV_ARGS.iter().map(|arg| (*arg).to_string()).collect())
+    }
+
+    fn actual_argv() -> Vec<String> {
+        hermit_argv(Path::new("/hermit"), true, true, Path::new("/guest"))
+    }
+
+    #[test]
+    fn every_arm_and_level_carries_the_exact_pin_before_the_guest() {
+        for e9 in [false, true] {
+            for verify in [false, true] {
+                let argv = hermit_argv(Path::new("/hermit"), e9, verify, Path::new("/guest"));
+                assert!(has_exact_pin(&argv), "missing pin in {argv:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mutated_value_is_refused() {
+        let mut argv = actual_argv();
+        *argv.iter_mut().find(|arg| arg.as_str() == "TZ=UTC").unwrap() = "TZ=localtime".into();
+        assert!(!has_exact_pin(&argv));
+    }
+
+    #[test]
+    fn an_omitted_entry_is_refused() {
+        let mut argv = actual_argv();
+        let index = argv.iter().position(|arg| arg == "LC_ALL=C").unwrap();
+        argv.drain(index - 1..=index);
+        assert!(!has_exact_pin(&argv));
+    }
+
+    #[test]
+    fn reordered_entries_are_refused() {
+        let mut argv = actual_argv();
+        let lc = argv.iter().position(|arg| arg == "LC_ALL=C").unwrap();
+        let tz = argv.iter().position(|arg| arg == "TZ=UTC").unwrap();
+        argv.swap(lc, tz);
+        assert!(!has_exact_pin(&argv));
+    }
 }
 
 /// L1/L2 measurement for one arm (golden or e9) of one guest.
@@ -454,6 +538,18 @@ fn main() {
 
     if !csv_path.exists() {
         fs::write(&csv_path, format!("{HEADER}\n")).unwrap_or_else(|e| die(&format!("create CSV: {e}")));
+    } else {
+        let existing_header = fs::read_to_string(&csv_path)
+            .ok()
+            .and_then(|text| text.lines().next().map(str::to_string))
+            .unwrap_or_default();
+        if existing_header != HEADER {
+            die(&format!(
+                "scorecard header does not match this producer (have {} columns, need {}); migrate it before appending",
+                existing_header.split(',').count(),
+                HEADER.split(',').count()
+            ));
+        }
     }
 
     let strict_to = Duration::from_secs(strict_to);
@@ -480,7 +576,7 @@ fn main() {
         if !compiled {
             for backend in ["ptrace", "e9patch"] {
                 rows.push(row(&run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, g,
-                    backend, "enabled", "fail", None, None, "", 0, "compile failed", None));
+                    backend, "enabled", "fail", None, None, "", "", 0, "compile failed", None));
             }
             *tally.entry("compile-fail").or_default() += 1;
             eprintln!("[{}/{}] {g}: COMPILE-FAIL", i + 1, guests.len());
@@ -502,7 +598,7 @@ fn main() {
         // ---- ptrace (golden reference) cell ----
         let (g_out, g_det, g_reason) = arm_cell(&golden, None);
         rows.push(row(&run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, g,
-            "ptrace", "enabled", g_out, g_det, None, &gref_hash, golden.duration_ms, &g_reason,
+            "ptrace", "enabled", g_out, g_det, None, &gref_hash, &gref_hash, golden.duration_ms, &g_reason,
             None));
 
         // ---- e9patch (rewritten variant) cell ----
@@ -515,7 +611,7 @@ fn main() {
         // outcome=not-exercised would re-manufacture the score the gate removes.
         let e_parity = if matches!(e9.reach, Some((_, m)) if m > 0) { Some(parity) } else { None };
         rows.push(row(&run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, g,
-            "e9patch", "enabled", &e_out, e_det, e_parity, &e9_hash, e9.duration_ms, &e_reason,
+            "e9patch", "enabled", &e_out, e_det, e_parity, &e9_hash, &gref_hash, e9.duration_ms, &e_reason,
             e9.reach));
 
         // Tally by the honest per-guest outcome (e9 arm is the interesting one).
@@ -579,7 +675,10 @@ fn main() {
         exit(1);
     }
     if assert_green {
-        eprintln!("collect-e9patch-compat: GREEN — no parity divergences or run failures (env wedges are not regressions).");
+        eprintln!(
+            "collect-e9patch-compat: RAW STDOUT PASS — no parity divergences or run failures, but comparison_tier=unqualified-stdout-only; emitted strict greens: 0/{}",
+            rows.len()
+        );
     }
 }
 
@@ -655,12 +754,23 @@ fn row(
     deterministic: Option<bool>,
     parity: Option<bool>,
     output_hash: &str,
+    ref_output_hash: &str,
     duration_ms: i64,
     reason: &str,
     reach: Option<(u64, u64)>,
 ) -> String {
     let det = deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("");
-    let par = parity.map(|b| if b { "1" } else { "0" }).unwrap_or("");
+    // Historical e9 parity lacks the complete profile/population receipt.  Keep
+    // the observation in the explicit legacy field; never publish it as a
+    // qualified stdout comparison.
+    let legacy_parity = parity
+        .map(|b| format!("stdout_parity:{}", if b { "1" } else { "0" }))
+        .unwrap_or_default();
+    let (verify_compare, det_tier) = if deterministic == Some(true) {
+        ("stripped", "stripped-uncounted")
+    } else {
+        ("", "")
+    };
     let reason_q = format!("\"{}\"", reason.replace('"', "'"));
     [
         run_id.to_string(),
@@ -677,11 +787,25 @@ fn row(
         cell_state.to_string(),
         outcome.to_string(),
         det.to_string(),
-        par.to_string(),
+        String::new(), // stdout_parity: no complete provenance receipt
         output_hash.to_string(),
         duration_ms.to_string(),
         String::new(), // max_rss_kb
         reason_q,
+        verify_compare.to_string(),
+        String::new(), // bitwise_parity
+        String::new(), // compared_log_messages
+        det_tier.to_string(),
+        legacy_parity,
+        ref_output_hash.to_string(),
+        String::new(), // parity_comparator
+        String::new(), // parity_tier
+        String::new(), // profile_flags
+        String::new(), // population_id
+        String::new(), // selected_count
+        String::new(), // executed_count
+        String::new(), // evidence_count
+        "unqualified-stdout-only".to_string(),
         reach.map(|(c, _)| c.to_string()).unwrap_or_default(),
         reach.map(|(_, m)| m.to_string()).unwrap_or_default(),
         match reach {

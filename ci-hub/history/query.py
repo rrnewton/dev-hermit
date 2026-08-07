@@ -12,9 +12,8 @@ Commands:
                      distribution and the runs behind it. `--since` works here.
   node-cpu-budgets   per DAG-node CPU-second budgets for the cpu_timeout
                      derivation (round(max_cpu_s * 1.5), n>=5 else thin/UNSET).
-  green-time         % of main-branch wall-clock time whose authoritative CI
-                     conclusion was success, DERIVED from the store (never
-                     estimated).
+  green-time         % of conclusive authoritative-run wall-clock whose CI
+                     conclusion was success; NO-RESULT/gap excluded and shown.
   runs               same summary + recent-runs listing (alias of the default).
 
 Usage:
@@ -71,8 +70,8 @@ AUTHORITATIVE = {
 #
 # GREEN IS A POSITIVE SUCCESS RECORD, NOT THE ABSENCE OF RED. The wall-clock
 # timeline of main is partitioned into FOUR mutually exclusive states so the
-# whole denominator is accounted for and no non-green time is ever silently
-# credited as green:
+# whole observation window is accounted for and no non-green time is ever
+# silently credited as green:
 #
 #   green      the latest attempt of EVERY authoritative workflow at the current
 #              main commit completed with success.
@@ -115,19 +114,23 @@ AUTHORITATIVE = {
 #                                           -> real red; killed BY the      conclusion)
 #                                           cancel -> stays no_result
 #
-# WHY THE GREEN NUMBER IS ROBUST TO ALL OF THIS. Cases 3-5 and 7 are all
-# NON-green (none is a success record), so which bucket they land in NEVER moves
-# green_pct up or down. The taxonomy refines the RED <-> NO_RESULT split, which
-# is what drives the ACTION, not the health headline:
+# HEADLINE DENOMINATOR. Green-time means green wall-hours divided by CONCLUSIVE
+# AUTHORITATIVE-RUN wall-hours: green / (green + red). NO_RESULT and gap hours
+# remain measured and reported, but are EXCLUDED from that denominator. A
+# cancelled run therefore cannot wear a red badge merely because it produced no
+# answer, and cannot depress the percentage as if it had disproved the code.
+# Cases 4 and 7 enter the denominator only after their independent failure is
+# positively established. The taxonomy therefore drives both the action and
+# whether an interval is eligible for the headline denominator:
 #    red       -> a genuine bad answer: fix-forward or revert.
 #    no_result -> a destroyed/withheld/harness-caused answer: RE-DISPATCH, never
 #                 revert a healthy tip.
 #    gap       -> fill the hole (dispatch / wait for the pending run).
 # The un-derivable splits (3-vs-4, 5, 7) are all CONSERVATIVE for green: an
 # undiscriminated case sits in no_result, so the worst offline error is
-# UNDER-counting red (a hidden failure reads as "no answer"), NEVER inflating
-# green. Case 5 on the GitHub leg is the one over-count (a harness cause reads as
-# red) and still cannot touch green.
+# UNDER-counting the conclusive denominator (a hidden failure reads as "no
+# answer"). Case 5 on the GitHub leg is the converse over-count: a harness cause
+# reads as red and enters the denominator until richer evidence is ingested.
 #
 # COMBINE + REIGN. A commit's state combines its authoritative workflows with
 # precedence red > gap > no_result > green: one real failure dominates; absent
@@ -135,14 +138,15 @@ AUTHORITATIVE = {
 # from its first observed run creation until the next commit's first run creation
 # (the last commit reigns to now). Within a reign, [became-head,
 # all-authoritative-terminal) is gap(pending) and the remainder takes the
-# combined terminal state. green_pct = green wall-clock / window wall-clock;
-# red/no_result/gap percentages complete the denominator.
+# combined terminal state. green_pct = green wall-clock / (green + red)
+# authoritative-run wall-clock. Separate *_window_pct fields account for the
+# complete observation window; no_result and gap never enter green_pct.
 #
-# TRINARY / FLAKY: green_pct is the exact fraction of time in the unambiguous
-# green state. Anything below 100% is time that was NOT green — reported broken
-# out as red/no_result/gap. A window that is (e.g.) 80% green is 20% unhealthy;
-# it is never rounded up to "green". A flaky period shows as mixed red+gap time,
-# which is not green time.
+# TRINARY / FLAKY: green_pct is the exact fraction of CONCLUSIVE authoritative
+# wall-time in the unambiguous green state. Anything below 100% is genuine red
+# time in that same denominator. NO_RESULT and gap are not healthy; they are
+# excluded unknowns and are always printed beside the figure with the full
+# window so 100% over a thin denominator cannot masquerade as full coverage.
 #
 # OFFLINE LIMITS (stated, not hidden — query.py never touches the network):
 #  * cases 3/4: cancelled cannot be split supersede-vs-self-timeout offline
@@ -161,7 +165,7 @@ AUTHORITATIVE = {
 #  * a commit with NO run of ANY workflow in the store is invisible (no reign
 #    boundary); the store cannot see it. Commits with some-but-not-authoritative
 #    runs ARE counted as gap(no-record).
-GREEN_TIME_DEFINITION_DATE = "2026-08-04"
+GREEN_TIME_DEFINITION_DATE = "2026-08-07"
 
 PRUNE = {"target", ".git", "node_modules", ".cargo", "incremental", "deps",
          "build", ".venv", "__pycache__"}
@@ -926,13 +930,12 @@ def _sum_by_state(intervals: list[dict], lo: float | None = None,
 # sub-buckets, reported SEPARATELY and never silently summed:
 #   green_ledger           green-by-conclusion AND a validate-run-ledger receipt
 #                          at that exact commit SHA satisfies the full-pass
-#                          predicate below (mirrors ci-hub/lib/validate_status.rs
-#                          is_clean_full_pass, PLUS the filtered_tests==0 clause
-#                          that fixes the false-green (c) case).
+#                          predicate below (the canonical shared predicate also
+#                          used by ci-hub/lib/validate_status.rs).
 #   green_conclusion_only  green-by-conclusion but NO corroborating receipt.
-# A row missing any of the schema-3 count fields (executed_tests/filtered_tests)
-# does NOT corroborate — it falls to conclusion-only. That asymmetry is
-# intentional and honest: an uncounted green cannot back a stronger claim.
+# A row missing both count fields does NOT corroborate, and schema-5+ rows must
+# prove complete per-node coverage. `filtered_tests` is diagnostic: full runs
+# legitimately filter tests outside their planned DAG nodes.
 LEDGER_REL = os.path.join("ignored", "validate-run-ledger.jsonl")
 
 
@@ -1038,42 +1041,66 @@ def green_time(parent: str, repo: str, since: str | None,
                 "definition_date": GREEN_TIME_DEFINITION_DATE,
                 "note": tl.get("note", "no authoritative main-branch runs")}
     sec, total = _sum_by_state(intervals)
+    authoritative = sec["green"] + sec["red"]
     hrs = {k: round(v / 3600.0, 2) for k, v in sec.items()}
-    pct = {k: (round(100.0 * v / total, 2) if total > 0 else None)
-           for k, v in sec.items()}
+    window_pct = {
+        k: (round(100.0 * v / total, 2) if total > 0 else None)
+        for k, v in sec.items()
+    }
+    green_pct = (round(100.0 * sec["green"] / authoritative, 2)
+                 if authoritative > 0 else None)
+    red_pct = (round(100.0 * sec["red"] / authoritative, 2)
+               if authoritative > 0 else None)
     # Split the GREEN bucket into ledger-corroborated vs conclusion-only. These
     # are reported SEPARATELY; green_pct stays the combined figure for back-compat.
     ledger_idx = load_ledger_index(parent)
     g_led_sec, g_concl_sec = _split_green_by_ledger(intervals, ledger_idx)
     green_ledger_hours = round(g_led_sec / 3600.0, 2)
     green_conclusion_only_hours = round(g_concl_sec / 3600.0, 2)
-    green_ledger_pct = (round(100.0 * g_led_sec / total, 2)
-                        if total > 0 else None)
-    green_conclusion_only_pct = (round(100.0 * g_concl_sec / total, 2)
-                                 if total > 0 else None)
-    return {
+    green_ledger_pct = (round(100.0 * g_led_sec / authoritative, 2)
+                        if authoritative > 0 else None)
+    green_conclusion_only_pct = (
+        round(100.0 * g_concl_sec / authoritative, 2)
+        if authoritative > 0 else None
+    )
+    result = {
         "repo": repo,
         "workflows": wanted,
         "definition_date": GREEN_TIME_DEFINITION_DATE,
         "combine_rule": "green requires ALL authoritative workflows success; "
                         "precedence red>gap>no_result>green",
+        "denominator_definition": "authoritative-run wall-hours = green_hours "
+                                  "+ red_hours; NO-RESULT and gap excluded",
         "samples": tl["samples"],
         "window_start": tl["window_start"],
         "window_end_utc": tl["window_end_utc"],
         "observed_through_utc": tl.get("observed_through_utc"),
         "store_stale_hours": tl.get("store_stale_hours", 0.0),
-        "green_pct": pct["green"],
+        "green_pct": green_pct,
         "green_ledger_pct": green_ledger_pct,
         "green_conclusion_only_pct": green_conclusion_only_pct,
-        "red_pct": pct["red"],
-        "no_result_pct": pct["no_result"],
-        "gap_pct": pct["gap"],
+        "red_pct": red_pct,
+        # Explicitly window-denominated diagnostics. Keep the legacy
+        # no_result_pct/gap_pct aliases for readers that predate the named
+        # denominator, but never mix them into the headline arithmetic.
+        "green_window_pct": window_pct["green"],
+        "red_window_pct": window_pct["red"],
+        "no_result_window_pct": window_pct["no_result"],
+        "gap_window_pct": window_pct["gap"],
+        "no_result_pct": window_pct["no_result"],
+        "gap_pct": window_pct["gap"],
         "green_hours": hrs["green"],
         "green_ledger_hours": green_ledger_hours,
         "green_conclusion_only_hours": green_conclusion_only_hours,
         "red_hours": hrs["red"],
         "no_result_hours": hrs["no_result"],
         "gap_hours": hrs["gap"],
+        "authoritative_run_hours": round(authoritative / 3600.0, 2),
+        "excluded_hours": round((sec["no_result"] + sec["gap"]) / 3600.0,
+                                2),
+        "window_hours": round(total / 3600.0, 2),
+        # Backward-compatible alias; its name is intentionally not used as the
+        # green-time denominator anymore.
         "total_hours": round(total / 3600.0, 2),
         "runs_by_conclusion": tl["runs_by_conclusion"],
         "job_level_red_promotions": tl.get("job_level_red_promotions", 0),
@@ -1089,6 +1116,10 @@ def green_time(parent: str, repo: str, since: str | None,
         "current_reason": _last_observed(intervals).get("reason"),
         "current_sha": tl["current_sha"],
     }
+    if authoritative <= 0:
+        result["note"] = ("no conclusive authoritative-run wall-hours in "
+                          "window; NO-RESULT and gap excluded")
+    return result
 
 
 _BUCKET_SECONDS = {"day": 86400.0, "week": 604800.0}
@@ -1113,13 +1144,19 @@ def green_time_trend(parent: str, repo: str, since: str | None,
         b1 = b0 + width
         sec, total = _sum_by_state(intervals, b0, b1)
         if total > 0:
+            authoritative = sec["green"] + sec["red"]
             out["buckets"].append({
                 "bucket_start": _iso_utc(b0),
-                "green_pct": round(100.0 * sec["green"] / total, 2),
-                "red_pct": round(100.0 * sec["red"] / total, 2),
-                "no_result_pct": round(100.0 * sec["no_result"] / total, 2),
-                "gap_pct": round(100.0 * sec["gap"] / total, 2),
-                "hours": round(total / 3600.0, 2),
+                "bucket_end": _iso_utc(b1),
+                "green_pct": (round(100.0 * sec["green"] / authoritative, 2)
+                              if authoritative > 0 else None),
+                "red_pct": (round(100.0 * sec["red"] / authoritative, 2)
+                            if authoritative > 0 else None),
+                "no_result_window_pct": round(
+                    100.0 * sec["no_result"] / total, 2),
+                "gap_window_pct": round(100.0 * sec["gap"] / total, 2),
+                "authoritative_run_hours": round(authoritative / 3600.0, 2),
+                "window_hours": round(total / 3600.0, 2),
             })
         b0 = b1
     return out
@@ -1137,15 +1174,25 @@ def append_green_time_log(parent: str, snapshot: dict, path: str | None) -> str:
         "repo": snapshot.get("repo"),
         "workflows": snapshot.get("workflows"),
         "definition_date": snapshot.get("definition_date"),
-        "since": snapshot.get("window_start"),
+        "denominator_definition": snapshot.get("denominator_definition"),
+        "window_start": snapshot.get("window_start"),
+        "window_end_utc": snapshot.get("window_end_utc"),
+        "observed_through_utc": snapshot.get("observed_through_utc"),
         "green_pct": snapshot.get("green_pct"),
+        "green_hours": snapshot.get("green_hours"),
+        "red_hours": snapshot.get("red_hours"),
+        "authoritative_run_hours": snapshot.get("authoritative_run_hours"),
+        "window_hours": snapshot.get("window_hours"),
+        "excluded_hours": snapshot.get("excluded_hours"),
+        "no_result_hours": snapshot.get("no_result_hours"),
+        "gap_hours": snapshot.get("gap_hours"),
         "green_ledger_pct": snapshot.get("green_ledger_pct"),
         "green_conclusion_only_pct": snapshot.get("green_conclusion_only_pct"),
         "red_pct": snapshot.get("red_pct"),
-        "no_result_pct": snapshot.get("no_result_pct"),
-        "gap_pct": snapshot.get("gap_pct"),
-        "total_hours": snapshot.get("total_hours"),
+        "no_result_window_pct": snapshot.get("no_result_window_pct"),
+        "gap_window_pct": snapshot.get("gap_window_pct"),
         "samples": snapshot.get("samples"),
+        "runs_by_conclusion": snapshot.get("runs_by_conclusion"),
         "current_state": snapshot.get("current_state"),
         "current_sha": snapshot.get("current_sha"),
     }
@@ -1431,7 +1478,8 @@ def main() -> int:
     p_nb.add_argument("--format", choices=["text", "csv", "json"], default="text")
 
     p_gt = sub.add_parser("green-time",
-                          help="%% main wall-clock time green (derived)")
+                          help="%% conclusive authoritative-run wall-clock "
+                               "green (NO-RESULT/gap excluded)")
     p_gt.add_argument("--repo", default="rrnewton/hermit")
     p_gt.add_argument("--since", help="YYYY-MM-DD")
     p_gt.add_argument("--workflow", action="append",
@@ -1487,17 +1535,22 @@ def main() -> int:
                 print(f"{tr['repo']} green-time trend per {tr['bucket']} "
                       f"(authoritative {tr['workflows']}; "
                       f"def {tr['definition_date']}):")
-                hdr = ("BUCKET_START", "GREEN%", "RED%", "NO_RESULT%", "GAP%",
-                       "HOURS")
-                body = [(b["bucket_start"], f"{b['green_pct']:g}",
-                         f"{b['red_pct']:g}", f"{b['no_result_pct']:g}",
-                         f"{b['gap_pct']:g}", f"{b['hours']:g}")
-                        for b in tr["buckets"]]
+                hdr = ("BUCKET_START", "BUCKET_END", "GREEN%", "RED%", "AUTH_H",
+                       "NO_RESULT_WIN%", "GAP_WIN%", "WINDOW_H")
+                body = [(
+                    b["bucket_start"],
+                    b["bucket_end"],
+                    "n/a" if b["green_pct"] is None else f"{b['green_pct']:g}",
+                    "n/a" if b["red_pct"] is None else f"{b['red_pct']:g}",
+                    f"{b['authoritative_run_hours']:g}",
+                    f"{b['no_result_window_pct']:g}",
+                    f"{b['gap_window_pct']:g}",
+                    f"{b['window_hours']:g}",
+                ) for b in tr["buckets"]]
                 print(_table(hdr, body))
             return 0
         res = green_time(parent, args.repo, args.since, args.workflow)
-        if getattr(args, "append_log", None) is not None and \
-                res.get("green_pct") is not None:
+        if getattr(args, "append_log", None) is not None:
             log_path = append_green_time_log(
                 parent, res, args.append_log or None)
             res["appended_log"] = log_path
@@ -1505,14 +1558,25 @@ def main() -> int:
             print(json.dumps(res, indent=2))
         else:
             if res.get("green_pct") is None:
-                print(f"{res['repo']}: green-time UNAVAILABLE — {res.get('note','')}")
+                print(f"{res['repo']}: green-time UNAVAILABLE — "
+                      f"{res.get('note', '')}; window "
+                      f"{res.get('window_start', 'n/a')} to "
+                      f"{res.get('window_end_utc', 'n/a')}; denominator "
+                      f"{res.get('authoritative_run_hours', 0)} "
+                      f"authoritative-run hours"
+                      + (f"; logged -> {res['appended_log']}"
+                         if res.get("appended_log") else ""))
             else:
-                # green is a POSITIVE success record; the remaining time is broken
-                # out (red/no_result/gap) so the whole denominator is accounted for
-                # and non-green time is never silently credited as green.
                 print(f"{res['repo']} main green-time (authoritative "
                       f"{res['workflows']}; definition {res['definition_date']}): "
                       f"{res['green_pct']}% GREEN")
+                print(f"  denominator: {res['green_hours']}h green / "
+                      f"{res['authoritative_run_hours']}h authoritative-run "
+                      f"(green + genuine red)")
+                print(f"  window: {res['window_start']} to "
+                      f"{res['window_end_utc']} = {res['window_hours']}h; "
+                      f"excluded from denominator: {res['no_result_hours']}h "
+                      f"NO-RESULT + {res['gap_hours']}h gap")
                 # Split GREEN into ledger-corroborated vs conclusion-only. These
                 # are DIFFERENT claims and are never silently summed.
                 print(f"    ledger-corroborated: {res['green_ledger_pct']}% "
@@ -1520,12 +1584,12 @@ def main() -> int:
                 print(f"    conclusion-only    : "
                       f"{res['green_conclusion_only_pct']}% "
                       f"({res['green_conclusion_only_hours']}h)")
-                print(f"  = {res['green_hours']}h green + {res['red_hours']}h red "
-                      f"+ {res['no_result_hours']}h no_result + "
-                      f"{res['gap_hours']}h gap  (of {res['total_hours']}h)")
-                print(f"  red={res['red_pct']}% no_result={res['no_result_pct']}% "
-                      f"gap={res['gap_pct']}%  over {res['samples']} commits "
-                      f"since {res['window_start']}")
+                print(f"  authoritative red={res['red_pct']}%; window shares: "
+                      f"green={res['green_window_pct']}% "
+                      f"red={res['red_window_pct']}% "
+                      f"no_result={res['no_result_window_pct']}% "
+                      f"gap={res['gap_window_pct']}% over {res['samples']} "
+                      f"commits")
                 stale = res.get("store_stale_hours") or 0.0
                 if stale > 0:
                     print(f"  ⚠ store observed only through "

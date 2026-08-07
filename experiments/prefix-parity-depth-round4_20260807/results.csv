@@ -1,0 +1,23 @@
+guest,backend,tier,verdict,y,z,emitted,rc,stdout_relation,engagement,raw_y_if_unbound,first_divergence_index,first_difference
+shell-pipeline,ptrace,COMMIT-PREFIX-PARITY,GOLDEN_SELF_IDENTICAL,47,47,47,0,replicate-identical,golden,,,none
+shell-pipeline,dbi,COMMIT-PREFIX-PARITY,DEPTH,0,47,305,0,matches,dbi-active,,0,"raw host dettid/DetPid 2177057 instead of deterministic 3"
+shell-pipeline,liteinst,COMMIT-PREFIX-PARITY,DEPTH_EXECUTION_FAIL,2,47,37,1,empty,"activation verified traps=1 hooks=31",,2,"injected LiteInst DSO Path instead of /etc/ld.so.cache; cleanup ENOTSUPP"
+shell-pipeline,sabre,COMMIT-PREFIX-PARITY,DEPTH_PATH_INVALID,2,47,42,0,matches,"guest_rpc=true fallback=0 trusted=66",,2,"Path /dev/tty instead of /etc/ld.so.cache"
+shell-pipeline,kvm,COMMIT-PREFIX-PARITY,DEPTH_TIMEOUT,2,47,26,124,empty,kvm-ran,,2,"same /etc/ld.so.cache Path; virtual time 0.001298250 instead of 0.001332170"
+shell-pipeline,e9patch,COMMIT-PREFIX-PARITY,NOT_ENGAGED,,47,47,0,matches,"candidate=0 mapped=0 b0=0",47,,"raw full-prefix match withheld because rewrite path was not exercised"
+python-sum,ptrace,COMMIT-PREFIX-PARITY,GOLDEN_SELF_IDENTICAL,141,141,141,0,replicate-identical,golden,,,none
+python-sum,dbi,COMMIT-PREFIX-PARITY,DEPTH,0,141,137,0,matches,dbi-active,,0,"raw host dettid/DetPid 2545486 instead of deterministic 3"
+python-sum,liteinst,COMMIT-PREFIX-PARITY,DEPTH,2,141,173,0,matches,"activation verified traps=1 hooks=31",,2,"injected LiteInst DSO Path instead of /etc/ld.so.cache"
+python-sum,sabre,COMMIT-PREFIX-PARITY,DEPTH,2,141,133,0,matches,"guest_rpc=true fallback=0 trusted=0",,2,"Path /usr/lib/locale/locale-archive instead of /etc/ld.so.cache"
+python-sum,kvm,COMMIT-PREFIX-PARITY,DEPTH,2,141,137,0,matches,kvm-ran,,2,"same /etc/ld.so.cache Path; virtual time 0.001298250 instead of 0.001332470"
+python-sum,e9patch,COMMIT-PREFIX-PARITY,NOT_ENGAGED,,141,141,0,matches,"candidate=0 mapped=0 b0=0",38,,"raw first difference index 38 is virtual time on the same site.cpython-39.pyc Path; withheld"
+tar-usr-include,ptrace,COMMIT-PREFIX-PARITY,GOLDEN_SELF_IDENTICAL,174,174,174,0,replicate-identical,golden,,,none
+tar-usr-include,dbi,COMMIT-PREFIX-PARITY,DEPTH,0,174,157,0,matches,dbi-active,,0,"raw host dettid/DetPid 2556876 instead of deterministic 3"
+tar-usr-include,liteinst,COMMIT-PREFIX-PARITY,DEPTH,2,174,211,0,matches,"activation verified traps=1 hooks=31",,2,"injected LiteInst DSO Path instead of /etc/ld.so.cache"
+tar-usr-include,sabre,COMMIT-PREFIX-PARITY,DEPTH,2,174,165,0,matches,"guest_rpc=true fallback=0 trusted=0",,2,"Path /proc/filesystems instead of /etc/ld.so.cache"
+tar-usr-include,kvm,COMMIT-PREFIX-PARITY,DEPTH,2,174,173,0,matches,kvm-ran,,2,"same /etc/ld.so.cache Path; virtual time 0.001298250 instead of 0.001332190"
+tar-usr-include,e9patch,COMMIT-PREFIX-PARITY,NOT_ENGAGED,,174,174,0,matches,"candidate=0 mapped=0 b0=0",174,,"raw full-prefix match withheld because rewrite path was not exercised"
+control-python,ptrace-self,COMMIT-PREFIX-PARITY,POSITIVE_CONTROL,141,141,141,0,not-applicable,synthetic-comparison,,,"full depth is reachable"
+control-python,liteinst-baseline,COMMIT-PREFIX-PARITY,BASELINE,2,141,173,0,not-applicable,measured,,2,"measured candidate"
+control-python,liteinst-perturb-index-1,COMMIT-PREFIX-PARITY,NEGATIVE_CONTROL,1,141,173,0,not-applicable,synthetic-perturbation,,1,"token appended to candidate record index 1"
+control-python,liteinst-perturb-index-0,COMMIT-PREFIX-PARITY,NEGATIVE_CONTROL,0,141,173,0,not-applicable,synthetic-perturbation,,0,"token appended to candidate record index 0; explicit 0/141"

@@ -1,0 +1,12 @@
+label,rc,wall_s,cpu_usage_s,cpu_user_s,cpu_system_s,cpu_per_wall,mem_peak_bytes,pids_peak,oom_kill,mem_max_applied,load1_before,load1_after,load_pct_of_cores,nproc,cmd,started_at
+lowload#1,0,24.831,41.607,13.248,28.36,1.676,329986048,866,0,max,42.89,60.26,19.1,316,./ci/test_harness.sh validate,2026-08-07T03:06:43Z
+lowload#2,0,24.741,44.653,13.502,31.151,1.805,321286144,778,0,max,60.26,48.56,19.1,316,./ci/test_harness.sh validate,2026-08-07T03:07:08Z
+lowload#3,0,23.299,40.7,12.833,27.867,1.747,322834432,836,0,max,48.56,60.76,19.2,316,./ci/test_harness.sh validate,2026-08-07T03:07:31Z
+plan#1,0,6.088,6.322,3.06,3.262,1.038,47079424,18,0,max,47.16,44.91,14.9,316,./ci/test_harness.sh plan,2026-08-07T03:08:03Z
+audit-test-footprints#1,0,6.328,6.577,3.206,3.372,1.039,63684608,19,0,max,44.91,45.16,14.3,316,./ci/test_harness.sh audit-test-footprints,2026-08-07T03:08:10Z
+audit-inventory#1,0,5.832,6.045,3.023,3.021,1.037,39378944,18,0,max,45.16,44.83,14.3,316,./ci/test_harness.sh audit-inventory,2026-08-07T03:08:16Z
+audit-ci#1,0,20.292,30.143,11.287,18.855,1.485,322531328,947,0,max,44.83,65.29,20.7,316,./ci/test_harness.sh audit-ci,2026-08-07T03:08:37Z
+validate(TOTAL)#1,0,28.345,45.23,13.097,32.132,1.596,286646272,921,0,max,65.29,55.84,20.7,316,./ci/test_harness.sh validate,2026-08-07T03:09:06Z
+cap-1GiB#1,0,23.996,43.313,13.229,30.084,1.805,324448256,820,0,1073741824,51.01,43.61,16.1,316,./ci/test_harness.sh validate,2026-08-07T03:11:14Z
+cap-1GiB#2,0,23.214,39.291,12.995,26.296,1.693,323366912,906,0,1073741824,43.61,34.58,13.8,316,./ci/test_harness.sh validate,2026-08-07T03:11:37Z
+cold+cap1GiB#1,0,30.623,56.216,23.816,32.401,1.836,473432064,915,0,1073741824,32.7,34.89,11.0,316,CARGO_TARGET_DIR=/tmp/w17-cold-target-1310909 ./ci/test_harness.sh validate,2026-08-07T03:13:56Z

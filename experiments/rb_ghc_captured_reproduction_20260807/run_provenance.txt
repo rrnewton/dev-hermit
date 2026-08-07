@@ -1,0 +1,9 @@
+image=docker.io/library/haskell:9.8.4
+hermit_binary=/home/newton/work/dev-hermit/worktrees/dbi-clock176/hermit/target/release/hermit
+hermit_version=hermit 0.2.0 (2026-08-07, g1fadc03779f2)
+hermit_sha256=96a29c8d74548dc9de0faa60e697e85a10e7973e74b445237f5426bbcf5dfe87
+host_kernel=Linux 6.16.1-0_fbk5_hardened_rc1_0_gffabe313d1ba
+host_glibc=ldd (GNU libc) 2.34
+container_ghc=9.8.4
+generated_utc=2026-08-07T03:01:55Z
+

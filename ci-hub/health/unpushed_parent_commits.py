@@ -33,8 +33,9 @@ import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
 
-PARENT = "/home/newton/work/dev-hermit"
+PARENT = str(Path(__file__).resolve().parents[2])
 HERDR = f"{PARENT}/agent-utils/bin/herdr-run"
 
 

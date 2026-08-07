@@ -1,0 +1,25 @@
+{
+  "id": 92670128104,
+  "run_id": 31114544049,
+  "workflow_name": "Merge Gate",
+  "head_sha": "d282a85726a5e0101cad069c2f3d6e2e23b9d6cd",
+  "run_url": "https://api.github.com/repos/rrnewton/hermit/actions/runs/31114544049",
+  "url": "https://api.github.com/repos/rrnewton/hermit/actions/jobs/92670128104",
+  "html_url": "https://github.com/rrnewton/hermit/actions/runs/31114544049/job/92670128104",
+  "check_run_url": "https://api.github.com/repos/rrnewton/hermit/check-runs/92670128104",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-08-06T15:46:12Z",
+  "started_at": "2026-08-06T18:20:19Z",
+  "completed_at": "2026-08-06T18:20:25Z",
+  "name": "merge-gate-v4",
+  "steps": [
+    {"name": "Set up job", "status": "completed", "conclusion": "success", "number": 1, "started_at": "2026-08-06T18:20:20Z", "completed_at": "2026-08-06T18:20:21Z"},
+    {"name": "Require the registered v4 gate definition", "status": "completed", "conclusion": "success", "number": 2, "started_at": "2026-08-06T18:20:21Z", "completed_at": "2026-08-06T18:20:21Z"},
+    {"name": "Fetch the trusted receipt verifier", "status": "completed", "conclusion": "success", "number": 3, "started_at": "2026-08-06T18:20:21Z", "completed_at": "2026-08-06T18:20:22Z"},
+    {"name": "Fetch the trusted check-outcome authority", "status": "completed", "conclusion": "success", "number": 4, "started_at": "2026-08-06T18:20:22Z", "completed_at": "2026-08-06T18:20:22Z"},
+    {"name": "Require the latest-Reverie pin gate", "status": "completed", "conclusion": "failure", "number": 5, "started_at": "2026-08-06T18:20:22Z", "completed_at": "2026-08-06T18:20:22Z"},
+    {"name": "Require successful CI or local validation", "status": "completed", "conclusion": "skipped", "number": 6, "started_at": "2026-08-06T18:20:22Z", "completed_at": "2026-08-06T18:20:22Z"},
+    {"name": "Complete job", "status": "completed", "conclusion": "success", "number": 7, "started_at": "2026-08-06T18:20:22Z", "completed_at": "2026-08-06T18:20:23Z"}
+  ]
+}
