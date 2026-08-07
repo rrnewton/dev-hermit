@@ -566,9 +566,32 @@ fn main() {
     let _ = fs::remove_dir_all(&tmp);
 
     eprintln!("\ncollect-e9patch-compat: wrote {} rows to {} (run_id={run_id})", rows.len(), csv_path.display());
-    eprintln!("Honest per-guest tally (of {} guests):", guests.len());
+    // NAME THE CORPUS ON THE TALLY. e9patch scores 20/20 here and 4/137-built on
+    // the shared dynamic full corpus; the tally below is meaningless without
+    // saying which. `--corpus` can point anywhere, so report the directory and
+    // build flags ACTUALLY used, and say so explicitly when they are not the
+    // registered dedicated corpus rather than letting the default label stand.
+    let is_registered = corpus_dir.ends_with("tests/backend-parity/e9patch_corpus");
+    let corpus_name = if is_registered { "e9patch-dedicated" } else { "UNREGISTERED" };
+    eprintln!(
+        "corpus={corpus_name}  dir={}  population={} guests  build={}",
+        corpus_dir.display(),
+        guests.len(),
+        FREESTANDING_FLAGS.join(" "),
+    );
+    if !is_registered {
+        eprintln!(
+            "  WARNING: --corpus is not the registered e9patch-dedicated population, so the \
+             tally below is NOT the 20/20 dedicated-corpus figure and must not be quoted as it. \
+             Register this population in compat-envelope/corpus_registry.py before publishing."
+        );
+    }
+    eprintln!(
+        "Honest per-guest tally (over corpus={corpus_name}, {} guests):",
+        guests.len()
+    );
     for (k, v) in &tally {
-        eprintln!("  {k}: {v}");
+        eprintln!("  {k}: {v}/{} over corpus={corpus_name}", guests.len());
     }
 
     if assert_green && !regressions.is_empty() {

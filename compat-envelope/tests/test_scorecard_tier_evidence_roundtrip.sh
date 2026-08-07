@@ -21,11 +21,27 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 envelope="$(dirname "$here")"
 repo_root="$(dirname "$envelope")"
+# NOTE: this default is an ephemeral SLOT path. A slot is parked and released by
+# ordinary coordinator lifecycle, so this default WILL evaporate. It is kept only
+# because the primary checkout's run_matrix.py still carries the narrower
+# SCORECARD_HEADER and cannot round-trip the canonical scorecard (tracked
+# separately as the 19-vs-canonical column skew). The fail-closed guard below is
+# what makes the evaporation loud instead of silent.
 RUN_MATRIX_DIR="${RUN_MATRIX_DIR:-$repo_root/worktrees/w7/hermit/tests/backend-parity}"
 
+# FAIL CLOSED. Exiting 0 here reported "success" while running zero of the
+# assertions below, which is indistinguishable at the consumer from a full pass
+# -- the exact defect this file exists to catch, in this file's own harness.
+# Set RUN_MATRIX_SKIP_OK=1 to opt into the old advisory behaviour deliberately.
 if [ ! -f "$RUN_MATRIX_DIR/run_matrix.py" ]; then
-  echo "SKIP: run_matrix.py not found at $RUN_MATRIX_DIR (set RUN_MATRIX_DIR)" >&2
-  exit 0
+  if [ "${RUN_MATRIX_SKIP_OK:-0}" = "1" ]; then
+    echo "SKIP (explicitly allowed): run_matrix.py not found at $RUN_MATRIX_DIR" >&2
+    exit 0
+  fi
+  echo "FAIL: run_matrix.py not found at $RUN_MATRIX_DIR -- 0 assertions ran." >&2
+  echo "      Set RUN_MATRIX_DIR to a checkout's tests/backend-parity, or" >&2
+  echo "      RUN_MATRIX_SKIP_OK=1 to accept an unverified run." >&2
+  exit 2
 fi
 
 tmp="$(mktemp -d)"
@@ -59,7 +75,12 @@ PY
 }
 
 echo "case LEGACY-20 — the pre-migration header MUST lose the evidence (regression reproduced)"
+# Check roundtrip's OWN exit code. run_matrix.append_parent_scorecard raises
+# MatrixError on an incompatible header (the exit-2 path); discarding that rc
+# surfaced it only as a confusing downstream "missing json" assertion failure
+# that named the wrong cause.
 roundtrip "$LEGACY20" "$tmp/legacy.json" >/dev/null 2>&1
+check "LEGACY-20 roundtrip through run_matrix completed (exit propagated)" $?
 python3 -c "
 import json,sys
 d=json.load(open('$tmp/legacy.json'))
@@ -69,6 +90,7 @@ check "20-col header keeps verify_compare and drops the other three" $?
 
 echo "case CANONICAL — the migrated live header MUST carry all four"
 roundtrip "$CANONICAL" "$tmp/canon.json" >/dev/null 2>&1
+check "CANONICAL roundtrip through run_matrix completed (exit propagated)" $?
 python3 -c "
 import json,sys
 d=json.load(open('$tmp/canon.json'))
@@ -88,6 +110,62 @@ check "re-running the migration is a no-op (rc=0)" $?
 printf 'a,b,c\n1,2,3\n' > "$tmp/bogus.csv"
 python3 "$envelope/migrate-scorecard-schema.py" "$tmp/bogus.csv" --apply >/dev/null 2>&1
 [ $? -eq 2 ] ; check "a header with no verify_compare is REFUSED (rc=2)" $?
+
+echo "case PRODUCER-WIDTH — every canonical column must be producible, and rows must not overflow"
+# THE BUG: collect-envelope's own HEADER is wider than the canonical scorecard (it also
+# records stdout_parity/parity_exercised/backend_engaged/native_output_hash/
+# ref_output_hash/run_flags). It appended its own row shape regardless of the target
+# file's header, so appending into the canonical 23-column scorecard wrote 28-field
+# rows -- five values past the last column, which surface only as csv.DictReader's
+# None key. Latent until the collector next runs, then silently corrupting.
+CANON_COLS="$(printf '%s' "$CANONICAL" | tr ',' '\n')"
+PROD_HEADER="$(grep -o 'run_id,run_utc[^"]*' "$envelope/collect-envelope.rs" | head -1)"
+missing=0
+for c in $CANON_COLS; do
+  case "$c" in parity) want="stdout_parity";; *) want="$c";; esac
+  printf '%s' "$PROD_HEADER" | tr ',' '\n' | grep -qx "$want" || { echo "     producer cannot fill canonical column: $c"; missing=$((missing+1)); }
+done
+[ "$missing" -eq 0 ]; check "collect-envelope can fill every canonical column (parity<-stdout_parity)" $?
+
+grep -q 'target_header' "$envelope/collect-envelope.rs"
+check "collect-envelope binds its write to the TARGET file header" $?
+grep -q 'let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");' "$envelope/collect-envelope.rs"
+[ $? -ne 0 ]; check "the unconditional own-shape join is gone (regression guard)" $?
+
+# Demonstrate the failure mode this guards, so the test can fail:
+printf '%s\n' "$CANONICAL" > "$tmp/overflow.csv"
+python3 - "$tmp/overflow.csv" <<'PYX'
+import csv, sys
+hdr = open(sys.argv[1]).read().strip().split(",")
+open(sys.argv[1], "a").write(",".join(["x"] * (len(hdr) + 5)) + "\n")
+row = list(csv.DictReader(open(sys.argv[1])))[0]
+sys.exit(0 if row.get(None) is not None and len(row[None]) == 5 else 1)
+PYX
+check "an over-wide append IS detectable as 5 overflow fields (fixture is live)" $?
+
+echo "case REVERIE-PATH — the reverie scorecard must satisfy the same wired checker"
+"$envelope/check-determinism-earned.sh" "$envelope/reverie-scorecard.csv" >/dev/null 2>&1
+check "reverie-scorecard.csv passes the production checker" $?
+head -1 "$envelope/reverie-scorecard.csv" | tr ',' '\n' | grep -qx tier
+check "reverie-scorecard.csv carries the tier column" $?
+
+echo "case FAIL-CLOSED — a deterministic positive with a blank tier is refused"
+python3 - "$tmp" "$envelope" <<'PYX'
+import csv, sys
+from pathlib import Path
+out, env = Path(sys.argv[1]), Path(sys.argv[2])
+base = list(csv.DictReader((env / "scorecard.csv").open()))
+rows = [dict(r) for r in base]
+n = 0
+for r in rows:
+    if r.get("deterministic") == "1" and n < 3:
+        r["tier"] = ""; r["verify_compare"] = "unknown-thing"
+        r["bitwise_parity"] = ""; r["compared_log_messages"] = ""; n += 1
+with (out / "blank_tier.csv").open("w", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(base[0].keys())); w.writeheader(); w.writerows(rows)
+PYX
+"$envelope/check-determinism-earned.sh" "$tmp/blank_tier.csv" >/dev/null 2>&1
+[ $? -eq 1 ]; check "blank-tier deterministic=1 is REFUSED (legacy bypass removed)" $?
 
 echo
 if [ "$FAILURES" -ne 0 ]; then echo "FAIL ($FAILURES assertions)"; exit 1; fi

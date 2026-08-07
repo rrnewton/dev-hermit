@@ -517,7 +517,23 @@ fn main() {
         );
     }
 
-    eprintln!("collect-dbi-corpus: tally {tally:?}");
+    // The tally is a per-backend ratio, so it names its population. `--tests`,
+    // `--buckets`, and `--limit` all narrow the corpus, and a narrowed tally
+    // quoted as "dbi on the corpus" is the same defect as quoting e9patch's
+    // 20/20 dedicated figure as its full-corpus reach.
+    let selected: usize = tally.values().sum();
+    let filtered = tests_filter.is_some() || buckets_filter.is_some() || limit.is_some();
+    let corpus_name = if filtered { "dbi-corpus(FILTERED SUBSET)" } else { "dbi-corpus" };
+    eprintln!(
+        "collect-dbi-corpus: tally {tally:?} over corpus={corpus_name} \
+         ({selected} cells selected of the manifest-derived dbi-corpus population)"
+    );
+    if filtered {
+        eprintln!(
+            "  WARNING: --tests/--buckets/--limit narrowed the population, so this tally is \
+             a SUBSET result and must not be quoted as a dbi-corpus figure."
+        );
+    }
 
     if to_stdout {
         println!("{HEADER}");

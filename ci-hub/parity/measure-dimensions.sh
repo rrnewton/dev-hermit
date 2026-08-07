@@ -48,10 +48,14 @@ for entry in "${DIMS[@]}"; do
     *)      val=$(grep -c 'DETLOG' "$OUT/$dim.log") ;;
   esac
   # Emission is GATED: this refuses rather than printing an unattributed number.
-  python3 - "$dim" "$BACKEND" "$val" "$ROOT/$src" "$OUT/$dim.out" "$OUT/$dim.log" "$rc" <<'PY' || status=1
+  python3 - "$dim" "$BACKEND" "$val" "$ROOT/$src" "$OUT/$dim.out" "$OUT/$dim.log" "$rc" "$HERE" <<'PY' || status=1
 import json, sys
-sys.path.insert(0, __import__("os").path.dirname(__file__) or ".")
-sys.path.insert(0, "/home/newton/work/dev-hermit/ci-hub/parity")
+# This script is fed on STDIN, so __file__ is "<stdin>" and os.path.dirname of
+# it is "" -- which is why a literal home was pinned here as a fallback and why
+# the portability gate then rejected the file. The shell already computes its
+# own directory portably ($HERE, line 13); it is passed as argv[8] so the module
+# is located relative to the checkout rather than to one author's box.
+sys.path.insert(0, sys.argv[8])
 from reference_guest import emit, RefusedError
 dim, backend, val, src, outp, logp, rc = sys.argv[1:8]
 try:

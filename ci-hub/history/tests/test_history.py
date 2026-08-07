@@ -41,6 +41,160 @@ class IngestUnitTest(unittest.TestCase):
         self.assertEqual(row["queue_s"], "300")
         self.assertEqual(row["run_s"], "")   # not completed -> no run duration
 
+    # ---- wall/work split -------------------------------------------------
+    # `run_s` is honest end-to-end WALL (audited 2026-08-06 against job-level
+    # truth on 61 rows: median deviation 1s, 0 inflated). These guard the
+    # companion `runner_s`, which supplies the execution figure `run_s` was being
+    # misread as. Both directions: a run WITH job data must get a real number,
+    # and a run WITHOUT must read absent rather than a plausible zero.
+
+    @staticmethod
+    def _job(repo, run_id, attempt, job_id, started, completed):
+        return {"repo": repo, "run_id": str(run_id), "run_attempt": str(attempt),
+                "job_id": str(job_id), "started_at": started,
+                "completed_at": completed}
+
+    def _run_row(self, repo, run_id, attempt, started, updated):
+        return {"repo": repo, "run_id": str(run_id), "run_attempt": str(attempt),
+                "run_started_at": started, "updated_at": updated,
+                "status": "completed",
+                "run_s": ingest._delta_s(updated, started)}
+
+    def test_runner_s_derived_when_jobs_present(self):
+        """POSITIVE: job data present -> a real runner_s, and it is NOT run_s."""
+        key = ("r/x", "1", "1")
+        runs = {key: self._run_row("r/x", 1, 1, "2026-08-03T00:00:00Z",
+                                   "2026-08-03T10:00:00Z")}   # 10h wall
+        jobs = {
+            ("r/x", "1", "j1"): self._job("r/x", 1, 1, "j1",
+                                          "2026-08-03T00:00:00Z",
+                                          "2026-08-03T00:10:00Z"),   # 600s
+            # starts 9h in -- the queue-starvation shape that motivated this
+            ("r/x", "1", "j2"): self._job("r/x", 1, 1, "j2",
+                                          "2026-08-03T09:00:00Z",
+                                          "2026-08-03T10:00:00Z"),   # 3600s
+        }
+        n = ingest.augment_runs_with_jobs(runs, jobs)
+        row = runs[key]
+        self.assertEqual(n, 1)
+        self.assertEqual(row["jobs_src"], ingest.JOBS_SRC_DERIVED)
+        self.assertEqual(row["runner_s"], "4200")     # 600 + 3600
+        self.assertEqual(row["jobs_n"], "2")
+        # The whole point: work is a small fraction of the honest wall figure.
+        self.assertEqual(row["run_s"], "36000")
+        self.assertLess(int(row["runner_s"]), int(row["run_s"]))
+
+    def test_absent_jobs_read_absent_not_zero(self):
+        """NEGATIVE: no job data -> BLANK runner_s + jobs_src=absent, never 0.
+
+        A 0 here would be indistinguishable from a run that genuinely did no
+        work -- exactly the 'plausible wrong number' this column exists to avoid.
+        """
+        key = ("r/x", "2", "1")
+        runs = {key: self._run_row("r/x", 2, 1, "2026-08-03T00:00:00Z",
+                                   "2026-08-03T01:00:00Z")}
+        n = ingest.augment_runs_with_jobs(runs, {})
+        row = runs[key]
+        self.assertEqual(n, 0)
+        self.assertEqual(row["jobs_src"], ingest.JOBS_SRC_ABSENT)
+        self.assertEqual(row["runner_s"], "")
+        self.assertNotEqual(row["runner_s"], "0")
+        self.assertEqual(row["jobs_n"], "")
+        self.assertEqual(row["run_s"], "3600")   # wall untouched
+
+    def test_runner_s_is_scoped_to_the_attempt(self):
+        """A non-latest attempt must NOT be costed from the latest attempt's jobs.
+
+        This is the live trap: GET /runs/{id}/jobs defaults to filter=latest, so
+        an unscoped join computed attempt 1 of run 30817694008 as 7.1h wrong.
+        """
+        k1, k2 = ("r/x", "9", "1"), ("r/x", "9", "2")
+        runs = {
+            k1: self._run_row("r/x", 9, 1, "2026-08-03T00:00:00Z",
+                              "2026-08-03T00:30:00Z"),
+            k2: self._run_row("r/x", 9, 2, "2026-08-03T05:00:00Z",
+                              "2026-08-03T09:00:00Z"),
+        }
+        jobs = {
+            ("r/x", "9", "a"): self._job("r/x", 9, 1, "a",
+                                         "2026-08-03T00:00:00Z",
+                                         "2026-08-03T00:05:00Z"),   # 300s
+            ("r/x", "9", "b"): self._job("r/x", 9, 2, "b",
+                                         "2026-08-03T05:00:00Z",
+                                         "2026-08-03T08:00:00Z"),   # 10800s
+        }
+        ingest.augment_runs_with_jobs(runs, jobs)
+        self.assertEqual(runs[k1]["runner_s"], "300")
+        self.assertEqual(runs[k2]["runner_s"], "10800")
+        # If scoping were dropped, attempt 1 would absorb attempt 2's 10800s.
+        self.assertNotEqual(runs[k1]["runner_s"], "11100")
+
+    def test_augmentation_never_mutates_run_s(self):
+        """Regression guard: run_s is correct and must survive untouched.
+
+        The defect report that prompted this work proposed rewriting run_s. The
+        audit refuted it, so any future edit that changes run_s here is a bug.
+        """
+        key = ("r/x", "3", "1")
+        runs = {key: self._run_row("r/x", 3, 1, "2026-08-03T00:00:00Z",
+                                   "2026-08-03T11:31:42Z")}
+        before_wall = runs[key]["run_s"]
+        jobs = {("r/x", "3", "j"): self._job("r/x", 3, 1, "j",
+                                             "2026-08-03T11:18:42Z",
+                                             "2026-08-03T11:31:42Z")}
+        ingest.augment_runs_with_jobs(runs, jobs)
+        self.assertEqual(runs[key]["run_s"], before_wall)
+        self.assertEqual(runs[key]["runner_s"], "780")
+
+    def test_augmentation_is_idempotent(self):
+        key = ("r/x", "4", "1")
+        runs = {key: self._run_row("r/x", 4, 1, "2026-08-03T00:00:00Z",
+                                   "2026-08-03T01:00:00Z")}
+        jobs = {("r/x", "4", "j"): self._job("r/x", 4, 1, "j",
+                                             "2026-08-03T00:00:00Z",
+                                             "2026-08-03T00:20:00Z")}
+        ingest.augment_runs_with_jobs(runs, jobs)
+        first = dict(runs[key])
+        ingest.augment_runs_with_jobs(runs, jobs)
+        self.assertEqual(runs[key], first)
+
+    def test_absent_overwrites_a_stale_derived_value(self):
+        """Re-deriving from scratch must clear a value whose jobs went away."""
+        key = ("r/x", "5", "1")
+        runs = {key: self._run_row("r/x", 5, 1, "2026-08-03T00:00:00Z",
+                                   "2026-08-03T01:00:00Z")}
+        runs[key].update(runner_s="999", jobs_n="7",
+                         jobs_src=ingest.JOBS_SRC_DERIVED)
+        ingest.augment_runs_with_jobs(runs, {})
+        self.assertEqual(runs[key]["runner_s"], "")
+        self.assertEqual(runs[key]["jobs_src"], ingest.JOBS_SRC_ABSENT)
+
+    def test_runner_s_may_exceed_run_s_under_parallelism(self):
+        """runner_s is aggregate runner-seconds, NOT a slice of wall.
+
+        Jobs run in parallel, so runner_s > run_s is correct. Guarded because the
+        obvious "sanity fix" -- clamping runner_s to run_s -- would destroy the
+        cost figure and silently understate every parallel run.
+        """
+        key = ("r/x", "6", "1")
+        runs = {key: self._run_row("r/x", 6, 1, "2026-08-03T00:00:00Z",
+                                   "2026-08-03T00:15:00Z")}      # 900s wall
+        jobs = {}
+        for i in range(34):                                       # 34 x 600s, parallel
+            jobs[("r/x", "6", f"j{i}")] = self._job(
+                "r/x", 6, 1, f"j{i}", "2026-08-03T00:00:00Z",
+                "2026-08-03T00:10:00Z")
+        ingest.augment_runs_with_jobs(runs, jobs)
+        self.assertEqual(runs[key]["run_s"], "900")
+        self.assertEqual(runs[key]["runner_s"], "20400")
+        self.assertGreater(int(runs[key]["runner_s"]), int(runs[key]["run_s"]))
+
+    def test_new_columns_are_in_the_written_schema(self):
+        for col in ("runner_s", "jobs_n", "jobs_src"):
+            self.assertIn(col, ingest.GHA_COLUMNS)
+        # Appended last, so a positional reader of the old 18 columns is unmoved.
+        self.assertEqual(ingest.GHA_COLUMNS[-3:], ["runner_s", "jobs_n", "jobs_src"])
+
     def test_upsert_idempotent_and_newest_wins(self):
         rows: dict = {}
         base = {"repo": "r/x", "run_id": "1", "run_attempt": "1"}
@@ -359,6 +513,33 @@ class TempParentTest(unittest.TestCase):
                 "head_sha": sha, "status": status, "conclusion": concl,
                 "created_at": created, "updated_at": updated}
 
+    def test_job_candidate_scope_all_excludes_non_terminal_runs(self):
+        """scope='all' drops the conclusion filter but NOT the terminal filter.
+
+        Isolated from the case-7 join test on purpose: adding a non-terminal row
+        to that fixture perturbs green_time's reign accounting, so the filter it
+        is meant to prove would be entangled with an unrelated assertion.
+        """
+        self._write_gha([
+            self._gha_wf("a" * 40, "success", "2026-08-03T00:00:00Z",
+                         "2026-08-03T00:10:00Z", run_id="DONE"),
+            # in flight: jobs have no final duration, so never a candidate
+            self._gha_wf("b" * 40, "", "2026-08-03T00:20:00Z",
+                         "2026-08-03T00:21:00Z", status="in_progress",
+                         run_id="RUNNING"),
+            self._gha_wf("c" * 40, "", "2026-08-03T00:30:00Z",
+                         "2026-08-03T00:31:00Z", status="queued",
+                         run_id="QUEUED"),
+        ])
+        wide = ingest.job_candidate_runs(
+            str(self.parent), "r/x", ["W"], None, scope="all")
+        self.assertEqual(wide, ["DONE"])
+        self.assertNotIn("RUNNING", wide)
+        self.assertNotIn("QUEUED", wide)
+        # and the narrow scope finds nothing here at all (none are cancelled)
+        self.assertEqual(
+            ingest.job_candidate_runs(str(self.parent), "r/x", ["W"], None), [])
+
     def _write_ledger(self, rows):
         path = self.parent / "ignored" / "validate-run-ledger.jsonl"
         with open(path, "w") as fh:
@@ -654,6 +835,23 @@ class TempParentTest(unittest.TestCase):
         cand = ingest.cancelled_authoritative_runs(
             str(self.parent), "r/x", ["W"], None)
         self.assertEqual(cand, ["R1"])
+
+        # scope='all' is the wall/work coverage set: every TERMINAL authoritative
+        # run regardless of branch or conclusion. R3 stays out (non-authoritative
+        # workflow "Other"); R1/R2/R4 come in, newest created_at first.
+        wide = ingest.job_candidate_runs(
+            str(self.parent), "r/x", ["W"], None, scope="all")
+        self.assertEqual(sorted(wide), ["R1", "R2", "R4"])
+        self.assertNotIn("R3", wide)
+        # Newest-first, so a --jobs-max-runs cap buys the most useful rows.
+        self.assertEqual(wide[0], "R2")
+        # Back-compat: the default scope is unchanged by the widening.
+        self.assertEqual(
+            ingest.job_candidate_runs(str(self.parent), "r/x", ["W"], None),
+            ["R1"])
+        with self.assertRaises(ValueError):
+            ingest.job_candidate_runs(str(self.parent), "r/x", ["W"], None,
+                                      scope="everything")
 
         calls = []
 

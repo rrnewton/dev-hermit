@@ -29,8 +29,65 @@ in-progress row is promoted to its terminal conclusion on re-run with **zero
 duplicate rows**. Timing is split because the hosted pool is queue-starved and a
 single wall figure lies:
 
-- `queue_s = run_started_at − created_at`  (time spent queued)
-- `run_s   = updated_at   − run_started_at` (time spent running; blank until terminal)
+- `queue_s = run_started_at − created_at`  (time spent queued *before* the run started)
+- `run_s   = updated_at   − run_started_at` (end-to-end wall of the run; blank until terminal)
+
+**`run_s` is wall, not work.** It is the honest end-to-end span of the run, but a
+run's jobs also queue for a runner *inside* that span, and `run_s` includes that
+wait. On a saturated pool the two diverge hard: hermit run `30822475239` has
+`run_s` = 691.7 min against 113.9 runner-min of job execution (longest single job
+13.0 min) because one job did not start until 691.6 min in — 83.5% of the figure
+is not execution. So a rise in `run_s` is not evidence that the work got slower;
+`queue_s` does **not** cover this, since it stops at `run_started_at`. Read `run_s`
+as "how long this run occupied the calendar", and derive work from job runtimes.
+
+This was audited on 2026-08-06 against job-level truth
+(`max(job.completed_at) − run_started_at`) on 61 rows — a 48-run stratified sample
+across four `run_s` strata plus all 14 multi-attempt rows. Median deviation 1 s,
+max 52 s, **0 rows inflated**. The `updated_at` endpoint is mutable in principle,
+but no stored run is measurably affected; the clustered `updated_at` values that
+look like a bulk touch are a drained-queue convoy — runs that started hours apart
+finishing together when the pool freed up.
+
+**The companion columns.** Since `run_s` cannot answer "how much work was that",
+three columns carry the execution figure separately:
+
+- `runner_s` — aggregate runner-seconds: the sum of each job's own span, scoped to
+  that row's `run_attempt`.
+- `jobs_n` — how many jobs that sum covers.
+- `jobs_src` — `jobs` when `runner_s` was derived from job rows, `absent` when no
+  job data exists for the attempt.
+
+`absent` rows leave `runner_s` and `jobs_n` **blank, never `0`** — a zero is
+indistinguishable from a run that genuinely did no work, which is the plausible
+wrong number this split exists to avoid. Check `jobs_src` before using `runner_s`.
+
+`runner_s` is **aggregate cost, not a slice of wall**. Jobs run in parallel, so
+`runner_s > run_s` is normal and correct (34 jobs of 10 min inside a 15 min run is
+20400 s of runner time against 900 s of wall). Do not clamp it to `run_s`; they
+answer different questions. It is only when a starved pool *serialises* the jobs
+that `runner_s` falls far below `run_s`, and that gap is the starvation signal.
+
+**Coverage is opt-in, because it costs an API call per run.** `runner_s` can only
+be derived where job rows exist, and the jobs store defaults to the small case-7
+set (cancelled authoritative-main runs) — 11 of 11,802 rows at 2026-08-06. Widen
+it with `--jobs-scope all`, which takes every *terminal* authoritative run on any
+branch with any conclusion:
+
+```
+ci-hub/history/ingest.py --jobs-scope all --jobs-max-runs 500 --since 2026-08-01
+```
+
+Candidates come back newest-first, so a capped pass buys the runs people are
+actually analysing rather than an arbitrary slice of old history. Non-terminal
+runs are excluded under *both* scopes: their jobs are still moving, and fetching
+them would bake in a partial duration that nothing later corrects.
+
+> **If you ever re-derive `run_s` from the jobs API, scope it to the attempt.**
+> `GET /runs/{id}/jobs` defaults to `filter=latest`, so on a re-run it returns only
+> the newest attempt's jobs (run `30817694008`: 34 by default, 68 with
+> `filter=all`). Pairing those with an earlier attempt's row computes a duration
+> 7.1 h wrong. 7 stored rows are non-latest attempts.
 
 Incrementality: the cursor `ignored/ci-hub/gha-cursor.json` records
 `{last_created_at, max_run_id}` per repo. Every mode fetches through one

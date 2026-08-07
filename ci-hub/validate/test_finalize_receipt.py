@@ -330,3 +330,56 @@ def test_planned_from_real_hermit_manifest_at_head():
     assert all(t.startswith("test.") for t in planned)
     assert "test.detcore_unit" in planned
     print(f"\n[planned-control] {len(planned)} planned test.* nodes at hermit HEAD {sha[:12]}")
+
+
+# --- idempotency guard: an ABSENT coverage list is UNKNOWN, not clean ---------
+# Judged on its own blast radius, not by shape-match with the certification
+# predicate. Failing open here cannot mint a false green (the authority fails
+# CLOSED on the same input); it silently SKIPS the re-mint that would repair the
+# row, leaving it permanently uncertifiable. These pin both directions.
+
+def _rec(cov, executed=42):
+    return {"schema_version": fr.SCHEMA_VERSION, "executed_tests": executed,
+            "coverage": cov}
+
+
+def test_guard_satisfied_when_both_lists_are_measured_empty():
+    """POSITIVE control: the guard must still fire, or the negatives below prove
+    nothing (a guard that refuses everything would 'pass' them all)."""
+    assert fr._has_satisfied_schema5(
+        _rec({"planned_test_nodes": 19, "zero_executed_nodes": [],
+              "absent_nodes": []})) is True
+
+
+def test_guard_refuses_a_real_violation():
+    assert fr._has_satisfied_schema5(
+        _rec({"planned_test_nodes": 19, "zero_executed_nodes": ["t.cli"],
+              "absent_nodes": []})) is False
+
+
+def test_guard_treats_an_omitted_list_as_unknown_not_clean():
+    """The fails-open shape. `not cov.get(x)` read all three of these as
+    satisfied, which told scan_and_finalize the sha was already handled."""
+    for cov in (
+        {"planned_test_nodes": 19, "zero_executed_nodes": []},   # absent_nodes omitted
+        {"planned_test_nodes": 19, "absent_nodes": []},          # zero_executed omitted
+        {"planned_test_nodes": 19},                              # both omitted
+    ):
+        assert fr._has_satisfied_schema5(_rec(cov)) is False, cov
+
+
+def test_guard_agrees_with_the_certification_authority():
+    """The guard and the authority must not disagree about the same row: a row
+    the authority will refuse must not be marked 'already handled' here."""
+    from importlib import util as _u
+    spec = _u.spec_from_file_location(
+        "qr", str(Path(__file__).resolve().parent.parent / "qualifying_receipt.py"))
+    qr = _u.module_from_spec(spec)
+    spec.loader.exec_module(qr)
+    for cov in (
+        {"planned_test_nodes": 19, "zero_executed_nodes": [], "absent_nodes": []},
+        {"planned_test_nodes": 19, "zero_executed_nodes": ["t"], "absent_nodes": []},
+        {"planned_test_nodes": 19, "zero_executed_nodes": []},
+        {"planned_test_nodes": 19},
+    ):
+        assert fr._has_satisfied_schema5(_rec(cov)) == qr.coverage_satisfied(cov), cov

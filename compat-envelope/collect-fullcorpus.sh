@@ -257,16 +257,47 @@ echo "== full-corpus scorecard written: $OUT =="
 # --- ratchet assert + render -------------------------------------------------
 fail=0
 echo "== green-stays-green ratchet (per-backend det floor over full corpus) =="
+# Every ratio below is scoped to a backend, so it MUST name the population it
+# was measured over: e9patch is 20/20 on the dedicated freestanding corpus and
+# 4/137-built here, and a reader cannot tell those apart from the number.
+# CORPUS_C/CORPUS_NONC are env-overridable, so the declaration reports the
+# sources ACTUALLY used rather than the registry's defaults.
+corpus_decl="corpus=fullcorpus  sources=$CORPUS_C + $CORPUS_NONC  csv=$OUT"
+echo "  $corpus_decl"
+if [ "$CORPUS_C" != "$here/corpus/corpus-c.tsv" ] || [ "$CORPUS_NONC" != "$here/corpus/corpus-nonc.tsv" ]; then
+  echo "  NOTE: corpus overridden via CORPUS_C/CORPUS_NONC — these ratios are NOT over the registered fullcorpus population" >&2
+fi
+ratchet_lines=""
 for backend in $order; do
   det=$(awk -F, -v b="$backend" 'NR>1 && $11==b && $14=="1"{n++} END{print n+0}' "$OUT")
   tot=$(awk -F, -v b="$backend" 'NR>1 && $11==b{n++} END{print n+0}' "$OUT")
   floor=$(baseline "$backend")
   if [ "$det" -lt "$floor" ]; then
-    echo "  REGRESSION: $backend det $det/$tot < floor $floor" >&2; fail=1
+    line="  REGRESSION: $backend det $det/$tot over corpus=fullcorpus < floor $floor"
+    echo "$line" >&2; fail=1
   else
-    echo "  OK: $backend det $det/$tot (floor $floor)"
+    line="  OK: $backend det $det/$tot over corpus=fullcorpus (floor $floor)"
+    echo "$line"
   fi
+  ratchet_lines="$ratchet_lines$line
+"
 done
+
+# REFUSE AT EMISSION. The gate reads back what we just printed; if any
+# backend-scoped ratio reached stdout without a registered corpus name, this run
+# does not get to publish it. Fail-closed only when the gate is present and says
+# no -- a missing checker is reported, never silently treated as a pass.
+if [ -f "$here/check_corpus_named.py" ]; then
+  if ! printf '%s%s\n' "$corpus_decl
+" "$ratchet_lines" | python3 "$here/check_corpus_named.py" >/dev/null; then
+    echo "collect-fullcorpus: REFUSED — emitted a per-backend ratio with no corpus name" >&2
+    printf '%s%s\n' "$corpus_decl
+" "$ratchet_lines" | python3 "$here/check_corpus_named.py" >&2 || true
+    exit 4
+  fi
+else
+  echo "collect-fullcorpus: WARNING — check_corpus_named.py absent; ratios NOT gated" >&2
+fi
 
 echo "== rendered scorecard =="
 "$here/render-scorecard.rs" --csv "$OUT" --all --backends kvm,dbi,sabre,liteinst,e9patch || true

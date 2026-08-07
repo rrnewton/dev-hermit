@@ -683,3 +683,14 @@ slot203 was an empty directory. Recovery refs were verified before removal.
 | Slot | owner/task | product SHAs | recovery | disposition |
 | --- | --- | --- | --- | --- |
 | `worktrees/pinbump` | revoked pinbump lease / `hermit_reverie_pin_e159` | Hermit recovery branch `ci/reverie-pin-bump-e159d6ce-recipe-key-rebind` at `f370bfd30640508195f2520e672d8ccd2f83f6eb`; registry-recorded branch `ci/reverie-pin-bump-9470712a-budget-recalibration` at `c5ba75bb5629a014bd192071fcea46076cee1a13` | Ten dirty dependency-pin files were checkpointed and pushed at `f370bfd30640508195f2520e672d8ccd2f83f6eb` before cleanup. Their resulting tree is byte-identical on those paths to already-merged Hermit commit `bee1677b5bab91ad6ce1acfb816fc36c9a823125` (PR #1660). | No live owner, pane, sentinel, or process CWD remained. The superseded branch is preserved remotely; the physical checkout will be restored to the registry-recorded branch and removed only through `scripts/release-worktree.rs --slot pinbump --clean --recover-submodule-cleanup`. |
+
+## 2026-08-06 w11flock (hermit-w11) — P0 flock mutual exclusion, PR #1742
+Hermit branch `w11/flock-doc-correction` == remote `fix-flock-mutual-exclusion`, head
+`a10f113441ad5efea691bfd905378bbbba13c600` (pushed, fast-forward over 4aea3529c).
+Reverie/LiteInst2: not provisioned (slot was --product hermit).
+Validation at head: L2 `bitwise_parity: true` 667/667; 10/10 flock contract probe identical to native,
+bracketed against a proven pre-fix binary (3/10 diverge); detcore lib 386 passed/0 failed; fmt+clippy clean.
+Two full validates both 6-passed/1-failed on NON-flock cells (chaos order-violation, reproduced at main tip;
+test.dbi_parity outer-scorecard 19-vs-20-column skew) — both filed as separate tasks.
+Disposition: work committed and pushed; PR open, draft, labelled post-facto-human-review, awaiting dual
+adversarial review. Slot released clean; nothing uncommitted.

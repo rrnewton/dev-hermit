@@ -21,6 +21,21 @@ row and resumes from the last cursor):
       lies): QUEUE_s = run_started_at - created_at is recorded SEPARATELY from
       RUN_s = updated_at - run_started_at.
 
+      RUN_s IS WALL, NOT WORK. It is the honest end-to-end span of the run, but a
+      run's jobs also queue for a runner INSIDE that span and RUN_s includes that
+      wait, which QUEUE_s does not cover (it stops at run_started_at). Run
+      30822475239: RUN_s 691.7 min vs 113.9 runner-min of execution, because one
+      job did not start until 691.6 min in. Do not read a rise in RUN_s as the
+      work getting slower.
+
+      Audited 2026-08-06 against job-level truth (max(job.completed_at) -
+      run_started_at) over 61 rows: median deviation 1s, max 52s, 0 inflated. The
+      updated_at endpoint is mutable in principle, but no stored run is measurably
+      affected -- clustered updated_at values are a drained-queue convoy, not a
+      bulk touch. If you re-derive this from the jobs API, SCOPE IT TO THE ATTEMPT:
+      GET /runs/{id}/jobs defaults to filter=latest, so pairing it with a
+      non-latest attempt row (7 such rows stored) computes a duration hours wrong.
+
   (B) Per-node CI profiling artifacts -> ignored/ci-hub/gha-profiles/<repo>/...
       Downloads GitHub artifacts named ^ci-perf-* (produced by the portable DAG
       runner; see hermit PR #1548) and unzips their safe-ci-dag-runner
@@ -80,7 +95,17 @@ GHA_COLUMNS = [
     "head_branch", "head_sha", "pull_requests", "status", "conclusion",
     "created_at", "run_started_at", "updated_at", "queue_s", "run_s",
     "html_url", "display_title",
+    # Wall/work split. `run_s` is honest end-to-end WALL and stays as it is; these
+    # say how much of it was execution. Appended last so readers keying by name
+    # (and any CSV consumer tolerant of extra trailing columns) are unaffected.
+    "runner_s", "jobs_n", "jobs_src",
 ]
+
+# `jobs_src` values. The distinction is the whole point: a run with no job data
+# must read as UNKNOWN, never as zero work, or a consumer gets a plausible wrong
+# number instead of an obvious absent one.
+JOBS_SRC_DERIVED = "jobs"      # runner_s computed from this attempt's job rows
+JOBS_SRC_ABSENT = "absent"     # no job rows for this attempt; runner_s left BLANK
 
 
 def parent_root() -> str:
@@ -522,10 +547,83 @@ def job_to_row(repo: str, job: dict) -> dict:
     }
 
 
-def cancelled_authoritative_runs(parent: str, repo: str,
-                                 workflows: list[str],
-                                 since: str | None) -> list[str]:
-    """run_ids of cancelled authoritative-workflow runs on main (case-7 candidates)."""
+def augment_runs_with_jobs(run_rows: dict[tuple, dict],
+                           job_rows: dict[tuple, dict]) -> int:
+    """Fill runner_s / jobs_n / jobs_src on run rows from job rows. Returns #derived.
+
+    WHY THIS EXISTS. `run_s` is honest end-to-end wall, but on a queue-starved
+    pool most of that span is jobs WAITING for a runner, not running: hermit run
+    30822475239 is 691.7 min of `run_s` against 113.9 runner-min of execution
+    because one job did not start until 691.6 min in. `queue_s` does not cover it
+    (it stops at `run_started_at`), so nothing in the store distinguished the two.
+    A reader who took `run_s` for work time concluded CI had got ~10x slower.
+    `runner_s` is that missing figure; it does NOT replace or correct `run_s`,
+    which a 61-row audit against job-level truth found accurate to a median 1 s.
+
+    `runner_s` IS AGGREGATE RUNNER-SECONDS, NOT A SLICE OF WALL. It sums every
+    job's own span, and jobs run in PARALLEL, so `runner_s > run_s` is normal and
+    correct -- 34 jobs of 10 min each inside a 15 min run is 20400 s of runner
+    time against 900 s of wall. Do not "fix" that by clamping it to `run_s`; the
+    two answer different questions (what did this cost / how long did it take).
+    Only when a starved pool serialises the jobs does `runner_s` fall far below
+    `run_s`, and that gap is the queue-starvation signal worth reading.
+
+    SCOPED BY ATTEMPT. Jobs are matched on (repo, run_id, run_attempt), never on
+    (repo, run_id). An attempt-1 row costed from attempt-2 jobs is hours wrong.
+
+    ABSENT IS NOT ZERO. A run with no job rows for its attempt gets
+    jobs_src=absent and BLANK runner_s/jobs_n. Writing 0 would be a plausible wrong
+    number -- indistinguishable from a run that genuinely did no work.
+    """
+    by_attempt: dict[tuple, list[dict]] = {}
+    for job in job_rows.values():
+        key = (job.get("repo", ""), job.get("run_id", ""),
+               job.get("run_attempt", ""))
+        by_attempt.setdefault(key, []).append(job)
+
+    derived = 0
+    for key, row in run_rows.items():
+        jobs = by_attempt.get(key)
+        # Only count jobs that actually ran; a queued/skipped job has no span.
+        spans = []
+        for job in jobs or []:
+            span = _delta_s(job.get("completed_at"), job.get("started_at"))
+            if span != "":
+                spans.append(int(span))
+        if not spans:
+            row["runner_s"] = ""
+            row["jobs_n"] = ""
+            row["jobs_src"] = JOBS_SRC_ABSENT
+            continue
+        row["runner_s"] = str(sum(spans))
+        row["jobs_n"] = str(len(spans))
+        row["jobs_src"] = JOBS_SRC_DERIVED
+        derived += 1
+    return derived
+
+
+JOBS_SCOPES = ("cancelled", "all")
+
+
+def job_candidate_runs(parent: str, repo: str, workflows: list[str],
+                       since: str | None, *, scope: str = "cancelled") -> list[str]:
+    """run_ids to fetch jobs for, newest first.
+
+    Two scopes, because the job store now serves two unrelated consumers:
+
+      cancelled - cancelled authoritative-workflow runs on main. The original
+                  case-7 discriminator set; small and cheap.
+      all       - every TERMINAL authoritative-workflow run, any branch, any
+                  conclusion. This is the wall/work coverage set: `runner_s` can
+                  only be derived where job rows exist, and under `cancelled`
+                  that was 11 of 11802 rows. Costs one API call per run, so it is
+                  opt-in and still bounded by --jobs-max-runs.
+
+    Newest-first so a capped pass buys the most useful rows (recent runs are the
+    ones being analysed) rather than an arbitrary prefix of ancient history.
+    """
+    if scope not in JOBS_SCOPES:
+        raise ValueError(f"unknown jobs scope {scope!r}; expected one of {JOBS_SCOPES}")
     path = gha_store_path(parent)
     if not os.path.isfile(path):
         return []
@@ -533,33 +631,56 @@ def cancelled_authoritative_runs(parent: str, repo: str,
     since_iso = None
     if since:
         since_iso = since if "T" in since else since[:10] + "T00:00:00Z"
-    ids: list[str] = []
+    picked: list[tuple[str, str]] = []
     seen: set[str] = set()
     with open(path, newline="", errors="replace") as fh:
         for row in csvmod.DictReader(fh):
             if row.get("repo") != repo:
                 continue
-            if row.get("head_branch") != "main":
-                continue
             if row.get("workflow_name") not in want:
                 continue
-            if (row.get("conclusion") or "").lower() != "cancelled":
-                continue
+            if scope == "cancelled":
+                if row.get("head_branch") != "main":
+                    continue
+                if (row.get("conclusion") or "").lower() != "cancelled":
+                    continue
+            else:
+                # Jobs of a non-terminal run are still moving; fetching them would
+                # bake in a partial duration that nothing later corrects.
+                if row.get("status") != TERMINAL_STATUS:
+                    continue
             if since_iso and (row.get("created_at") or "") < since_iso:
                 continue
             rid = row.get("run_id") or ""
             if rid and rid not in seen:
                 seen.add(rid)
-                ids.append(rid)
-    return ids
+                picked.append((row.get("created_at") or "", rid))
+    picked.sort(reverse=True)
+    return [rid for _, rid in picked]
+
+
+def cancelled_authoritative_runs(parent: str, repo: str, workflows: list[str],
+                                 since: str | None) -> list[str]:
+    """Back-compat alias for the original case-7 candidate set."""
+    return job_candidate_runs(parent, repo, workflows, since, scope="cancelled")
 
 
 def fetch_jobs(repo: str, run_id: str) -> list[dict]:
-    """All jobs of a run via `.../runs/{id}/jobs` (paginated)."""
+    """All jobs of a run via `.../runs/{id}/jobs` (paginated).
+
+    `filter=all` is LOAD-BEARING, not a default worth omitting. The endpoint
+    defaults to `filter=latest`, which returns only the newest attempt's jobs
+    (run 30817694008: 34 by default, 68 with `filter=all`). Since the run store is
+    keyed by (repo, run_id, run_attempt) and holds earlier attempts as their own
+    rows, the default would silently pair an attempt-1 row with attempt-2 job
+    timestamps -- 7.1 h wrong on that run. Job rows carry `run_attempt`, so every
+    consumer must scope by it; see `augment_runs_with_jobs`.
+    """
     jobs: list[dict] = []
     for page in range(1, RESULT_CAP_PAGES + 1):
         payload = gh_json(
-            f"repos/{repo}/actions/runs/{run_id}/jobs?per_page={PER_PAGE}&page={page}")
+            f"repos/{repo}/actions/runs/{run_id}/jobs"
+            f"?per_page={PER_PAGE}&page={page}&filter=all")
         if not payload:
             break
         batch = payload.get("jobs") or []
@@ -590,11 +711,12 @@ def save_jobs_fetched(parent: str, data: dict) -> None:
 
 
 def ingest_jobs(repo: str, parent: str, *, workflows: list[str],
-                since: str | None, refetch: bool, max_runs: int) -> None:
+                since: str | None, refetch: bool, max_runs: int,
+                scope: str = "cancelled") -> None:
     path = jobs_store_path(parent)
     rows = load_jobs_store(path)
     before = len(rows)
-    candidates = cancelled_authoritative_runs(parent, repo, workflows, since)
+    candidates = job_candidate_runs(parent, repo, workflows, since, scope=scope)
     # A cancelled run is terminal, so its jobs never change: skip run_ids already
     # fetched (idempotent, cheap incremental) unless --refetch-jobs. `have` unions
     # the fetched-set sidecar with run_ids present in the row store, so a run with
@@ -615,9 +737,21 @@ def ingest_jobs(repo: str, parent: str, *, workflows: list[str],
     fetched[repo] = sorted(have)
     save_jobs_fetched(parent, fetched)
     write_jobs_store(path, rows)
+    # Push the wall/work split back onto the run store. Re-derived from scratch on
+    # every pass rather than incrementally, so a run whose jobs arrive later stops
+    # reading `absent` without needing a separate backfill mode.
+    gha_path = gha_store_path(parent)
+    run_rows = load_store(gha_path)
+    if run_rows:
+        derived = augment_runs_with_jobs(run_rows, rows)
+        write_store(gha_path, run_rows)
+        print(f"ci-hub ingest [{repo}]: wall/work split -> {derived}/{len(run_rows)} "
+              f"run rows have runner_s (jobs_src=jobs); the rest read jobs_src=absent "
+              f"with BLANK runner_s, never 0")
     added = len(rows) - before
-    msg = (f"ci-hub ingest [{repo}]: jobs for {len(todo)} cancelled "
-           f"authoritative-main runs ({api_calls} api calls), +{added} job rows; "
+    label = "cancelled authoritative-main" if scope == "cancelled" else "terminal authoritative"
+    msg = (f"ci-hub ingest [{repo}]: jobs for {len(todo)} {label} "
+           f"runs ({api_calls} api calls), +{added} job rows; "
            f"store now {len(rows)} rows -> {path}")
     if truncated:
         msg += (f"  [CAPPED: {truncated} more candidate runs not fetched this "
@@ -668,6 +802,11 @@ def main() -> int:
     ap.add_argument("--jobs-max-runs", type=int, default=JOBS_MAX_RUNS,
                     help=f"per-pass cap on cancelled runs fetched for jobs "
                          f"(default {JOBS_MAX_RUNS})")
+    ap.add_argument("--jobs-scope", choices=JOBS_SCOPES, default="cancelled",
+                    help="which runs to fetch jobs for. 'cancelled' (default) is "
+                         "the case-7 discriminator set; 'all' widens to every "
+                         "terminal authoritative run so runner_s can be derived "
+                         "(one API call per run, still capped by --jobs-max-runs)")
     ap.add_argument("--jobs-workflow", action="append",
                     help="authoritative workflow for job scoping (repeatable; "
                          "default per-repo AUTHORITATIVE_WORKFLOWS)")
@@ -686,7 +825,8 @@ def main() -> int:
             wf = args.jobs_workflow or AUTHORITATIVE_WORKFLOWS.get(repo, [])
             if wf:
                 ingest_jobs(repo, parent, workflows=wf, since=args.since,
-                            refetch=args.refetch_jobs, max_runs=args.jobs_max_runs)
+                            refetch=args.refetch_jobs, max_runs=args.jobs_max_runs,
+                            scope=args.jobs_scope)
     if not args.no_local:
         refresh_local(parent)
     return 0

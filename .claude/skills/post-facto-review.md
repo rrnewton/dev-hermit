@@ -87,7 +87,69 @@ round labels, and restore passed labels only after fresh exact-head approval.
 Changes-requested findings likewise remove the affected passed label until the
 reviewer approves a corrected head.
 
-## 3. Mandatory PR description sections
+## 3. Prove the guard by deletion (mutation testing)
+
+Reading a guard confirms it **exists**. Deleting it confirms it is
+**load-bearing**. For any PR whose value is a guard — a check, refusal,
+assertion, lint, gate, or validation — reviewing the code is not sufficient.
+The reviewer must run the owner's **mutation testing** standard:
+
+> Put a known-wrong value into a fixture's input and confirm the fixture
+> **FAILS**. If it still passes, it tests nothing.
+
+Applied to a guard, the mutation is the guard's own removal.
+
+### The required form
+
+1. **Delete** the guard (or neutralise its condition) in a scratch checkout.
+2. **Reproduce** the failure it claims to prevent, and record the observed
+   symptom — the exact output, exit code, or divergence.
+3. **Restore** the guard and confirm the failure is gone and the suite is green
+   again.
+
+The canonical example is the Hermit **#403** re-review, which deleted the
+subscription guard, reproduced the old unsubscribed-RDTSCP delivery, and then
+restored it. That review established the form; PRs adding guards are expected
+to match it.
+
+### What the review comment must record
+
+A guard PR is not approvable until a role-tagged review comment states all
+three, with counts and exact output rather than prose:
+
+- the **deletion** — which guard, which lines, how it was neutralised;
+- the **reproduced failure** — the symptom that returned, quoted;
+- the **restoration** — the guard back in place and the suite green.
+
+State both sides. A mutation that fails to apply is not a detection: if the
+edit did not change the file, say so and redo it, because a no-op edit and a
+working guard produce the same green.
+
+### A guard whose deletion changes nothing is INERT
+
+If the failure does **not** return when the guard is removed, the correct
+review outcome is **INERT — reported, not approved**. Inert is not a rejection
+of the author's intent; it is a factual finding that the mechanism is not
+currently load-bearing, and it must be recorded as such rather than waved
+through because the code reads correctly.
+
+This is not hypothetical. Mechanisms found present and inert include:
+
+- a `--cgroups` flag accepted and then ignored;
+- a portability lint covering 3 of 6 backends while reading as if it covered all;
+- a library written, tested, and never wired to a call site;
+- a scorecard column added to the schema and populated on 0 of 3309 rows.
+
+Each of those passed a reading review. None would have survived a deletion.
+
+### Scope, so this does not become a tax on every PR
+
+Required when the PR's *value* is the guard. Not required for a PR that merely
+touches code near one. If a reviewer is unsure, the cheap test is: **if this
+guard were silently removed, would any test go red?** If the answer is no or
+unknown, run the deletion.
+
+## 4. Mandatory PR description sections
 
 Every PR description must contain:
 
@@ -105,6 +167,11 @@ Every PR description must contain:
   time-related changes, validate continuous evolution across multiple reads,
   deterministic work/events, timers or waits, and relevant fork/exec process
   trees; do not validate only the first observed timestamp.
+- **Guard Evidence** — mandatory when the PR's value is a guard (check,
+  refusal, assertion, lint, gate, or validation). Record the deletion, the
+  reproduced failure with its exact symptom, and the restoration, per section 3.
+  A guard PR without this section is not reviewable; a guard whose deletion
+  changed nothing must say **INERT** here rather than claim a pass.
 - **Relationship to gVisor** — required for KVM changes; state the relevant
   comparison or explicitly explain why none applies.
 - **Human Review Required** — mandatory whenever
@@ -116,7 +183,7 @@ explained as weighted virtual-time progression with deterministic epochs and
 replay evidence, rather than asserted from passing tests alone. New PRs must use
 the section names above and identify trigger 4 explicitly.
 
-## 4. Continuous virtual time is sacred
+## 5. Continuous virtual time is sacred
 
 Treat any weakening of continuous, fine-grained guest virtual time as a
 landing red flag. Virtual time must remain a coherent process-tree clock whose
@@ -140,7 +207,7 @@ An immediate pair of reads need not differ when no deterministic progress
 occurred. The invariant is coherent fine-grained evolution across meaningful
 guest work and events, not artificial movement on every read.
 
-## 5. Labels
+## 6. Labels
 
 - `post-facto-human-review` is the **single** routing label for a PR awaiting
   the human's after-the-fact review. Apply it automatically for the four
@@ -158,7 +225,7 @@ guest work and events, not artificial movement on every read.
 - `locally-validated` is permitted only when local evidence proves that a
   residual CI failure is baseline or environmental.
 
-## 6. New-syscall code markers
+## 7. New-syscall code markers
 
 New syscall support authored by a bot must carry both narrowly scoped
 determinization breadcrumbs:
@@ -170,7 +237,7 @@ Verify both markers before labeling or landing trigger 1. They are not blanket
 markers for bot-authored code, backend changes, or routine parity fixes. Use
 them only at the smallest new-syscall regions, not across untouched code.
 
-## 7. Land when review and CI are green
+## 8. Land when review and CI are green
 
 Once required adversarial review is resolved and the authoritative gate is
 green, land the authorized change without waiting for a human.
@@ -185,7 +252,7 @@ green, land the authorized change without waiting for a human.
   exact merge SHA, and rebase dependents in dependency order. Do not add the
   label to a routine non-triggering PR.
 
-## 8. Human reviews after landing
+## 9. Human reviews after landing
 
 The human reviews landed work after the fact. Corrections use follow-up PRs and
 fix forward. Remove a `TODO-HUMAN-REVIEW` marker only when its concern is

@@ -41,6 +41,7 @@ tool ALWAYS terminates with a report instead of hanging.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -89,6 +90,25 @@ _TERMINATE_GRACE = 10.0
 # on PATH. Override with --net-wrapper "" to disable, or --net-wrapper CMD.
 DEFAULT_NET_WRAPPER = "with-proxy"
 
+def _age_hours(created_at):
+    """Hours since the PR was opened, or ``None`` when GitHub gave no timestamp.
+
+    Returns ``None`` rather than 0 for a missing/unparseable value: 0 would read
+    as "brand new" and sort a PR of unknown age to the front of an oldest-first
+    drain, which is the opposite of fail-closed.
+    """
+    if not isinstance(created_at, str) or not created_at.strip():
+        return None
+    try:
+        opened = datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if opened.tzinfo is None:
+        opened = opened.replace(tzinfo=datetime.timezone.utc)
+    delta = datetime.datetime.now(datetime.timezone.utc) - opened
+    return round(delta.total_seconds() / 3600.0, 2)
+
+
 # Fields pulled in the single `gh pr list` call. mergeable + statusCheckRollup
 # are what let us classify every open PR without any per-PR local git fetch.
 GH_FIELDS = (
@@ -100,6 +120,7 @@ GH_FIELDS = (
     "reviewDecision",
     "baseRefName",
     "headRefName",
+    "createdAt",
     "updatedAt",
     "labels",
     "statusCheckRollup",
@@ -118,6 +139,16 @@ _RETRYABLE_MARKERS = (
     "connection reset",
     "temporarily unavailable",
     "changed during collection",
+    # A TRUNCATED response is retryable and was not covered. Measured 2026-08-07:
+    # hermit came back UNAVAILABLE on 2 of 5 consecutive lander polls with gh's
+    # own Go-side "unexpected end of JSON input", which matched 0 of the 9
+    # markers above -- so MAX_FETCH_ATTEMPTS=3 never engaged for the one fault
+    # class that was actually firing. The enriched query (statusCheckRollup) is
+    # 461,854 bytes vs 34,051 without it, and a 462 KB proxied response is far
+    # likelier to arrive truncated. Retrying is safe: `gh pr list` is read-only.
+    "unexpected end of json input",
+    "unexpected eof",
+    "invalid character",
 )
 
 # Keep this exact language in sync with Hermit's
@@ -145,7 +176,72 @@ HEALTH_VERDICT_EXCLUDES = (
 
 
 class RepoUnavailable(RuntimeError):
-    """The status query could not complete within its time budget or was blocked."""
+    """A repo's status query did not produce a usable result.
+
+    NOT necessarily a timeout. This is raised from seven distinct sites and only
+    two of them are budget exhaustion; see :func:`classify_unavailable_reason`.
+    Collapsing them all into "time budget" sends the reader to a knob
+    (CI_HUB_PR_STATUS_TIMEOUT) that cannot fix a truncated response.
+    """
+
+
+# Typed causes for an unavailable repo. The whole point is that these have
+# DIFFERENT fixes: raising the timeout helps TIMEOUT and nothing else.
+CAUSE_TIMEOUT = "TIMEOUT"
+CAUSE_BLOCKED = "BLOCKED"
+CAUSE_MALFORMED = "MALFORMED-RESPONSE"
+CAUSE_QUERY_FAILED = "QUERY-FAILED"
+
+# Matched against the reason text produced at each raise site. Ordered: the
+# first matching group wins, and BLOCKED/MALFORMED are tested before the
+# generic query-failure so a specific cause is never swallowed by the catch-all.
+_CAUSE_SIGNATURES = (
+    (CAUSE_BLOCKED, ("bpfjailer", "security policy")),
+    (
+        # Bound to the two texts the timeout sites actually emit. Deliberately
+        # NOT a bare "exceeded": "API rate limit exceeded" is a quota fault, not
+        # a budget fault, and keying on the generic token would send that reader
+        # to the timeout knob too.
+        CAUSE_TIMEOUT,
+        ("time budget exhausted", "proxy stall or gh hang"),
+    ),
+    (
+        CAUSE_MALFORMED,
+        (
+            "unexpected end of json input",  # gh's own Go-side truncation error
+            "returned non-json",
+            "empty output",
+            "unexpected schema",
+            "invalid character",
+        ),
+    ),
+)
+
+# Advice bound to the cause, so the reader is never pointed at a knob that
+# cannot move the failure they actually hit.
+_CAUSE_ADVICE = {
+    CAUSE_TIMEOUT: "raise CI_HUB_PR_STATUS_TIMEOUT / CI_HUB_PR_STATUS_DEADLINE",
+    CAUSE_BLOCKED: "route the call through the proxy (with-proxy)",
+    CAUSE_MALFORMED: (
+        "gh returned truncated/undecodable output -- a transport or gh-side "
+        "fault; raising CI_HUB_PR_STATUS_TIMEOUT will NOT help"
+    ),
+    CAUSE_QUERY_FAILED: "inspect the gh error text above",
+}
+
+
+def classify_unavailable_reason(reason: str) -> str:
+    """Map a :class:`RepoUnavailable` reason string to a typed cause.
+
+    Binds to the text each raise site actually emits rather than to the fact
+    that *some* failure occurred, so the summary can state a cause it observed
+    instead of asserting the one that happens to be most common.
+    """
+    text = (reason or "").lower()
+    for cause, markers in _CAUSE_SIGNATURES:
+        if any(marker in text for marker in markers):
+            return cause
+    return CAUSE_QUERY_FAILED
 
 
 @dataclass(frozen=True)
@@ -730,8 +826,27 @@ def _classify_gh_prs(
                 "mergeable": mergeable or "UNKNOWN",
                 "merge_state": merge_state or "UNKNOWN",
                 "title": entry.get("title", ""),
+                # AGE IS FIRST-CLASS, not a derived nicety.
+                #
+                # An open-PR COUNT treats a 3-hour-old PR and a 3-week-old PR as
+                # the same row, and they are not: the old one is the protocol
+                # breach. Staleness also compounds -- while a PR waits, main
+                # advances, its head goes stale and its SHA-keyed validate
+                # receipt is invalidated, so waiting does not merely delay a
+                # landing, it destroys the work that made it landable. A drain
+                # report that cannot rank by age cannot see that.
+                #
+                # `None` when GitHub returned no createdAt: unknown age is
+                # reported as unknown rather than silently sorted as brand new.
+                "age_hours": _age_hours(entry.get("createdAt")),
+                "created_at": entry.get("createdAt"),
             }
         )
+    # OLDEST FIRST. The drain order is the report order; anything else buries the
+    # breach under whatever happens to be newest. Unknown ages sort last rather
+    # than first, so a missing timestamp can never masquerade as the oldest PR
+    # and jump the queue.
+    prs.sort(key=lambda row: (row.get("age_hours") is None, -(row.get("age_hours") or 0.0)))
     open_count = len(prs)
     # Outage heuristic: a large simultaneous *known* real-red fraction smells
     # like infra, not N independent product breaks. Built only from resolved
@@ -1317,12 +1432,20 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                     f"{invalid_detail}{draft} {audit.title}"
                 )
     if unavailable:
+        # Do NOT assert "time budget" here. Only 2 of the 7 RepoUnavailable
+        # raise sites are budget exhaustion; naming the wrong cause sends the
+        # reader to CI_HUB_PR_STATUS_TIMEOUT, which cannot fix a truncated
+        # response, and they observe no change.
         lines.append(
             f"PARTIAL RESULT: {len(unavailable)} of {len(statuses)} repo(s) "
-            "could not be queried within the time budget; open-PR totals above "
-            "cover only the repos that responded (NOT a claim that they have no "
-            "PRs)."
+            "could not be queried; open-PR totals above cover only the repos "
+            "that responded (NOT a claim that they have no PRs)."
         )
+        for status in unavailable:
+            cause = classify_unavailable_reason(status.reason)
+            lines.append(
+                f"  {status.repo}: {cause} -- {_CAUSE_ADVICE[cause]}"
+            )
     if total > warn_threshold:
         lines.append(
             f"WARNING: {total} open PRs exceeds the {warn_threshold} PR threshold."

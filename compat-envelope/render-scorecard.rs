@@ -19,9 +19,17 @@
 //!     compare INFO logs, stack detlogs, or heap detlogs. TTY behavior is also
 //!     outside this scorecard.
 //!     Determinism and stdout parity are independent signals; neither implies
-//!     the other. A cell the backend never ran counts as 0 in both, so a small
-//!     envelope reads as a low percentage — that is the honest, anti-fakery
-//!     signal, not a bug.
+//!     the other. A cell the backend never ran is NOT counted as 0: `ran_count`
+//!     and `<parity>_measured_count` travel with every cell, an unmeasured
+//!     observable renders `?` (or `~` for partial) and a backend that could not
+//!     run renders `n/a` — none of which is a confirmed zero. A small envelope
+//!     therefore reads as a small MEASURED population, not as a low percentage
+//!     over an imagined one.
+//!     Correspondingly, an EMPTY DENOMINATOR is refused rather than rendered:
+//!     if no ptrace row passes the requested `--denominator` mode there are no
+//!     cells at all, so the tool prints `NO DATA:` with the modes and backends
+//!     the run does contain and exits 3 (distinct from 2 = usage, 0 = rendered).
+//!     Without that, a dbi/strict-only run rendered a confident `TOTAL 0`.
 //!     Reverie counter CSVs select `--observable tool-count` instead and are
 //!     labeled `tool-count-parity%`; the two observables are never conflated.
 //!
@@ -45,7 +53,7 @@
 //!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
 //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
-//!   --observable O    Observable compared by the legacy CSV `parity` field
+//!   --observable O    Observable compared by the stdout-parity CSV column
 //!                     (default: stdout; use tool-count for Reverie counters).
 //!   --json | --tsv    Machine-readable output instead of the table.
 //!
@@ -95,14 +103,39 @@ struct Cell {
     bucket: String,
     test_id: String,
     test_mode: String, // verify | replay | chaos | custom | naked
-    backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
-    outcome: String,   // pass | fail | error | timeout | oom | skip
+    backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native | e9patch
+    outcome: String,   // pass | fail | error | timeout | oom | skip | not-exercised | unavailable
     deterministic: Option<bool>,
-    // Legacy CSV field name: this stores stdout-only parity.
-    parity: Option<bool>,
+    /// Stdout-only parity. Read from `stdout_parity`, or from the legacy `parity`
+    /// column in scorecards written before the rename (see [`PARITY_COLUMNS`]).
+    stdout_parity: Option<bool>,
+    /// Whether the guest itself exercised anything hermit virtualizes (parity_exercised).
+    parity_exercised: Option<bool>,
+    /// How much work THIS backend uniquely performed (e9patch mapped_sites,
+    /// sabre patched_sites, dbi branches, ptrace turns). None = unknown,
+    /// distinct from 0 = vacuous. §319 counts must travel with cell.
+    backend_engaged: Option<i64>,
 }
 
+/// Accepted names for the stdout-parity column, in preference order.
+///
+/// The column was originally called `parity`, which claimed more than it measured: it
+/// only ever held piped-guest-stdout SHA-256 equality, never the four-signal standard.
+/// The rendered label was corrected first; this is the raw column catching up. The old
+/// name stays readable because published scorecards still carry it, and silently
+/// rendering nothing for them would be a worse failure than the misnomer.
+const PARITY_COLUMNS: &[&str] = &["stdout_parity", "parity"];
+
 /// The canonical header this renderer and `collect-envelope.rs` agree on.
+///
+/// The stdout-parity column is deliberately absent: it is resolved through
+/// [`PARITY_COLUMNS`] so either spelling is accepted.
+///
+/// Modern collectors append `stdout_parity, parity_exercised, backend_engaged,
+/// native_output_hash, output_hash, ref_output_hash, verify_compare, run_flags`
+/// alongside the core columns (§319: the count must travel with the cell).
+/// Older CSVs lacking those columns remain readable: optional columns are
+/// looked up fallibly.
 const HEADER: &[&str] = &[
     "run_id",
     "run_utc",
@@ -118,7 +151,6 @@ const HEADER: &[&str] = &[
     "cell_state",
     "outcome",
     "deterministic",
-    "parity",
     "output_hash",
     "duration_ms",
     "max_rss_kb",
@@ -133,8 +165,65 @@ fn parse_bool(s: &str) -> Option<bool> {
     }
 }
 
+/// Split the whole CSV text into RECORDS, not lines.
+///
+/// WHY RECORD-ORIENTED. RFC-4180 lets a quoted field contain a literal newline,
+/// so ONE record can span several physical lines. The previous reader iterated
+/// `text.lines()` and split each line independently, which cannot represent
+/// that: it saw a multiline record as two short fragments, warned, skipped both,
+/// and still exited 0 -- silently dropping a row and changing every derived
+/// count. That is the shape that produced the DBI `file_metadata` incident (one
+/// record split across physical lines 542-544).
+///
+/// Measured 2026-08-07 on the live file: 619 physical lines, 619 records, all 23
+/// fields -- but 109 of 618 data rows already carry commas inside quoted fields,
+/// so a naive splitter mis-reads one row in six today.
+///
+/// FAIL-CLOSED: an unterminated quote is an error, never a best-effort parse.
+fn parse_csv_records(text: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut records = Vec::new();
+    let mut field = String::new();
+    let mut record: Vec<String> = Vec::new();
+    let mut in_quotes = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                // Includes '\n': a newline inside quotes belongs to the field.
+                field.push(c);
+            }
+        } else if c == '"' {
+            in_quotes = true;
+        } else if c == ',' {
+            record.push(std::mem::take(&mut field));
+        } else if c == '\n' {
+            record.push(std::mem::take(&mut field));
+            records.push(std::mem::take(&mut record));
+        } else if c != '\r' {
+            field.push(c);
+        }
+    }
+    if in_quotes {
+        return Err("unterminated quoted field (unbalanced quote) at end of input".into());
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    records.retain(|r| !(r.len() == 1 && r[0].trim().is_empty()));
+    Ok(records)
+}
+
 /// Minimal RFC-4180-ish CSV split: handles double-quoted fields with commas and
 /// escaped `""`. Good enough for our own writer's output.
+#[allow(dead_code)]
 fn split_csv_line(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut field = String::new();
@@ -221,9 +310,10 @@ fn main() {
     let text = fs::read_to_string(&csv_path)
         .unwrap_or_else(|e| die(&format!("cannot read {}: {e}", csv_path.display())));
 
-    let mut lines = text.lines();
-    let header_line = lines.next().unwrap_or_else(|| die("empty CSV (no header)"));
-    let header = split_csv_line(header_line);
+    let records = parse_csv_records(&text)
+        .unwrap_or_else(|e| die(&format!("malformed CSV {}: {e}", csv_path.display())));
+    let mut records = records.into_iter();
+    let header = records.next().unwrap_or_else(|| die("empty CSV (no header)"));
     let idx = |name: &str| -> usize {
         header
             .iter()
@@ -234,7 +324,17 @@ fn main() {
     for h in HEADER {
         let _ = idx(h);
     }
-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
+    // Resolve stdout-parity under either spelling, preferring the honest one.
+    let i_par = PARITY_COLUMNS
+        .iter()
+        .find_map(|name| header.iter().position(|h| h == name))
+        .unwrap_or_else(|| {
+            die(&format!(
+                "CSV missing the stdout-parity column (looked for {})",
+                PARITY_COLUMNS.join(" then ")
+            ))
+        });
+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
         idx("run_id"),
         idx("bucket"),
         idx("test_id"),
@@ -242,20 +342,33 @@ fn main() {
         idx("backend"),
         idx("outcome"),
         idx("deterministic"),
-        idx("parity"),
     );
 
     let mut cells: Vec<Cell> = Vec::new();
-    for (n, line) in lines.enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let f = split_csv_line(line);
+    for (n, f) in records.enumerate() {
         let get = |i: usize| f.get(i).cloned().unwrap_or_default();
-        if f.len() < header.len() {
-            eprintln!("warn: row {} has {} fields (< {}); skipping", n + 2, f.len(), header.len());
-            continue;
+        // FAIL CLOSED. This used to warn and `continue`, which changed every
+        // derived count while still exiting 0 -- a producer defect could silently
+        // move the numbers this renderer exists to report.
+        if f.len() != header.len() {
+            die(&format!(
+                "row {} has {} fields, expected {}; refusing to render a partial scorecard",
+                n + 2, f.len(), header.len()));
         }
+        // Optional engagement columns (new collectors) — missing = unknown, not zero.
+        let i_par_exercised = header.iter().position(|h| h == "parity_exercised");
+        let i_engaged = header.iter().position(|h| h == "backend_engaged");
+        let i_engaged_alt = header.iter().position(|h| h == "mapped_sites");
+        let eng_raw = if let Some(ix) = i_engaged {
+            f.get(ix).cloned().unwrap_or_default()
+        } else if let Some(ix) = i_engaged_alt {
+            f.get(ix).cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let backend_engaged = eng_raw.parse::<i64>().ok();
+        let parity_exercised = i_par_exercised.and_then(|ix| parse_bool(f.get(ix).cloned().unwrap_or_default().as_str()));
+
         cells.push(Cell {
             seq: n,
             run_id: get(i_run),
@@ -265,7 +378,9 @@ fn main() {
             backend: get(i_backend),
             outcome: get(i_outcome),
             deterministic: parse_bool(&get(i_det)),
-            parity: parse_bool(&get(i_par)),
+            stdout_parity: parse_bool(&get(i_par)),
+            parity_exercised,
+            backend_engaged,
         });
     }
     if cells.is_empty() {
@@ -312,7 +427,11 @@ fn main() {
     let present_backends: BTreeSet<String> =
         denom_cells.iter().map(|c| c.backend.clone()).collect();
 
-    let default_order = ["dbi", "kvm", "sabre", "liteinst"];
+    // Per AGENTS.md e9patch is NOT a Detcore backend, but e9patch-scorecard.csv
+    // DOES legitimately contain an `e9patch` column (its own preprocessing
+    // measurement). Include it when present so the file remains self-rendering;
+    // main scorecard.csv never has e9patch rows anyway.
+    let default_order = ["dbi", "kvm", "sabre", "liteinst", "e9patch"];
     let backend_cols: Vec<String> = if let Some(list) = backends_arg {
         list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
     } else {
@@ -354,17 +473,47 @@ fn main() {
         if c.backend == "ptrace" || c.backend == "native" {
             continue;
         }
-        let pass = c.outcome == "pass";
-        let ran = c.outcome != "unavailable" && c.outcome != "skip";
+        // NOT-EXERCISED is a THIRD bucket, never a pass — vacuous, not green.
+        // A backend that did nothing agrees with the reference perfectly, so
+        // e9patch reporting mapped_sites=0 scores byte-identical parity while
+        // actually running plain ptrace underneath. That manufactured perfect
+        // score must not be credited. §319: the count must travel with the cell.
+        let is_not_exercised = matches!(
+            c.outcome.as_str(),
+            "not-exercised" | "not_exercised" | "notexercised" | "not-exercised-no-main-elf-sites"
+        ) || c.backend_engaged == Some(0) || c.parity_exercised == Some(false);
+
+        // A known-green cell that is vacuous is NOT a failure but also NOT a
+        // measurement; its parity/determinism must be withheld so a sweep over
+        // dynamic guests does not manufacture 100% e9patch parity.
+        let pass = c.outcome == "pass" && !is_not_exercised;
+        let ran = !matches!(
+            c.outcome.as_str(),
+            "unavailable" | "skip" | "not-exercised" | "not_exercised" | "notexercised" | "not-exercised-no-main-elf-sites"
+        ) && !is_not_exercised;
         // Determinism (run1 == run2) is independent of parity: a backend can be
         // self-deterministic yet diverge from ptrace. The CSV `deterministic`
         // field is authoritative; fall back to "verify pass => deterministic"
         // only when the collector left it blank. Do NOT gate on `pass`, which
-        // for a non-ptrace backend already requires parity.
-        let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
-        // Parity is true only when the collector recorded a bitwise match.
-        let par = c.parity.unwrap_or(false);
-        let par_measured = c.parity.is_some();
+        // for a non-ptrace backend already requires parity — except vacuous
+        // cells which must be withheld entirely.
+        let det = if is_not_exercised {
+            false
+        } else {
+            c.deterministic.unwrap_or(pass && c.test_mode == "verify")
+        };
+        // Parity is true only when the collector recorded a bitwise match AND
+        // the cell is not vacuous (§319).
+        let par = if is_not_exercised {
+            false
+        } else {
+            c.stdout_parity.unwrap_or(false)
+        };
+        let par_measured = if is_not_exercised {
+            false
+        } else {
+            c.stdout_parity.is_some()
+        };
         by_backend
             .entry(c.backend.clone())
             .or_default()
@@ -418,6 +567,82 @@ fn main() {
             e.3 += r;
         }
         rows.insert(bucket.clone(), row);
+    }
+
+    // A1 -- AN EMPTY DENOMINATOR IS NOT A ZERO RESULT.
+    //
+    // The per-cell vocabulary below (`?` / `~` / `n/a`, plus ran_count and
+    // measured_count) is careful about unmeasured CELLS, but it cannot speak for
+    // the denominator one level up: when no ptrace row passes the requested mode
+    // there are no cells at all, and every format renders a confident `TOTAL 0`
+    // (exit 0) that is indistinguishable from "we measured, and nothing passed".
+    // That happens for real -- a run that is dbi/strict only has a legitimately
+    // empty verify/ptrace denominator.
+    //
+    // So refuse to render, and say what IS present so the caller can pick a mode
+    // or backend that exists. Distinct exit status (3) keeps "could not measure"
+    // separable from usage errors (2) and from a rendered result (0).
+    //
+    // The remedy line reports the modes that would ACTUALLY yield a denominator --
+    // i.e. modes with a *passing ptrace* row -- not the modes the run merely
+    // contains. Those two differ exactly when the run has no ptrace rows at all
+    // (a dbi-only run "contains" strict, yet `--denominator strict` refuses too),
+    // and naming the wrong set would repeat this very defect one level up:
+    // a remedy is only actionable if it travels with the population it is drawn from.
+    let denom_total: usize = ptrace_pass.values().map(|s| s.len()).sum();
+    if denom_total == 0 {
+        let modes_present: BTreeSet<&str> = cells.iter().map(|c| c.test_mode.as_str()).collect();
+        let backends_present: BTreeSet<&str> = cells.iter().map(|c| c.backend.as_str()).collect();
+        let ptrace_rows = cells.iter().filter(|c| c.backend == "ptrace").count();
+        // Exactly the `--denominator` values that would produce a non-empty denominator.
+        let usable: BTreeSet<&str> = cells
+            .iter()
+            .filter(|c| c.backend == "ptrace" && c.outcome == "pass")
+            .map(|c| c.test_mode.as_str())
+            .collect();
+        let run_label = scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into());
+        let remedy = if !usable.is_empty() {
+            format!(
+                "Retry with --denominator <{}> -- those are the modes this run has passing \
+                 ptrace rows in.",
+                usable.iter().copied().collect::<Vec<_>>().join("|")
+            )
+        } else if ptrace_rows == 0 {
+            "This run has NO ptrace rows in any mode, so no denominator can be formed from it \
+             at all; changing --denominator will not help. Use a run that includes the ptrace \
+             reference backend."
+                .to_string()
+        } else {
+            format!(
+                "This run has {ptrace_rows} ptrace rows but none passing in any mode, so no \
+                 --denominator choice yields a population; the reference backend itself failed \
+                 here."
+            )
+        };
+        eprintln!(
+            "NO DATA: run {run} has 0 ptrace/{mode} passing cells, so the denominator is empty \
+             and no percentage is defined (this is NOT a measured zero).\n\
+             \x20 rows considered:  {n}\n\
+             \x20 ptrace rows:      {ptrace_rows} (passing in modes: {usable})\n\
+             \x20 modes present:    {modes}\n\
+             \x20 backends present: {backends}\n\
+             \x20 csv:              {csv}\n\
+             {remedy}",
+            run = run_label,
+            mode = denom_mode,
+            n = cells.len(),
+            ptrace_rows = ptrace_rows,
+            usable = if usable.is_empty() {
+                "none".to_string()
+            } else {
+                usable.iter().copied().collect::<Vec<_>>().join(",")
+            },
+            modes = modes_present.iter().copied().collect::<Vec<_>>().join(","),
+            backends = backends_present.iter().copied().collect::<Vec<_>>().join(","),
+            csv = csv_path.display(),
+            remedy = remedy,
+        );
+        exit(3);
     }
 
     let pct = |num: usize, den: usize| -> f64 {
@@ -531,7 +756,11 @@ fn main() {
                 for b in &backend_cols {
                     let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
                     // A backend that ran ZERO denom cells here is not measurable
-                    // (binary absent / not enabled) — show n/a, never a 0% red.
+                    // (binary absent, not enabled, or vacuous e9patch mapped_sites=0
+                    // which the engagement gate in collect-envelope.rs reclassifies
+                    // as not-exercised and excluded from parity). Show n/a, never a
+                    // 0% red — a vacuous cell manufactures a perfect parity score
+                    // because the shared ptrace runtime ran underneath.
                     let cell = if row.ptrace > 0 && r == 0 {
                         "n/a".to_string()
                     } else {

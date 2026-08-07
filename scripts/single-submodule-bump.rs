@@ -16,14 +16,26 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fs2::FileExt;
 use serde::Serialize;
+use serde_json::Value;
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, ExitStatus, Stdio};
 use thiserror::Error;
+
+#[allow(dead_code)]
+#[path = "../ci-hub/lib/qualifying_receipt.rs"]
+#[rustfmt::skip]
+mod qualifying_receipt;
+#[allow(dead_code)]
+#[path = "../ci-hub/lib/records.rs"]
+#[rustfmt::skip]
+mod records;
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -54,7 +66,7 @@ struct CommonArgs {
     /// Full known-green parent commit; current parent HEAD must equal it.
     #[arg(long)]
     base: String,
-    /// Durable evidence file containing the full base SHA and its green result.
+    /// Validation JSON/JSONL carrying a completed, counted green at the exact base SHA.
     #[arg(long)]
     base_evidence: PathBuf,
     /// Verification class; determinism requires matched-load calibration evidence.
@@ -122,6 +134,87 @@ struct Transition {
     submodule_a: String,
     submodule_b: String,
     checkout_branch: String,
+    base_evidence: BoundEvidence,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BoundEvidence {
+    record_ordinal: usize,
+    total_records: usize,
+    finished_at: String,
+    executed_tests: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum BoundEvidenceIssue {
+    UntypedArtifact,
+    MalformedRecord,
+    MissingRecord,
+    WrongSha,
+    IncompleteRun,
+    PartialRun,
+    CancelledRun,
+    TruncatedRun,
+    ZeroExecutedTests,
+    MissingExecutedTests,
+    MissingFailureCount,
+    NonzeroFailures,
+    NonpassResult,
+    UnboundRun,
+    PredicateRefused,
+}
+
+impl BoundEvidenceIssue {
+    fn code(self) -> &'static str {
+        match self {
+            Self::UntypedArtifact => "untyped-artifact",
+            Self::MalformedRecord => "malformed-record",
+            Self::MissingRecord => "missing-record",
+            Self::WrongSha => "wrong-sha",
+            Self::IncompleteRun => "incomplete-run",
+            Self::PartialRun => "partial-run",
+            Self::CancelledRun => "cancelled-run",
+            Self::TruncatedRun => "truncated-run",
+            Self::ZeroExecutedTests => "zero-executed-tests",
+            Self::MissingExecutedTests => "missing-executed-tests",
+            Self::MissingFailureCount => "missing-failure-count",
+            Self::NonzeroFailures => "nonzero-failures",
+            Self::NonpassResult => "nonpass-result",
+            Self::UnboundRun => "unbound-run",
+            Self::PredicateRefused => "qualifying-predicate-refused",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BoundEvidenceFailure {
+    issues: BTreeSet<BoundEvidenceIssue>,
+    details: Vec<String>,
+}
+
+impl BoundEvidenceFailure {
+    fn one(issue: BoundEvidenceIssue, detail: impl Into<String>) -> Self {
+        Self {
+            issues: BTreeSet::from([issue]),
+            details: vec![detail.into()],
+        }
+    }
+}
+
+impl fmt::Display for BoundEvidenceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let issues = self
+            .issues
+            .iter()
+            .map(|issue| issue.code())
+            .collect::<Vec<_>>()
+            .join(",");
+        write!(formatter, "bound-evidence/{issues}")?;
+        if !self.details.is_empty() {
+            write!(formatter, ": {}", self.details.join("; "))?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -313,7 +406,8 @@ fn inspect_transition(root: &Path, args: &CommonArgs) -> Result<Transition, Bump
             args.base
         )));
     }
-    require_bound_evidence(root, &args.base_evidence, &args.base, "base evidence")?;
+    let base_evidence =
+        require_bound_evidence(root, &args.base_evidence, &args.base, "base evidence")?;
     if matches!(args.verification_kind, VerificationKind::Determinism) {
         let calibration = args.matched_load_calibration.as_ref().ok_or_else(|| {
             BumpError::Precondition(
@@ -391,6 +485,7 @@ fn inspect_transition(root: &Path, args: &CommonArgs) -> Result<Transition, Bump
         submodule_a: parent_pin,
         submodule_b: target,
         checkout_branch,
+        base_evidence,
     })
 }
 
@@ -607,6 +702,13 @@ fn print_transition(transition: &Transition, args: &CommonArgs) {
     println!("  submodule_a={}", transition.submodule_a);
     println!("  submodule_b={}", transition.submodule_b);
     println!("  verification_kind={:?}", args.verification_kind);
+    println!(
+        "  base_evidence=record {}/{} finished_at={} executed_tests={}",
+        transition.base_evidence.record_ordinal,
+        transition.base_evidence.total_records,
+        transition.base_evidence.finished_at,
+        transition.base_evidence.executed_tests
+    );
     println!("  changed_paths_if_run={}", args.submodule.path());
 }
 
@@ -615,19 +717,249 @@ fn require_bound_evidence(
     path: &Path,
     sha: &str,
     name: &str,
-) -> Result<(), BumpError> {
+) -> Result<BoundEvidence, BumpError> {
     let path = absolute(root, path);
-    let content = fs::read_to_string(&path).map_err(|source| BumpError::Io {
-        path: path.clone(),
-        source,
-    })?;
-    if !content.contains(sha) {
-        return Err(BumpError::Precondition(format!(
-            "{name} {} does not contain full A SHA {sha}",
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Err(BumpError::Precondition(format!(
+                "{name} {} refused: bound-evidence/missing-record: file does not exist",
+                path.display()
+            )));
+        }
+        Err(source) => {
+            return Err(BumpError::Io {
+                path: path.clone(),
+                source,
+            });
+        }
+    };
+    let predicate = qualifying_receipt::load(root).map_err(|message| {
+        BumpError::Precondition(format!(
+            "{name} {} refused: qualifying predicate is unusable: {message}",
             path.display()
-        )));
+        ))
+    })?;
+    resolve_bound_evidence(&content, sha, &predicate).map_err(|failure| {
+        BumpError::Precondition(format!("{name} {} refused: {failure}", path.display()))
+    })
+}
+
+fn resolve_bound_evidence(
+    content: &str,
+    sha: &str,
+    predicate: &qualifying_receipt::QualifyingPredicate,
+) -> Result<BoundEvidence, BoundEvidenceFailure> {
+    let rows = parse_bound_evidence_rows(content)?;
+    let matching: Vec<(usize, &records::HistoryRow)> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.commit.as_deref() == Some(sha))
+        .map(|(index, row)| (index + 1, row))
+        .collect();
+    if matching.is_empty() {
+        let has_typed_identity = rows.iter().any(|row| row.commit.is_some());
+        return Err(BoundEvidenceFailure::one(
+            if has_typed_identity {
+                BoundEvidenceIssue::WrongSha
+            } else {
+                BoundEvidenceIssue::MissingRecord
+            },
+            if has_typed_identity {
+                format!("no validation record has exact commit {sha}")
+            } else {
+                "artifact contains no validation record with a commit identity".into()
+            },
+        ));
     }
-    Ok(())
+
+    let mut all_issues = BTreeSet::new();
+    let mut details = Vec::new();
+    let mut selected: Option<(chrono::DateTime<chrono::FixedOffset>, BoundEvidence)> = None;
+    for (ordinal, row) in matching {
+        let issues = bound_evidence_issues(row, sha, predicate);
+        if issues.is_empty() {
+            let finished_at = row.finished_at.as_deref().expect("checked completion");
+            let parsed = chrono::DateTime::parse_from_rfc3339(finished_at)
+                .expect("checked RFC3339 completion");
+            let candidate = BoundEvidence {
+                record_ordinal: ordinal,
+                total_records: rows.len(),
+                finished_at: finished_at.to_string(),
+                executed_tests: row.executed_tests.expect("checked positive execution"),
+            };
+            if selected
+                .as_ref()
+                .is_none_or(|(selected_time, _)| parsed > *selected_time)
+            {
+                selected = Some((parsed, candidate));
+            }
+            continue;
+        }
+        let codes = issues
+            .iter()
+            .map(|issue| issue.code())
+            .collect::<Vec<_>>()
+            .join(",");
+        details.push(format!("record {ordinal}: {codes}"));
+        all_issues.extend(issues);
+    }
+    if let Some((_, evidence)) = selected {
+        Ok(evidence)
+    } else {
+        Err(BoundEvidenceFailure {
+            issues: all_issues,
+            details,
+        })
+    }
+}
+
+fn parse_bound_evidence_rows(
+    content: &str,
+) -> Result<Vec<records::HistoryRow>, BoundEvidenceFailure> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err(BoundEvidenceFailure::one(
+            BoundEvidenceIssue::MissingRecord,
+            "evidence file is empty",
+        ));
+    }
+    if !matches!(content.as_bytes().first(), Some(b'{') | Some(b'[')) {
+        return Err(BoundEvidenceFailure::one(
+            BoundEvidenceIssue::UntypedArtifact,
+            "expected a JSON validation record or JSONL ledger",
+        ));
+    }
+
+    let values = match serde_json::from_str::<Value>(content) {
+        Ok(Value::Object(object)) => vec![Value::Object(object)],
+        Ok(Value::Array(values)) => values,
+        Ok(_) => {
+            return Err(BoundEvidenceFailure::one(
+                BoundEvidenceIssue::UntypedArtifact,
+                "top-level JSON evidence must be an object or array of objects",
+            ));
+        }
+        Err(whole_error) => {
+            let mut values = Vec::new();
+            for (index, line) in content.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<Value>(line) {
+                    Ok(Value::Object(object)) => values.push(Value::Object(object)),
+                    Ok(_) => {
+                        return Err(BoundEvidenceFailure::one(
+                            BoundEvidenceIssue::MalformedRecord,
+                            format!("JSONL line {} is not an object", index + 1),
+                        ));
+                    }
+                    Err(line_error) => {
+                        return Err(BoundEvidenceFailure::one(
+                            BoundEvidenceIssue::MalformedRecord,
+                            format!(
+                                "cannot parse JSON/JSONL (document: {whole_error}; line {}: {line_error})",
+                                index + 1
+                            ),
+                        ));
+                    }
+                }
+            }
+            values
+        }
+    };
+    if values.is_empty() {
+        return Err(BoundEvidenceFailure::one(
+            BoundEvidenceIssue::MissingRecord,
+            "evidence contains no validation records",
+        ));
+    }
+    values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            serde_json::from_value(value).map_err(|error| {
+                BoundEvidenceFailure::one(
+                    BoundEvidenceIssue::MalformedRecord,
+                    format!(
+                        "record {} does not match the validation schema: {error}",
+                        index + 1
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+fn bound_evidence_issues(
+    row: &records::HistoryRow,
+    sha: &str,
+    predicate: &qualifying_receipt::QualifyingPredicate,
+) -> BTreeSet<BoundEvidenceIssue> {
+    let mut issues = BTreeSet::new();
+    let result = row.result.as_deref().unwrap_or("");
+    if matches!(
+        result,
+        "cancelled" | "canceled" | "killed" | "no_result" | "no-result"
+    ) {
+        issues.insert(BoundEvidenceIssue::CancelledRun);
+    }
+    if matches!(result, "truncated" | "incomplete")
+        || row.extra.get("truncated").and_then(Value::as_bool) == Some(true)
+        || row.extra.get("incomplete").and_then(Value::as_bool) == Some(true)
+    {
+        issues.insert(BoundEvidenceIssue::TruncatedRun);
+    }
+    let completed_at = row
+        .finished_at
+        .as_deref()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok());
+    let state_incomplete = row
+        .extra
+        .get("state")
+        .and_then(Value::as_str)
+        .is_some_and(|state| state != "completed");
+    if completed_at.is_none() || state_incomplete {
+        issues.insert(BoundEvidenceIssue::IncompleteRun);
+    }
+    if row.profile.as_deref() != Some("full")
+        || row.selection_mode.as_deref() != Some("full")
+        || row.full_coverage == Some(false)
+        || result == "pass-partial"
+    {
+        issues.insert(BoundEvidenceIssue::PartialRun);
+    }
+    match row.executed_tests {
+        Some(0) => {
+            issues.insert(BoundEvidenceIssue::ZeroExecutedTests);
+        }
+        Some(count) if count > 0 => {}
+        _ => {
+            issues.insert(BoundEvidenceIssue::MissingExecutedTests);
+        }
+    }
+    match row.failures {
+        Some(0) => {}
+        Some(_) => {
+            issues.insert(BoundEvidenceIssue::NonzeroFailures);
+        }
+        None => {
+            issues.insert(BoundEvidenceIssue::MissingFailureCount);
+        }
+    }
+    if result != "pass" {
+        issues.insert(BoundEvidenceIssue::NonpassResult);
+    }
+    if row.commit_anchored != Some(true) || row.tree_dirty != Some(false) {
+        issues.insert(BoundEvidenceIssue::UnboundRun);
+    }
+    if matches!(
+        qualifying_receipt::row_qualification(row, sha, predicate),
+        qualifying_receipt::Qualification::Refused(_)
+    ) {
+        issues.insert(BoundEvidenceIssue::PredicateRefused);
+    }
+    issues
 }
 
 fn require_existing(root: &Path, path: &Path, name: &str) -> Result<(), BumpError> {
@@ -855,6 +1187,168 @@ fn exit_code(code: i32) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EVIDENCE_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn qualifying_predicate() -> qualifying_receipt::QualifyingPredicate {
+        qualifying_receipt::QualifyingPredicate::parse(
+            qualifying_receipt::EMBEDDED,
+            "embedded test predicate",
+        )
+        .unwrap()
+    }
+
+    fn green_record(sha: &str) -> Value {
+        serde_json::json!({
+            "schema_version": 3,
+            "finished_at": "2026-08-07T01:33:17Z",
+            "profile": "full",
+            "selection_mode": "full",
+            "commit": sha,
+            "commit_anchored": true,
+            "tree_dirty": false,
+            "result": "pass",
+            "failures": 0,
+            "executed_tests": 751,
+            "filtered_tests": 693
+        })
+    }
+
+    fn refusal(record: &Value, sha: &str) -> BoundEvidenceFailure {
+        resolve_bound_evidence(&record.to_string(), sha, &qualifying_predicate()).unwrap_err()
+    }
+
+    #[test]
+    fn sha_mention_without_green_record_is_refused() {
+        let sha = EVIDENCE_SHA;
+        let path = env::temp_dir().join(format!(
+            "submodule-bump-sha-mention-test-{}",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            format!("notes mention {sha}, but no validation ran\n"),
+        )
+        .unwrap();
+
+        let error = require_bound_evidence(Path::new("/"), &path, &sha, "base evidence")
+            .expect_err("a SHA substring is not bound green evidence");
+
+        assert!(
+            error
+                .to_string()
+                .contains("bound-evidence/untyped-artifact"),
+            "unexpected refusal: {error}"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn genuine_exact_sha_green_passes_and_states_executed_count() {
+        // This is the shape of the live schema-3 green for 85116489... in
+        // ignored/validate-run-ledger.jsonl: a completed full/full PASS, bound
+        // to a clean exact commit, with 751 executed tests and zero failures.
+        let record = green_record(EVIDENCE_SHA);
+
+        let evidence =
+            resolve_bound_evidence(&record.to_string(), EVIDENCE_SHA, &qualifying_predicate())
+                .unwrap();
+
+        assert_eq!(evidence.executed_tests, 751);
+        assert_eq!(evidence.finished_at, "2026-08-07T01:33:17Z");
+        assert_eq!((evidence.record_ordinal, evidence.total_records), (1, 1));
+    }
+
+    #[test]
+    fn wrong_sha_refuses_with_typed_reason() {
+        let failure = refusal(
+            &green_record("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            EVIDENCE_SHA,
+        );
+
+        assert_eq!(
+            failure.issues,
+            BTreeSet::from([BoundEvidenceIssue::WrongSha])
+        );
+    }
+
+    #[test]
+    fn zero_executed_tests_refuses_with_typed_reason() {
+        let mut record = green_record(EVIDENCE_SHA);
+        record["executed_tests"] = serde_json::json!(0);
+
+        let failure = refusal(&record, EVIDENCE_SHA);
+
+        assert!(failure
+            .issues
+            .contains(&BoundEvidenceIssue::ZeroExecutedTests));
+    }
+
+    #[test]
+    fn cancelled_run_refuses_with_typed_reason() {
+        let mut record = green_record(EVIDENCE_SHA);
+        record["result"] = serde_json::json!("cancelled");
+
+        let failure = refusal(&record, EVIDENCE_SHA);
+
+        assert!(failure.issues.contains(&BoundEvidenceIssue::CancelledRun));
+    }
+
+    #[test]
+    fn truncated_run_refuses_with_typed_reason() {
+        let mut record = green_record(EVIDENCE_SHA);
+        record["result"] = serde_json::json!("truncated");
+        record["truncated"] = serde_json::json!(true);
+
+        let failure = refusal(&record, EVIDENCE_SHA);
+
+        assert!(failure.issues.contains(&BoundEvidenceIssue::TruncatedRun));
+    }
+
+    #[test]
+    fn partial_run_and_missing_record_refuse_distinctly() {
+        let mut partial = green_record(EVIDENCE_SHA);
+        partial["profile"] = serde_json::json!("portable-only");
+        assert!(refusal(&partial, EVIDENCE_SHA)
+            .issues
+            .contains(&BoundEvidenceIssue::PartialRun));
+
+        let missing = serde_json::json!({"notes": format!("mentions {EVIDENCE_SHA}")});
+        assert_eq!(
+            refusal(&missing, EVIDENCE_SHA).issues,
+            BTreeSet::from([BoundEvidenceIssue::MissingRecord])
+        );
+    }
+
+    #[test]
+    fn incomplete_run_and_nonzero_failures_refuse_distinctly() {
+        let mut incomplete = green_record(EVIDENCE_SHA);
+        incomplete.as_object_mut().unwrap().remove("finished_at");
+        assert!(refusal(&incomplete, EVIDENCE_SHA)
+            .issues
+            .contains(&BoundEvidenceIssue::IncompleteRun));
+
+        let mut failed = green_record(EVIDENCE_SHA);
+        failed["failures"] = serde_json::json!(1);
+        assert!(refusal(&failed, EVIDENCE_SHA)
+            .issues
+            .contains(&BoundEvidenceIssue::NonzeroFailures));
+    }
+
+    #[test]
+    fn truncated_json_is_a_malformed_record_not_a_green() {
+        let failure = resolve_bound_evidence(
+            &format!(r#"{{"commit":"{EVIDENCE_SHA}","result":"pass""#),
+            EVIDENCE_SHA,
+            &qualifying_predicate(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            failure.issues,
+            BTreeSet::from([BoundEvidenceIssue::MalformedRecord])
+        );
+    }
 
     #[test]
     fn accepts_only_one_expected_path() {

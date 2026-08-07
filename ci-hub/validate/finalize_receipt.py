@@ -212,7 +212,21 @@ def _is_countless_clean_full_pass(rec: dict) -> bool:
 
 def _has_satisfied_schema5(rec: dict) -> bool:
     """Idempotency guard: a sha already carrying a satisfied schema-5 row needs
-    no re-mint (re-running scan must not append duplicates)."""
+    no re-mint (re-running scan must not append duplicates).
+
+    `== []` rather than `not ...` is deliberate, and mirrors the authority
+    (`qualifying_receipt.coverage_satisfied`, and the Rust `coverage_satisfied`
+    which refuses an omitted list outright). An ABSENT list is UNKNOWN, not
+    empty; `not cov.get(x)` cannot tell "measured, no violations" from "never
+    measured" and reads both as satisfied.
+
+    Getting this wrong here does NOT mint a false green -- the authority fails
+    CLOSED on the same input, so such a row can never certify. It fails the other
+    way: the guard would report the sha as already handled, `scan_and_finalize`
+    would skip the one mechanism that could repair it, and the row would sit
+    permanently un-minted and permanently uncertifiable, silently. Reading the
+    absent list as unknown makes the sha eligible for a re-mint instead.
+    """
     if (rec.get("schema_version") or 0) < SCHEMA_VERSION:
         return False
     cov = rec.get("coverage") or {}
@@ -220,8 +234,8 @@ def _has_satisfied_schema5(rec: dict) -> bool:
         isinstance(rec.get("executed_tests"), int)
         and rec["executed_tests"] > 0
         and cov.get("planned_test_nodes", 0) > 0
-        and not cov.get("zero_executed_nodes")
-        and not cov.get("absent_nodes")
+        and cov.get("zero_executed_nodes") == []
+        and cov.get("absent_nodes") == []
     )
 
 

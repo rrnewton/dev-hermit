@@ -208,6 +208,24 @@ applied — name the numbered trigger(s)). The label is informational, never a l
 `pre-land-human-review` notional but **never apply it**; never apply/remove/alter `human-approved` (owner-only);
 never recreate obsolete `human-review`/`post-facto-review` labels. Only a human reviewer removes the audit tags.
 
+### Shepherding: The Agent That Opens A PR Owns It Until It Lands
+
+**Owner directive (2026-08-04): during an implementation sprint, EVERY AGENT SHEPHERDS ITS OWN PR TO LANDING.**
+No handoff to a lander. A dedicated lander is for **bulk catch-up of an already-accumulated backlog**, not the
+steady-state model — a producer/lander split makes the lander a serial bottleneck and every PR behind it ages.
+
+**Staleness is the breach, not count.** An open-PR count treats a 3-hour-old PR and a 3-week-old PR as the same
+row; the old one is the violation. And staleness compounds: while a PR waits, `main` advances, its head goes
+stale, and its SHA-keyed validate receipt is invalidated — so waiting does not merely delay a landing, **it
+destroys the work that made it landable**, which then costs a rebase-and-revalidate to rebuild. Predicates:
+
+- **Age is a first-class field in every drain report**, and the drain order is **oldest-first** among landable
+  candidates. `ci-hub/health/pr_status.py` emits `age_hours` per PR and sorts on it; a PR whose age is unknown
+  sorts **last**, never first, so a missing timestamp cannot masquerade as the oldest and jump the queue.
+- **Rank and report by age, not by count.** A bare open-PR total is not a drain report.
+- **The WIP ceiling is scoped**, not universal: it is a regulated-pipeline limit for when the fleet is driving
+  hard at new PR creation. It is not the primary metric — staleness is.
+
 ### Landing Authorization
 
 On startup or replacement, `hermit-lander` must run `ci-hub/ci-hub inherit-obligations` to discover durable

@@ -70,7 +70,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 // Shared contract with collect-envelope.rs / render-scorecard.rs. Keep in sync.
 // `absence_reason` is APPENDED at the end: readers resolve columns by header
 // name, so trailing additions are backward compatible with the 19-column form.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,absence_reason";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,absence_reason";
 const BUCKET: &str = "reverie-examples";
 // Single reverie mode: "run the shared counter Tool". The specific tool
 // (counter1/counter2) is preserved in test_id so it slots into the
@@ -384,7 +384,7 @@ fn main() {
                     // Typed non-measurement. Never faked, never blank.
                     rows.push(row(
                         &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
-                        MODE, backend, "enabled", "skip", None, None, "", 0, &detail, absence,
+                        MODE, backend, "enabled", "skip", None, None, "", 0, &detail, absence, reps,
                     ));
                     continue;
                 }
@@ -395,7 +395,7 @@ fn main() {
                         &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
                         MODE, backend, "enabled", "skip", None, None, "", 0,
                         &format!("launcher not built: {}", bin.display()),
-                        ABSENCE_UNAVAILABLE,
+                        ABSENCE_UNAVAILABLE, reps,
                     ));
                     continue;
                 }
@@ -462,7 +462,7 @@ fn main() {
                 rows.push(row(
                     &run_id, &run_utc, &hermit_sha, &reverie_sha, dirty, &lane, &test_id,
                     MODE, backend, "enabled", outcome, Some(deterministic), parity,
-                    &output_hash, total_ms, &reason, absence_after_run,
+                    &output_hash, total_ms, &reason, absence_after_run, reps,
                 ));
             }
         }
@@ -549,8 +549,22 @@ fn row(
     duration_ms: i64,
     reason: &str,
     absence_reason: &str,
+    reps: u32,
 ) -> String {
     let det = deterministic.map(|b| if b { "1" } else { "0" }).unwrap_or("");
+    // WHAT THIS COLLECTOR ACTUALLY COMPARED, carried with the verdict.
+    //
+    // `counter` mode runs each cell `reps` times and asserts the syscall counter is
+    // identical across them. That IS a genuine multi-run comparison -- it is not a
+    // single run claiming determinism -- but it is the WEAKEST rung: it compares one
+    // integer, not stdout and not a log. Naming it keeps it from ever being read as
+    // a DETLOG or even a guest-visible claim.
+    let (verify_compare, tier, compared) = if deterministic.is_some() {
+        ("syscall-count-across-reps", "counter", format!("{reps}|{reps}"))
+    } else {
+        ("", "", String::new())
+    };
+    let bitwise_parity = if deterministic.is_some() { "0" } else { "" };
     let par = parity.map(|b| if b { "1" } else { "0" }).unwrap_or("");
     // reason may contain commas; wrap in quotes.
     let reason_q = format!("\"{}\"", reason.replace('"', "'"));
@@ -574,6 +588,10 @@ fn row(
         duration_ms.to_string(),
         String::new(), // max_rss_kb
         reason_q,
+        verify_compare.to_string(),
+        bitwise_parity.to_string(),
+        compared,
+        tier.to_string(),
         absence_reason.to_string(),
     ]
     .join(",")
