@@ -3531,9 +3531,10 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
         self.assertEqual(reason, "non-test-failure:cold-build-flake")
 
     def test_dynamorio_build_summary_is_build_no_result_not_test_failure(self) -> None:
-        # Exact 3801a7df shape: the DAG aggregate says ``1 failed``, but the
-        # first concrete operation is DynamoRIO configure/install, before the
-        # named product test.  The old count regex mislabeled this test-failure.
+        # Negative half of the mixed-output bracket. Exact 3801a7df shape: the
+        # DAG aggregate says ``1 failed``, but the only concrete operation is
+        # DynamoRIO configure/install, before a named product test. The old
+        # count regex mislabeled this test-failure.
         for operation in (
             "failed to build and install DynamoRIO: exit status: 2",
             "failed to configure DynamoRIO: exit status: 1",
@@ -3547,6 +3548,27 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
                 state, reason = protocol._classify_local(1, output)
                 self.assertEqual(state, "no_result")
                 self.assertEqual(reason, "non-test-failure:build-tool")
+
+    def test_explicit_test_verdict_wins_over_unrelated_build_marker(self) -> None:
+        # Positive half of the mixed-output bracket. Combined DAG output can
+        # carry an unrelated build-node marker and a genuine product-test
+        # verdict. The explicit named test + libtest summary is the stronger
+        # causal evidence and must remain red; canonical FAILED/3 receipt
+        # binding remains the final remediation authority.
+        for operation in (
+            "failed to build and install DynamoRIO: exit status: 2",
+            "failed to configure DynamoRIO: exit status: 1",
+        ):
+            with self.subTest(operation=operation):
+                output = (
+                    f"[build.dbi_release] {operation}\n"
+                    "test tests::determinism_holds ... FAILED\n"
+                    "test result: FAILED. 41 passed; 1 failed; 0 ignored\n"
+                    "❌ Validation summary [full] (4 passed, 2 failed)\n"
+                )
+                state, reason = protocol._classify_local(1, output)
+                self.assertEqual(state, "red")
+                self.assertEqual(reason, "test-failure")
 
     def test_build_script_panic_dag_summary_is_no_result_not_red(self) -> None:
         # REAL incident log (obligation 20260804-025419-0f891e43), planted verbatim:

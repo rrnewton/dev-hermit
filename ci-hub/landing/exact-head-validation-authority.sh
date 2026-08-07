@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Owner-authorized exact-head landing authority with named coverage sets.
-# Hermit's local full run and hosted portable run cover complementary execution
-# dimensions, so neither may stand in for the other. Labels and copied statuses
-# are never inputs.
+# Owner-authorized exact-head landing authority: counted local OR versioned
+# hosted, with any genuine red blocking. Labels and copied statuses are never
+# inputs.
 set -uo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -97,7 +96,7 @@ hosted_coverage=none
 required_coverage=unsupported
 case "$repo" in
     rrnewton/hermit)
-        required_coverage=local:portable+privileged,hosted:portable
+        required_coverage='local:portable+privileged|hosted:portable'
         [[ $local_state == green ]] && local_coverage=portable+privileged
         if [[ $hosted_state == green ]] && jq -e '
             .policy_schema_version == 3
@@ -131,10 +130,17 @@ if [[ $local_state == red || $hosted_state == red ]]; then
         "$required_coverage" "$sha"
     exit 3
 fi
-if [[ $repo == rrnewton/hermit && $local_state == green && $hosted_state == green ]]; then
-    printf 'AUTHORITY=local+hosted LOCAL=%s HOSTED=%s LOCAL_COVERAGE=%s HOSTED_COVERAGE=%s REQUIRED_COVERAGE=%s SHA=%s\n' \
-        "$local_state" "$hosted_state" "$local_coverage" "$hosted_coverage" \
-        "$required_coverage" "$sha"
+if [[ $repo == rrnewton/hermit && ( $local_state == green || $hosted_state == green ) ]]; then
+    if [[ $local_state == green && $hosted_state == green ]]; then
+        authority=local+hosted
+    elif [[ $local_state == green ]]; then
+        authority=local
+    else
+        authority=hosted
+    fi
+    printf 'AUTHORITY=%s LOCAL=%s HOSTED=%s LOCAL_COVERAGE=%s HOSTED_COVERAGE=%s REQUIRED_COVERAGE=%s SHA=%s\n' \
+        "$authority" "$local_state" "$hosted_state" "$local_coverage" \
+        "$hosted_coverage" "$required_coverage" "$sha"
     exit 0
 fi
 if [[ $repo == rrnewton/reverie && $hosted_state == green ]]; then

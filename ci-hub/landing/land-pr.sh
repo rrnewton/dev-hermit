@@ -196,18 +196,18 @@ abandon(){
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
-# 1b. Owner-authorized exact-head coverage gate. Hermit's counted local full
-# receipt binds portable+privileged coverage; its registered hosted job binds
-# hosted-portable coverage. Both complementary sets are required, and a genuine
-# red from either blocks. Missing/partial/stale evidence is NO_RESULT, never a
-# green. The same predicate is checked again after a SHA-changing rebase.
+# 1b. Owner-authorized exact-head authority gate. Hermit's counted local full
+# receipt and its versioned registered hosted-portable job are interchangeable
+# positives. A genuine red from either blocks; missing/partial/stale evidence is
+# NO_RESULT, never green. The same predicate is checked after a SHA-changing
+# rebase.
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
 VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$ORIG" 2>&1); VRC=$?
 say "exact-head validation(head=$ORIG) rc=$VRC: $VS"
 case "$VRC" in
   0) say "landing eligibility: exact-head authority green for $ORIG" ;;
   3) abandon "exact-head authority reported a genuine red for PR head $ORIG" 4 ;;
-  4) abandon "required exact-head coverage set is incomplete for PR head $ORIG" 4 ;;
+  4) abandon "neither exact-head authority produced green for PR head $ORIG" 4 ;;
   *) abandon "could not evaluate exact-head validation authority (rc=$VRC)" 4 ;;
 esac
 
@@ -278,7 +278,7 @@ else
   say "pushed head=$HEAD"
 fi
 
-# 4. The pushed exact head needs the complete named local+hosted coverage set.
+# 4. The pushed exact head needs counted local or versioned hosted authority.
 # A rebase that changed the SHA cannot inherit the old authorization.
 # Only the ledger-guarded applier may materialize the optional local cache label.
 #
@@ -376,10 +376,10 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. Re-evaluate the named exact-head coverage policy at the final mutation
-# boundary. The local positive now additionally dereferences its immutable
-# receipt comment; hosted portable remains complementary, not independently
-# sufficient. Any genuine red blocks.
+# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. The
+# local positive now additionally dereferences its immutable receipt comment;
+# versioned hosted portable remains independently sufficient. Any genuine red
+# blocks.
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \

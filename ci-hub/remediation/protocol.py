@@ -223,13 +223,21 @@ _TEST_FAILURE_MARKERS = (
     "panicked at",  # a rust test panic
 )
 _TEST_FAILURE_COUNT_RE = re.compile(r"\b([1-9]\d*)\s+failed\b")  # pytest "3 failed"
+# These forms bind the failure to a product test suite rather than to the DAG's
+# aggregate ``N failed`` node count.  They are intentionally narrower than
+# _has_test_failures: when an unrelated build marker is also present, only a
+# concrete named-test or test-runner verdict is strong enough to win.
+_NAMED_TEST_FAILURE_RE = re.compile(r"(?mi)^test\s+.+?\s+\.\.\.\s+failed\s*$")
+_PYTEST_FAILURE_SUMMARY_RE = re.compile(
+    r"(?mi)^=+[^\n]*\b[1-9]\d*\s+failed\b[^\n]*=+\s*$"
+)
 # A BUILD-PHASE failure — a cargo build-script panic or a "failed to run custom
 # build command" — is NOT a product test verdict, even though the DAG runner
 # renders it with the very same "N failed" / "panicked at" vocabulary a failing
 # test uses. It is a hole to re-dispatch (a cold-toolchain build-script flake
-# reproduces every cold run), never a tip to revert. It is recognised FIRST, ahead
-# of the test-verdict markers below, so that shared vocabulary can never
-# manufacture a false red. Incident: a reverie-dbi/build.rs:339 cold-build panic,
+# reproduces every cold run), never a tip to revert. It is recognised ahead of
+# ambiguous panic/count markers, but not ahead of an independent explicit test-
+# runner verdict. Incident: a reverie-dbi/build.rs:339 cold-build panic,
 # rendered "0 passed, 1 failed ... panicked at .../build.rs", was read as a
 # test-failure and armed a revert of a healthy tip (obligation
 # 20260804-025419-0f891e43). A build.rs panic means the crate never built, so no
@@ -327,6 +335,23 @@ def _has_test_failures(output: str) -> bool:
     return _TEST_FAILURE_COUNT_RE.search(lowered) is not None
 
 
+def _has_explicit_product_test_failure(output: str) -> bool:
+    """Whether a test runner itself emitted a strong failing verdict.
+
+    Raw combined logs can contain failures from independent DAG nodes.  A
+    DynamoRIO/build marker therefore cannot globally mask an explicit libtest,
+    named-test, or pytest verdict elsewhere in the same run.  Bare aggregate
+    ``N failed`` text is deliberately excluded because it may count DAG nodes.
+    The persisted canonical FAILED/3 receipt remains the final typed authority.
+    """
+    lowered = output.lower()
+    return (
+        "test result: failed" in lowered
+        or _NAMED_TEST_FAILURE_RE.search(output) is not None
+        or _PYTEST_FAILURE_SUMMARY_RE.search(output) is not None
+    )
+
+
 def _infra_signature(output: str) -> str | None:
     """Best-effort ROOT-CAUSE label for a no_result, or None if unrecognised.
 
@@ -403,6 +428,13 @@ def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
         # "N failed"/"panicked at". Recognised BEFORE build-script/test markers so
         # neither shared vocabulary can manufacture a revert: re-dispatch, never revert.
         return "no_result", "non-test-failure:inner-memorymax-oom"
+    if _has_explicit_product_test_failure(output):
+        # Combined DAG output may also mention an unrelated build-node failure.
+        # A concrete test-runner verdict is the stronger causal binding and must
+        # not be globally masked by that build marker.  Canonical FAILED/3
+        # receipt verification still decides whether this provisional red may
+        # drive remediation.
+        return "red", "test-failure"
     if _is_build_phase_failure(output):
         # A build-script panic / "failed to run custom build command" surfaced
         # through the DAG runner's "N failed" / "panicked at" summary is a
@@ -410,8 +442,9 @@ def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
         return "no_result", "non-test-failure:build-script"
     if _is_build_tool_failure(output):
         # The runner's aggregate ``N failed`` counts DAG nodes, not product
-        # tests.  The named configure/install operation proves this failure is
-        # in the build layer, so remediation must repair/re-dispatch the box.
+        # tests.  Without an explicit product-test verdict, the named
+        # configure/install operation binds the observed failure to the build
+        # layer, so remediation must repair/re-dispatch the box.
         return "no_result", "non-test-failure:build-tool"
     if _has_test_failures(output):
         return "red", "test-failure"

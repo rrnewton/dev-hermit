@@ -28,7 +28,13 @@ observed_sha=${STALE_SHA:-$sha}
 if [[ $command == validate-status ]]; then
     case ${LOCAL_STATE:-no_result} in
         green)
-            printf '{"repo":"%s","sha":"%s","verdict":"VALIDATED","exit_code":0,"qualifying_count":1,"newest_qualifying":{"sha":"%s","gates":[{"name":"portable CI DAG lane","result":"pass"},{"name":"privileged CI DAG lane","result":"pass"}]}}\n' "$repo" "$observed_sha" "$observed_sha"
+            qualifying_count=${LOCAL_COUNT:-1}
+            if [[ ${LOCAL_COVERAGE:-full} == partial ]]; then
+                gates='[{"name":"portable CI DAG lane","result":"pass"}]'
+            else
+                gates='[{"name":"portable CI DAG lane","result":"pass"},{"name":"privileged CI DAG lane","result":"pass"}]'
+            fi
+            printf '{"repo":"%s","sha":"%s","verdict":"VALIDATED","exit_code":0,"qualifying_count":%s,"newest_qualifying":{"sha":"%s","gates":%s}}\n' "$repo" "$observed_sha" "$qualifying_count" "$observed_sha" "$gates"
             exit 0 ;;
         red)
             printf '{"repo":"%s","sha":"%s","verdict":"FAILED","exit_code":3,"qualifying_count":0,"newest_qualifying":null}\n' "$repo" "$observed_sha"
@@ -40,7 +46,11 @@ if [[ $command == validate-status ]]; then
 fi
 case ${HOSTED_STATE:-no_result} in
     green)
-        printf '{"authority":"github-actions-exact-head-jobs","repo":"%s","sha":"%s","policy_schema_version":3,"state":"green","required_positive_count":1,"positive_count":1,"jobs":[{"state":"green","run_id":1,"job_id":2,"job_name":"Regular tests (GitHub-managed portable)"}]}\n' "$repo" "$observed_sha"
+        policy_schema=3
+        job_name='Regular tests (GitHub-managed portable)'
+        [[ ${HOSTED_POLICY:-valid} == wrong-schema ]] && policy_schema=2
+        [[ ${HOSTED_POLICY:-valid} == wrong-job ]] && job_name='Privileged capability and E2E tests'
+        printf '{"authority":"github-actions-exact-head-jobs","repo":"%s","sha":"%s","policy_schema_version":%s,"state":"green","required_positive_count":1,"positive_count":1,"jobs":[{"state":"green","run_id":1,"job_id":2,"job_name":"%s"}]}\n' "$repo" "$observed_sha" "$policy_schema" "$job_name"
         exit 0 ;;
     red)
         printf '{"authority":"github-actions-exact-head-jobs","repo":"%s","sha":"%s","state":"red","required_positive_count":1,"positive_count":0,"jobs":[{"state":"red","run_id":1,"job_id":2}]}\n' "$repo" "$observed_sha"
@@ -73,17 +83,26 @@ run_case() {
     last_output=$output
 }
 
-run_case 4 "local-only coverage is incomplete" env LOCAL_STATE=green HOSTED_STATE=no_result
-run_case 4 "weaker hosted-only coverage is incomplete" env LOCAL_STATE=no_result HOSTED_STATE=green
-run_case 0 "complementary local and hosted coverage" env LOCAL_STATE=green HOSTED_STATE=green
+run_case 0 "counted local exact-head positive" env LOCAL_STATE=green HOSTED_STATE=no_result
 [[ $last_output == *"LOCAL_COVERAGE=portable+privileged"* ]] || {
-    echo "FAIL: successful authority did not name local coverage" >&2; exit 1;
+    echo "FAIL: local authority did not name its full coverage" >&2; exit 1;
 }
+[[ $last_output == *"AUTHORITY=local "* ]] || {
+    echo "FAIL: local-only positive did not select local authority" >&2; exit 1;
+}
+run_case 0 "versioned hosted exact-head positive" env LOCAL_STATE=no_result HOSTED_STATE=green
 [[ $last_output == *"HOSTED_COVERAGE=portable"* ]] || {
-    echo "FAIL: successful authority did not name hosted coverage" >&2; exit 1;
+    echo "FAIL: hosted authority did not name its versioned coverage" >&2; exit 1;
 }
-[[ $last_output == *"REQUIRED_COVERAGE=local:portable+privileged,hosted:portable"* ]] || {
-    echo "FAIL: successful authority did not name the required coverage set" >&2; exit 1;
+[[ $last_output == *"AUTHORITY=hosted "* ]] || {
+    echo "FAIL: hosted-only positive did not select hosted authority" >&2; exit 1;
+}
+[[ $last_output == *"REQUIRED_COVERAGE=local:portable+privileged|hosted:portable"* ]] || {
+    echo "FAIL: authority did not name the OR coverage policy" >&2; exit 1;
+}
+run_case 0 "both exact-head positives" env LOCAL_STATE=green HOSTED_STATE=green
+[[ $last_output == *"AUTHORITY=local+hosted "* ]] || {
+    echo "FAIL: dual positive did not report both authorities" >&2; exit 1;
 }
 run_case 3 "local genuine red blocks hosted green" env LOCAL_STATE=red HOSTED_STATE=green
 run_case 3 "hosted genuine red blocks local green" env LOCAL_STATE=green HOSTED_STATE=red
@@ -91,6 +110,10 @@ run_case 4 "both authorities no-result" env LOCAL_STATE=no_result HOSTED_STATE=n
 run_case 4 "partial hosted set is no-result" env LOCAL_STATE=no_result HOSTED_STATE=partial
 run_case 4 "stale local evidence is refused" env LOCAL_STATE=green HOSTED_STATE=no_result STALE_SHA="$stale"
 run_case 4 "stale hosted evidence is refused" env LOCAL_STATE=no_result HOSTED_STATE=green STALE_SHA="$stale"
+run_case 4 "uncounted local report is refused" env LOCAL_STATE=green HOSTED_STATE=no_result LOCAL_COUNT=0
+run_case 4 "partial local gate coverage is refused" env LOCAL_STATE=green HOSTED_STATE=no_result LOCAL_COVERAGE=partial
+run_case 4 "wrong hosted policy schema is refused" env LOCAL_STATE=no_result HOSTED_STATE=green HOSTED_POLICY=wrong-schema
+run_case 4 "wrong hosted policy job is refused" env LOCAL_STATE=no_result HOSTED_STATE=green HOSTED_POLICY=wrong-job
 
 rc=0
 env CI_HUB_BIN="$tmp/ci-hub" VERIFY_RECEIPT_BIN="$tmp/verify-receipt" \
@@ -102,7 +125,10 @@ rc=0
 env CI_HUB_BIN="$tmp/ci-hub" VERIFY_RECEIPT_BIN="$tmp/verify-receipt" \
     LOCAL_STATE=green HOSTED_STATE=green RECEIPT_RC=1 \
     "$authority" --repo rrnewton/hermit --sha "$sha" --comments "$comments" \
-    >/dev/null || rc=$?
-[[ $rc -eq 4 ]] || { echo "FAIL: hosted-only coverage passed after local receipt refusal" >&2; exit 1; }
+    >"$tmp/receipt-fallback" || rc=$?
+[[ $rc -eq 0 ]] || { echo "FAIL: hosted authority did not survive local receipt refusal" >&2; exit 1; }
+grep -Fq 'AUTHORITY=hosted ' "$tmp/receipt-fallback" || {
+    echo "FAIL: receipt refusal did not downgrade the local path" >&2; exit 1;
+}
 
-echo "PASS: complementary named coverage positive=1; weaker/single/red/partial/no-result/stale/unbound negatives=9"
+echo "PASS: local/hosted OR positives=4; red/partial/stale/unbound/count/coverage/policy negatives=11"

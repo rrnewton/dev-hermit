@@ -1,17 +1,15 @@
 ---
 name: manual-ci-mode
-description: "Hermit exact-head local validation path within the complementary named-coverage landing policy."
+description: "Hermit exact-head local validation path within the owner-authorized local-or-hosted landing policy."
 ---
 
 # Exact-head local validation mode
 
-This skill operates the local half of Hermit's owner-authorized exact-head
-coverage policy. A full local receipt dereferenced by `ci-hub validate-status`
-binds the portable+privileged local coverage set. The registered hosted result
-dereferenced by `ci-hub hosted-status` binds hosted-portable coverage. These are
-complementary, not interchangeable: Hermit landing requires both named sets.
-Missing evidence from either side is a no-result that blocks landing, and a
-genuine product red from either authority also blocks.
+This skill operates the local half of Hermit's owner-authorized exact-head OR
+policy. A full, counted local receipt dereferenced by `ci-hub validate-status`
+and the versioned registered hosted result dereferenced by `ci-hub
+hosted-status` are interchangeable positives. Missing hosted evidence does not
+block a local green; a genuine product red from either authority does block.
 
 **Deployment transition.** Until
 [`hermit-merge-gate-authority-deployment`](../../../ci-hub/landing/README.md#deployment-obligation-hermit-merge-gate-authority-deployment)
@@ -30,9 +28,9 @@ Before landing, require all of the following:
 
 1. The task authorizes landing and required adversarial review is resolved at
    the exact current head.
-2. `ci-hub validate-status --sha <40-hex-head>` accepts that head's full local
-   receipt and the canonical lander observes the registered hosted-portable
-   green through `ci-hub hosted-status`.
+2. `ci-hub validate-status --sha <40-hex-head>` accepts that head's counted
+   full local receipt, or the canonical lander observes the versioned registered
+   hosted-portable green through `ci-hub hosted-status`.
 3. `ci-hub/landing/land-pr.sh` owns fresh-base preparation, the serialized land
    lock, merge mode, and post-merge ancestry check.
 

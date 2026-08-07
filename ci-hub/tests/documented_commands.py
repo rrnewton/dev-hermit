@@ -22,7 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 51
+EXPECTED_COMMANDS = 52
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -83,7 +83,7 @@ def _classify(text: str) -> str:
     match = re.match(r"^(?:\./)?ci-hub/ci-hub\s+(\S+)", normalized)
     if match:
         command = match.group(1)
-        if command in {"fresh", "health", "runner-health"}:
+        if command in {"fresh", "health", "hosted-status", "runner-health"}:
             return "live-read"
         if command in {
             "help",
@@ -180,6 +180,7 @@ def _check_shell_syntax(path: Path, block: list[tuple[int, str]]) -> None:
 def _render(text: str) -> str:
     return (
         text.replace("OBLIGATION_ID", "missing-obligation")
+        .replace("PARENT_HEAD", "a" * 40)
         .replace("REPAIR_SHA", "a" * 40)
         .replace("PR_NUMBER", os.environ.get("CI_HUB_DOCS_MERGED_PR", "1278"))
     )

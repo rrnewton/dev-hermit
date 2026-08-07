@@ -164,7 +164,7 @@ The land sequence itself lives here too, not only in `scratch/`:
 
 | script | role |
 | --- | --- |
-| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union\|--no-rebase]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires Hermit's complementary named local-full (portable+privileged) and hosted-portable exact-head coverage before and after rebase, derives `locally-validated` only for a qualifying local receipt, polls merge-gate, rechecks the same coverage at the final mutation boundary, performs a head-matched rebase merge, then verifies ancestry |
+| `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union\|--no-rebase]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires Hermit's counted local-full **or** versioned hosted-portable exact-head authority before and after rebase, derives `locally-validated` only for a qualifying local receipt, polls merge-gate, rechecks the same authority at the final mutation boundary, performs a head-matched rebase merge, then verifies ancestry |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
 ### Parent changes: hosted exact-head evidence, not a synthetic validate receipt
@@ -175,7 +175,7 @@ uses a distinct registered authority rather than widening that ledger with rows
 whose profile and coverage fields would be fictitious:
 
 ```bash
-ci-hub/ci-hub hosted-status --repo rrnewton/dev-hermit --sha <parent-head>
+ci-hub/ci-hub hosted-status --repo rrnewton/dev-hermit --sha PARENT_HEAD
 ```
 
 A parent green is the complete 4/4 exact-head set: `Parent tooling shard`,

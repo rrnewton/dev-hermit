@@ -714,9 +714,9 @@ class OperationalBoundsTest(unittest.TestCase):
             text=True,
             timeout=WALL_SECONDS,
         )
-        self.assertIn("complementary named coverage positive=1", result.stdout)
+        self.assertIn("local/hosted OR positives=4", result.stdout)
         self.assertIn(
-            "weaker/single/red/partial/no-result/stale/unbound negatives=9",
+            "red/partial/stale/unbound/count/coverage/policy negatives=11",
             result.stdout,
         )
 

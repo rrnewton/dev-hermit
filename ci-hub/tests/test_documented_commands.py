@@ -34,6 +34,14 @@ class DocumentedCommandsTest(unittest.TestCase):
         )
         self.assertTrue(any("ci-hub/ci-hub quickstart" in command.text for command in commands))
         self.assertTrue(any("systemd-run --user" in command.text for command in commands))
+        parent_hosted = [
+            command
+            for command in commands
+            if "hosted-status --repo rrnewton/dev-hermit" in command.text
+        ]
+        self.assertEqual(len(parent_hosted), 1)
+        self.assertEqual(parent_hosted[0].mode, "live-read")
+        self.assertIn("a" * 40, documented_commands._render(parent_hosted[0].text))
         reconcile_commands = [
             command
             for command in commands
