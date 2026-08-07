@@ -89,7 +89,28 @@ def is_full_coverage(record: dict) -> bool:
     ``full_coverage`` boolean. Prefer that explicit field when present; otherwise
     fall back to the profile taxonomy. This keys on the SAME ``profile == "full"``
     signal as the Rust ``validate_status::is_clean_full_coverage`` landing
-    predicate, so a partial pass can never be read as a full green here either."""
+    predicate.
+
+    SCOPE OF THIS ANSWER, corrected 2026-08-07. This reports the run's DECLARED
+    scope, not its achieved coverage, and the two are not the same. An earlier
+    version of this docstring claimed "a partial pass can never be read as a full
+    green here either"; that was false. The ``full_coverage`` field it prefers is
+    emitted by NO current ledger writer (17 schema-3 rows and nothing since --
+    schema 4 at ci-hub.rs:3849 and schema 5 at finalize_receipt.py:52 both omit
+    it), so in practice this always falls through to ``profile == "full"``. On the
+    live ledger there are 13 rows with ``profile == "full"`` whose own coverage
+    block records fewer executed test nodes than planned -- e.g. ``aff18cf466e3``
+    at 0/19 and ``ee3038998f`` at 4/19 -- and this function returns True for every
+    one of them.
+
+    That is acceptable HERE, because flake classification asks "was this run
+    supposed to be full-scope?", which a declaration answers. It is not
+    acceptable for a question about what actually ran. For that, use
+    ``totality.classify``/``totality.is_total``, which decide from observed
+    execution and return UNKNOWN rather than True when nothing records it. The
+    two predicates disagree on 386 of 654 live rows -- by design, because they
+    answer different questions. Do not swap one for the other without deciding
+    which question you are asking."""
     fc = record.get("full_coverage")
     if isinstance(fc, bool):
         return fc

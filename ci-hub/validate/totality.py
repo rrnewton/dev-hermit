@@ -26,6 +26,23 @@ without a scale; ``4`` means nothing until ``19`` is beside it. The returned
 record always states both, plus which field decided the verdict, so a consumer
 never has to re-derive the premise and a wrong call is visible in the record
 rather than inferable only from source.
+
+RELATIONSHIP TO THE TWO EXISTING PREDICATES -- read this before calling either,
+because three coverage predicates in one tree is a drift hazard unless each says
+what it is for:
+
+* ``validate_status.rs::is_clean_full_coverage`` (Rust, landing certifier) and
+  ``flake_class.is_full_coverage`` (Python) both answer "was this run DECLARED
+  full-scope?" from ``profile``/``selection_mode``. That is the right question
+  for flake classification, and it is the WRONG question for landing.
+* This module answers "did this run OBSERVABLY execute everything?"
+
+They are not interchangeable and they do not agree: measured on the live ledger,
+``flake_class.is_full_coverage`` and ``is_total`` differ on 386 of 654 rows, all
+in the same direction -- the declaration says full where execution does not show
+it. That is expected, not a bug in either. Swapping one for the other silently
+would either promote 386 unverified rows or reclassify every flake; decide which
+question you are asking first.
 """
 
 from __future__ import annotations
