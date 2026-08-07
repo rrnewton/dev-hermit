@@ -188,6 +188,17 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@# hides its own coverage is worse than a slow one, so each gate is run through
 	@# `gate`, which records the failure and continues; the target still exits
 	@# nonzero, with EVERY failing gate named at the end rather than just the first.
+	@# A GATE THAT PASSED IS NOT A GATE THAT RAN. `gate` reports OK on exit 0,
+	@# which cannot distinguish "checked 33 files" from "checked nothing" -- and
+	@# shellcheck and py-compile are silent on success, so their OK printed zero
+	@# evidence of work. Measured 2026-08-07: all four countable tools DO fail
+	@# closed on empty input today (rustfmt rc=1, shellcheck rc=2, py_compile rc=1,
+	@# unittest rc=5 "NO TESTS RAN"), so nothing is vacuous right now -- but that
+	@# is a property of the tools, not of this target, and nothing binds it. One
+	@# `shopt -s nullglob`, or a switch to a `find` that legitimately matches
+	@# nothing, and an empty run starts reporting OK. `counted` binds it: it counts
+	@# the inputs, REFUSES on zero, and prints the count beside the verdict so the
+	@# log carries what was checked instead of asking to be trusted.
 	@set -u; failures=''; \
 	gate() { \
 	  name="$$1"; shift; \
@@ -199,10 +210,26 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	    failures="$$failures $$name"; \
 	  fi; \
 	}; \
-	gate rustfmt         'rustfmt --edition 2021 --check scripts/*.rs'; \
-	gate shellcheck      'shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create'; \
-	gate py-compile      'python3 -m py_compile scripts/*.py'; \
-	gate py-unittest     'python3 -m unittest discover -s scripts -p "test_*.py"'; \
+	counted() { \
+	  name="$$1"; unit="$$2"; count_cmd="$$3"; shift 3; \
+	  printf '\n===== lint gate: %s =====\n' "$$name"; \
+	  n=$$(sh -c "$$count_cmd" 2>/dev/null || echo 0); \
+	  if [ "$$n" -eq 0 ] 2>/dev/null || [ -z "$$n" ]; then \
+	    printf 'lint gate FAILED   : %s (zero %s to check -- refusing to pass vacuously)\n' "$$name" "$$unit"; \
+	    failures="$$failures $$name"; \
+	    return; \
+	  fi; \
+	  if sh -c "$$*"; then \
+	    printf 'lint gate OK       : %s (%s %s checked)\n' "$$name" "$$n" "$$unit"; \
+	  else \
+	    rc=$$?; printf 'lint gate FAILED   : %s (rc=%s, %s %s checked)\n' "$$name" "$$rc" "$$n" "$$unit"; \
+	    failures="$$failures $$name"; \
+	  fi; \
+	}; \
+	counted rustfmt      files 'ls scripts/*.rs 2>/dev/null | wc -l' 'rustfmt --edition 2021 --check scripts/*.rs'; \
+	counted shellcheck   files 'ls scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create 2>/dev/null | wc -l' 'shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create'; \
+	counted py-compile   files 'ls scripts/*.py 2>/dev/null | wc -l' 'python3 -m py_compile scripts/*.py'; \
+	counted py-unittest  tests 'python3 -m unittest discover -s scripts -p "test_*.py" 2>&1 | sed -n "s/^Ran \([0-9]*\) test.*/\1/p"' 'python3 -m unittest discover -s scripts -p "test_*.py"'; \
 	gate error-proxies   '$(MAKE) --no-print-directory check-rust-error-string-proxies'; \
 	gate gitmodules      'scripts/check-parent-gitmodules.sh'; \
 	gate agent-utils-pin 'scripts/check-agent-utils-pin.rs'; \
