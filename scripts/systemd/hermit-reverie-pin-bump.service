@@ -1,0 +1,33 @@
+[Unit]
+Description=One bounded Reverie pin auto-safe-bump attempt (atomic, validated, fail-closed)
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/ci-hub/pin/auto_bump.py
+
+[Service]
+Type=oneshot
+
+# THE CHECKOUT IS ISOLATED, DELIBERATELY. Never point this at ~/work/dev-hermit/hermit:
+# a primary is an integration surface, and a scheduled job that mutates one would
+# collide with whatever an agent is mid-way through. Override with:
+#   systemctl --user edit hermit-reverie-pin-bump.service
+Environment=PIN_BUMP_CHECKOUT=%h/work/dev-hermit/ignored/pin-bump/hermit
+Environment=PIN_BUMP_BUDGET_SECONDS=3600
+
+# The job returns under its OWN power at the budget with a typed
+# `budget-exceeded` outcome. This is only the backstop for a wedge, and is
+# deliberately larger so the typed outcome wins the race in the normal case; a
+# kill leaves no verdict, which is the thing being avoided.
+#
+# TimeoutStartSec, NOT RuntimeMaxSec: `systemd-analyze verify` reports
+# "RuntimeMaxSec= has no effect in combination with Type=oneshot. Ignoring." A
+# directive systemd ignores is worse than none, because the comment beside it
+# claims a bound that does not exist. For a oneshot, ExecStart runs inside the
+# START job, so TimeoutStartSec is the knob that actually binds.
+TimeoutStartSec=5400
+
+ExecStart=/usr/bin/env python3 %h/work/dev-hermit/ci-hub/pin/bump_job.py \
+    --repo ${PIN_BUMP_CHECKOUT} \
+    --budget-seconds ${PIN_BUMP_BUDGET_SECONDS}
+
+# A refusal is the safety property working, not a unit failure; bump_job exits
+# nonzero only on a genuine error. SuccessExitStatus is therefore NOT widened —
+# doing so would hide real breakage.
