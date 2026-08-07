@@ -45,7 +45,58 @@ depth() { # $1=golden-prefix $2=cand-prefix -> Y
        END{if(!found)print (FNR<n?FNR:n)}' "$OUT/.g" "$OUT/.c"
 }
 
-GOLDEN_SHA=$(git -C /home/newton/work/dev-hermit/hermit rev-parse HEAD)
+# PROVENANCE OF THE BINARY, NOT OF A CHECKOUT.
+#
+# This used to be `git -C <parent>/hermit rev-parse HEAD` -- the PRIMARY's HEAD,
+# which is not where $H came from and is not even the same tree. $H defaults to
+# ignored/prefix-build/target/, a CARGO_TARGET_DIR holding no source at all, and
+# $HERMIT can point anywhere. So the old stamp described a checkout that had no
+# causal link to the measurement, while looking like a precise 40-hex
+# attribution. Measured 2026-08-07: the stamp read
+# f89c69766371806d3c9b2c3003531df2d59d6118 (clean) for a binary that self-reports
+# gf89c69766371-DIRTY. The SHA even matched -- only the qualification that makes
+# it meaningless was dropped, which is the worst case: unfalsifiable because it
+# looks right. ai_docs/measurements/prefix-parity-depth-ratchet_20260806.md
+# carries that false-precision stamp.
+#
+# The binary embeds its own build provenance (hermit-cli/build.rs ->
+# HERMIT_BUILD_GIT_SHA, `<ver> (<date>, g<sha12>[-dirty])`), where -dirty means
+# tracked/index changes existed in the BUILD tree. Ask the artifact that produced
+# the numbers, and fail closed to a loud UNKNOWN rather than to anything that
+# could be mistaken for a clean commit.
+#
+# A -dirty build is NOT re-identifiable from its SHA, so binary_sha256 is stamped
+# too: it is the only field that distinguishes two different dirty builds of the
+# same commit. Do not drop it because the SHA "looks specific enough".
+binary_provenance() { # $1=path to hermit binary -> g<sha>[-dirty] | UNKNOWN(reason)
+  local bin="$1" v g
+  [ -x "$bin" ] || { echo "UNKNOWN(no-executable-at:$bin)"; return 1; }
+  v=$("$bin" --version 2>/dev/null) || { echo "UNKNOWN(version-call-failed)"; return 1; }
+  # format: hermit <ver> (<date>, g<sha12>[-dirty]); build.rs emits g<sha>=unknown
+  # outside a checkout, which must stay visible rather than becoming a blank.
+  g=$(printf '%s' "$v" | sed -n 's/.*, \(g[^)]*\)).*/\1/p' | head -n1)
+  # The stamp is a single-line record, so an unrecognised --version must not be
+  # pasted in raw: a multi-line or long banner would break the line and spill
+  # into the record (observed with coreutils' two-line --version). Collapse to
+  # the first line, strip whitespace runs, and cap it -- enough to recognise what
+  # was pointed at, never enough to corrupt the format.
+  [ -n "$g" ] || {
+    local first
+    first=$(printf '%s' "$v" | head -n1 | tr -s '[:space:]' ' ' | cut -c1-60)
+    echo "UNKNOWN(unparsable-version:${first})"
+    return 1
+  }
+  printf '%s\n' "$g"
+}
+GOLDEN_SHA=$(binary_provenance "$H")
+BIN_SHA256=$(sha256sum "$H" 2>/dev/null | cut -d' ' -f1); [ -n "$BIN_SHA256" ] || BIN_SHA256=UNKNOWN
+case "$GOLDEN_SHA" in
+  UNKNOWN*) echo "WARNING: cannot attribute this measurement to any source revision:" \
+                 "$GOLDEN_SHA (binary=$H). Values below are UNATTRIBUTED." >&2 ;;
+  *-dirty)  echo "WARNING: binary was built from a DIRTY tree ($GOLDEN_SHA)." \
+                 "The commit does not identify the source; binary_sha256=$BIN_SHA256" \
+                 "is the only handle on what actually ran." >&2 ;;
+esac
 DATE=$(date -u +%Y-%m-%d)
 # EMIT is the candidate's own comparable-record count. It is printed as its own
 # column because Y alone cannot distinguish "compared and diverged immediately"
@@ -92,7 +143,7 @@ for spec in "$@"; do
   done
 done
 echo
-echo "golden_sha=$GOLDEN_SHA  flags='--log=info --backend <be>'  date=$DATE  metric=COMMIT-record prefix depth (INFO log)"
+echo "golden_sha=$GOLDEN_SHA  binary=$H  binary_sha256=$BIN_SHA256  flags='--log=info --backend <be>'  date=$DATE  metric=COMMIT-record prefix depth (INFO log)"
 # Distinct exit status so a consumer can tell "measured" from "could not measure":
 # 0 = every guest had a golden denominator, 2 = at least one guest was NO-GOLDEN.
 exit "$status"
