@@ -168,19 +168,33 @@ def is_total(row: Mapping[str, Any]) -> bool:
     return classify(row)["scope"] == TOTAL
 
 
-def incremental_chain_depth(rows, *, until_total: bool = True) -> dict[str, Any]:
+def incremental_chain_depth(rows, *, passes_only: bool = True) -> dict[str, Any]:
     """How many runs have accumulated since the last TOTAL one.
 
-    ``rows`` is any iterable of ledger rows; they are consumed newest-first, so
-    pass them in that order. Returns the depth plus the row that ended the
-    chain, so the answer is auditable rather than a bare number.
+    ``rows`` is any iterable of ledger rows, consumed newest-first, so pass them
+    in that order. Returns the depth plus the row that ended the chain, so the
+    answer is auditable rather than a bare number.
 
-    Depth is reported with an explicit ``anchored`` flag: a chain that never
-    reaches a TOTAL row is NOT depth-N, it is depth-at-least-N with no known
-    anchor, and conflating those would understate drift exactly when drift is
-    worst.
+    ``passes_only`` (default True) counts only PASSING runs, and this default is
+    load-bearing. A first version counted every row and reported "depth=69 runs
+    since the last total". Its actual composition was 60 fail / 9 pass /
+    1 no_result. "69 incremental verifications have accumulated without a full
+    one" and "9 passing runs have been accepted since the last provably-total
+    pass" are different claims, and only the second is the drift the number is
+    supposed to express -- a FAILED run is not a verification anyone relied on,
+    it is a run that told you something was broken. Counting failures inflated
+    the figure roughly sevenfold.
+
+    The composition is returned either way, so the number can never again be
+    read without seeing what it is made of.
+
+    Depth carries an explicit ``anchored`` flag: a chain that never reaches a
+    TOTAL row is NOT depth-N, it is depth-at-least-N with no known anchor, and
+    conflating those understates drift exactly when drift is worst.
     """
     depth = 0
+    composition: dict[str, int] = {}
+    skipped_non_pass = 0
     for row in rows:
         verdict = classify(row)
         if verdict["scope"] == TOTAL:
@@ -190,7 +204,15 @@ def incremental_chain_depth(rows, *, until_total: bool = True) -> dict[str, Any]
                 "anchor_commit": row.get("commit"),
                 "anchor_finished_at": row.get("finished_at"),
                 "anchor_reason": verdict["reason"],
+                "composition": composition,
+                "skipped_non_pass": skipped_non_pass,
+                "passes_only": passes_only,
             }
+        result = str(row.get("result") or "unknown")
+        composition[result] = composition.get(result, 0) + 1
+        if passes_only and result != "pass":
+            skipped_non_pass += 1
+            continue
         depth += 1
     return {
         "depth": depth,
@@ -199,6 +221,9 @@ def incremental_chain_depth(rows, *, until_total: bool = True) -> dict[str, Any]
         "anchor_finished_at": None,
         "anchor_reason": "no TOTAL run found in the rows examined;"
                          " depth is a LOWER BOUND, not a measurement",
+        "composition": composition,
+        "skipped_non_pass": skipped_non_pass,
+        "passes_only": passes_only,
     }
 
 

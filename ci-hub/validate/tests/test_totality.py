@@ -181,5 +181,40 @@ def test_immediate_total_is_depth_zero():
     assert d["depth"] == 0 and d["anchored"] is True
 
 
+def test_chain_depth_counts_only_passing_runs_by_default():
+    """Regression for a number I reported wrong. Counting every row gave
+    depth=69 whose composition was 60 fail / 9 pass / 1 no_result. A failed run
+    is not a verification anyone relied on, so it must not inflate the drift
+    figure."""
+    rows = [
+        row(commit="f2", result="fail", coverage=cov(2, 19)),
+        row(commit="f1", result="fail", coverage=cov(2, 19)),
+        row(commit="p1", result="pass", coverage=cov(4, 19)),
+        row(commit="t0", result="pass", coverage=cov(19, 19)),
+    ]
+    d = incremental_chain_depth(rows)
+    assert d["depth"] == 1, d                 # only p1 counts
+    assert d["skipped_non_pass"] == 2
+    assert d["composition"] == {"fail": 2, "pass": 1}
+    assert d["anchor_commit"] == "t0"
+
+
+def test_chain_depth_can_count_every_run_when_asked():
+    rows = [
+        row(commit="f1", result="fail", coverage=cov(2, 19)),
+        row(commit="p1", result="pass", coverage=cov(4, 19)),
+        row(commit="t0", result="pass", coverage=cov(19, 19)),
+    ]
+    d = incremental_chain_depth(rows, passes_only=False)
+    assert d["depth"] == 2 and d["skipped_non_pass"] == 0
+
+
+def test_chain_depth_always_reports_its_composition():
+    """The number must never again be readable without what it is made of."""
+    d = incremental_chain_depth([row(commit="x", result="fail", coverage=cov(1, 19))])
+    assert "composition" in d and d["composition"] == {"fail": 1}
+    assert d["anchored"] is False
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
