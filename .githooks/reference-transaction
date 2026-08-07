@@ -35,8 +35,10 @@
 # SCOPE, deliberately narrow so this cannot become noise:
 #   * only refs/heads/<shared>  (default `main`; add with
 #     `git config --add hermit.sharedbranch <name>`)
-#   * only REWINDS -- the new tip being an ancestor of the old one. Ordinary
-#     commits, fast-forwards and merges are untouched.
+#   * rewinds retain the declaration CAS below;
+#   * forward updates additionally require the parent-main writer mutex and a
+#     freshly fetched origin/main CAS receipt. This catches commit --no-verify,
+#     update-ref, merges, and pulls rather than trusting only pre-commit.
 #   * detached HEAD and feature branches in scratch worktrees are untouched,
 #     which is where nearly all agent work happens.
 # A guard that fires on ordinary work gets disabled, so it fires on nothing else.
@@ -107,7 +109,22 @@ while read -r old new ref; do
 
   # A rewind is the new tip being an ancestor of the old one: the branch moves
   # BACKWARDS. Fast-forwards and merges are descendants and never reach here.
-  git merge-base --is-ancestor "$new" "$old" 2>/dev/null || continue
+  if ! git merge-base --is-ancestor "$new" "$old" 2>/dev/null; then
+    # A brand-new fixture/local repository has no parent-main authority yet.
+    # Once origin/main has been fetched, every forward update is publication
+    # state and must carry the serialized writer receipt.
+    git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}' >/dev/null || continue
+    root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -z "$root" ] || [ ! -x "$root/scripts/parent-main-write" ]; then
+      echo "parent-main-write: REFUSED: serialization gate is missing" >&2
+      status=1
+      continue
+    fi
+    if ! "$root/scripts/parent-main-write" verify-ref "$old" "$new"; then
+      status=1
+    fi
+    continue
+  fi
 
   # THE COMPARE half of compare-and-swap.
   if [ -n "${HERMIT_RESET_EXPECT:-}" ]; then

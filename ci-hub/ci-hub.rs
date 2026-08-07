@@ -2091,19 +2091,12 @@ fn ci_mode_set(root: &Path, args: CiModeSetArgs) -> Result<i32, CiHubError> {
         }
     }
 
-    // 3. Commit the state file to parent main (path-scoped; never disturbs
-    //    another agent's staged work). Push follows; a rejected push is
-    //    reported, not force-resolved, on the shared checkout.
+    // 3. Commit and publish through the one serialized parent-main writer.
+    //    It freshly fetches origin/main, enforces the CAS, and verifies fresh
+    //    post-push ancestry without disturbing another agent's staged work.
     match commit_ci_mode_state(root, value) {
         Ok(true) => {
-            println!("Committed {CI_MODE_STATE_PATH} to parent main.");
-            match push_parent_main(root) {
-                Ok(()) => println!("Pushed origin HEAD:main."),
-                Err(error) => {
-                    eprintln!("PUSH FAILED: {error}");
-                    failures.push(format!("push: {error}"));
-                }
-            }
+            println!("Committed and published {CI_MODE_STATE_PATH} to parent main.");
         }
         Ok(false) => println!("No state change to commit (file already matches)."),
         Err(error) => {
@@ -2144,42 +2137,16 @@ fn commit_ci_mode_state(root: &Path, value: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let message = format!("ci-hub: set CI mode to {value}");
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", &message, "-o", "--", CI_MODE_STATE_PATH])
+    let output = Command::new(root.join("scripts/parent-main-write"))
+        .current_dir(root)
+        .args(["commit", "-m", &message, "--", CI_MODE_STATE_PATH])
         .output()
-        .map_err(|source| format!("launch git commit: {source}"))?;
+        .map_err(|source| format!("launch serialized parent-main writer: {source}"))?;
     if output.status.success() {
         Ok(true)
     } else {
         Err(format!(
-            "git commit exited {}: {}",
-            exit_status_code(output.status),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
-}
-
-fn push_parent_main(root: &Path) -> Result<(), String> {
-    let mut command = if on_path("with-proxy") {
-        let mut command = Command::new("with-proxy");
-        command.arg("git");
-        command
-    } else {
-        Command::new("git")
-    };
-    let output = command
-        .arg("-C")
-        .arg(root)
-        .args(["push", "origin", "HEAD:main"])
-        .output()
-        .map_err(|source| format!("launch git push: {source}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "git push exited {}: {}",
+            "serialized parent-main writer exited {}: {}",
             exit_status_code(output.status),
             String::from_utf8_lossy(&output.stderr).trim()
         ))
@@ -2377,17 +2344,16 @@ fn commit_batch_state(root: &Path, name: &str) -> Result<bool, String> {
     } else {
         format!("ci-hub: set CI batch to {name}")
     };
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", &message, "-o", "--", CI_BATCH_STATE_PATH])
+    let output = Command::new(root.join("scripts/parent-main-write"))
+        .current_dir(root)
+        .args(["commit", "-m", &message, "--", CI_BATCH_STATE_PATH])
         .output()
-        .map_err(|source| format!("launch git commit: {source}"))?;
+        .map_err(|source| format!("launch serialized parent-main writer: {source}"))?;
     if output.status.success() {
         Ok(true)
     } else {
         Err(format!(
-            "git commit exited {}: {}",
+            "serialized parent-main writer exited {}: {}",
             exit_status_code(output.status),
             String::from_utf8_lossy(&output.stderr).trim()
         ))
@@ -2449,14 +2415,7 @@ fn publish_batch(
 
     match commit_batch_state(root, &state.name) {
         Ok(true) => {
-            println!("Committed {CI_BATCH_STATE_PATH} to parent main.");
-            match push_parent_main(root) {
-                Ok(()) => println!("Pushed origin HEAD:main."),
-                Err(error) => {
-                    eprintln!("PUSH FAILED: {error}");
-                    failures.push(format!("push: {error}"));
-                }
-            }
+            println!("Committed and published {CI_BATCH_STATE_PATH} to parent main.");
         }
         Ok(false) => println!("No state change to commit (file already matches)."),
         Err(error) => {

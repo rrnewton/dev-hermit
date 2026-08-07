@@ -31,6 +31,17 @@ set -u
 LIMIT_KB="${HERMIT_HYGIENE_MAX_KB:-1024}"
 POLICY=".githooks/hygiene-policy.md"
 
+# Parent main is a serialized publication surface.  This early check gives a
+# useful refusal before Git writes a commit object; reference-transaction below
+# enforces the same receipt even when --no-verify skips this hook.
+if [ "$(git branch --show-current 2>/dev/null)" = main ]; then
+  if [ ! -x scripts/parent-main-write ]; then
+    echo "parent-main-write: REFUSED: serialization gate is missing" >&2
+    exit 1
+  fi
+  scripts/parent-main-write verify-commit || exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # SHARED-INDEX GUARD.
 #

@@ -12,7 +12,9 @@
 set -uo pipefail
 
 HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/reference-transaction"
+WRITER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/parent-main-write"
 [ -x "$HOOK" ] || { echo "FATAL: hook not executable at $HOOK"; exit 1; }
+[ -x "$WRITER" ] || { echo "FATAL: writer not executable at $WRITER"; exit 1; }
 
 pass=0; fail=0
 ok()   { pass=$((pass+1)); echo "  PASS  $1"; }
@@ -24,6 +26,9 @@ new_repo() {
   mkdir -p "$d/.githooks"
   cp "$HOOK" "$d/.githooks/reference-transaction"
   chmod +x "$d/.githooks/reference-transaction"
+  mkdir -p "$d/scripts"
+  cp "$WRITER" "$d/scripts/parent-main-write"
+  chmod +x "$d/scripts/parent-main-write"
   git -C "$d" config core.hooksPath .githooks
   git -C "$d" config user.name t
   git -C "$d" config user.email t@invalid
@@ -112,14 +117,20 @@ fi
 rm -rf "$r"
 
 # ---------------------------------------------------------------- POSITIVE 3
-# Fast-forward: the tip moves forward, which is not a rewind.
+# Fast-forward: it remains allowed, but now only through the serialized sync
+# path so another local writer cannot append between fetch and ref update.
 r=$(new_repo); u=$(new_repo)
-commit "$u" base; commit "$u" ahead
+commit "$u" base
 git -C "$r" remote add origin "$u" >/dev/null 2>&1
 git -C "$r" fetch -q origin main 2>/dev/null
-out=$(git -C "$r" merge --ff-only FETCH_HEAD 2>&1)
+git -C "$r" checkout -q -B main FETCH_HEAD
+commit "$u" ahead
+git -C "$r" fetch -q origin main 2>/dev/null
+out=$(cd "$r" && HERMIT_PARENT_MAIN_NO_PROXY=1 \
+  HERMIT_PARENT_MAIN_LOCK_PATH="$r/parent-main.lock" \
+  scripts/parent-main-write sync 2>&1)
 if [ "$(tip "$r")" = "$(tip "$u")" ]; then
-  ok "fast-forward to the remote tip is untouched"
+  ok "serialized fast-forward to the remote tip is allowed"
 else
   bad "fast-forward was blocked" "$out"
 fi

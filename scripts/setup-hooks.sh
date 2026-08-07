@@ -5,9 +5,11 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 git config core.hooksPath .githooks
 chmod +x .githooks/* 2>/dev/null || true
-echo "core.hooksPath -> .githooks (pre-commit hygiene + pre-push main-health warning active)."
+echo "core.hooksPath -> .githooks (serialized parent-main writes + hygiene + main-health active)."
 echo "Policy: .githooks/hygiene-policy.md"
 echo "Override an oversized-but-intended file with: HERMIT_HYGIENE_OVERRIDE=1 git commit ..."
 echo "Every push polls GitHub current-main workflow truth; RED warns but does not block a fix."
 echo "Every commit warns on stale primaries/gitlinks; make checkout-fresh publishes a coherent clean snapshot."
 echo "Shared-branch rewinds are REFUSED unless you declare the tip: HERMIT_RESET_EXPECT=<sha> git reset ..."
+echo "Parent main commits/pushes are REFUSED outside scripts/parent-main-write."
+echo "Gitlink/hook repairs require its retained --audit-reason path."

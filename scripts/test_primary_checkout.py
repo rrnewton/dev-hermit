@@ -563,6 +563,10 @@ class PreCommitHookTests(_ParentWorkspaceFixture):
         (self.root / "notes.md").write_text("parent notes\n")
         git(self.root, "add", "crates-squat/Cargo.toml", "notes.md")
         git(self.root, "commit", "-m", "parent files", "--no-verify")
+        # These cases isolate pin/hygiene behavior. Parent-main serialization
+        # has its own real-hook suite; use the normal feature-branch surface so
+        # this suite does not need a writer receipt unrelated to its assertion.
+        git(self.root, "switch", "-c", "test-pin-hook")
 
     def commit(self, *pathspec: str, message: str = "unrelated parent work", **env: str):
         environment = dict(os.environ, PRIMARY_CHECKOUT_DISABLE_PROXY="1", **env)

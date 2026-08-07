@@ -249,13 +249,14 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	  fi; \
 	}; \
 	counted rustfmt      files 'ls scripts/*.rs 2>/dev/null | wc -l' 'rustfmt --edition 2021 --check scripts/*.rs'; \
-	counted shellcheck   files 'ls scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create 2>/dev/null | wc -l' 'shellcheck --severity=warning scripts/*.sh .githooks/pre-commit .githooks/pre-push .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create'; \
+	counted shellcheck   files 'ls scripts/*.sh scripts/parent-main-write .githooks/pre-commit .githooks/pre-push .githooks/reference-transaction .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create 2>/dev/null | wc -l' 'shellcheck --severity=warning scripts/*.sh scripts/parent-main-write .githooks/pre-commit .githooks/pre-push .githooks/reference-transaction .orc/plugins/hermit-dev/gh-issue-create .orc/plugins/hermit-dev/gh-coord-comment .orc/plugins/hermit-dev/gh-coord-pr-create'; \
 	counted py-compile   files 'ls scripts/*.py 2>/dev/null | wc -l' 'python3 -m py_compile scripts/*.py'; \
 	counted py-unittest  tests 'python3 -m unittest discover -s scripts -p "test_*.py" 2>&1 | sed -n "s/^Ran \([0-9]*\) test.*/\1/p"' 'python3 -m unittest discover -s scripts -p "test_*.py"'; \
 	gate error-proxies   '$(MAKE) --no-print-directory check-rust-error-string-proxies'; \
 	gate gitmodules      'scripts/check-parent-gitmodules.sh'; \
 	gate agent-utils-pin 'scripts/check-agent-utils-pin.rs'; \
 	gate primary-fresh   'scripts/primary_checkout.py check'; \
+	gate reset-cas       '.githooks/tests/test-reset-cas-guard.sh'; \
 	gate codex-setup     '$(MAKE) --no-print-directory check-codex-setup'; \
 	gate claude-md-size  '$(MAKE) --no-print-directory check-claude-md-size'; \
 	gate portability     '$(MAKE) --no-print-directory check-portability'; \

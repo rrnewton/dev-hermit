@@ -20,6 +20,7 @@ PRODUCTS = ("hermit", "reverie", "liteinst2")
 MAIN_REF = "refs/heads/main"
 REVERIE_GIT_URL = "https://github.com/rrnewton/reverie.git"
 SNAPSHOT_COMMIT_MESSAGE = "Advance product submodules as consistent snapshot"
+SNAPSHOT_AUDIT_REASON = "publish coherent product-main gitlinks"
 REVERIE_SOURCE = re.compile(
     rf"^git\+{re.escape(REVERIE_GIT_URL)}\?rev=([0-9a-f]{{40}})#([0-9a-f]{{40}})$"
 )
@@ -97,6 +98,26 @@ def print_command_output(result: subprocess.CompletedProcess[str], stream: TextI
     for output in (result.stdout, result.stderr):
         if output:
             print(output.rstrip(), file=stream)
+
+
+def run_parent_main_write(
+    root: Path, *args: str, use_proxy: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Use the single serialized parent-main commit+push authority."""
+    env = dict(os.environ)
+    for name in GIT_REPO_SCOPED_ENV:
+        env.pop(name, None)
+    if not use_proxy:
+        env["HERMIT_PARENT_MAIN_NO_PROXY"] = "1"
+    helper = Path(__file__).with_name("parent-main-write")
+    return subprocess.run(
+        (str(helper), *args),
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
 
 
 def _walk_reverie_dependencies(value: object) -> list[str]:
@@ -335,33 +356,22 @@ def publish_parent_snapshot(
         print("ERROR: could not inspect staged product gitlinks.", file=err)
         return 1
 
-    commit = run_git(
+    publish = run_parent_main_write(
         root,
         "commit",
-        "--only",
         "-m",
         SNAPSHOT_COMMIT_MESSAGE,
+        "--audit-reason",
+        SNAPSHOT_AUDIT_REASON,
         "--",
         *PRODUCTS,
-    )
-    print_command_output(commit, out if commit.returncode == 0 else err)
-    if commit.returncode != 0:
-        print("ERROR: automatic parent snapshot commit failed; push skipped.", file=err)
-        return 1
-
-    push = run_git(
-        root,
-        "push",
-        "origin",
-        "HEAD:refs/heads/main",
-        network=True,
         use_proxy=use_proxy,
     )
-    print_command_output(push, out if push.returncode == 0 else err)
-    if push.returncode != 0:
+    print_command_output(publish, out if publish.returncode == 0 else err)
+    if publish.returncode != 0:
         print(
-            "HARD WARNING: parent snapshot commit is local but push failed; reconcile "
-            "without force-pushing.",
+            "HARD WARNING: serialized parent snapshot publication failed; reconcile "
+            "any named local commit without force-pushing.",
             file=err,
         )
         return 1

@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# Serialize every parent-main publication and bind it to a freshly fetched
+# origin/main value.  Hooks call the verify-* subcommands; humans and tools use
+# commit, publish, or sync.  No mode force-pushes or rewrites a branch.
+set -euo pipefail
+
+ZERO=0000000000000000000000000000000000000000
+
+die() {
+  echo "parent-main-write: REFUSED: $*" >&2
+  exit 1
+}
+
+repo_root() {
+  git rev-parse --show-toplevel 2>/dev/null || die "not inside a Git checkout"
+}
+
+lock_path() {
+  if [ -n "${HERMIT_PARENT_MAIN_LOCK_PATH:-}" ]; then
+    printf '%s\n' "$HERMIT_PARENT_MAIN_LOCK_PATH"
+  else
+    printf '/tmp/dev-hermit-parent-main-%s.lock\n' "$(id -u)"
+  fi
+}
+
+acquire_lock() {
+  local path timeout
+  path=$(lock_path)
+  timeout=${HERMIT_PARENT_MAIN_LOCK_TIMEOUT:-30}
+  exec 9>"$path"
+  if ! flock -w "$timeout" 9; then
+    local holder
+    holder=$(sed -n '1,4p' "$path" 2>/dev/null | tr '\n' ' ')
+    die "another parent-main writer owns $path after ${timeout}s${holder:+ ($holder)}"
+  fi
+  printf 'pid=%s\nmode=%s\nreason=%s\nstarted=%s\n' \
+    "$$" "$HERMIT_PARENT_MAIN_MODE" "${HERMIT_PARENT_MAIN_AUDIT_REASON:-ordinary}" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$path"
+  export HERMIT_PARENT_MAIN_LOCK_FD=9
+  export HERMIT_PARENT_MAIN_LOCK_PATH="$path"
+}
+
+verify_lock() {
+  local fd=${HERMIT_PARENT_MAIN_LOCK_FD:-} expected actual
+  expected=$(lock_path)
+  case "$fd" in ''|*[!0-9]*) die "missing serialized-writer lock receipt" ;; esac
+  [ -e "/proc/$$/fd/$fd" ] || die "writer lock fd $fd is not inherited"
+  actual=$(readlink "/proc/$$/fd/$fd" 2>/dev/null || true)
+  [ "$actual" = "$expected" ] || die "writer lock fd does not name $expected"
+  flock -n "$fd" || die "writer lock is not owned by this operation"
+}
+
+network_git() {
+  local root=$1
+  shift
+  local url
+  url=$(git -C "$root" remote get-url origin 2>/dev/null || true)
+  if [ "${HERMIT_PARENT_MAIN_NO_PROXY:-}" = 1 ] ||
+     [ -z "$url" ] || [ "${url#/}" != "$url" ] || [ "${url#file://}" != "$url" ]; then
+    git -C "$root" "$@"
+  elif command -v with-proxy >/dev/null 2>&1; then
+    with-proxy git -C "$root" "$@"
+  else
+    git -C "$root" "$@"
+  fi
+}
+
+fetch_expected() {
+  local root=$1
+  network_git "$root" fetch origin main >/dev/null
+  HERMIT_PARENT_MAIN_EXPECT=$(git -C "$root" rev-parse --verify 'refs/remotes/origin/main^{commit}')
+  export HERMIT_PARENT_MAIN_EXPECT
+}
+
+is_sensitive_path() {
+  case "$1" in
+    hermit|reverie|liteinst2|agent-utils|.githooks/*|scripts/parent-main-write|scripts/setup-hooks.sh)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+range_has_sensitive_path() {
+  local root=$1 old=$2 new=$3 path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    is_sensitive_path "$path" && return 0
+  done < <(git -C "$root" diff --name-only "$old" "$new" --)
+  return 1
+}
+
+verify_audit_receipt() {
+  local root=$1 base=$2 commit=$3 message reason
+  [ "${HERMIT_PARENT_MAIN_MODE:-}" = audited ] ||
+    die "gitlink/hook writes require --audit-reason"
+  reason=${HERMIT_PARENT_MAIN_AUDIT_REASON:-}
+  [ -n "$reason" ] || die "audited mode requires a non-empty reason"
+  message=$(git -C "$root" log -1 --format=%B "$commit")
+  grep -Fqx 'Parent-Main-Write-Mode: audited' <<<"$message" ||
+    die "audited commit $commit lacks Parent-Main-Write-Mode trailer"
+  grep -Fqx "Parent-Main-Write-Reason: $reason" <<<"$message" ||
+    die "audited commit $commit does not retain this audit reason"
+  grep -Fqx "Parent-Main-Write-Base: $base" <<<"$message" ||
+    die "audited commit $commit is not bound to fetched base $base"
+}
+
+verify_context() {
+  local expected=${HERMIT_PARENT_MAIN_EXPECT:-}
+  verify_lock
+  [[ "$expected" =~ ^[0-9a-f]{40}$ ]] || die "missing fetched-origin CAS receipt"
+  printf '%s\n' "$expected"
+}
+
+verify_commit() {
+  local root branch head expected path sensitive=0
+  root=$(repo_root)
+  branch=$(git -C "$root" branch --show-current)
+  [ "$branch" = main ] || return 0
+  expected=$(verify_context)
+  head=$(git -C "$root" rev-parse HEAD)
+  [ "$head" = "$expected" ] ||
+    die "ordinary main commit is stale (HEAD=$head fetched-origin=$expected)"
+  while IFS= read -r path; do
+    is_sensitive_path "$path" && sensitive=1
+  done < <(git -C "$root" diff --cached --name-only --)
+  if [ "$sensitive" -eq 1 ] && [ "${HERMIT_PARENT_MAIN_MODE:-}" != audited ]; then
+    die "gitlink/hook commit requires the retained --audit-reason path"
+  fi
+}
+
+verify_ref() {
+  local old=${1:?old SHA required} new=${2:?new SHA required} root expected mode
+  root=$(repo_root)
+  expected=$(verify_context)
+  mode=${HERMIT_PARENT_MAIN_MODE:-}
+  case "$mode" in
+    sync)
+      [ "$new" = "$expected" ] || die "sync target $new is not fetched origin $expected"
+      git -C "$root" merge-base --is-ancestor "$old" "$new" ||
+        die "sync is not a fast-forward"
+      ;;
+    ordinary|audited)
+      [ "$old" = "$expected" ] ||
+        die "main ref CAS failed (old=$old fetched-origin=$expected)"
+      git -C "$root" merge-base --is-ancestor "$old" "$new" ||
+        die "main ref update is not a forward append"
+      if range_has_sensitive_path "$root" "$old" "$new"; then
+        verify_audit_receipt "$root" "$expected" "$new"
+      fi
+      ;;
+    *) die "unknown or missing writer mode '$mode'" ;;
+  esac
+}
+
+verify_push() {
+  local remote=${1:?remote required} remote_old=${2:?remote old required} new=${3:?new required}
+  local root expected
+  root=$(repo_root)
+  [ "$remote" = origin ] || die "parent main may be published only to remote 'origin'"
+  [ "$remote_old" != "$ZERO" ] || die "refusing to create a missing remote main"
+  expected=$(verify_context)
+  [ "$remote_old" = "$expected" ] ||
+    die "remote main moved after fetch (remote=$remote_old fetched-origin=$expected)"
+  git -C "$root" merge-base --is-ancestor "$remote_old" "$new" ||
+    die "remote main update is not a fast-forward"
+  if range_has_sensitive_path "$root" "$remote_old" "$new"; then
+    verify_audit_receipt "$root" "$expected" "$new"
+  fi
+}
+
+publish_sha() {
+  local root=$1 source=$2 expected published
+  expected=$HERMIT_PARENT_MAIN_EXPECT
+  git -C "$root" merge-base --is-ancestor "$expected" "$source" ||
+    die "source $source is not based on fetched origin/main $expected"
+  if range_has_sensitive_path "$root" "$expected" "$source"; then
+    verify_audit_receipt "$root" "$expected" "$source"
+  fi
+  network_git "$root" push origin "$source:refs/heads/main"
+  network_git "$root" fetch origin main >/dev/null
+  published=$(git -C "$root" rev-parse refs/remotes/origin/main)
+  git -C "$root" merge-base --is-ancestor "$source" "$published" ||
+    die "freshly fetched main $published does not contain published $source"
+  printf 'PARENT_MAIN_WRITE published=%s fetched-main=%s ancestry=1/1 mode=%s\n' \
+    "$source" "$published" "$HERMIT_PARENT_MAIN_MODE"
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  scripts/parent-main-write commit -m MESSAGE [--audit-reason REASON] -- PATH...
+  scripts/parent-main-write publish [--audit-reason REASON] [REV]
+  scripts/parent-main-write sync
+
+Hooks use: verify-commit, verify-ref OLD NEW, verify-push REMOTE OLD NEW.
+EOF
+  exit 2
+}
+
+command=${1:-}
+[ -n "$command" ] || usage
+shift
+
+case "$command" in
+  verify-commit) verify_commit ;;
+  verify-ref) verify_ref "$@" ;;
+  verify-push) verify_push "$@" ;;
+  sync)
+    [ "$#" -eq 0 ] || usage
+    root=$(repo_root)
+    HERMIT_PARENT_MAIN_MODE=sync
+    export HERMIT_PARENT_MAIN_MODE
+    acquire_lock
+    fetch_expected "$root"
+    [ "$(git -C "$root" branch --show-current)" = main ] || die "sync requires local main"
+    head=$(git -C "$root" rev-parse HEAD)
+    if [ "$head" = "$HERMIT_PARENT_MAIN_EXPECT" ]; then
+      printf 'PARENT_MAIN_WRITE sync already-current=%s\n' "$head"
+      exit 0
+    fi
+    git -C "$root" merge-base --is-ancestor "$head" "$HERMIT_PARENT_MAIN_EXPECT" ||
+      die "local main diverges from fetched origin; reconcile without reset"
+    git -C "$root" merge --ff-only refs/remotes/origin/main
+    printf 'PARENT_MAIN_WRITE sync old=%s new=%s fast-forward=1/1\n' \
+      "$head" "$HERMIT_PARENT_MAIN_EXPECT"
+    ;;
+  commit)
+    message=''
+    audit_reason=''
+    paths=()
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -m|--message) [ "$#" -ge 2 ] || usage; message=$2; shift 2 ;;
+        --audit-reason) [ "$#" -ge 2 ] || usage; audit_reason=$2; shift 2 ;;
+        --) shift; paths=("$@"); break ;;
+        *) usage ;;
+      esac
+    done
+    [ -n "$message" ] && [ "${#paths[@]}" -gt 0 ] || usage
+    root=$(repo_root)
+    if [ -n "$audit_reason" ]; then
+      [[ "$audit_reason" != *$'\n'* ]] || die "audit reason must be one line"
+      HERMIT_PARENT_MAIN_MODE=audited
+      HERMIT_PARENT_MAIN_AUDIT_REASON=$audit_reason
+      export HERMIT_PARENT_MAIN_AUDIT_REASON
+    else
+      HERMIT_PARENT_MAIN_MODE=ordinary
+    fi
+    export HERMIT_PARENT_MAIN_MODE
+    acquire_lock
+    fetch_expected "$root"
+    [ "$(git -C "$root" branch --show-current)" = main ] || die "commit requires local main"
+    [ "$(git -C "$root" rev-parse HEAD)" = "$HERMIT_PARENT_MAIN_EXPECT" ] ||
+      die "local main is not the freshly fetched origin/main"
+    commit_args=(commit --only -m "$message")
+    if [ "$HERMIT_PARENT_MAIN_MODE" = audited ]; then
+      commit_args+=( -m "Parent-Main-Write-Mode: audited" \
+        -m "Parent-Main-Write-Reason: $audit_reason" \
+        -m "Parent-Main-Write-Base: $HERMIT_PARENT_MAIN_EXPECT" )
+    fi
+    commit_args+=( -- "${paths[@]}" )
+    git -C "$root" "${commit_args[@]}"
+    source=$(git -C "$root" rev-parse HEAD)
+    publish_sha "$root" "$source"
+    ;;
+  publish)
+    audit_reason=
+    if [ "${1:-}" = --audit-reason ]; then
+      [ "$#" -ge 2 ] || usage
+      audit_reason=$2
+      shift 2
+    fi
+    [ "$#" -le 1 ] || usage
+    root=$(repo_root)
+    source=$(git -C "$root" rev-parse "${1:-HEAD}^{commit}")
+    if [ -n "$audit_reason" ]; then
+      [[ "$audit_reason" != *$'\n'* ]] || die "audit reason must be one line"
+      HERMIT_PARENT_MAIN_MODE=audited
+      HERMIT_PARENT_MAIN_AUDIT_REASON=$audit_reason
+      export HERMIT_PARENT_MAIN_AUDIT_REASON
+    else
+      HERMIT_PARENT_MAIN_MODE=ordinary
+    fi
+    export HERMIT_PARENT_MAIN_MODE
+    acquire_lock
+    fetch_expected "$root"
+    publish_sha "$root" "$source"
+    ;;
+  *) usage ;;
+esac
