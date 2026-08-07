@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Find and reap proven runaway Hermit or test orphans.
+"""Find and reap receipt-proven Hermit or test orphans.
 
 The default is report-only.  ``--apply`` additionally requires the exact
 acknowledgement flag, and signals through a pidfd after re-reading the process
 identity.  It never uses a name-, user-, process-group-, or cgroup-wide kill:
 an agent scope can contain both a live coordinator and an orphaned Hermit.
 
-A process is eligible only when all of these independently observable facts
-hold:
+A process is eligible only when an external run-provenance receipt binds its
+current cgroup to an explicit agent/slot/task and the receipt's exact owner is
+gone.  The process still must be a same-uid workspace Hermit/test executable.
+Age, CPU use, PPID, command line, and agent-shaped cgroups remain diagnostics;
+they cannot authorize a signal.
 
-* its real uid is the caller's uid and its current parent is PID 1;
-* its cgroup is a 3pai per-agent ``run-p*.scope`` for that same uid;
-* its executable resolves below this dev-hermit workspace;
-* it is either ``hermit ... run ...`` or a Cargo test executable under
-  ``target/{debug,release}/deps``;
-* age, consumed CPU time, and lifetime CPU/age ratio all exceed their bounds.
+Pre-receipt processes can only be covered through the provenance tool's
+explicit, finite-member ``attest-existing`` operation.  The reaper never
+creates that authorization itself.
 
 This is cleanup containment.  New ad-hoc runs should instead use
 ``scripts/hermit-box-run``, whose cgroup owns and reaps the complete process
@@ -26,14 +26,25 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
+import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import select
 import signal
 import sys
 from collections.abc import Callable, Iterable
+
+
+PROVENANCE_PATH = Path(__file__).with_name("hermit-run-provenance.py")
+PROVENANCE_SPEC = importlib.util.spec_from_file_location(
+    "hermit_run_provenance_for_reaper", PROVENANCE_PATH
+)
+if PROVENANCE_SPEC is None or PROVENANCE_SPEC.loader is None:
+    raise RuntimeError(f"cannot load run provenance module {PROVENANCE_PATH}")
+provenance = importlib.util.module_from_spec(PROVENANCE_SPEC)
+sys.modules[PROVENANCE_SPEC.name] = provenance
+PROVENANCE_SPEC.loader.exec_module(provenance)
 
 
 DEFAULT_MIN_AGE_SECONDS = 15 * 60.0
@@ -57,6 +68,7 @@ class ProcessSnapshot:
     cpu_seconds: float
     age_seconds: float
     exe: Path
+    exe_deleted: bool
     argv: tuple[str, ...]
     cgroup: str
 
@@ -77,6 +89,8 @@ class Decision:
     snapshot: ProcessSnapshot
     eligible: bool
     reasons: tuple[str, ...]
+    diagnostics: tuple[str, ...]
+    ownership: provenance.QueryResult
     kind: str | None = None
 
 
@@ -170,8 +184,9 @@ class ProcReader:
             raise ProcReadError(f"process {pid} disappeared while reading identity") from exc
         except OSError as exc:
             raise ProcReadError(f"cannot read process {pid} identity: {exc}") from exc
-        if exe_raw.endswith(" (deleted)"):
-            raise ProcReadError("executable has been deleted")
+        exe_deleted = exe_raw.endswith(" (deleted)")
+        if exe_deleted:
+            exe_raw = exe_raw[: -len(" (deleted)")]
         argv = tuple(
             part.decode("utf-8", errors="surrogateescape")
             for part in cmdline_raw.rstrip(b"\0").split(b"\0")
@@ -190,6 +205,7 @@ class ProcReader:
             cpu_seconds=(utime + stime) / self.clock_ticks,
             age_seconds=age,
             exe=Path(exe_raw),
+            exe_deleted=exe_deleted,
             argv=argv,
             cgroup=cgroup,
         )
@@ -201,14 +217,6 @@ def _inside(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def _agent_scope(uid: int, cgroup: str) -> bool:
-    prefix = (
-        rf"/user\.slice/user-{uid}\.slice/user@{uid}\.service/"
-        rf"3pai_sandbox\.slice/run-p[0-9]+(?:-i[A-Za-z0-9_.:-]+)?\.scope"
-    )
-    return re.fullmatch(prefix + r"(?:/.*)?", cgroup) is not None
 
 
 def _process_kind(snapshot: ProcessSnapshot, workspace: Path) -> str | None:
@@ -234,32 +242,51 @@ def decide(
     caller_uid: int,
     workspace: Path,
     bounds: Bounds,
+    ownership: provenance.QueryResult,
 ) -> Decision:
     reasons: list[str] = []
+    diagnostics: list[str] = []
+    if ownership.classification != provenance.PROVEN_ORPHAN:
+        reasons.append(
+            f"ownership {ownership.classification}: {ownership.reason}"
+        )
+    elif ownership.process is None or (
+        ownership.process.pid,
+        ownership.process.start_ticks,
+        ownership.process.cgroup,
+    ) != (snapshot.pid, snapshot.start_ticks, snapshot.cgroup):
+        reasons.append("provenance process identity does not match snapshot")
     if snapshot.uid != caller_uid:
         reasons.append(f"uid {snapshot.uid} != caller uid {caller_uid}")
-    if snapshot.ppid != 1:
-        reasons.append(f"ppid {snapshot.ppid} != 1")
     if snapshot.state == "Z":
         reasons.append("zombie has no executable work to reap")
-    if not _agent_scope(caller_uid, snapshot.cgroup):
-        reasons.append("not in this uid's 3pai per-agent scope")
     kind = _process_kind(snapshot, workspace)
     if kind is None:
         reasons.append("not an allowed workspace Hermit run or Cargo test executable")
     if snapshot.age_seconds < bounds.min_age_seconds:
-        reasons.append(
+        diagnostics.append(
             f"age {snapshot.age_seconds:.1f}s < {bounds.min_age_seconds:.1f}s"
         )
     if snapshot.cpu_seconds < bounds.min_cpu_seconds:
-        reasons.append(
+        diagnostics.append(
             f"cpu {snapshot.cpu_seconds:.1f}s < {bounds.min_cpu_seconds:.1f}s"
         )
     if snapshot.core_ratio < bounds.min_core_ratio:
-        reasons.append(
+        diagnostics.append(
             f"cpu/age {snapshot.core_ratio:.3f} < {bounds.min_core_ratio:.3f}"
         )
-    return Decision(snapshot=snapshot, eligible=not reasons, reasons=tuple(reasons), kind=kind)
+    if snapshot.ppid != 1:
+        diagnostics.append(f"ppid {snapshot.ppid} != 1")
+    if snapshot.exe_deleted:
+        diagnostics.append("executable has been deleted")
+    return Decision(
+        snapshot=snapshot,
+        eligible=not reasons,
+        reasons=tuple(reasons),
+        diagnostics=tuple(diagnostics),
+        ownership=ownership,
+        kind=kind,
+    )
 
 
 def same_identity(left: ProcessSnapshot, right: ProcessSnapshot) -> bool:
@@ -270,6 +297,7 @@ def same_identity(left: ProcessSnapshot, right: ProcessSnapshot) -> bool:
         left.uid,
         left.ppid,
         left.exe,
+        left.exe_deleted,
         left.cgroup,
         left.argv,
     ) == (
@@ -278,6 +306,7 @@ def same_identity(left: ProcessSnapshot, right: ProcessSnapshot) -> bool:
         right.uid,
         right.ppid,
         right.exe,
+        right.exe_deleted,
         right.cgroup,
         right.argv,
     )
@@ -296,6 +325,7 @@ def reap(
     caller_uid: int,
     workspace: Path,
     bounds: Bounds,
+    authority: Callable[[int], provenance.QueryResult],
     grace_seconds: float,
     pidfd_open: Callable[[int], int] = os.pidfd_open,
     pidfd_send: Callable[[int, signal.Signals], None] = signal.pidfd_send_signal,
@@ -315,7 +345,11 @@ def reap(
         except ProcReadError:
             return ReapResult(pid, "already-exited", False, False)
         current_decision = decide(
-            current, caller_uid=caller_uid, workspace=workspace, bounds=bounds
+            current,
+            caller_uid=caller_uid,
+            workspace=workspace,
+            bounds=bounds,
+            ownership=authority(pid),
         )
         if not current_decision.eligible or not same_identity(candidate.snapshot, current):
             return ReapResult(pid, "refused-identity-changed-before-term", False, False)
@@ -330,7 +364,11 @@ def reap(
         except ProcReadError:
             return ReapResult(pid, "terminated", True, False)
         after_decision = decide(
-            after_term, caller_uid=caller_uid, workspace=workspace, bounds=bounds
+            after_term,
+            caller_uid=caller_uid,
+            workspace=workspace,
+            bounds=bounds,
+            ownership=authority(pid),
         )
         if not after_decision.eligible or not same_identity(candidate.snapshot, after_term):
             return ReapResult(pid, "refused-identity-changed-before-kill", True, False)
@@ -350,6 +388,31 @@ def _snapshot_record(decision: Decision) -> dict[str, object]:
         "eligible": decision.eligible,
         "kind": decision.kind,
         "reasons": decision.reasons,
+        "diagnostics": decision.diagnostics,
+        "ownership": {
+            "classification": decision.ownership.classification,
+            "reason": decision.ownership.reason,
+            "receipt_id": (
+                decision.ownership.receipt.receipt_id
+                if decision.ownership.receipt is not None
+                else None
+            ),
+            "agent": (
+                decision.ownership.receipt.agent
+                if decision.ownership.receipt is not None
+                else None
+            ),
+            "slot": (
+                decision.ownership.receipt.slot
+                if decision.ownership.receipt is not None
+                else None
+            ),
+            "task": (
+                decision.ownership.receipt.task
+                if decision.ownership.receipt is not None
+                else None
+            ),
+        },
         "uid": item.uid,
         "ppid": item.ppid,
         "state": item.state,
@@ -358,6 +421,7 @@ def _snapshot_record(decision: Decision) -> dict[str, object]:
         "cpu_seconds": round(item.cpu_seconds, 3),
         "cpu_age_ratio": round(item.core_ratio, 6),
         "exe": str(item.exe),
+        "exe_deleted": item.exe_deleted,
         "argv": item.argv,
         "cgroup": item.cgroup,
     }
@@ -376,6 +440,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-cpu-seconds", type=float, default=DEFAULT_MIN_CPU_SECONDS)
     parser.add_argument("--min-core-ratio", type=float, default=DEFAULT_MIN_CORE_RATIO)
     parser.add_argument("--grace-seconds", type=float, default=DEFAULT_GRACE_SECONDS)
+    parser.add_argument(
+        "--receipt-dir",
+        type=Path,
+        default=provenance.default_receipt_dir(),
+        help="run-provenance receipt directory",
+    )
+    parser.add_argument("--proc-root", type=Path, default=Path("/proc"), help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--cgroup-root", type=Path, default=Path("/sys/fs/cgroup"), help=argparse.SUPPRESS
+    )
     parser.add_argument("--json", action="store_true", help="emit one JSON document")
     parser.add_argument(
         "--verbose-refusals", action="store_true", help="include inspected non-candidates"
@@ -399,10 +473,16 @@ def main(argv: list[str] | None = None) -> int:
         _parser().error("--apply requires at least one explicit --pid from a prior dry-run")
 
     workspace = Path(__file__).resolve().parent.parent
-    reader = ProcReader()
+    reader = ProcReader(args.proc_root)
     caller_uid = os.getuid()
     bounds = Bounds(args.min_age_seconds, args.min_cpu_seconds, args.min_core_ratio)
     requested = sorted(set(args.pid)) if args.pid else sorted(reader.pids())
+    authority = lambda pid: provenance.query(
+        pid=pid,
+        receipt_dir=args.receipt_dir,
+        proc_root=args.proc_root,
+        cgroup_root=args.cgroup_root,
+    )
     decisions: list[Decision] = []
     scan_errors: list[dict[str, object]] = []
     for pid in requested:
@@ -414,7 +494,11 @@ def main(argv: list[str] | None = None) -> int:
                 scan_errors.append({"pid": pid, "error": str(exc)})
             continue
         decision = decide(
-            snapshot, caller_uid=caller_uid, workspace=workspace, bounds=bounds
+            snapshot,
+            caller_uid=caller_uid,
+            workspace=workspace,
+            bounds=bounds,
+            ownership=authority(pid),
         )
         # Explicit PID inspection always reports a refusal.  In apply mode an
         # unreadable or ineligible member of the requested set blocks the
@@ -434,6 +518,7 @@ def main(argv: list[str] | None = None) -> int:
                     caller_uid=caller_uid,
                     workspace=workspace,
                     bounds=bounds,
+                    authority=authority,
                     grace_seconds=args.grace_seconds,
                 )
             )
@@ -444,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
         "mode": "apply" if args.apply else "dry-run",
         "workspace": str(workspace),
         "caller_uid": caller_uid,
+        "receipt_dir": str(args.receipt_dir),
         "bounds": dataclasses.asdict(bounds),
         "candidate_count": len(candidates),
         "processes": [_snapshot_record(decision) for decision in decisions],
@@ -460,13 +546,20 @@ def main(argv: list[str] | None = None) -> int:
         for decision in decisions:
             item = decision.snapshot
             status = "CANDIDATE" if decision.eligible else "REFUSED"
+            receipt = decision.ownership.receipt
             print(
                 f"{status} pid={item.pid} kind={decision.kind or '-'} "
                 f"age={item.age_seconds:.1f}s cpu={item.cpu_seconds:.1f}s "
-                f"ratio={item.core_ratio:.3f} exe={item.exe} cgroup={item.cgroup}"
+                f"ratio={item.core_ratio:.3f} ownership={decision.ownership.classification} "
+                f"agent={receipt.agent if receipt else '-'} "
+                f"slot={receipt.slot if receipt else '-'} "
+                f"task={receipt.task if receipt else '-'} "
+                f"exe={item.exe} cgroup={item.cgroup}"
             )
             if decision.reasons:
                 print("  reasons: " + "; ".join(decision.reasons))
+            if decision.diagnostics:
+                print("  diagnostics: " + "; ".join(decision.diagnostics))
         for error in scan_errors:
             print(f"ERROR pid={error['pid']}: {error['error']}", file=sys.stderr)
         for result in results:
