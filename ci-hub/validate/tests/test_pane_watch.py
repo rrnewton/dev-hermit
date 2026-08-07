@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -32,6 +33,90 @@ class PaneWatchTest(unittest.TestCase):
             self.assertEqual(
                 {"/user.slice/safe-ci-dag-runner/safe-ci-node.scope"},
                 pane_watch.safe_ci_cgroups(10, proc),
+            )
+            self.assertEqual(
+                {10, 11},
+                pane_watch.live_cgroup_pids(
+                    {
+                        10: {"/user.slice/3pai_sandbox.slice/validate.service"},
+                        11: {"/user.slice/safe-ci-dag-runner/safe-ci-node.scope"},
+                        12: {"/wrong-reused-pid.scope"},
+                        13: {"/missing.scope"},
+                    },
+                    proc,
+                ),
+            )
+
+    def test_visibility_miss_cannot_publish_terminal_run_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record = root / "runs/validate-test.json"
+            log = root / "validate-test.log"
+            log.write_text("producer is still running\n")
+            run_registry.write_record(
+                record,
+                {
+                    "schema_version": 1,
+                    "state": "running",
+                    "target": "a" * 40,
+                },
+            )
+            active = {
+                "ActiveState": "active",
+                "SubState": "running",
+                "ExecMainStatus": "0",
+                "Result": "success",
+                "MainPID": "10",
+            }
+            finished = {
+                "ActiveState": "inactive",
+                "SubState": "dead",
+                "ExecMainStatus": "0",
+                "Result": "success",
+                "MainPID": "0",
+            }
+            with (
+                mock.patch.object(
+                    pane_watch,
+                    "service_properties",
+                    side_effect=[active, None, None, finished],
+                ),
+                mock.patch.object(pane_watch, "proc_ppids", return_value={10: 1}),
+                mock.patch.object(
+                    pane_watch,
+                    "safe_ci_cgroups",
+                    return_value={"/user.slice/safe-ci-test.scope"},
+                ),
+                mock.patch.object(pane_watch, "live_cgroup_pids", return_value={10}),
+            ):
+                status = pane_watch.main(
+                    [
+                        "--unit",
+                        "validate-test.service",
+                        "--target",
+                        "a" * 40,
+                        "--checkout",
+                        str(root),
+                        "--log",
+                        str(log),
+                        "--record",
+                        str(record),
+                        "--poll-seconds",
+                        "0",
+                        "--appearance-seconds",
+                        "0",
+                    ]
+                )
+
+            self.assertEqual(0, status)
+            durable = run_registry.read_record(record)
+            self.assertEqual("running", durable["state"])
+            self.assertNotIn("result", durable)
+            self.assertNotIn("exit_code", durable)
+            self.assertNotIn("finished_at", durable)
+            self.assertEqual(
+                ["/user.slice/safe-ci-test.scope"],
+                durable["observed_safe_ci_cgroups"],
             )
 
     def test_durable_handle_round_trip_preserves_observer_evidence(self) -> None:

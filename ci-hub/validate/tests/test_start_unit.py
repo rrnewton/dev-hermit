@@ -167,6 +167,9 @@ class StartUnitTest(unittest.TestCase):
             self.root / "ignored/validate/runs/validate-test.json"
         )
         self.assertEqual("completed", record["state"])
+        self.assertEqual("success", record["result"])
+        self.assertEqual(0, record["exit_code"])
+        self.assertIn("finished_at", record)
         self.assertEqual("observer-only", record["pane_role"])
 
     def test_dry_run_is_non_mutating_but_exposes_exact_command(self) -> None:
