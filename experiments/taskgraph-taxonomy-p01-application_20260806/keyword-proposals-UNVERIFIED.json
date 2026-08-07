@@ -1,0 +1,3873 @@
+{
+ "STATUS": "UNVERIFIED \u2014 KEYWORD PROPOSALS, NOT EVIDENCE",
+ "WARNING": "Every row below was produced by anchored keyword matching over task id+title, with description demoted to corroboration. It is NOT a reading of each task. Two rounds of visible misclassification were found before these were applied (see README). Do not cite a row here as the reason a task is in a workstream; re-read the task.",
+ "applied": "yes \u2014 these labels ARE live in the graph, and the 196 keyword-derived ones carry the tag `needs-label-review` so they are distinguishable from evidenced labels",
+ "row_count": 262,
+ "proposals": [
+  {
+   "id": "a_plain_git_reset",
+   "st": "IN_PROGRESS",
+   "old": [
+    "implemented"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "A plain 'git reset HEAD~1' on shared parent main silently de"
+  },
+  {
+   "id": "active-md-branch-drift-registry-disagrees-with-reality",
+   "st": "BACKLOG",
+   "old": [
+    "implemented",
+    "process",
+    "source:finding",
+    "worktrees"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "P1 `worktrees/registry-drift`: ACTIVE.md records a DIFFERENT"
+  },
+  {
+   "id": "add-authoritative-open-prs-auto-mode",
+   "st": "IN_PROGRESS",
+   "old": [
+    "integrity",
+    "measurement",
+    "source:finding",
+    "status"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Add authoritative auto mode for total-open PR counts in stat"
+  },
+  {
+   "id": "adopt-github-merge-queue",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "p0",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: adopt an actual GitHub merge queue for rrnewton/hermit \u2014"
+  },
+  {
+   "id": "adversarial_review_liteinst_maps",
+   "st": "IN_PROGRESS",
+   "old": [
+    "adversarial-review",
+    "determinism",
+    "mechanism:deterministic-inode-identity"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Adversarial review LiteInst maps inode determinization PR 18"
+  },
+  {
+   "id": "agent-utils-own-ci-configured-and-green",
+   "st": "BACKLOG",
+   "old": [
+    "agent-utils",
+    "ci",
+    "policy",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: agent-utils must have its OWN CI configured and GREEN \u2014 "
+  },
+  {
+   "id": "agent-utils-rust-script-by-default",
+   "st": "BACKLOG",
+   "old": [
+    "agent-utils",
+    "dx",
+    "reproducibility",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: move agent-utils toward rust-script by DEFAULT so a stal"
+  },
+  {
+   "id": "append-only-investigation-history-coordinator",
+   "st": "BACKLOG",
+   "old": [
+    "coordination",
+    "debugging",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: coordinator-managed APPEND-ONLY machine-readable investi"
+  },
+  {
+   "id": "apply-taskgraph-label-taxonomy-to-priority-work",
+   "st": "IN_PROGRESS",
+   "old": [
+    "hygiene",
+    "labels",
+    "source:finding",
+    "taskgraph"
+   ],
+   "ws": "operations",
+   "wsw": "override:meta-tooling-not-determinism",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Apply strict TaskGraph workstream and lifecycle labels to pr"
+  },
+  {
+   "id": "arch-cross-process-child-tool-admission",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "determinism",
+    "phase:vision",
+    "source:tui"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Cross-process forked-child Tool/scheduler admission \u2014 ke"
+  },
+  {
+   "id": "auto-science-process-meta-evaluation",
+   "st": "BACKLOG",
+   "old": [
+    "debugging",
+    "meta",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: meta-evaluation of the auto-science process \u2014 is the deb"
+  },
+  {
+   "id": "capture-immediate-pre-tightening-scorecard-baseline",
+   "st": "IN_PROGRESS",
+   "old": [
+    "baseline",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "goal:release-0.3",
+    "scorecard",
+    "source:gchat",
+    "strictness"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Capture an immediate pre-tightening compatibility scorecard "
+  },
+  {
+   "id": "ci-hub-epic",
+   "st": "BACKLOG",
+   "old": [
+    "architecture",
+    "ci",
+    "ci-hub",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "EPIC: `dev-hermit/ci-hub/` \u2014 centralize all CI infrastructur"
+  },
+  {
+   "id": "ci-hub-incremental-vs-total-tracking",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "ci-hub",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: distinguish INCREMENTAL vs TOTAL validation runs \u2014 mark "
+  },
+  {
+   "id": "ci-hub-local-ci-history-store",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "ci-hub",
+    "observability",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: ci-hub local store \u2014 ingest full GitHub Actions history "
+  },
+  {
+   "id": "ci-hub-timeout-mgmt-cancel-and-run-local",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "ci-hub",
+    "landing",
+    "owner-directive",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 (OWNER): ci-hub owns CI TIMEOUT MANAGEMENT \u2014 a PR waiting"
+  },
+  {
+   "id": "ci-jobs-download-both-debug-and-release-artifacts",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "github",
+    "mechanism:artifact-download",
+    "performance",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: CI jobs download BOTH debug AND release artifacts in the"
+  },
+  {
+   "id": "close-the-observation-gap-before-optimising-green-time",
+   "st": "BACKLOG",
+   "old": [
+    "ci-hub",
+    "metrics",
+    "observability",
+    "source:finding"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 (PHASE 2 PREREQ): green-time is GAP-DOMINATED (0.88% port"
+  },
+  {
+   "id": "coalesce-staging-branch-NOW",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 BLOCKING ALL ELSE: build ONE staging branch with every co"
+  },
+  {
+   "id": "coalescing_assembly_must_run",
+   "st": "BACKLOG",
+   "old": [
+    "ci-hub",
+    "landing",
+    "source:finding"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "coalescing assembly must run prelude-cache-key.sh --write af"
+  },
+  {
+   "id": "compare-github-validation-index-prototypes",
+   "st": "OPEN",
+   "old": [
+    "decision",
+    "github",
+    "ledger",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Compare GitHub status, comment, and check-run indexes for gl"
+  },
+  {
+   "id": "complete-sabre-vdso-symbol-set",
+   "st": "OPEN",
+   "old": [
+    "backend-parity",
+    "sabre",
+    "vdso"
+   ],
+   "ws": "backend:sabre",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Complete SaBRe vDSO symbol coverage including clock_getres"
+  },
+  {
+   "id": "coordinate-demo5-fork-decision",
+   "st": "BACKLOG",
+   "old": [
+    "coordination",
+    "demos",
+    "determinism",
+    "source:gchat"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "Coordinate demo5 fork prototypes \u2192 owner-decision summary: a"
+  },
+  {
+   "id": "coordinate-post-crash-recovery-until-codex-relaunch",
+   "st": "BACKLOG",
+   "old": [
+    "coordination",
+    "infra",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Coordinate post-crash recovery until canonical Codex coordin"
+  },
+  {
+   "id": "coordinate-release-0.3-overnight-critical-path",
+   "st": "IN_PROGRESS",
+   "old": [
+    "coordination",
+    "release:0.3",
+    "source:gchat"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Coordinate the Hermit 0.3 release critical path and mileston"
+  },
+  {
+   "id": "cross-backend-detlog-parity-sweep",
+   "st": "IN_PROGRESS",
+   "old": [
+    "compat",
+    "determinism"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Cross-backend detlog/heap/stack parity sweep"
+  },
+  {
+   "id": "dag-schema-cpu-secs-and-reference-machine",
+   "st": "OPEN",
+   "old": [
+    "ci",
+    "dag",
+    "schema",
+    "source:gchat",
+    "timeouts"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 (DEFERRED to a green cruising baseline): replace `est_dur"
+  },
+  {
+   "id": "dbi-to-dbt-rename-and-install-path-factoring",
+   "st": "BACKLOG",
+   "old": [
+    "0.2",
+    "backends",
+    "naming",
+    "owner-directive",
+    "release",
+    "source:gchat"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P2 (GATED on <10 OPEN PRs \u2014 owner 2026-08-04; SUPERSEDES the"
+  },
+  {
+   "id": "dbi_backend_stats_provider",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "dbi",
+    "stats"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "DBI backend stats provider with translation metrics"
+  },
+  {
+   "id": "dbi_packs_anonymous_mmaps",
+   "st": "OPEN",
+   "old": [
+    "backend-parity",
+    "blocked-with-evidence",
+    "compat",
+    "dbi",
+    "determinism",
+    "north-star"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "DBI packs anonymous mmaps differently from ptrace (d23 -4 vs"
+  },
+  {
+   "id": "decide-dbt-mmap-native-fidelity-vs-backend-independence",
+   "st": "BACKLOG",
+   "old": [
+    "dbt",
+    "determinism",
+    "mmap",
+    "owner-decision",
+    "source:finding"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "Decide DBT anonymous-mmap contract: native fidelity or backe"
+  },
+  {
+   "id": "decide-vdso-getrandom-enosys-vs-determinized-bytes",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "integrity",
+    "owner-decision",
+    "randomness",
+    "sabre"
+   ],
+   "ws": "backend:sabre",
+   "wsw": "anchor:backend-name",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "OWNER DECISION: neutralize __vdso_getrandom to -ENOSYS (work"
+  },
+  {
+   "id": "deepen-parity-to-detlog-stack-heap",
+   "st": "IN_PROGRESS",
+   "old": [
+    "compat",
+    "measurement",
+    "parity",
+    "scorecard"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Deepen parity from stdout to detlog/stack/heap (the (b) half"
+  },
+  {
+   "id": "define-and-mediate-direct-vvar-policy",
+   "st": "OPEN",
+   "old": [
+    "backend-parity",
+    "research",
+    "vdso",
+    "vvar"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Define and enforce direct vvar access policy across backends"
+  },
+  {
+   "id": "demo-gate-runner-relabel-owner",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "infra",
+    "owner-gated",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "OWNER-GATED: relabel/add a runner to raise demo-gate through"
+  },
+  {
+   "id": "demo5-adversarial-critic-review",
+   "st": "BACKLOG",
+   "old": [
+    "debugging",
+    "determinism",
+    "review",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "P1: adversarial-critic review of the demo5 investigation (pa"
+  },
+  {
+   "id": "demo5-fix-revert-config-flip-0591104",
+   "st": "BACKLOG",
+   "old": [
+    "demos",
+    "determinism",
+    "landing",
+    "p0",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: revert the 0591104 demo5 config flip (re-arm --max-times"
+  },
+  {
+   "id": "demo5-fix-scheduler-fairness-impl",
+   "st": "BACKLOG",
+   "old": [
+    "demos",
+    "determinism",
+    "p0",
+    "scheduler",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: IMPLEMENT scheduler fairness/aging fix (from scheduler-t"
+  },
+  {
+   "id": "determinism_stress_order_violation",
+   "st": "IN_PROGRESS",
+   "old": [
+    "chaos",
+    "ci",
+    "determinism",
+    "fake-green",
+    "frontier",
+    "validate"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "determinism-stress/order-violation fails at distinct=1 and p"
+  },
+  {
+   "id": "determinism_stress_order_violation_2",
+   "st": "OPEN",
+   "old": [
+    "integrity"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "determinism-stress/order-violation chaos fails on main and e"
+  },
+  {
+   "id": "determinism_stress_order_violation_3",
+   "st": "OPEN",
+   "old": [
+    "bug",
+    "ci",
+    "determinism"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "determinism-stress-order-violation-chaos-red-on-main"
+  },
+  {
+   "id": "determinize_findmnt_against_transient",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "determinism",
+    "landing",
+    "procfs"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Determinize findmnt against transient host user mounts"
+  },
+  {
+   "id": "diagnose-pr1832-debug-workspace-portable-red",
+   "st": "IN_PROGRESS",
+   "old": [
+    "ci",
+    "diagnosis",
+    "portable",
+    "pr-1832",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "Diagnose PR #1832 portable CI debug-workspace job failure"
+  },
+  {
+   "id": "discuss-vtime-advance-heuristic-soundness",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "do-not-close",
+    "nag",
+    "review",
+    "scheduler",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "P1 (RECURRING NAG, unclosable until discussed): owner + coor"
+  },
+  {
+   "id": "does-dbi-reuse-the-ptrace-vdso-path-or-duplicate-it",
+   "st": "BACKLOG",
+   "old": [
+    "backends",
+    "compat",
+    "determinism",
+    "research"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Does DBI REUSE the ptrace vDSO path, or DUPLICATE it? \u2014 a fo"
+  },
+  {
+   "id": "drain-implemented-to-landed",
+   "st": "IN_PROGRESS",
+   "old": [
+    "drain",
+    "landing",
+    "orc-coord",
+    "process",
+    "source:gchat",
+    "unclosable"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "Drain all closed implemented work onto main"
+  },
+  {
+   "id": "dual_adversarial_review_core",
+   "st": "BACKLOG",
+   "old": [
+    "milestone"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "dual-adversarial-review-core-change-prs"
+  },
+  {
+   "id": "e2e_mcookie_random_determinism",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "e2e",
+    "real-execution"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "e2e mcookie-random determinism test"
+  },
+  {
+   "id": "e2e_perl_hash_order",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "e2e",
+    "real-execution"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "e2e: perl-hash-order determinism test (hash iteration order)"
+  },
+  {
+   "id": "e2e_proc_random_uuid",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "e2e",
+    "real-execution"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "e2e proc-random-uuid determinism test"
+  },
+  {
+   "id": "e9patch-corpus-salvage-not-wholesale-graft",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "e9patch,tests,source:gchat"
+   ],
+   "ws": "backend:e9patch",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: salvage the SUBSTANTIVE e9patch corpus tests (roundtrips"
+  },
+  {
+   "id": "elide-coordinator-hop-while-logical-timeslice-unexhausted",
+   "st": "BACKLOG",
+   "old": [
+    "architecture",
+    "determinism",
+    "perf",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 (OWNER, GATED) `detcore/timeslice-local-fastpath`: the gu"
+  },
+  {
+   "id": "enable-github-merge-queue-on-main",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "infra",
+    "merge-queue",
+    "owner-gated",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "OWNER-GATED (TOP morning ask): enable the GitHub MERGE QUEUE"
+  },
+  {
+   "id": "encode-orc-coord-014-github-attribution-policy",
+   "st": "IN_PROGRESS",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "github",
+    "policy",
+    "source:gchat",
+    "team-attribution"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Encode orc-coord-014 GitHub comment prefixes and PR labels i"
+  },
+  {
+   "id": "epic-backend-supremacy",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "determinism",
+    "phase:vision",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "EPIC: Backend supremacy \u2014 a non-ptrace backend substantially"
+  },
+  {
+   "id": "epic-drb-modern-frontier",
+   "st": "OPEN",
+   "old": [
+    "determinism",
+    "phase:vision",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "EPIC: Close the MODERN Debian Reproducible Builds frontier t"
+  },
+  {
+   "id": "epic-drb-replay-asplos20",
+   "st": "OPEN",
+   "old": [
+    "determinism",
+    "phase:vision",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "EPIC: Reproduce the ASPLOS'20 DRB case study in hermit (dett"
+  },
+  {
+   "id": "epic-test-powerweight",
+   "st": "OPEN",
+   "old": [
+    "ci",
+    "determinism",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "EPIC: coverage-guided test power-to-weight optimization (all"
+  },
+  {
+   "id": "every-agent-shepherds-its-own-pr-to-landing",
+   "st": "BACKLOG",
+   "old": [
+    "landing",
+    "process",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `process/shepherd-own-pr`: STALENESS is the protocol brea"
+  },
+  {
+   "id": "fail-closed-vdso-patch-integrity",
+   "st": "OPEN",
+   "old": [
+    "backend-parity",
+    "integrity",
+    "source:finding",
+    "vdso"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fail closed and integrity-check backend vDSO patching"
+  },
+  {
+   "id": "fanout-land-green-free-to-land",
+   "st": "BACKLOG",
+   "old": [
+    "landing",
+    "p0",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "P0: land the ~51 GREEN free-to-land PRs NOW (low-hanging fru"
+  },
+  {
+   "id": "fanout-land-noncluster-prs",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "PR-landing fan-out: land free-to-land green PRs + the non-ma"
+  },
+  {
+   "id": "fix-load-dependent-scheduling-vtime",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "determinism",
+    "scheduler",
+    "source:gchat"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1: --strict scheduler makes a LOAD-DEPENDENT number of sche"
+  },
+  {
+   "id": "fix-pr1832-final-review-scorecard-integrity",
+   "st": "IN_PROGRESS",
+   "old": [
+    "implemented",
+    "integrity",
+    "scorecard"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Fix PR #1832 final-review scorecard schema and fail-open blo"
+  },
+  {
+   "id": "fix-sabre-run-scope-message-mismatch",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "cli",
+    "sabre",
+    "source:finding"
+   ],
+   "ws": "backend:sabre",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix SaBRe backend scope predicate/message mismatch"
+  },
+  {
+   "id": "fix-speculative-land-obligations-workflow-timeout",
+   "st": "IN_PROGRESS",
+   "old": [
+    "infra",
+    "source:finding",
+    "speculative-land",
+    "workflow"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Fix hermit speculative-land remediation workflow timing out "
+  },
+  {
+   "id": "fix_1213_timerfd_codex",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "codex-review-findings",
+    "determinism",
+    "pr-1213"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "fix #1213 Codex findings: coherent timerfd ownership across "
+  },
+  {
+   "id": "fix_kvm_python_examples",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "ci",
+    "dx",
+    "kvm",
+    "source:gchat"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix KVM Python examples verify timeout in privileged gate"
+  },
+  {
+   "id": "fix_pr_1147_failed",
+   "st": "OPEN",
+   "old": [
+    "adversarial-review",
+    "bug",
+    "determinism",
+    "pr-1147"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Fix PR 1147 failed-exec coordinator rollback"
+  },
+  {
+   "id": "fix_pr_1147_nonleader",
+   "st": "OPEN",
+   "old": [
+    "adversarial-review",
+    "bug",
+    "determinism",
+    "linux-semantics",
+    "pr-1147"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Fix PR 1147 nonleader-thread exec continuity"
+  },
+  {
+   "id": "fold_edit_distance_into",
+   "st": "BACKLOG",
+   "old": [
+    "cratesio",
+    "implemented",
+    "packaging",
+    "release"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Fold edit-distance into detcore before 0.2 publication"
+  },
+  {
+   "id": "goal-hermit-v2",
+   "st": "BACKLOG",
+   "old": [
+    "goal",
+    "goal:hermit-v2",
+    "source:web",
+    "unclosable"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "GOAL: Hermit v2 \u2014 Robust deterministic execution for arbitra"
+  },
+  {
+   "id": "goal-qemu-linux-under-hermit",
+   "st": "OPEN",
+   "old": [
+    "goal",
+    "goal:qemu-linux",
+    "milestone",
+    "source:web"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "MILESTONE: Run full Linux VM under QEMU deterministically wi"
+  },
+  {
+   "id": "green-reset-after-landing-sprint-recompute-envelope-on-bitwise",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "fake-green",
+    "measurement",
+    "source:gchat"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 (AFTER LANDING SPRINT \u2014 owner 2026-08-04): RESET WHAT GRE"
+  },
+  {
+   "id": "guard-heavy-fbsource-buck-runs-from-hostwide-io-stall",
+   "st": "IN_PROGRESS",
+   "old": [
+    "boxing",
+    "buck",
+    "fbsource",
+    "host-health",
+    "implemented",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Guard heavy fbsource Buck runs from recreating the host-wide"
+  },
+  {
+   "id": "gvisor-analysis-redo-v2",
+   "st": "BACKLOG",
+   "old": [
+    "benchmarking",
+    "gvisor",
+    "research",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: REDO the gvisor analysis with expanded backends + the se"
+  },
+  {
+   "id": "harness_must_not_count",
+   "st": "OPEN",
+   "old": [
+    "ci",
+    "e2e",
+    "fake-green",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Harness must not count guest launch refusals as chaos test f"
+  },
+  {
+   "id": "hb-impl-candidate-introspection",
+   "st": "BACKLOG",
+   "old": [
+    "chaos",
+    "determinism",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Happens-before candidate introspection \u2014 run-first enume"
+  },
+  {
+   "id": "hb-impl-config-json-yaml-dsl",
+   "st": "BACKLOG",
+   "old": [
+    "chaos",
+    "determinism",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Happens-before config format \u2014 JSON + interchangeable YA"
+  },
+  {
+   "id": "hermit-strict-parallel-build-perf",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "performance",
+    "source:gchat"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 FINDING: hermit --strict sequentialization too slow for r"
+  },
+  {
+   "id": "hermit_reverie_pin_bump",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "reverie-pin"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "hermit reverie-pin bump to 55f6876a (post #369+#221)"
+  },
+  {
+   "id": "impl-backend-maturity-gh-issues",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Create per-backend Backend Maturity Tracker GitHub issues"
+  },
+  {
+   "id": "impl-backend-wip-banners",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Add UNDER CONSTRUCTION stderr banners to all non-ptrace back"
+  },
+  {
+   "id": "impl-dbi-cross-process-rpc",
+   "st": "BACKLOG",
+   "old": [
+    "dbi",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: DBI \u2014 implement cross-process RPC for GlobalState"
+  },
+  {
+   "id": "impl-dbi-debug-simple-coreutils",
+   "st": "BACKLOG",
+   "old": [
+    "needs-landing",
+    "phantom-reopened"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: DBI debug \u2014 why do simple coreutils (ls, cat, echo, head"
+  },
+  {
+   "id": "impl-dbi-fix-vdso-post-109",
+   "st": "BACKLOG",
+   "old": [
+    "needs-landing",
+    "phantom-reopened"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: DBI \u2014 bump hermit reverie pin to include #109 vDSO fix, "
+  },
+  {
+   "id": "impl-dbi-global-state-fix",
+   "st": "BACKLOG",
+   "old": [
+    "dbi",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: DBI \u2014 fix fundamentally broken global state architecture"
+  },
+  {
+   "id": "impl-dbi-implement-uds-ipc",
+   "st": "BACKLOG",
+   "old": [
+    "needs-landing",
+    "phantom-reopened"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: DBI \u2014 implement serde+UDS IPC for cross-process GlobalSt"
+  },
+  {
+   "id": "impl-dbi-integration-smoke",
+   "st": "BACKLOG",
+   "old": [
+    "dbi",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: DBI backend \u2014 integration smoke test across all batched "
+  },
+  {
+   "id": "impl-dbi-simple-tools-first",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "dbi",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "DBI ratchet: counter1/counter2/strace as proper Reverie back"
+  },
+  {
+   "id": "impl-dbi-verify-honest",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "dbi",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "DBI backend: make --verify honest (require full INFO logs or"
+  },
+  {
+   "id": "impl-dbi-wip-warning",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "dbi",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "DBI backend: print prominent WIP warning to stderr on --back"
+  },
+  {
+   "id": "impl-e9patch-real-backend",
+   "st": "BACKLOG",
+   "old": [
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:e9patch",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: e9patch \u2014 real backend using shared ld-preload + RPC"
+  },
+  {
+   "id": "impl-fbsource-codesync-green",
+   "st": "BACKLOG",
+   "old": [
+    "fbsource",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Codesync hermit/reverie into fbsource \u2014 make import diff"
+  },
+  {
+   "id": "impl-gh-issue-audit-script",
+   "st": "BACKLOG",
+   "old": [
+    "ops",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1: Write gh-issue-audit.rs script \u2014 reports unlinked non-sy"
+  },
+  {
+   "id": "impl-hermit-kvm-claude-agent",
+   "st": "BACKLOG",
+   "old": [
+    "ops",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Ensure hermit-kvm is always a claude agent (codex can't "
+  },
+  {
+   "id": "impl-kvm-disable-fake-flag",
+   "st": "BACKLOG",
+   "old": [
+    "area:backend",
+    "kvm",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: Disable fake --backend kvm flag \u2014 don't expose BS functi"
+  },
+  {
+   "id": "impl-kvm-final-push",
+   "st": "BACKLOG",
+   "old": [
+    "kvm",
+    "phase:impl",
+    "source:tui"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: KVM backend \u2014 final push: fix remaining 17 gaps (130/147"
+  },
+  {
+   "id": "impl-kvm-golden-log-comparison",
+   "st": "BACKLOG",
+   "old": [
+    "kvm",
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: KVM \u2014 cross-compare KVM logs against ptrace golden logs"
+  },
+  {
+   "id": "impl-prepare-next-import",
+   "st": "OPEN",
+   "old": [
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Prepare next fbsource import diffs from latest green mai"
+  },
+  {
+   "id": "impl-qemu-debugger-attach",
+   "st": "BACKLOG",
+   "old": [
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Demo \u2014 attach debugger to guest program inside QEMU unde"
+  },
+  {
+   "id": "impl-rr-kvm-coverage",
+   "st": "BACKLOG",
+   "old": [
+    "kvm",
+    "phase:impl",
+    "source:tui"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Test record/replay coverage under KVM backend"
+  },
+  {
+   "id": "impl-semantic-versioning",
+   "st": "BACKLOG",
+   "old": [
+    "phase:impl",
+    "source:web"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Adopt semantic versioning across ALL hermit/reverie crat"
+  },
+  {
+   "id": "implement-overshoot-marker-and-skid-gated-retry",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "flaky",
+    "mechanism:skid-gated-retry",
+    "pmu",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: IMPLEMENT the skid-gated retry \u2014 standardize ONE oversho"
+  },
+  {
+   "id": "implement-selected-github-validation-index",
+   "st": "OPEN",
+   "old": [
+    "github",
+    "implementation",
+    "ledger",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Implement the selected GitHub per-commit validation index"
+  },
+  {
+   "id": "investigate-orc-idle-detection-bug",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "observability",
+    "orc",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1 (ORC bug): incorrect idle-detection \u2014 agents at codex hom"
+  },
+  {
+   "id": "kick-the-tires-robustness-audit",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "dx",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1: systematic 'no surprises when kicking the tires' audit \u2014"
+  },
+  {
+   "id": "kvm_backend_stats_provider",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "kvm",
+    "stats"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "KVM backend stats provider with VM-exit reasons"
+  },
+  {
+   "id": "land-clusters-as-they-ripen-not-all-or-nothing",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "OWNER PRINCIPLE: LAND A CLUSTER THE MOMENT IT IS HEALTHY, th"
+  },
+  {
+   "id": "land-container-runtime-oci-pr1179",
+   "st": "BACKLOG",
+   "old": [
+    "container-runtime",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "P1: adversarial-review + land PR #1179 (hermit --image OCI-i"
+  },
+  {
+   "id": "land-dev-hermit-pr-72-kvm-scorecard-provenance",
+   "st": "IN_PROGRESS",
+   "old": [
+    "kvm",
+    "landing",
+    "pr-72",
+    "scorecard"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "Land dev-hermit PR #72 documenting KVM scorecard provenance "
+  },
+  {
+   "id": "land-e9patch-chain-to-remove-ptrace-downgrade",
+   "st": "BACKLOG",
+   "old": [
+    "architecture",
+    "determinism",
+    "e9patch",
+    "landing",
+    "owner-gate"
+   ],
+   "ws": "backend:e9patch",
+   "wsw": "anchor:backend-name",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "The #283 ptracer-out-of-path gate is UNMET and blocked on ON"
+  },
+  {
+   "id": "land-low-hanging-post-tightening-ratchets",
+   "st": "OPEN",
+   "old": [
+    "implementation",
+    "ratchet",
+    "release:0.3",
+    "strictness"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "Implement and land the selected low-hanging post-tightening "
+  },
+  {
+   "id": "land-reverie-pr-394-dbi-stack-scrub",
+   "st": "OPEN",
+   "old": [
+    "dbi",
+    "landing",
+    "pr-394",
+    "reverie"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "Land Reverie PR #394 and advance Hermit pin after exact-head"
+  },
+  {
+   "id": "land_liteinst_maps_inode",
+   "st": "OPEN",
+   "old": [
+    "determinism",
+    "landing",
+    "mechanism:deterministic-inode-identity"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "Land LiteInst maps inode determinization PR 1847"
+  },
+  {
+   "id": "land_reverie_369_221",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "landing",
+    "reverie",
+    "source:coordinator"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "land-reverie-369-221-green-behind"
+  },
+  {
+   "id": "landing-throughput-ceiling-serialized-validate",
+   "st": "BACKLOG",
+   "old": [
+    "landing",
+    "source:finding",
+    "throughput",
+    "validate"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: LANDING is the bottleneck, not implementation \u2014 70 imple"
+  },
+  {
+   "id": "ledger-records-reds-without-distinguishing-flake-from-defect",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "fake-green",
+    "measurement",
+    "source:finding"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `ci/false-red-durability`: the validate ledger records a "
+  },
+  {
+   "id": "libunwind-missing-fleet-blocker",
+   "st": "BACKLOG",
+   "old": [
+    "fleet-blocker",
+    "infra",
+    "owner-decision",
+    "source:tui"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "libunwind not installed box-wide: every hermit binary fails "
+  },
+  {
+   "id": "liteinst-corpus-ratchet-to-b3",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "determinism",
+    "liteinst",
+    "source:gchat"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: crank up LiteInst compat ratchet toward B3 \u2014 expand corp"
+  },
+  {
+   "id": "liteinst-flagship-acceleration",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "determinism",
+    "liteinst",
+    "source:gchat"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "VISION: accelerate LiteInst to a FLAGSHIP backend \u2014 pure-Rus"
+  },
+  {
+   "id": "liteinst-multiproc-and-inguest-flagship",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "determinism",
+    "liteinst",
+    "source:gchat"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:multi-backend",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: LiteInst multiproc + in-guest-Tool flagship path \u2014 follo"
+  },
+  {
+   "id": "liteinst_backend_patch_and",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "liteinst",
+    "stats"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "LiteInst backend patch and slowpath stats provider"
+  },
+  {
+   "id": "liteinst_flip_cli_to",
+   "st": "IN_PROGRESS",
+   "old": [
+    "architecture",
+    "backend",
+    "blocked"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "liteinst-flip-cli-to-inguest-toolhost"
+  },
+  {
+   "id": "liteinst_in_guest_backend",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "stats"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "LiteInst in-guest backend-stats RPC aggregation"
+  },
+  {
+   "id": "liteinst_single_process_ceiling",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "implemented",
+    "source:gchat"
+   ],
+   "ws": "backend:liteinst",
+   "wsw": "anchor:backend-name",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "LiteInst single-process ceiling corpus ratchet"
+  },
+  {
+   "id": "logical-child-reap-model",
+   "st": "BACKLOG",
+   "old": [
+    "awaiting-owner-decision",
+    "determinism",
+    "phase:vision",
+    "pre-land-human-review",
+    "source:gchat"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1 (owner design decision): logical-child-reap model for det"
+  },
+  {
+   "id": "main-force-push-reset-incident-postmortem",
+   "st": "BACKLOG",
+   "old": [
+    "implemented",
+    "incident",
+    "p0",
+    "scm",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "P0 INCIDENT: origin/main force-pushed backward (~2026-08-03 "
+  },
+  {
+   "id": "maintain-dev-hermit-main-freshness-during-release",
+   "st": "IN_PROGRESS",
+   "old": [
+    "ongoing-monitor",
+    "parent-git",
+    "release:0.3",
+    "source:gchat",
+    "workspace-health"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Keep dev-hermit main fetched, pushed, and ancestry-verified "
+  },
+  {
+   "id": "make-lint-target",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: add a `make lint` target running the full lint suite (cl"
+  },
+  {
+   "id": "make-validate-quick-and-reliable",
+   "st": "BACKLOG",
+   "old": [
+    "build",
+    "ci",
+    "dx",
+    "implemented",
+    "p0",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "P0: make `make validate` work QUICKLY + RELIABLY on a fresh "
+  },
+  {
+   "id": "make_plugin_detcore_build",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "implemented"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Make plugin Detcore build ID cover resolved dependencies"
+  },
+  {
+   "id": "make_stale_hermit_dir",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "implemented"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Make stale HERMIT_DIR plugin repair command effective"
+  },
+  {
+   "id": "manual-ci-mode-targeted-batches",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "landing",
+    "process",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1 (OWNER): CI-CONSTRAINED MODE \u2014 turn OFF auto-CI-on-push, "
+  },
+  {
+   "id": "mass_parallel_rebase_stale",
+   "st": "BACKLOG",
+   "old": [
+    "coordination",
+    "pr-landing",
+    "rebase"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "mass-parallel-rebase-stale-base"
+  },
+  {
+   "id": "measure-post-tightening-compat-envelope-drop",
+   "st": "OPEN",
+   "old": [
+    "measurement",
+    "scorecard",
+    "source:gchat",
+    "strictness"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Measure the exact compatibility-envelope drop after tighteni"
+  },
+  {
+   "id": "measure-red-pr-flip-rate-on-new-main",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: measure how many of the 172 CI-failing PRs flip GREEN wh"
+  },
+  {
+   "id": "memory-caps-cover-ten-nodes-not-the-class",
+   "st": "BACKLOG",
+   "old": [
+    "cgroups",
+    "ci",
+    "drain",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `boxing/oom-class`: #1583 fixed memory caps on TEN pinned"
+  },
+  {
+   "id": "migrate-existing-ledger-to-team-machine-shard",
+   "st": "IN_PROGRESS",
+   "old": [
+    "ledger",
+    "migration",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Migrate existing validate history into the initial team/mach"
+  },
+  {
+   "id": "milestone-hermit-02-stable-and-done",
+   "st": "OPEN",
+   "old": [
+    "0.2",
+    "milestone",
+    "release",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "MILESTONE GATE: hermit 0.2 is stable and DONE \u2014 release actu"
+  },
+  {
+   "id": "monotonic-ratchet-metric-set",
+   "st": "IN_PROGRESS",
+   "old": [
+    "compat",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "implemented",
+    "measurement",
+    "scorecard",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "The MONOTONIC RATCHET SET: track each metric that should onl"
+  },
+  {
+   "id": "nightly_stress_red_triage",
+   "st": "OPEN",
+   "old": [
+    "determinism",
+    "nightly",
+    "stability"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "nightly-stress-red-triage"
+  },
+  {
+   "id": "operational_tooling_shard_consistently",
+   "st": "OPEN",
+   "old": [
+    "ci",
+    "fake-green",
+    "source:finding"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "operational-tooling shard consistently RED: lock deadline te"
+  },
+  {
+   "id": "orc-coord-label-convention",
+   "st": "BACKLOG",
+   "old": [
+    "coordination",
+    "process",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: label all orc-side PRs `orc-coord`; second codex coordin"
+  },
+  {
+   "id": "owner-ask-lands-same-turn-or-it-is-lost",
+   "st": "BACKLOG",
+   "old": [
+    "landing",
+    "process",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 (OWNER) `process/consolidate-gains`: owner asks get LOST "
+  },
+  {
+   "id": "owner-decision-org-runner-pool-is-the-ci-lever",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "source:finding"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1 (OWNER DECISION) `ci/runner-supply`: portable CI is ADMIS"
+  },
+  {
+   "id": "owner-decision-queue-2026-08-04",
+   "st": "BACKLOG",
+   "old": [
+    "owner-discussion",
+    "source:finding"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "OWNER DISCUSSION QUEUE (do NOT close \u2014 nag until discussed) "
+  },
+  {
+   "id": "owner-decision-times2-vs-getrusage-continuity",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "owner-decision",
+    "source:finding"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "OWNER DECISION: `times(2)` vs `getrusage` disagree on system"
+  },
+  {
+   "id": "owner-decision-zero-ptracer-requires-reverie-core-abstraction-changes",
+   "st": "BACKLOG",
+   "old": [
+    "architecture",
+    "backend",
+    "owner-decision",
+    "source:gchat"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "OWNER DECISION `patching/zero-ptracer-scope`: the path to no"
+  },
+  {
+   "id": "owner-decisions-blocking-02-publication",
+   "st": "BACKLOG",
+   "old": [
+    "0.2",
+    "owner-discussion",
+    "release",
+    "source:finding"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "OWNER DECISIONS (2): final detcore NAMING and hermit-run/DBT"
+  },
+  {
+   "id": "owner-enable-user-journal-access-for-orc-crash-attribution",
+   "st": "BACKLOG",
+   "old": [
+    "infra",
+    "owner-decision",
+    "source:finding"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Owner/infra: enable journal access needed to attribute futur"
+  },
+  {
+   "id": "owner_decision_clear_the",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "owner-decision",
+    "pre-anchor-heads"
+   ],
+   "ws": "owner-decision",
+   "wsw": "anchor:owner",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "ANSWERED BY OWNER RULE: rebase the 23 pre-anchor passers \u2014 '"
+  },
+  {
+   "id": "p1_add_a_durable",
+   "st": "BACKLOG",
+   "old": [
+    "linux",
+    "phase:impl",
+    "ptrace",
+    "qemu",
+    "test",
+    "userspace"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Add a durable strict-L2 Linux userspace workload fixture"
+  },
+  {
+   "id": "p1_correct_pmu_overshoot",
+   "st": "BACKLOG",
+   "old": [
+    "chaos",
+    "linux",
+    "phase:impl",
+    "pmu",
+    "qemu",
+    "scheduler"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Correct PMU overshoot telemetry and map QEMU chaos times"
+  },
+  {
+   "id": "p1_land_reproducible_strict",
+   "st": "BACKLOG",
+   "old": [
+    "linux",
+    "phase:impl",
+    "ptrace",
+    "qemu",
+    "sched_ext",
+    "test"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Land reproducible strict-L2 sched_ext QEMU coverage"
+  },
+  {
+   "id": "p1_repair_primary_hermit",
+   "st": "BACKLOG",
+   "old": [
+    "infra",
+    "orc-coord"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Repair primary hermit checkout bare-repo anomaly (breaks"
+  },
+  {
+   "id": "p1_resume_qemu_linux",
+   "st": "BACKLOG",
+   "old": [
+    "linux",
+    "phase:impl",
+    "ptrace",
+    "qemu",
+    "record-replay"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Resume QEMU Linux R/R at zero-read and mprotect divergen"
+  },
+  {
+   "id": "p1_retest_qemu_snapshot",
+   "st": "BACKLOG",
+   "old": [
+    "linux",
+    "phase:impl",
+    "ptrace",
+    "qemu",
+    "snapshot"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: Retest QEMU snapshot resume under strict after the secco"
+  },
+  {
+   "id": "per-backend-stats-framework",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "determinism",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:multi-backend",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: end-of-`hermit run` summary shows WHICH backend ran + ca"
+  },
+  {
+   "id": "per-node-private-cargo-target-dirs-to-kill-lock-contention",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "measurement",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "SUPERSEDED by `dag/one-fat-build` \u2014 private target dirs work"
+  },
+  {
+   "id": "permission-sweep-approves-idle-agents",
+   "st": "BACKLOG",
+   "old": [
+    "process",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 `orc/permission-sweep`: my approval sweep sends `y` to ag"
+  },
+  {
+   "id": "permission-sweep-misses-busy-agents-sabre-lost-65-minutes",
+   "st": "BACKLOG",
+   "old": [
+    "process",
+    "source:finding"
+   ],
+   "ws": "backend:sabre",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `orc/permission-sweep`: an agent sat on an approval promp"
+  },
+  {
+   "id": "persist-opus-5-default-in-orc-config",
+   "st": "BACKLOG",
+   "old": [
+    "implemented",
+    "infra",
+    "source:tui",
+    "tooling"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Persist opus-5-1m as the coordinator default in ~/.orc/confi"
+  },
+  {
+   "id": "phase1-hermit-standalone-build",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "ci",
+    "gated-zero-prs",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P2 (gated): hermit/ builds standalone (make/cargo build on l"
+  },
+  {
+   "id": "post_hoc_review_direct",
+   "st": "BACKLOG",
+   "old": [
+    "adversarial-review",
+    "ci",
+    "orc-coord"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "post-hoc review direct-main CI tooling changes"
+  },
+  {
+   "id": "pr-filing-must-extend-the-drain-list",
+   "st": "OPEN",
+   "old": [
+    "drain",
+    "landing",
+    "orc-coord",
+    "process",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "P1: FILING a PR must add an entry to `drain-implemented-to-l"
+  },
+  {
+   "id": "pr_drain_hermit_coord",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "hermit-coord"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "pr-drain-hermit-coord: claim #1558 #1570 #1534 #1547 #1299 ("
+  },
+  {
+   "id": "prototype-github-checks-index-for-local-validate",
+   "st": "IN_PROGRESS",
+   "old": [
+    "checks-api",
+    "github",
+    "implemented",
+    "ledger",
+    "prototype",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Prototype or scope GitHub Checks API as a validation-receipt"
+  },
+  {
+   "id": "prototype-github-commit-comment-index-for-local-validate",
+   "st": "IN_PROGRESS",
+   "old": [
+    "implemented",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Prototype commit comments as a GitHub index for validation r"
+  },
+  {
+   "id": "publish-post-tightening-strict-scorecard-postcard",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "goal:release-0.3",
+    "postcard",
+    "scorecard",
+    "source:gchat",
+    "strictness"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Publish the post-tightening strict compatibility scorecard p"
+  },
+  {
+   "id": "quantify-test-coverage-value-syscall-flags-and-rust-loc",
+   "st": "OPEN",
+   "old": [
+    "ci",
+    "coverage",
+    "matrix-symmetry",
+    "source:gchat",
+    "testing"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: QUANTIFY 'coverage value' \u2014 syscall coverage AT FLAG/OPT"
+  },
+  {
+   "id": "rb-drb-asplos20-rebuild",
+   "st": "OPEN",
+   "old": [
+    "determinism",
+    "phase:impl",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Rebuild the ASPLOS'20 DRB subset under hermit per the pinned"
+  },
+  {
+   "id": "re_implement_procfs_process",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "followup",
+    "hermit",
+    "procfs"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Re-implement procfs process accounting on current main (was "
+  },
+  {
+   "id": "rebase-and-relevance-recheck-inflight-work",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "drain",
+    "recovery",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `recovery/relevance`: rebase every in-flight feature bran"
+  },
+  {
+   "id": "reconcile-fleet-egress-403-vs-codex-coord-landing",
+   "st": "BACKLOG",
+   "old": [
+    "coordination",
+    "drain",
+    "egress",
+    "source:tui"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fleet egress still 403 but codex-coord is landing \u2014 reconcil"
+  },
+  {
+   "id": "record-release-status-2300-edt",
+   "st": "IN_PROGRESS",
+   "old": [
+    "source:tui",
+    "status"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "status:IN_PROGRESS",
+   "title": "Append the 23:00 EDT release status to the structured status"
+  },
+  {
+   "id": "recover-three-dbt-identity-fixtures-with-shared-mutation-harness",
+   "st": "OPEN",
+   "old": [
+    "dbt",
+    "determinism",
+    "fixture",
+    "recovery",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Recover rlimit/getcpu/sched-affinity DBT identity fixtures w"
+  },
+  {
+   "id": "recover_dirty_kvm_l3",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "kvm",
+    "recovery"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Recover dirty KVM L3 stack-content worktree"
+  },
+  {
+   "id": "recover_stranded_1549_uncommitted",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "drain",
+    "recovery",
+    "source:finding"
+   ],
+   "ws": "backend:e9patch",
+   "wsw": "anchor:backend-name",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "Recover stranded #1549 uncommitted test-count fix in e9patch"
+  },
+  {
+   "id": "recycled-agents-release-nothing-they-hold",
+   "st": "BACKLOG",
+   "old": [
+    "process",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 `fleet/dead-owner-residue`: a recycled agent releases NOT"
+  },
+  {
+   "id": "refresh_hermit_and_parent",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "build",
+    "reverie",
+    "source:gchat",
+    "submodules"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Refresh Hermit and parent pins to current Reverie main"
+  },
+  {
+   "id": "release-0.3-backend-rename-split",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "implementation",
+    "release:0.3",
+    "source:gchat"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Complete DBI\u2192DBT rename and release backend packaging split"
+  },
+  {
+   "id": "release-0.3-docs-help-cleanup",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "implementation",
+    "release:0.3",
+    "source:gchat",
+    "ux"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Polish Hermit README, docs, help output, and repository clea"
+  },
+  {
+   "id": "release-0.3-fbsource-hermit",
+   "st": "OPEN",
+   "old": [
+    "fbsource",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "import",
+    "release:0.3",
+    "source:gchat"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Create second fbsource import diff: Hermit 0.3"
+  },
+  {
+   "id": "release-0.3-fbsource-parity",
+   "st": "OPEN",
+   "old": [
+    "fbsource",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "release:0.3",
+    "source:gchat",
+    "verification"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Compare fbsource Buck-built Hermit with external Cargo-built"
+  },
+  {
+   "id": "release-0.3-fbsource-rehearsal-hermit-diff",
+   "st": "OPEN",
+   "old": [
+    "fbsource",
+    "import",
+    "rehearsal",
+    "release:0.3"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Create the fbsource Hermit rehearsal import diff stacked on "
+  },
+  {
+   "id": "release-0.3-fbsource-rehearsal-parity",
+   "st": "OPEN",
+   "old": [
+    "fbsource",
+    "rehearsal",
+    "release:0.3",
+    "verification"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Compare rehearsal fbsource Buck-built Hermit with external C"
+  },
+  {
+   "id": "release-0.3-fbsource-rehearsal-reverie-diff",
+   "st": "OPEN",
+   "old": [
+    "fbsource",
+    "import",
+    "rehearsal",
+    "release:0.3"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Create the fbsource Reverie rehearsal import diff"
+  },
+  {
+   "id": "release-0.3-fbsource-rehearsal-runbook",
+   "st": "OPEN",
+   "old": [
+    "documentation",
+    "fbsource",
+    "rehearsal",
+    "release:0.3"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Publish a repeatable runbook from the successful fbsource im"
+  },
+  {
+   "id": "release-0.3-fbsource-reverie",
+   "st": "OPEN",
+   "old": [
+    "fbsource",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "import",
+    "release:0.3",
+    "source:gchat"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Create first fbsource import diff: Reverie first-party code"
+  },
+  {
+   "id": "release-0.3-integrate-main",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "integration",
+    "release:0.3",
+    "source:gchat"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Integrate the Hermit 0.3 release candidate on main"
+  },
+  {
+   "id": "release-0.3-mission",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "release:0.3",
+    "source:gchat",
+    "vision"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Deliver a strong Hermit 0.3 first-public-release candidate a"
+  },
+  {
+   "id": "release-0.3-semver-cut",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "release:0.3",
+    "source:gchat",
+    "versioning"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Cut final Hermit 0.3.0 versions only at release time"
+  },
+  {
+   "id": "release-0.3-syscall-drafts",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "implementation",
+    "release:0.3",
+    "source:gchat",
+    "syscalls"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Implement first determinization draft for every nondetermini"
+  },
+  {
+   "id": "release-0.3-syscall-issues",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "github-sync",
+    "release:0.3",
+    "source:gchat",
+    "syscalls"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Publish exhaustive syscall tracking issues"
+  },
+  {
+   "id": "release-0.3-upstream-pr",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "github",
+    "release:0.3",
+    "source:gchat",
+    "upstream"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Open and drive the Hermit 0.3 upstream pull request"
+  },
+  {
+   "id": "release-0.3-validate-external",
+   "st": "OPEN",
+   "old": [
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "release:0.3",
+    "source:gchat",
+    "verification"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Run full cold external validation for the 0.3 release candid"
+  },
+  {
+   "id": "remeasure-post-ratchet-envelope",
+   "st": "OPEN",
+   "old": [
+    "measurement",
+    "ratchet",
+    "release:0.3",
+    "strictness"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Remeasure the certified compatibility envelope after the 0.3"
+  },
+  {
+   "id": "rename-dbi-to-dbt-backend",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "big-rename",
+    "gated-zero-prs",
+    "goal:release-0.3",
+    "source:gchat"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Rename public DBI backend to DBT for Hermit 0.3 \u2014 release-cr"
+  },
+  {
+   "id": "rename_public_detcore_package",
+   "st": "BACKLOG",
+   "old": [
+    "implemented",
+    "release"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Rename public Detcore package to hermit-detcore"
+  },
+  {
+   "id": "replace_reverie_ptrace_provenance",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "proxy-binding",
+    "reverie",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Replace Reverie ptrace provenance error-string fallback with"
+  },
+  {
+   "id": "rereview-reverie-pr394-after-first-scrub-fix",
+   "st": "IN_PROGRESS",
+   "old": [
+    "dbt",
+    "pr-394",
+    "reverie",
+    "review",
+    "urgent"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Re-review Reverie PR #394 after first-scrub preservation fix"
+  },
+  {
+   "id": "rescue-three-unpushed-commits-in-dead-staging-drain-slot",
+   "st": "BACKLOG",
+   "old": [
+    "process",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "P1 `fleet/stranded-work`: THREE UNPUSHED RECOVERY COMMITS si"
+  },
+  {
+   "id": "research-backend-maturity-audit",
+   "st": "BACKLOG",
+   "old": [
+    "backend",
+    "phase:research",
+    "source:web"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:multi-backend",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "Research: audit actual backend maturity on main - KVM, DBI, "
+  },
+  {
+   "id": "research-strict-noop-check",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "phase:research",
+    "source:web"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "Verify: is --strict still a noop? Check default vs strict de"
+  },
+  {
+   "id": "restate-headline-numbers-with-provenance",
+   "st": "BACKLOG",
+   "old": [
+    "implemented",
+    "integrity",
+    "measurement",
+    "process",
+    "reporting"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Re-derive the headline numbers I have quoted to the owner, e"
+  },
+  {
+   "id": "resync-upper-team-main-and-agent-utils",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "recovery",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `recovery/resync`: pull upper-team advances into main + b"
+  },
+  {
+   "id": "reverie-pin-consistency-invariant-lint",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: lint enforcing the main-only-monorepo invariant \u2014 hermit"
+  },
+  {
+   "id": "reverie_341_model_linux",
+   "st": "BACKLOG",
+   "old": [
+    "adversarial-review",
+    "bug",
+    "kvm",
+    "linux-semantics",
+    "new-syscall"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Reverie #341: model Linux ptrace request-specific errno sema"
+  },
+  {
+   "id": "reverie_343_make_kvm",
+   "st": "BACKLOG",
+   "old": [
+    "adversarial-review",
+    "bug",
+    "kvm",
+    "linux-semantics",
+    "reverie"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Reverie #343: make KVM robust-list registry follow task life"
+  },
+  {
+   "id": "rf-backend-bypass-rr-dbi",
+   "st": "BACKLOG",
+   "old": [
+    "dbi",
+    "landing",
+    "record-replay",
+    "review-followup"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: reclassified-Determinized syscalls bypass fixed handler"
+  },
+  {
+   "id": "rf-file-mutation-readback",
+   "st": "BACKLOG",
+   "old": [
+    "fix-forward",
+    "landing",
+    "review-followup",
+    "tests"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix-forward: file_mutation fixture overclaims write parity -"
+  },
+  {
+   "id": "rf-getsockopt-optlen-overlap",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: getsockopt TCP_INFO canonicalization corrupts returned "
+  },
+  {
+   "id": "rf-ioprio-semantics",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: ioprio_get ignores who (no ESRCH) and ioprio_set is a n"
+  },
+  {
+   "id": "rf-key-users-todo-breadcrumbs",
+   "st": "BACKLOG",
+   "old": [
+    "landing",
+    "procfs",
+    "review-followup"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Fix: /proc/key-users -- bind TODO-HUMAN-REVIEW(PR-TBD) bread"
+  },
+  {
+   "id": "rf-netlink-autobind-determinism",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: Netlink autobind (implicit sendto/sendmsg) bypasses ID "
+  },
+  {
+   "id": "rf-ns-inode-identity-aliases",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: namespace inode identity still observable via readlinka"
+  },
+  {
+   "id": "rf-prctl-dumpable-virtualize",
+   "st": "BACKLOG",
+   "old": [
+    "fix-forward",
+    "landing",
+    "reverie-ptrace",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix-forward: PR_SET_DUMPABLE=0 physical passthrough breaks p"
+  },
+  {
+   "id": "rf-prctl-timerslack-virtualize",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: PR_SET_TIMERSLACK physically passed through -- alters r"
+  },
+  {
+   "id": "rf-procfs-semantic-coherence",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "procfs",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: procfs virtual files are semantically incoherent (host "
+  },
+  {
+   "id": "rf-procfs-shared-access-mediation",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "procfs",
+    "review-followup"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: procfs/sysfs ProcfsFile mediation is bypassable (pread6"
+  },
+  {
+   "id": "rf-socket-timestamp-ioctl",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: SIOCGSTAMP* handler advances time per-query and ignores"
+  },
+  {
+   "id": "rf-softirqs-ci-and-determinism",
+   "st": "BACKLOG",
+   "old": [
+    "landing",
+    "procfs",
+    "review-followup"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: /proc/softirqs -- hosted CI needs absent /usr/bin/lsirq"
+  },
+  {
+   "id": "rf-thread-self-open-time-binding",
+   "st": "BACKLOG",
+   "old": [
+    "detcore",
+    "landing",
+    "review-followup"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Fix: /proc/thread-self/{stat,status} rewrites reader TID, no"
+  },
+  {
+   "id": "sabre-determinize-vdso-getrandom-entropy",
+   "st": "BACKLOG",
+   "old": [
+    "compat",
+    "determinism",
+    "fake-green",
+    "randomness",
+    "sabre"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "FIX the confirmed vDSO entropy hole: SaBRe's __vdso_getrando"
+  },
+  {
+   "id": "scorecard-carry-full-provenance",
+   "st": "BACKLOG",
+   "old": [
+    "compat",
+    "provenance",
+    "scorecard",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Scorecard rows carry the full comparison provenance"
+  },
+  {
+   "id": "scorecard_csv_producer_must",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "compat",
+    "integrity",
+    "scorecard",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Scorecard CSV producer must quote multiline reason fields"
+  },
+  {
+   "id": "select-low-hanging-post-tightening-ratchets",
+   "st": "OPEN",
+   "old": [
+    "ratchet",
+    "release:0.3",
+    "source:gchat",
+    "strictness"
+   ],
+   "ws": "release:0.3",
+   "wsw": "anchor/tag:release-0.3",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Select the highest-ROI low-hanging compatibility ratchets af"
+  },
+  {
+   "id": "ship-team-machine-validation-ledger",
+   "st": "OPEN",
+   "old": [
+    "ledger",
+    "source:gchat",
+    "vision"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Ship the per-team/machine validation ledger and global green"
+  },
+  {
+   "id": "sig-alarm-e9patch-exceeds-wall",
+   "st": "BACKLOG",
+   "old": [
+    "compat",
+    "determinism",
+    "e9patch",
+    "implemented"
+   ],
+   "ws": "backend:e9patch",
+   "wsw": "anchor:backend-name",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "sig_alarm under e9patch exceeds a 10-minute wall"
+  },
+  {
+   "id": "signal-delivery-determinism",
+   "st": "BACKLOG",
+   "old": [
+    "compat",
+    "determinism",
+    "implemented",
+    "north-star",
+    "signals"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Determinism of SIGNAL DELIVERY ordering (uncovered dimension"
+  },
+  {
+   "id": "staging-branch-reverie-all-18",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "P0 `drain/staging-reverie`: merge ALL 18 open reverie PRs in"
+  },
+  {
+   "id": "staging-hermit-33-free-merges",
+   "st": "BACKLOG",
+   "old": [
+    "drain",
+    "landing",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "landing",
+   "lcw": "anchor:landing",
+   "title": "P0 `drain/staging-hermit`: build hermit staging from the 33 "
+  },
+  {
+   "id": "taskgraph-hygiene-awaiting-land-workflow",
+   "st": "IN_PROGRESS",
+   "old": [
+    "implemented",
+    "source:web"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "awaiting-land",
+   "lcw": "tag:implemented",
+   "title": "Keep implemented-awaiting-landing tasks out of normal ready-"
+  },
+  {
+   "id": "test-power-to-weight-and-selective-selection",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "source:gchat",
+    "tests"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P2 (post-CI-reshape): finish test power-to-weight analysis ("
+  },
+  {
+   "id": "test-powerweight-audit-slowest-first",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "determinism",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1: systematic power-to-weight audit \u2014 slowest tests first, "
+  },
+  {
+   "id": "test-selection-relevance-vs-reachability-design",
+   "st": "BACKLOG",
+   "old": [
+    "architecture",
+    "ci",
+    "design",
+    "source:gchat",
+    "test-selection"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 DESIGN: dependency closure gives 'could possibly cause' ("
+  },
+  {
+   "id": "three-core-prs-blocked-on-design-decisions-not-fixes",
+   "st": "BACKLOG",
+   "old": [
+    "core-change",
+    "design",
+    "owner-discussion",
+    "source:finding"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1 (OWNER DISCUSSION): #1200, #1213, #1443 are blocked on DE"
+  },
+  {
+   "id": "timeout-headroom-and-load-relative",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "determinism",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: analyze test/CI timeout HEADROOM + make timeouts LOAD-RE"
+  },
+  {
+   "id": "translate_scm_rights_descriptors",
+   "st": "BACKLOG",
+   "old": [
+    "adversarial-review",
+    "correctness",
+    "kvm",
+    "reverie"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "review",
+   "lcw": "tag/anchor",
+   "title": "Translate SCM_RIGHTS descriptors in Reverie KVM sendmsg/recv"
+  },
+  {
+   "id": "unified-in-guest-patching-backend",
+   "st": "BACKLOG",
+   "old": [
+    "architecture",
+    "backends",
+    "milestone",
+    "source:finding"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:multi-backend",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 (OWNER, ARCHITECTURE GATE) `patching/zero-ptracer`: the f"
+  },
+  {
+   "id": "unify-cross-backend-vdso-vvar-contract",
+   "st": "OPEN",
+   "old": [
+    "backend-parity",
+    "source:gchat",
+    "vdso",
+    "vision"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Unify vDSO and vvar semantics across all Hermit backends"
+  },
+  {
+   "id": "unify-dbi-child-vdso-clock",
+   "st": "OPEN",
+   "old": [
+    "dbt",
+    "determinism",
+    "time",
+    "vdso"
+   ],
+   "ws": "backend:dbi",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Route DBT copied children through the shared continuous vDSO"
+  },
+  {
+   "id": "unwire-executed-tests-from-remaining-consumers",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "fake-green",
+    "source:finding"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 `ci/refuted-field-still-wired`: Python + PR-status consum"
+  },
+  {
+   "id": "validate-cputime-limit-and-antibloat-skill",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "governance",
+    "source:gchat",
+    "tooling"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 (gated on CI-healthy): strict CPU-time limit on the outer"
+  },
+  {
+   "id": "validate-dag-runner-p0-umbrella",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "dag-runner",
+    "p0",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 (OWNER-DECLARED): validate fully on safe-ci-dag-runner, p"
+  },
+  {
+   "id": "validate-performance-ratchet",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "ci-hub",
+    "performance",
+    "source:gchat",
+    "validate"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1: RATCHET validate performance \u2014 measure wall+CPU per run "
+  },
+  {
+   "id": "validate-speed-the-three-coupled-levers-owner-gated",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "dag",
+    "measurement",
+    "source:finding"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "P1 (OWNER DECISION): validate speed has THREE COUPLED LEVERS"
+  },
+  {
+   "id": "validate-wall-is-a-first-class-main-branch-metric-watched-continuously",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "ci-hub",
+    "measurement",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0 (OWNER) `ci-hub/main-metrics`: validate WALL TIME (and se"
+  },
+  {
+   "id": "validate_4_open_hermit",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "source:gchat"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Validate 4 open hermit PRs SOLO via producer path"
+  },
+  {
+   "id": "validate_pr_1243_at",
+   "st": "BACKLOG",
+   "old": [
+    "ci",
+    "landing",
+    "sabre",
+    "validate"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Validate PR 1243 at rebased exact head"
+  },
+  {
+   "id": "validate_sh_retry_classifier",
+   "st": "BACKLOG",
+   "old": [
+    "bug",
+    "ci",
+    "source:finding",
+    "source:leaked-findings-sweep",
+    "validate"
+   ],
+   "ws": "main-health",
+   "wsw": "anchor:ci/main-health",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "validate.sh retry classifier: tail|sed|grep -q SIGPIPE/pipef"
+  },
+  {
+   "id": "verify-current-session-codex-subagent-spawn",
+   "st": "BACKLOG",
+   "old": [
+    "codex",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "infra",
+    "probe",
+    "source:gchat"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Verify a new persistent Codex subagent can start from the cu"
+  },
+  {
+   "id": "verify-team-machine-ledger-end-to-end",
+   "st": "OPEN",
+   "old": [
+    "integration",
+    "ledger",
+    "verification"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Verify team/machine ledger end to end across two simulated p"
+  },
+  {
+   "id": "verify-vm-memory-deterministic",
+   "st": "BACKLOG",
+   "old": [
+    "linux",
+    "phase:impl",
+    "qemu",
+    "source:web"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "Verify: VM output memory snapshot is ALSO deterministic (not"
+  },
+  {
+   "id": "vision-backend-parity",
+   "st": "BACKLOG",
+   "old": [
+    "goal:hermit-v2",
+    "phase:vision",
+    "source:web"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "VISION: DBI + KVM backends at full ptrace parity with benchm"
+  },
+  {
+   "id": "vision-kvm-backend",
+   "st": "BACKLOG",
+   "old": [
+    "goal:hermit-v2",
+    "phase:vision",
+    "source:web"
+   ],
+   "ws": "backend:kvm",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P0: KVM Backend Goal State \u2014 identical behavior to ptrace, g"
+  },
+  {
+   "id": "vision-reverie-backend-repo-split",
+   "st": "OPEN",
+   "old": [
+    "backend",
+    "big-refactor",
+    "gated-zero-prs",
+    "reverie-api",
+    "source:gchat",
+    "vision"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "VISION (GATED on ~zero open PRs): split reverie backends by "
+  },
+  {
+   "id": "vision-sabre-hybrid-backend",
+   "st": "BACKLOG",
+   "old": [
+    "goal:hermit-v2",
+    "phase:vision",
+    "source:web"
+   ],
+   "ws": "backend:sabre",
+   "wsw": "anchor:backend-name",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "VISION: SaBRe/BI hybrid backend \u2014 in-guest syscall hooking +"
+  },
+  {
+   "id": "vision-strict-compat-envelope-to-100",
+   "st": "BACKLOG",
+   "old": [
+    "compat",
+    "gchat-space:spaces/AAQAA6Irlwg",
+    "goal:hermit-v2",
+    "north-star",
+    "source:gchat",
+    "vision"
+   ],
+   "ws": "strictness",
+   "wsw": "anchor:strictness/parity",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "NORTH STAR: maximally-strict verify+parity envelope, every b"
+  },
+  {
+   "id": "vtime-global-vs-local-audit-overnight",
+   "st": "BACKLOG",
+   "old": [
+    "determinism",
+    "research",
+    "source:gchat",
+    "vtime"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "research",
+   "lcw": "anchor:research-shaped",
+   "title": "Audit detcore global(committed) vs local(per-thread) virtual"
+  },
+  {
+   "id": "worktree-cli-opaque-state-registry-updated-by-construction",
+   "st": "BACKLOG",
+   "old": [
+    "source:gchat",
+    "tooling",
+    "worktrees"
+   ],
+   "ws": "operations",
+   "wsw": "default:fleet-operations",
+   "lc": "active-implementation",
+   "lcw": "default",
+   "title": "P1 (OWNER DESIGN): make the worktree dir OBJECT-ORIENTED \u2014 o"
+  }
+ ]
+}

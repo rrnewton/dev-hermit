@@ -1,0 +1,11 @@
+metric,value,note
+applied_rows,260,bulk pass; 2 further failed and were retried in the tail pass
+evidence_backed_rows,63,tag/status derived; defensible without re-reading
+keyword_proposal_rows,197,UNVERIFIED; marked needs-label-review in the graph
+conflicts_introduced_by_this_pass,37,union-not-assignment defect; all 37 removed same pass
+conflicts_remaining,1,pre-existing (triage-and-review-62-abandoned-draft-prs)
+p01_violations_before,262,measured on the 411-row snapshot
+p01_violations_after,0,validator --gate p01 exit 0
+nonterminal_denominator_start,411,cursor==aggregate
+nonterminal_denominator_end,407,cursor==aggregate; graph drains continuously
+unlabelled_remaining,140,all P2+; separate lower-priority pass

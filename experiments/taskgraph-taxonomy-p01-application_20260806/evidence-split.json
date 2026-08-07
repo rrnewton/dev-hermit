@@ -1,0 +1,1251 @@
+{
+ "hard": [
+  "a_plain_git_reset",
+  "active-md-branch-drift-registry-disagrees-with-reality",
+  "add-authoritative-open-prs-auto-mode",
+  "adversarial_review_liteinst_maps",
+  "apply-taskgraph-label-taxonomy-to-priority-work",
+  "capture-immediate-pre-tightening-scorecard-baseline",
+  "coordinate-release-0.3-overnight-critical-path",
+  "cross-backend-detlog-parity-sweep",
+  "deepen-parity-to-detlog-stack-heap",
+  "demo5-adversarial-critic-review",
+  "determinism_stress_order_violation",
+  "discuss-vtime-advance-heuristic-soundness",
+  "dual_adversarial_review_core",
+  "encode-orc-coord-014-github-attribution-policy",
+  "fix-pr1832-final-review-scorecard-integrity",
+  "fix-speculative-land-obligations-workflow-timeout",
+  "fix_pr_1147_failed",
+  "fix_pr_1147_nonleader",
+  "fold_edit_distance_into",
+  "guard-heavy-fbsource-buck-runs-from-hostwide-io-stall",
+  "land-container-runtime-oci-pr1179",
+  "land-low-hanging-post-tightening-ratchets",
+  "liteinst_flip_cli_to",
+  "liteinst_single_process_ceiling",
+  "main-force-push-reset-incident-postmortem",
+  "maintain-dev-hermit-main-freshness-during-release",
+  "make-validate-quick-and-reliable",
+  "make_plugin_detcore_build",
+  "make_stale_hermit_dir",
+  "migrate-existing-ledger-to-team-machine-shard",
+  "monotonic-ratchet-metric-set",
+  "persist-opus-5-default-in-orc-config",
+  "post_hoc_review_direct",
+  "prototype-github-checks-index-for-local-validate",
+  "prototype-github-commit-comment-index-for-local-validate",
+  "record-release-status-2300-edt",
+  "release-0.3-backend-rename-split",
+  "release-0.3-docs-help-cleanup",
+  "release-0.3-fbsource-hermit",
+  "release-0.3-fbsource-parity",
+  "release-0.3-fbsource-rehearsal-hermit-diff",
+  "release-0.3-fbsource-rehearsal-parity",
+  "release-0.3-fbsource-rehearsal-reverie-diff",
+  "release-0.3-fbsource-rehearsal-runbook",
+  "release-0.3-fbsource-reverie",
+  "release-0.3-integrate-main",
+  "release-0.3-semver-cut",
+  "release-0.3-syscall-drafts",
+  "release-0.3-syscall-issues",
+  "release-0.3-upstream-pr",
+  "release-0.3-validate-external",
+  "remeasure-post-ratchet-envelope",
+  "rename_public_detcore_package",
+  "rereview-reverie-pr394-after-first-scrub-fix",
+  "restate-headline-numbers-with-provenance",
+  "reverie_341_model_linux",
+  "reverie_343_make_kvm",
+  "rf-key-users-todo-breadcrumbs",
+  "select-low-hanging-post-tightening-ratchets",
+  "sig-alarm-e9patch-exceeds-wall",
+  "signal-delivery-determinism",
+  "taskgraph-hygiene-awaiting-land-workflow",
+  "translate_scm_rights_descriptors"
+ ],
+ "review": [
+  {
+   "id": "adopt-github-merge-queue",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "agent-utils-own-ci-configured-and-green",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "agent-utils-rust-script-by-default",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "append-only-investigation-history-coordinator",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "arch-cross-process-child-tool-admission",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "auto-science-process-meta-evaluation",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "ci-hub-epic",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "ci-hub-incremental-vs-total-tracking",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "ci-hub-local-ci-history-store",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "ci-hub-timeout-mgmt-cancel-and-run-local",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "ci-jobs-download-both-debug-and-release-artifacts",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "close-the-observation-gap-before-optimising-green-time",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "coalesce-staging-branch-NOW",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "coalescing_assembly_must_run",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "compare-github-validation-index-prototypes",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "complete-sabre-vdso-symbol-set",
+   "ws": "backend:sabre",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "coordinate-demo5-fork-decision",
+   "ws": "owner-decision",
+   "lc": "research",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "coordinate-post-crash-recovery-until-codex-relaunch",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "dag-schema-cpu-secs-and-reference-machine",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "dbi-to-dbt-rename-and-install-path-factoring",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "dbi_backend_stats_provider",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "dbi_packs_anonymous_mmaps",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "decide-dbt-mmap-native-fidelity-vs-backend-independence",
+   "ws": "owner-decision",
+   "lc": "research",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "decide-vdso-getrandom-enosys-vs-determinized-bytes",
+   "ws": "backend:sabre",
+   "lc": "research",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "define-and-mediate-direct-vvar-policy",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "demo-gate-runner-relabel-owner",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "demo5-fix-revert-config-flip-0591104",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "demo5-fix-scheduler-fairness-impl",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "determinism_stress_order_violation_2",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "determinism_stress_order_violation_3",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "determinize_findmnt_against_transient",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "diagnose-pr1832-debug-workspace-portable-red",
+   "ws": "main-health",
+   "lc": "research",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "does-dbi-reuse-the-ptrace-vdso-path-or-duplicate-it",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "drain-implemented-to-landed",
+   "ws": "operations",
+   "lc": "landing",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "e2e_mcookie_random_determinism",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "e2e_perl_hash_order",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "e2e_proc_random_uuid",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "e9patch-corpus-salvage-not-wholesale-graft",
+   "ws": "backend:e9patch",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "elide-coordinator-hop-while-logical-timeslice-unexhausted",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "enable-github-merge-queue-on-main",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "epic-backend-supremacy",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "epic-drb-modern-frontier",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "epic-drb-replay-asplos20",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "epic-test-powerweight",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "every-agent-shepherds-its-own-pr-to-landing",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "fail-closed-vdso-patch-integrity",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "fanout-land-green-free-to-land",
+   "ws": "main-health",
+   "lc": "landing",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "fanout-land-noncluster-prs",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "fix-sabre-run-scope-message-mismatch",
+   "ws": "backend:sabre",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "fix_1213_timerfd_codex",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "fix_kvm_python_examples",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "goal-hermit-v2",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "goal-qemu-linux-under-hermit",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "green-reset-after-landing-sprint-recompute-envelope-on-bitwise",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "gvisor-analysis-redo-v2",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "harness_must_not_count",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "hb-impl-candidate-introspection",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "hb-impl-config-json-yaml-dsl",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "hermit-strict-parallel-build-perf",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "hermit_reverie_pin_bump",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "impl-backend-maturity-gh-issues",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "impl-backend-wip-banners",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "impl-dbi-cross-process-rpc",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-debug-simple-coreutils",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-fix-vdso-post-109",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-global-state-fix",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-implement-uds-ipc",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-integration-smoke",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-simple-tools-first",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-verify-honest",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-dbi-wip-warning",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-e9patch-real-backend",
+   "ws": "backend:e9patch",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-fbsource-codesync-green",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "impl-gh-issue-audit-script",
+   "ws": "operations",
+   "lc": "research",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "impl-hermit-kvm-claude-agent",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-kvm-disable-fake-flag",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-kvm-final-push",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-kvm-golden-log-comparison",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-prepare-next-import",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "impl-qemu-debugger-attach",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "impl-rr-kvm-coverage",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "impl-semantic-versioning",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "implement-overshoot-marker-and-skid-gated-retry",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "implement-selected-github-validation-index",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "investigate-orc-idle-detection-bug",
+   "ws": "operations",
+   "lc": "research",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "kick-the-tires-robustness-audit",
+   "ws": "operations",
+   "lc": "research",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "kvm_backend_stats_provider",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "land-clusters-as-they-ripen-not-all-or-nothing",
+   "ws": "operations",
+   "lc": "landing",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "land-dev-hermit-pr-72-kvm-scorecard-provenance",
+   "ws": "backend:kvm",
+   "lc": "landing",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "land-e9patch-chain-to-remove-ptrace-downgrade",
+   "ws": "backend:e9patch",
+   "lc": "landing",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "land-reverie-pr-394-dbi-stack-scrub",
+   "ws": "backend:dbi",
+   "lc": "landing",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "land_liteinst_maps_inode",
+   "ws": "backend:liteinst",
+   "lc": "landing",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "land_reverie_369_221",
+   "ws": "main-health",
+   "lc": "landing",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "landing-throughput-ceiling-serialized-validate",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "ledger-records-reds-without-distinguishing-flake-from-defect",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "libunwind-missing-fleet-blocker",
+   "ws": "owner-decision",
+   "lc": "active-implementation",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "liteinst-corpus-ratchet-to-b3",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "liteinst-flagship-acceleration",
+   "ws": "backend:liteinst",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "liteinst-multiproc-and-inguest-flagship",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:multi-backend"
+  },
+  {
+   "id": "liteinst_backend_patch_and",
+   "ws": "backend:liteinst",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "liteinst_in_guest_backend",
+   "ws": "backend:liteinst",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "logical-child-reap-model",
+   "ws": "strictness",
+   "lc": "research",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "make-lint-target",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "manual-ci-mode-targeted-batches",
+   "ws": "main-health",
+   "lc": "research",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "mass_parallel_rebase_stale",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "measure-post-tightening-compat-envelope-drop",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "measure-red-pr-flip-rate-on-new-main",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "memory-caps-cover-ten-nodes-not-the-class",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "milestone-hermit-02-stable-and-done",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "nightly_stress_red_triage",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "operational_tooling_shard_consistently",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "orc-coord-label-convention",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "owner-ask-lands-same-turn-or-it-is-lost",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "owner-decision-org-runner-pool-is-the-ci-lever",
+   "ws": "main-health",
+   "lc": "research",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "owner-decision-queue-2026-08-04",
+   "ws": "owner-decision",
+   "lc": "research",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "owner-decision-times2-vs-getrusage-continuity",
+   "ws": "strictness",
+   "lc": "research",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "owner-decision-zero-ptracer-requires-reverie-core-abstraction-changes",
+   "ws": "owner-decision",
+   "lc": "research",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "owner-decisions-blocking-02-publication",
+   "ws": "owner-decision",
+   "lc": "research",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "owner-enable-user-journal-access-for-orc-crash-attribution",
+   "ws": "owner-decision",
+   "lc": "active-implementation",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "owner_decision_clear_the",
+   "ws": "owner-decision",
+   "lc": "active-implementation",
+   "why": "anchor:owner"
+  },
+  {
+   "id": "p1_add_a_durable",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "p1_correct_pmu_overshoot",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "p1_land_reproducible_strict",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "p1_repair_primary_hermit",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "p1_resume_qemu_linux",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "p1_retest_qemu_snapshot",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "per-backend-stats-framework",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:multi-backend"
+  },
+  {
+   "id": "per-node-private-cargo-target-dirs-to-kill-lock-contention",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "permission-sweep-approves-idle-agents",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "permission-sweep-misses-busy-agents-sabre-lost-65-minutes",
+   "ws": "backend:sabre",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "phase1-hermit-standalone-build",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "pr-filing-must-extend-the-drain-list",
+   "ws": "operations",
+   "lc": "landing",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "pr_drain_hermit_coord",
+   "ws": "main-health",
+   "lc": "landing",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "publish-post-tightening-strict-scorecard-postcard",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "quantify-test-coverage-value-syscall-flags-and-rust-loc",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rb-drb-asplos20-rebuild",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "re_implement_procfs_process",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rebase-and-relevance-recheck-inflight-work",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "reconcile-fleet-egress-403-vs-codex-coord-landing",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "recover-three-dbt-identity-fixtures-with-shared-mutation-harness",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "recover_dirty_kvm_l3",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "recover_stranded_1549_uncommitted",
+   "ws": "backend:e9patch",
+   "lc": "landing",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "recycled-agents-release-nothing-they-hold",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "refresh_hermit_and_parent",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rename-dbi-to-dbt-backend",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "replace_reverie_ptrace_provenance",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rescue-three-unpushed-commits-in-dead-staging-drain-slot",
+   "ws": "operations",
+   "lc": "landing",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "research-backend-maturity-audit",
+   "ws": "strictness",
+   "lc": "research",
+   "why": "anchor:multi-backend"
+  },
+  {
+   "id": "research-strict-noop-check",
+   "ws": "strictness",
+   "lc": "research",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "resync-upper-team-main-and-agent-utils",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "reverie-pin-consistency-invariant-lint",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-backend-bypass-rr-dbi",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "rf-file-mutation-readback",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "rf-getsockopt-optlen-overlap",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-ioprio-semantics",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-netlink-autobind-determinism",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "rf-ns-inode-identity-aliases",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-prctl-dumpable-virtualize",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-prctl-timerslack-virtualize",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-procfs-semantic-coherence",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-procfs-shared-access-mediation",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "rf-socket-timestamp-ioctl",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "rf-softirqs-ci-and-determinism",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "rf-thread-self-open-time-binding",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "sabre-determinize-vdso-getrandom-entropy",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "scorecard-carry-full-provenance",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "scorecard_csv_producer_must",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "ship-team-machine-validation-ledger",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "staging-branch-reverie-all-18",
+   "ws": "main-health",
+   "lc": "landing",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "staging-hermit-33-free-merges",
+   "ws": "main-health",
+   "lc": "landing",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "test-power-to-weight-and-selective-selection",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "test-powerweight-audit-slowest-first",
+   "ws": "operations",
+   "lc": "research",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "test-selection-relevance-vs-reachability-design",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "three-core-prs-blocked-on-design-decisions-not-fixes",
+   "ws": "operations",
+   "lc": "research",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "timeout-headroom-and-load-relative",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "unified-in-guest-patching-backend",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:multi-backend"
+  },
+  {
+   "id": "unify-cross-backend-vdso-vvar-contract",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "unify-dbi-child-vdso-clock",
+   "ws": "backend:dbi",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "unwire-executed-tests-from-remaining-consumers",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "validate-cputime-limit-and-antibloat-skill",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "validate-dag-runner-p0-umbrella",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "validate-performance-ratchet",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "validate-speed-the-three-coupled-levers-owner-gated",
+   "ws": "strictness",
+   "lc": "research",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "validate-wall-is-a-first-class-main-branch-metric-watched-continuously",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "validate_4_open_hermit",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "validate_pr_1243_at",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "validate_sh_retry_classifier",
+   "ws": "main-health",
+   "lc": "active-implementation",
+   "why": "anchor:ci/main-health"
+  },
+  {
+   "id": "verify-current-session-codex-subagent-spawn",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "verify-team-machine-ledger-end-to-end",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "verify-vm-memory-deterministic",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "vision-backend-parity",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "vision-kvm-backend",
+   "ws": "backend:kvm",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "vision-reverie-backend-repo-split",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "vision-sabre-hybrid-backend",
+   "ws": "backend:sabre",
+   "lc": "active-implementation",
+   "why": "anchor:backend-name"
+  },
+  {
+   "id": "vision-strict-compat-envelope-to-100",
+   "ws": "strictness",
+   "lc": "active-implementation",
+   "why": "anchor:strictness/parity"
+  },
+  {
+   "id": "vtime-global-vs-local-audit-overnight",
+   "ws": "operations",
+   "lc": "research",
+   "why": "default:fleet-operations"
+  },
+  {
+   "id": "worktree-cli-opaque-state-registry-updated-by-construction",
+   "ws": "operations",
+   "lc": "active-implementation",
+   "why": "default:fleet-operations"
+  }
+ ]
+}
