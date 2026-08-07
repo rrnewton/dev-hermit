@@ -9,6 +9,57 @@ without re-deriving.
 
 Team: `claude-coord-176`. Host: `devbig176`, 176-core AMD EPYC 9D64.
 
+## 0. Executive summary
+
+**The strongest result.** On a reconstructed Debian Wheezy corpus, building each package **twice
+from two different absolute root paths**:
+
+> **52 of 52 packages that diverge natively across two build roots are byte-identical under
+> `hermit run --strict --no-rcb-time`** — out of 58 attempted, with **all 58 native controls
+> firing**, so no "identical" cell is vacuous. Each package is its own control.
+
+Across the whole set there is **exactly one unexplained Hermit-side failure** (`ack-grep`); every
+other non-verdict is package-side, harness-side, or explained.
+
+**Two models worth more than the count.**
+
+1. **Path-varying nondeterminism has two mechanisms, and Hermit addresses exactly one.**
+   *Path-embedded* — the path lands in the output bytes — Hermit does **not** fix, and correctly
+   so: nothing is nondeterministic from the guest's view. *Path-triggered* — the path perturbs
+   allocation, `readdir` order, or timing — Hermit **does** fix. Both were reproduced in one corpus
+   with opposite predicted outcomes. **The practical consequence is a triage step nobody was
+   doing: classify a candidate by mechanism before reaching for Hermit.**
+2. **A named Detcore defect class.** *A handler that lets the guest execute an indefinitely-blocking
+   syscall while holding the scheduler turn deadlocks whenever the only task that can unblock it is
+   queued behind.* Four instances found in one night with **four different proximate causes**; two
+   fixed, one specified-and-declined, one an open reachability risk to the fix itself.
+
+**Three Hermit bugs fixed** (#1851 `chown` family, #1864 `epoll_pwait`, plus the `openat` fd-typing
+error that made `read`-on-pipe misroute). Six PRs landed and ancestry-proven; four more are green
+and blocked on a fleet-wide CI outage, not on our work.
+
+**The honest negatives, which are results and not failures.**
+
+- **Nix real nixpkgs: N=0** of 13 measurable. Not a determinization failure — a compatibility one.
+  With two of three blockers fixed, `lensfun` now clears cmake configure, build **and** install and
+  hangs in `fixupPhase`. **The remaining distance is one bug, not a category.**
+- **buck2: 0 of 8** fleet-flagged targets reproduced their nondeterminism locally, over 3,287
+  executed actions per round. This is the **expected** outcome, not a null one: a same-host A/B
+  cannot reproduce cross-environment nondeterminism by construction. It narrows what the fleet's
+  flags can be — and if they are path- or host-sourced, **Hermit is not the right tool** and a
+  hermetic-root change is.
+- **The GHC `-C0` flagship result does not replicate.** Recorded as a non-replication with
+  attribution unknown. It stopped being true and nothing noticed for nine days, because no
+  re-runnable harness existed. That is the argument for capture, made by example.
+
+**The methodological through-line.** Nearly every significant finding tonight came from refusing to
+let a status word stand in for the thing it claimed: `UNIONED` that preserved nothing, a scorecard
+describing a build that no longer exists, a hosted green that went stale when a pin moved beneath
+it, `output_hash` that was `sha256("")`, `BUILD FAILED` that meant out-of-memory, `du` that meant
+nothing on a reflinking filesystem, an empty `/proc` file on a kernel without `CONFIG_PROC_CHILDREN`
+read as evidence of absence. **Several of those were ours, including two by the coordinator, and
+they are recorded here rather than quietly fixed.** §5 lists what a reader must not conclude.
+
 ## 1. The corrections: three refuted claims, one shape
 
 Three load-bearing claims in `nix-hermit-execbuilder-prototype_20260729` were refuted, all the
