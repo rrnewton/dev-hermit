@@ -12,7 +12,15 @@
 # denominator as compat-envelope/corpus-manifest.csv: 214 compiled C guests +
 # 21 shell/interpreter cells, listed in corpus/corpus-c.tsv + corpus/corpus-nonc.tsv),
 # and for every locally-available backend runs, per cell:
-#   det    = <backend> --strict --verify exits 0 (L2 DETLOG-bitwise self-verify)
+#   det    = <backend> --strict --verify exits 0. This is a STRIPPED-DETLOG
+#            self-verify, NOT a bitwise one: plain --verify compares the DETLOG
+#            under the Stripped policy, which normalises numbers, addresses and
+#            paths, and whose own --verify-json reports bitwise_parity:false.
+#            Mutation testing measured 3 of 5 planted defects surviving it (a
+#            differing read() return length, pointer arg and openat path); see
+#            experiments/strict-certification-mutation-sweep_20260806/. This
+#            line previously read "L2 DETLOG-bitwise self-verify", which claimed
+#            an assurance the flag cannot earn.
 #   parity = <backend> --strict stdout == ptrace --strict --verify stdout
 # It writes the merged fullcorpus-scorecard.csv, ASSERTS green-stays-green
 # against a per-backend ratchet baseline (a real regression fails the gate), and

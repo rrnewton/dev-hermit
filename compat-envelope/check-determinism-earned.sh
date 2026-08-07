@@ -34,15 +34,27 @@ if not rows:
 
 TWO_RUN = {"verify"}     # the only mode that executes and compares a second run
 
-unearned, unlabelled = [], []
+# A row may only claim the `bitwise` tier if its own record earned it: the
+# comparator was NOT the stripped one AND bitwise_parity is set. Without this a
+# producer could write tier=bitwise beside verify_compare=stripped -- exactly the
+# over-tiering that made all 346 greens read as DETLOG-bitwise.
+STRIPPED_COMPARATORS = {"stripped"}
+
+unearned, unlabelled, overtiered = [], [], []
 for i, r in enumerate(rows, start=2):
     if r.get("deterministic") != "1":
         continue
     mode = r.get("test_mode", "")
+    compare = (r.get("verify_compare") or "").strip()
+    tier = (r.get("tier") or "").strip()
     if mode not in TWO_RUN:
         unearned.append((i, mode, r.get("test_id", "")))
-    elif not (r.get("verify_compare") or "").strip():
+    elif not compare:
         unlabelled.append((i, mode, r.get("test_id", "")))
+    if tier == "bitwise" and (
+        compare in STRIPPED_COMPARATORS or (r.get("bitwise_parity") or "").strip() != "1"
+    ):
+        overtiered.append((i, compare, tier, r.get("test_id", "")))
 
 by_mode = collections.Counter(r["test_mode"] for r in rows if r.get("deterministic") == "1")
 blank    = sum(1 for r in rows if not (r.get("deterministic") or "").strip())
@@ -62,6 +74,14 @@ if unlabelled:
           f"comparison was stripped or bitwise)", file=sys.stderr)
     for line, mode, tid in unlabelled[:10]:
         print(f"  line {line}: mode={mode} test={tid}", file=sys.stderr)
+if overtiered:
+    rc = 1
+    print(f"\nOVER-TIERED determinism claims: {len(overtiered)} "
+          f"(tier=bitwise on a stripped comparison or without bitwise_parity=1 — "
+          f"a bitwise claim must rest on a bitwise comparison)", file=sys.stderr)
+    for line, compare, tier, tid in overtiered[:10]:
+        print(f"  line {line}: verify_compare={compare!r} tier={tier!r} test={tid}",
+              file=sys.stderr)
 
 # POSITIVE CONTROL: a guard that can only ever fail is useless. Assert the
 # scorecard still contains genuinely earned determinism, so a recompute that
