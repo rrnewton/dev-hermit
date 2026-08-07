@@ -1062,12 +1062,14 @@ class ProtocolTest(unittest.TestCase):
         hermit = self.repo_source("rrnewton/hermit", "mapped-hermit")
         reverie = self.repo_source("rrnewton/reverie", "mapped-reverie")
         parent = self.repo_source(protocol.PARENT_REPO, "mapped-parent")
+        agent_utils = self.repo_source(protocol.AGENT_UTILS_REPO, "mapped-agent-utils")
         with mock.patch.dict(
             protocol._DEFAULT_REPO_SOURCES,
             {
                 "rrnewton/hermit": hermit,
                 "rrnewton/reverie": reverie,
                 protocol.PARENT_REPO: parent,
+                protocol.AGENT_UTILS_REPO: agent_utils,
             },
             clear=True,
         ):
@@ -1083,6 +1085,10 @@ class ProtocolTest(unittest.TestCase):
                 protocol.resolve_repo_source(protocol.PARENT_REPO, None),
                 parent.resolve(),
             )
+            self.assertEqual(
+                protocol.resolve_repo_source(protocol.AGENT_UTILS_REPO, None),
+                agent_utils.resolve(),
+            )
             with self.assertRaisesRegex(
                 protocol.ProtocolError, "not required repository"
             ):
@@ -1097,6 +1103,28 @@ class ProtocolTest(unittest.TestCase):
         parent_policy = protocol.verification_policy_for_repo(protocol.PARENT_REPO)
         self.assertEqual(parent_policy["github"]["required_positive_count"], 4)
         self.assertEqual(len(parent_policy["github"]["required_jobs"]), 4)
+
+    def test_agent_utils_has_landing_ancestry_but_no_post_land_policy(self) -> None:
+        """agent-utils is ancestry-verifiable WITHOUT gaining a hosted policy.
+
+        The unpatched default map must carry it (otherwise every agent-utils
+        owner directive reports ``unverifiable`` and renders as drift), and the
+        post-land policy map must still refuse it (otherwise a repo with zero
+        registered jobs would produce a vacuous ``required_positive_count: 0``
+        green). Both halves are asserted against the real module state, not a
+        patched dict, because the defect being fixed lived in the default.
+        """
+        self.assertEqual(
+            protocol._DEFAULT_REPO_SOURCES[protocol.AGENT_UTILS_REPO],
+            protocol.ROOT / "agent-utils",
+        )
+        self.assertNotIn(
+            protocol.AGENT_UTILS_REPO, protocol._CURRENT_VERIFICATION_POLICY_VERSION
+        )
+        with self.assertRaisesRegex(
+            protocol.ProtocolError, "unsupported post-land verification repository"
+        ):
+            protocol.verification_policy_for_repo(protocol.AGENT_UTILS_REPO)
 
     def test_repo_source_accepts_intended_https_and_ssh_remote_forms(self) -> None:
         source = self.repo_source("rrnewton/hermit", "remote-forms")

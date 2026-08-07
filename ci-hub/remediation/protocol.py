@@ -45,6 +45,11 @@ PRIVILEGED_WORKFLOW_FILE = ".github/workflows/ci-privileged.yml"
 REVERIE_REPO = "rrnewton/reverie"
 REVERIE_WORKFLOW = "Rust"
 REVERIE_WORKFLOW_FILE = ".github/workflows/ci.yml"
+# agent-utils is a first-class checked-out submodule (`update = checkout`) and
+# owner tooling directives land there directly on main, so their landing
+# ancestry is verifiable exactly like the other three. It deliberately gets NO
+# entry in `_CURRENT_VERIFICATION_POLICY_VERSION`: see `resolve_repo_source`.
+AGENT_UTILS_REPO = "rrnewton/agent-utils"
 VERIFICATION_POLICY_SCHEMA_VERSION = 2
 _CURRENT_VERIFICATION_POLICY_VERSION = {
     # v3 makes the owner-authorized Hermit hosted authority the portable job;
@@ -119,6 +124,7 @@ _DEFAULT_REPO_SOURCES = {
     DEFAULT_REPO: ROOT / "hermit",
     REVERIE_REPO: ROOT / "reverie",
     PARENT_REPO: ROOT,
+    AGENT_UTILS_REPO: ROOT / "agent-utils",
 }
 DEFAULT_POLL_SECONDS = 15
 DEFAULT_GITHUB_WAIT_SECONDS = 120
@@ -1383,10 +1389,13 @@ def _github_repo_from_remote(remote: str) -> str | None:
 def resolve_repo_source(repo: str, source: Path | None) -> Path:
     """Resolve a repository-specific donor checkout and prove its origin binding."""
     # Landing ancestry is a narrower authority than post-land CI policy. Parent
-    # tooling lands directly to main and therefore needs ancestry verification,
-    # but it has no hosted/local verification obligation policy. Keeping these
-    # allowlists separate avoids manufacturing a zero-job policy that would make
-    # an unsupported parent obligation look green.
+    # tooling and agent-utils both land directly to main and therefore need
+    # ancestry verification, but neither has a hosted/local verification
+    # obligation policy. Keeping these allowlists separate avoids manufacturing
+    # a zero-job policy that would make an unsupported obligation look green:
+    # `AGENT_UTILS_REPO` is in `_DEFAULT_REPO_SOURCES` but NOT in
+    # `_CURRENT_VERIFICATION_POLICY_VERSION`, so `verification_policy_for_repo`
+    # still refuses it ("unsupported post-land verification repository").
     if repo not in _DEFAULT_REPO_SOURCES:
         supported = ", ".join(sorted(_DEFAULT_REPO_SOURCES))
         raise ProtocolError(
