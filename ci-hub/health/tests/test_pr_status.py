@@ -198,6 +198,255 @@ class GhEngineClassificationTests(unittest.TestCase):
         self.assertTrue(status.unhealthy)
 
 
+class SetupOnlyRollupClassificationTests(unittest.TestCase):
+    HEAD = "d282a85726a5e0101cad069c2f3d6e2e23b9d6cd"
+
+    @staticmethod
+    def failed_check(
+        *,
+        name: str = "reverie-pin-is-latest-main",
+        run: int = 31114544049,
+        job: int = 92660569815,
+    ) -> dict[str, object]:
+        return {
+            "__typename": "CheckRun",
+            "completedAt": "2026-08-06T15:46:01Z",
+            "conclusion": "FAILURE",
+            "detailsUrl": (
+                f"https://github.com/rrnewton/hermit/actions/runs/{run}/job/{job}"
+            ),
+            "name": name,
+            "startedAt": "2026-08-06T15:40:35Z",
+            "status": "COMPLETED",
+            "workflowName": "Merge Gate",
+        }
+
+    @staticmethod
+    def accepted(
+        _repo: str, _check: dict[str, object], _head: str
+    ) -> pr_status.SetupOnlyVerification:
+        return pr_status.SetupOnlyVerification(
+            True, "setup only", run_id=31114544049, job_id=92660569815
+        )
+
+    @staticmethod
+    def refused(
+        _repo: str, _check: dict[str, object], _head: str
+    ) -> pr_status.SetupOnlyVerification:
+        return pr_status.SetupOnlyVerification(False, "identity mismatch")
+
+    def test_1665_setup_only_failure_becomes_visible_no_result(self) -> None:
+        rollup = [
+            self.failed_check(),
+            {
+                "__typename": "CheckRun",
+                "name": "merge-gate-v4",
+                "status": "QUEUED",
+                "conclusion": "",
+                "detailsUrl": (
+                    "https://github.com/rrnewton/hermit/actions/runs/31114544049/"
+                    "job/92670128104"
+                ),
+            },
+        ]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [_pr(1665, rollup, head=self.HEAD)],
+            setup_only_verifier=self.accepted,
+        )
+        self.assertEqual(status.pending, 1)
+        self.assertEqual(status.red, 0)
+        self.assertEqual(status.real_reds, 0)
+        self.assertEqual(status.setup_only_no_result_checks, 1)
+        self.assertEqual(
+            status.prs[0]["setup_only_no_result_checks"],
+            ("reverie-pin-is-latest-main",),
+        )
+        self.assertEqual(status.prs[0]["failing_checks"], ())
+
+    def test_setup_only_failure_blocks_green_even_when_everything_else_passes(
+        self,
+    ) -> None:
+        result = pr_status._classify_rollup(
+            "rrnewton/hermit",
+            [
+                self.failed_check(),
+                {
+                    "__typename": "CheckRun",
+                    "name": "hosted tests",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+            ],
+            head_sha=self.HEAD,
+            setup_only_verifier=self.accepted,
+        )
+        self.assertEqual(result.state, "pending")
+        self.assertEqual(
+            result.setup_only_no_result_checks,
+            ("reverie-pin-is-latest-main",),
+        )
+
+    def test_1697_product_failure_stays_real_red(self) -> None:
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            [
+                _pr(
+                    1697,
+                    [
+                        self.failed_check(
+                            name="P0 demo gate (demos 1-8)",
+                            run=31110129926,
+                            job=92645431859,
+                        )
+                    ],
+                    head="d93d512826c522dff89a27a1aa2d4eda0377796b",
+                )
+            ],
+            setup_only_verifier=self.refused,
+        )
+        self.assertEqual(status.pending, 0)
+        self.assertEqual(status.red, 1)
+        self.assertEqual(status.real_reds, 1)
+        self.assertEqual(status.product_reds, 1)
+        self.assertEqual(status.setup_only_no_result_checks, 0)
+        self.assertEqual(status.prs[0]["failing_checks"], ("P0 demo gate (demos 1-8)",))
+
+    def test_mixed_setup_only_and_product_failure_remains_red(self) -> None:
+        def verifier(
+            _repo: str, check: dict[str, object], _head: str
+        ) -> pr_status.SetupOnlyVerification:
+            if check.get("name") == "setup-infra":
+                return pr_status.SetupOnlyVerification(
+                    True, "setup only", run_id=1, job_id=2
+                )
+            return pr_status.SetupOnlyVerification(False, "product steps ran")
+
+        result = pr_status._classify_rollup(
+            "rrnewton/hermit",
+            [
+                self.failed_check(name="setup-infra", job=92660569815),
+                self.failed_check(name="product", job=92645431859),
+            ],
+            head_sha=self.HEAD,
+            setup_only_verifier=verifier,
+        )
+        self.assertEqual(result.state, "red")
+        self.assertEqual(result.setup_only_no_result_checks, ("setup-infra",))
+        self.assertEqual(result.failing_check_names, ("product",))
+
+    def test_batch_authority_preserves_source_and_downstream_no_result(self) -> None:
+        class BatchAuthority:
+            def __call__(self, *_args: object) -> pr_status.SetupOnlyVerification:
+                raise AssertionError("rollup must use the single batch authority")
+
+            def verify_failures(
+                self,
+                _repo: str,
+                checks: tuple[dict[str, object], ...],
+                _head: str,
+            ) -> tuple[pr_status.SetupOnlyVerification, ...]:
+                results = []
+                for check in checks:
+                    if check.get("name") == "reverie-pin-is-latest-main":
+                        results.append(
+                            pr_status.SetupOnlyVerification(
+                                True,
+                                "setup only",
+                                31114544049,
+                                92660569815,
+                                kind="setup-only",
+                            )
+                        )
+                    else:
+                        results.append(
+                            pr_status.SetupOnlyVerification(
+                                True,
+                                "prerequisite consequence",
+                                31114544049,
+                                92670128104,
+                                kind="prerequisite-no-result",
+                                source_job_id=92660569815,
+                            )
+                        )
+                return tuple(results)
+
+        downstream = self.failed_check(name="merge-gate-v4", job=92670128104)
+        downstream["startedAt"] = "2026-08-06T18:20:19Z"
+        downstream["completedAt"] = "2026-08-06T18:20:25Z"
+        result = pr_status._classify_rollup(
+            "rrnewton/hermit",
+            [downstream, self.failed_check()],
+            head_sha=self.HEAD,
+            setup_only_verifier=BatchAuthority(),
+        )
+        self.assertEqual(result.state, "pending")
+        self.assertEqual(
+            result.setup_only_no_result_checks,
+            ("reverie-pin-is-latest-main",),
+        )
+        self.assertEqual(result.prerequisite_no_result_checks, ("merge-gate-v4",))
+        self.assertEqual(result.failing_check_names, ())
+        self.assertIn("source_job=92660569815", result.prerequisite_evidence[0])
+
+    def test_latest_attempt_is_selected_once_for_state_and_names(self) -> None:
+        old_product = self.failed_check(name="same", run=10, job=100)
+        new_setup = self.failed_check(name="same", run=11, job=101)
+        seen: list[str] = []
+
+        def verifier(
+            _repo: str, check: dict[str, object], _head: str
+        ) -> pr_status.SetupOnlyVerification:
+            seen.append(str(check["detailsUrl"]))
+            return pr_status.SetupOnlyVerification(True, "setup only", 11, 101)
+
+        for rollup in ([old_product, new_setup], [new_setup, old_product]):
+            with self.subTest(order=[c["detailsUrl"] for c in rollup]):
+                seen.clear()
+                result = pr_status._classify_rollup(
+                    "rrnewton/hermit",
+                    rollup,
+                    head_sha=self.HEAD,
+                    setup_only_verifier=verifier,
+                )
+                self.assertEqual(result.state, "pending")
+                self.assertEqual(result.failing_check_names, ())
+                self.assertEqual(len(seen), 1)
+                self.assertIn("/runs/11/job/101", seen[0])
+
+    def test_verifier_exception_is_fail_closed_and_visible(self) -> None:
+        def broken(
+            _repo: str, _check: dict[str, object], _head: str
+        ) -> pr_status.SetupOnlyVerification:
+            raise RuntimeError("boom")
+
+        result = pr_status._classify_rollup(
+            "rrnewton/hermit",
+            [self.failed_check()],
+            head_sha=self.HEAD,
+            setup_only_verifier=broken,
+        )
+        self.assertEqual(result.state, "red")
+        self.assertEqual(result.failing_check_names, ("reverie-pin-is-latest-main",))
+        self.assertIn("verifier error", result.actions_job_verification_errors[0])
+
+    def test_nonfailure_no_result_never_invokes_setup_verifier(self) -> None:
+        for conclusion in ("CANCELLED", "STALE", "FUTURE"):
+            with self.subTest(conclusion=conclusion):
+                check = self.failed_check()
+                check["conclusion"] = conclusion
+                verifier = mock.Mock()
+                result = pr_status._classify_rollup(
+                    "rrnewton/hermit",
+                    [check],
+                    head_sha=self.HEAD,
+                    setup_only_verifier=verifier,
+                )
+                self.assertEqual(result.state, "pending")
+                self.assertEqual(result.setup_only_no_result_checks, ())
+                verifier.assert_not_called()
+
+
 class ReviewProtocolClassificationTests(unittest.TestCase):
     def classify(self, *labels: str, draft: bool = False):
         status = pr_status._classify_gh_prs(
@@ -392,6 +641,68 @@ class GhEngineLoudFailureTests(unittest.TestCase):
         status = pr_status.fetch_repo_status_gh("rrnewton/hermit", net_wrapper=[])
         self.assertEqual(status.open, 0)  # legit empty list == 0 PRs (query OK)
         sleep.assert_called_once()
+
+    @mock.patch("pr_status.banked_failure_tier_commits", return_value={})
+    @mock.patch("pr_status.banked_green_commits", return_value=frozenset())
+    @mock.patch("pr_status.subprocess.run")
+    def test_fetch_consumer_dereferences_setup_failure(
+        self, run: mock.Mock, _green: mock.Mock, _failure: mock.Mock
+    ) -> None:
+        check = SetupOnlyRollupClassificationTests.failed_check()
+        raw = [_pr(1665, [check], head=SetupOnlyRollupClassificationTests.HEAD)]
+        fixture = (
+            Path(__file__).resolve().parent / "fixtures/actions_job_92660569815.json"
+        ).read_text()
+        run.side_effect = [
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(raw), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=fixture, stderr=""
+            ),
+        ]
+        status = pr_status.fetch_repo_status_gh(
+            "rrnewton/hermit", net_wrapper=[], timeout=30
+        )
+        self.assertEqual(status.pending, 1)
+        self.assertEqual(status.red, 0)
+        self.assertEqual(status.setup_only_no_result_checks, 1)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args_list[1].args[0][-1],
+            "repos/rrnewton/hermit/actions/jobs/92660569815",
+        )
+
+    @mock.patch("pr_status.banked_failure_tier_commits", return_value={})
+    @mock.patch("pr_status.banked_green_commits", return_value=frozenset())
+    @mock.patch("pr_status.subprocess.run")
+    def test_fetch_consumer_preserves_genuine_product_red(
+        self, run: mock.Mock, _green: mock.Mock, _failure: mock.Mock
+    ) -> None:
+        check = SetupOnlyRollupClassificationTests.failed_check(
+            name="P0 demo gate (demos 1-8)",
+            run=31110129926,
+            job=92645431859,
+        )
+        raw = [_pr(1697, [check], head="d93d512826c522dff89a27a1aa2d4eda0377796b")]
+        fixture = (
+            Path(__file__).resolve().parent / "fixtures/actions_job_92645431859.json"
+        ).read_text()
+        run.side_effect = [
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(raw), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=fixture, stderr=""
+            ),
+        ]
+        status = pr_status.fetch_repo_status_gh(
+            "rrnewton/hermit", net_wrapper=[], timeout=30
+        )
+        self.assertEqual(status.pending, 0)
+        self.assertEqual(status.red, 1)
+        self.assertEqual(status.product_reds, 1)
+        self.assertEqual(status.setup_only_no_result_checks, 0)
 
     def test_net_wrapper_default_prefers_with_proxy(self) -> None:
         with mock.patch("pr_status.shutil.which", return_value="/usr/bin/with-proxy"):

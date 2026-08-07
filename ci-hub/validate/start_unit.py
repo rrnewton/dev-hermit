@@ -119,7 +119,7 @@ def _prepend_path(existing: str, entry: str) -> str:
 # `ignored/lu-parity/usr/lib64` is deliberately last: it has the .pc and the
 # static `libunwind-ptrace.a`, but no `libunwind-ptrace.so*`.
 RUNTIME_CANDIDATES = (
-    "/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib",
+    "~/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib",
     "~/.local/hermit-deps/lu/usr/lib64",
 )
 

@@ -19,9 +19,17 @@
 //!     compare INFO logs, stack detlogs, or heap detlogs. TTY behavior is also
 //!     outside this scorecard.
 //!     Determinism and stdout parity are independent signals; neither implies
-//!     the other. A cell the backend never ran counts as 0 in both, so a small
-//!     envelope reads as a low percentage — that is the honest, anti-fakery
-//!     signal, not a bug.
+//!     the other. A cell the backend never ran is NOT counted as 0: `ran_count`
+//!     and `<parity>_measured_count` travel with every cell, an unmeasured
+//!     observable renders `?` (or `~` for partial) and a backend that could not
+//!     run renders `n/a` — none of which is a confirmed zero. A small envelope
+//!     therefore reads as a small MEASURED population, not as a low percentage
+//!     over an imagined one.
+//!     Correspondingly, an EMPTY DENOMINATOR is refused rather than rendered:
+//!     if no ptrace row passes the requested `--denominator` mode there are no
+//!     cells at all, so the tool prints `NO DATA:` with the modes and backends
+//!     the run does contain and exits 3 (distinct from 2 = usage, 0 = rendered).
+//!     Without that, a dbi/strict-only run rendered a confident `TOTAL 0`.
 //!     Reverie counter CSVs select `--observable tool-count` instead and are
 //!     labeled `tool-count-parity%`; the two observables are never conflated.
 //!
@@ -45,8 +53,9 @@
 //!                     (default: verify).
 //!   --backends LIST   Comma-separated backend columns, in order
 //!                     (default: dbi,kvm,sabre,liteinst — whichever appear).
-//!   --observable O    Observable compared by the legacy CSV `parity` field
-//!                     (default: stdout; use tool-count for Reverie counters).
+//!   --observable O    Observable-specific parity column to read: `stdout_parity`
+//!                     by default, or `tool_count_parity` for Reverie counters.
+//!                     The legacy `parity` spelling remains readable.
 //!   --json | --tsv    Machine-readable output instead of the table.
 //!
 //! ```cargo
@@ -98,12 +107,15 @@ struct Cell {
     backend: String,   // ptrace | dbi | kvm | sabre | liteinst | native
     outcome: String,   // pass | fail | error | timeout | oom | skip
     deterministic: Option<bool>,
-    // Legacy CSV field name: this stores stdout-only parity.
-    parity: Option<bool>,
+    /// Selected observable parity. The schema column is chosen from
+    /// `--observable`, with `parity` accepted only as a legacy fallback.
+    observable_parity: Option<bool>,
 }
 
-/// The canonical header this renderer and `collect-envelope.rs` agree on.
-const HEADER: &[&str] = &[
+/// Columns common to every supported scorecard schema. Observable-specific
+/// parity is resolved separately so stdout equality and Tool-count equality
+/// can never be silently conflated.
+const REQUIRED_COLUMNS: &[&str] = &[
     "run_id",
     "run_utc",
     "hermit_sha",
@@ -118,7 +130,6 @@ const HEADER: &[&str] = &[
     "cell_state",
     "outcome",
     "deterministic",
-    "parity",
     "output_hash",
     "duration_ms",
     "max_rss_kb",
@@ -230,11 +241,48 @@ fn main() {
             .position(|h| h == name)
             .unwrap_or_else(|| die(&format!("CSV missing required column `{name}`")))
     };
-    // Validate the header carries every field we rely on.
-    for h in HEADER {
+    // Validate the header carries every common field we rely on.
+    for h in REQUIRED_COLUMNS {
         let _ = idx(h);
     }
-    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det, i_par) = (
+    let modern_parity_columns = ["stdout_parity", "tool_count_parity"];
+    let selected_modern = parity_key;
+    let selected_count = header
+        .iter()
+        .filter(|h| h.as_str() == selected_modern)
+        .count();
+    let legacy_count = header.iter().filter(|h| h.as_str() == "parity").count();
+    let wrong_modern: Vec<&str> = modern_parity_columns
+        .iter()
+        .copied()
+        .filter(|name| *name != selected_modern && header.iter().any(|h| h == name))
+        .collect();
+    if selected_count > 1 || legacy_count > 1 {
+        die(&format!(
+            "CSV has duplicate observable columns (`{selected_modern}` count={selected_count}, legacy `parity` count={legacy_count})"
+        ));
+    }
+    if !wrong_modern.is_empty() {
+        die(&format!(
+            "CSV observable does not match --observable `{observable}`: found `{}`, expected `{selected_modern}` (or legacy `parity`)",
+            wrong_modern.join("`, `")
+        ));
+    }
+    if selected_count == 1 && legacy_count == 1 {
+        die(&format!(
+            "CSV has ambiguous observable columns `{selected_modern}` and legacy `parity`; keep exactly one"
+        ));
+    }
+    let i_par = if selected_count == 1 {
+        idx(selected_modern)
+    } else if legacy_count == 1 {
+        idx("parity")
+    } else {
+        die(&format!(
+            "CSV missing observable column `{selected_modern}` (legacy `parity` is also accepted)"
+        ));
+    };
+    let (i_run, i_bucket, i_tid, i_tmode, i_backend, i_outcome, i_det) = (
         idx("run_id"),
         idx("bucket"),
         idx("test_id"),
@@ -242,7 +290,6 @@ fn main() {
         idx("backend"),
         idx("outcome"),
         idx("deterministic"),
-        idx("parity"),
     );
 
     let mut cells: Vec<Cell> = Vec::new();
@@ -265,7 +312,7 @@ fn main() {
             backend: get(i_backend),
             outcome: get(i_outcome),
             deterministic: parse_bool(&get(i_det)),
-            parity: parse_bool(&get(i_par)),
+            observable_parity: parse_bool(&get(i_par)),
         });
     }
     if cells.is_empty() {
@@ -363,8 +410,8 @@ fn main() {
         // for a non-ptrace backend already requires parity.
         let det = c.deterministic.unwrap_or(pass && c.test_mode == "verify");
         // Parity is true only when the collector recorded a bitwise match.
-        let par = c.parity.unwrap_or(false);
-        let par_measured = c.parity.is_some();
+        let par = c.observable_parity.unwrap_or(false);
+        let par_measured = c.observable_parity.is_some();
         by_backend
             .entry(c.backend.clone())
             .or_default()
@@ -418,6 +465,82 @@ fn main() {
             e.3 += r;
         }
         rows.insert(bucket.clone(), row);
+    }
+
+    // A1 -- AN EMPTY DENOMINATOR IS NOT A ZERO RESULT.
+    //
+    // The per-cell vocabulary below (`?` / `~` / `n/a`, plus ran_count and
+    // measured_count) is careful about unmeasured CELLS, but it cannot speak for
+    // the denominator one level up: when no ptrace row passes the requested mode
+    // there are no cells at all, and every format renders a confident `TOTAL 0`
+    // (exit 0) that is indistinguishable from "we measured, and nothing passed".
+    // That happens for real -- a run that is dbi/strict only has a legitimately
+    // empty verify/ptrace denominator.
+    //
+    // So refuse to render, and say what IS present so the caller can pick a mode
+    // or backend that exists. Distinct exit status (3) keeps "could not measure"
+    // separable from usage errors (2) and from a rendered result (0).
+    //
+    // The remedy line reports the modes that would ACTUALLY yield a denominator --
+    // i.e. modes with a *passing ptrace* row -- not the modes the run merely
+    // contains. Those two differ exactly when the run has no ptrace rows at all
+    // (a dbi-only run "contains" strict, yet `--denominator strict` refuses too),
+    // and naming the wrong set would repeat this very defect one level up:
+    // a remedy is only actionable if it travels with the population it is drawn from.
+    let denom_total: usize = ptrace_pass.values().map(|s| s.len()).sum();
+    if denom_total == 0 {
+        let modes_present: BTreeSet<&str> = cells.iter().map(|c| c.test_mode.as_str()).collect();
+        let backends_present: BTreeSet<&str> = cells.iter().map(|c| c.backend.as_str()).collect();
+        let ptrace_rows = cells.iter().filter(|c| c.backend == "ptrace").count();
+        // Exactly the `--denominator` values that would produce a non-empty denominator.
+        let usable: BTreeSet<&str> = cells
+            .iter()
+            .filter(|c| c.backend == "ptrace" && c.outcome == "pass")
+            .map(|c| c.test_mode.as_str())
+            .collect();
+        let run_label = scope_run.clone().unwrap_or_else(|| "ALL (last-writer-wins)".into());
+        let remedy = if !usable.is_empty() {
+            format!(
+                "Retry with --denominator <{}> -- those are the modes this run has passing \
+                 ptrace rows in.",
+                usable.iter().copied().collect::<Vec<_>>().join("|")
+            )
+        } else if ptrace_rows == 0 {
+            "This run has NO ptrace rows in any mode, so no denominator can be formed from it \
+             at all; changing --denominator will not help. Use a run that includes the ptrace \
+             reference backend."
+                .to_string()
+        } else {
+            format!(
+                "This run has {ptrace_rows} ptrace rows but none passing in any mode, so no \
+                 --denominator choice yields a population; the reference backend itself failed \
+                 here."
+            )
+        };
+        eprintln!(
+            "NO DATA: run {run} has 0 ptrace/{mode} passing cells, so the denominator is empty \
+             and no percentage is defined (this is NOT a measured zero).\n\
+             \x20 rows considered:  {n}\n\
+             \x20 ptrace rows:      {ptrace_rows} (passing in modes: {usable})\n\
+             \x20 modes present:    {modes}\n\
+             \x20 backends present: {backends}\n\
+             \x20 csv:              {csv}\n\
+             {remedy}",
+            run = run_label,
+            mode = denom_mode,
+            n = cells.len(),
+            ptrace_rows = ptrace_rows,
+            usable = if usable.is_empty() {
+                "none".to_string()
+            } else {
+                usable.iter().copied().collect::<Vec<_>>().join(",")
+            },
+            modes = modes_present.iter().copied().collect::<Vec<_>>().join(","),
+            backends = backends_present.iter().copied().collect::<Vec<_>>().join(","),
+            csv = csv_path.display(),
+            remedy = remedy,
+        );
+        exit(3);
     }
 
     let pct = |num: usize, den: usize| -> f64 {

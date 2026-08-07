@@ -1,0 +1,27 @@
+{
+  "experiment": "prefix-parity-rungs",
+  "date": "2026-08-06",
+  "agent": "hermit-det4",
+  "hermit_commit": "4c70658e785834737cbe1524f77330c781a6f5ea",
+  "reverie_pin": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "hermit_binary_version": "hermit 0.2.0 (2026-08-06, g4c70658e7858)",
+  "build": "cargo build --release -p hermit --bin hermit --features third-party-backends",
+  "backend": "ptrace (golden), sabre and dbi compared",
+  "flags": "--strict; relaxations none",
+  "env": {
+    "PKG_CONFIG_PATH": "ignored/lu-parity/usr/lib64/pkgconfig",
+    "LIBRARY_PATH": "ignored/lu-parity/usr/lib64",
+    "LD_LIBRARY_PATH": "/home/newton/fbsource/fbcode/third-party-buck/platform010/build/libunwind/lib",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "host": "devbig014",
+  "harness_dependency": {
+    "path": "scripts/cross-backend-detlog-diff.rs",
+    "repo": "rrnewton/hermit",
+    "pr": 1709,
+    "branch": "feat/cross-backend-detlog-diff-harness",
+    "sha": "bc461a2608e2d7dca2f56293312e9bc2aa270182"
+  },
+  "results": ["parity-depth.tsv", "golden-selfdet.tsv", "rung-sizes.tsv", "rung-qualify.tsv"],
+  "limits": "one host, one binary; n=3 for self-determinism, n=1 per backend cell; demo05 unresolved; tar/grep/find record counts are filesystem-dependent"
+}

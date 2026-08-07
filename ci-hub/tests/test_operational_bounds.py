@@ -73,6 +73,7 @@ class OperationalBoundsTest(unittest.TestCase):
                 "CI_HUB_PR_STATUS_TIMEOUT": "0.1",
                 "CI_HUB_PR_STATUS_DEADLINE": "0.2",
                 "CI_HUB_REMEDIATION_NETWORK_TIMEOUT": "0.1",
+                "CI_HUB_AGGREGATE_TMPDIRS": str(self.temp),
                 "DEV_HERMIT_PARENT": str(self.temp),
                 "TMPDIR": str(self.temp),
             }
@@ -135,6 +136,18 @@ class OperationalBoundsTest(unittest.TestCase):
                 self.env,
             ),
             (("main-health", "--repo", "rrnewton/dev-hermit"), {2}, self.env),
+            (
+                (
+                    "hosted-status",
+                    "--repo",
+                    "rrnewton/hermit",
+                    "--sha",
+                    "a" * 40,
+                    "--json",
+                ),
+                {2, 4},
+                self.env,
+            ),
             (("pr-status", "--repo", "rrnewton/dev-hermit"), {2}, stall_env),
             (("tick",), {0}, tick_env),
             (
@@ -204,6 +217,11 @@ class OperationalBoundsTest(unittest.TestCase):
             (("refresh-history", "--", "--help"), {0}, self.env),
             (("history", "--", "--help"), {0}, self.env),
             (("local-history", "--json", "--since", "2999-01-01"), {0}, self.env),
+            (
+                ("receipt-digest", "--sha", "a" * 40),
+                {2},
+                self.env,
+            ),
             (
                 (
                     "newest-green",
@@ -562,7 +580,9 @@ class OperationalBoundsTest(unittest.TestCase):
         inherit = script.index('"$ROOT/ci-hub/ci-hub" inherit-obligations')
         prepare = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" prepare')
         acquire = script.index('"$ROOT/ci-hub/ci-hub" land-lock run')
-        receipt = script.index('"$ROOT/ci-hub/validation/verify_receipt.sh"')
+        receipt = script.index(
+            'receipt_detail=$("$SCRIPT_DIR/exact-head-validation-authority.sh"'
+        )
         merge = script.index('gh pr merge "$PR"')
         ancestry = script.index("merge-base --is-ancestor")
         complete = script.index('"$ROOT/ci-hub/remediation/land_and_arm.py" complete')
@@ -592,7 +612,8 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn('NO_RESULT)', script)
         self.assertIn("gh workflow run merge-gate.yml", script)
         self.assertIn("exit 75", script)
-        self.assertIn("local-validation-eligibility.sh", script)
+        self.assertIn("exact-head-validation-authority.sh", script)
+        self.assertNotIn("local-validation-eligibility.sh", script)
         self.assertIn("apply-local-label --pr", script)
         self.assertIn('--repo "$R" --sha "$HEAD" --comments "$receipt_comments"', script)
         self.assertIn('rm -f -- "$receipt_comments"', script)
@@ -600,6 +621,12 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertNotIn(
             'gh pr edit "$PR" -R "$R" --add-label locally-validated', script
         )
+        authority = (
+            ROOT / "ci-hub/landing/exact-head-validation-authority.sh"
+        ).read_text()
+        self.assertIn("ci-hub/validation/verify_receipt.sh", authority)
+        self.assertIn("validate-status --sha", authority)
+        self.assertIn("hosted-status --repo", authority)
 
         plugin = (ROOT / ".orc/plugins/hermit-dev/index.ts").read_text()
         heartbeat = plugin[plugin.index("speculativeLandRemediationHeartbeat") :]
@@ -621,9 +648,56 @@ class OperationalBoundsTest(unittest.TestCase):
         self.assertIn("unbacked label rejected 2/2", result.stdout)
         self.assertIn("validated head admitted 2/2", result.stdout)
 
+    def test_lander_exact_head_authority_brackets_both_positive_paths(self) -> None:
+        result = subprocess.run(
+            [
+                str(
+                    ROOT
+                    / "ci-hub/landing/test-exact-head-validation-authority.sh"
+                )
+            ],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=WALL_SECONDS,
+        )
+        self.assertIn("local/hosted OR positives=3", result.stdout)
+        self.assertIn("red/partial/no-result/stale/unbound negatives=7", result.stdout)
+
+    def test_skill_denylist_guards_against_local_only_landing_claims(self) -> None:
+        denylist = (
+            ROOT / "ci-hub/health/skill-contradiction-denylist.txt"
+        ).read_text().lower()
+        guarded_claims = (
+            ("hermit landing requires", "local receipt"),
+            ("hermit landing", "github results are supplemental"),
+        )
+        skill_bodies = {
+            path: path.read_text().lower()
+            for path in (ROOT / ".claude/skills").rglob("SKILL.md")
+        }
+        for needles in guarded_claims:
+            with self.subTest(needles=needles):
+                self.assertIn("+".join(needles), denylist)
+                for path, body in skill_bodies.items():
+                    self.assertFalse(
+                        all(needle in body for needle in needles),
+                        f"{path} resurrects stale landing authority: {needles}",
+                    )
+
     def test_lander_receipt_authorization_has_both_controls_and_cleans_plant(
         self,
     ) -> None:
+        verifier = (ROOT / "ci-hub/validation/verify_receipt.sh").read_text()
+        self.assertEqual(
+            verifier.count("receipt-digest --sha \"$sha\""),
+            1,
+            "candidate verification must use one Rust digest/qualification authority",
+        )
+        self.assertIn("--require-qualifying", verifier)
+        self.assertNotIn("qualifying_receipt.py", verifier)
         result = subprocess.run(
             [str(ROOT / "ci-hub/validation/test_verify_receipt.sh")],
             cwd=ROOT,

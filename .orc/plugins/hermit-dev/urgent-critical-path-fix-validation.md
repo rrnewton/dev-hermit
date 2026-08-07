@@ -49,6 +49,6 @@ candidate; the individual local test discovers and nails the blocker.
 
 For a hard determinism or scheduling blocker, use the workspace
 `research-planning-persona` skill at
-`~/work/dev-hermit/.llms/skills/research-planning-persona.md` before spawning
+`~/work/dev-hermit/.llms/skills/research-planning-persona/SKILL.md` before spawning
 competing approaches. Otherwise stay frugal: one fix path, one tight test loop,
 one watched CI run per coherent head.
