@@ -16,6 +16,7 @@ message that names *which* condition refused it.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import importlib.util
 import json
@@ -39,6 +40,23 @@ def _load_module():
 
 
 ohm = _load_module()
+
+
+@contextlib.contextmanager
+def _patched(module, **attrs):
+    """Temporarily replace module attributes, restoring them on exit.
+
+    Used to stand in for tmux so the delivery branches can be driven directly.
+    Nothing here touches a socket, a pane, or a live coordinator.
+    """
+    saved = {name: getattr(module, name) for name in attrs}
+    for name, value in attrs.items():
+        setattr(module, name, value)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(module, name, value)
 
 ORC_START = (
     '"if [ -f \'/home/test/.orc/tmux.conf\' ]; then tmux source-file '
@@ -743,6 +761,108 @@ class TestExitStatusAndLog(DeliveryTestCase):
             code, records = self.run_main(FakeOrcPane(), Path(tmp))
         self.assertEqual(len(records), 1)
 
+
+
+class VerifyInjectedConsumptionTests(unittest.TestCase):
+    """An empty composer is ambiguous; the scrollback is what disambiguates it.
+
+    `verify_injected` used to read "composer empty and probe not on screen" as
+    non-delivery. That is only one of its two meanings: the other is that Orc
+    took the draft before the relay looked, which is DELIVERY. The 2026-08-07
+    T03:00Z hourly wake hit the ambiguous state, was reported relay-rc=1, and
+    its hour was released -- so a later run would have sent the whole status
+    again. These tests drive the three states directly, with tmux replaced, so
+    the branch is exercised deterministically rather than by racing a pane.
+    """
+
+    RULE = "-" * 40
+    PROBE = "theexactmessageprobe"
+
+    def _screen(self, draft: str = "") -> str:
+        return "\n".join([self.RULE, f"> {draft}", self.RULE])
+
+    def _patch(self, screen: str, transcript: str):
+        calls = []
+
+        def fake_capture(socket, pane_id, *, scrollback: int = 0) -> str:
+            calls.append(scrollback)
+            return transcript if scrollback else screen
+
+        return fake_capture, calls
+
+    def test_a_populated_composer_needs_no_scrollback_lookup(self):
+        capture, calls = self._patch(self._screen("some draft"), "")
+        with _patched(ohm, capture_pane=capture):
+            outcome = ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+        self.assertEqual(outcome, ohm.INJECTED_IN_COMPOSER)
+        self.assertEqual(calls, [0], "must not read scrollback when the box is full")
+
+    def test_an_empty_composer_with_the_message_in_scrollback_is_a_delivery(self):
+        # THE CASE THAT USED TO DOUBLE-SEND.
+        capture, calls = self._patch(self._screen(""), f"[user]\n{self.PROBE}\n")
+        with _patched(ohm, capture_pane=capture, INJECT_ATTEMPTS=2, INJECT_RETRY_SLEEP=0.0):
+            outcome = ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+        self.assertEqual(outcome, ohm.INJECTED_ALREADY_CONSUMED)
+        self.assertIn(ohm.TRANSCRIPT_SCROLLBACK_LINES, calls, "scrollback must be consulted")
+
+    def test_an_empty_composer_with_nothing_anywhere_still_fails(self):
+        # The genuine non-delivery must NOT have been converted into a success.
+        capture, _ = self._patch(self._screen(""), "[user]\nsomething entirely else\n")
+        with _patched(
+            ohm, capture_pane=capture, INJECT_ATTEMPTS=2, INJECT_RETRY_SLEEP=0.0,
+            clear_composer=lambda *a, **k: True,
+        ):
+            with self.assertRaises(ohm.OrcMessageError) as caught:
+                ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+        self.assertIn("did not reach the Orc composer", str(caught.exception))
+
+    def test_the_two_outcomes_differ_only_by_the_scrollback(self):
+        """Identical screens, opposite verdicts -- the transcript decides."""
+        screen = self._screen("")
+        for transcript, expected in (
+            (f"[user]\n{self.PROBE}\n", ohm.INJECTED_ALREADY_CONSUMED),
+            ("[user]\nunrelated turn\n", None),
+        ):
+            capture, _ = self._patch(screen, transcript)
+            with _patched(
+                ohm, capture_pane=capture, INJECT_ATTEMPTS=2, INJECT_RETRY_SLEEP=0.0,
+                clear_composer=lambda *a, **k: True,
+            ):
+                if expected is None:
+                    with self.assertRaises(ohm.OrcMessageError):
+                        ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE)
+                else:
+                    self.assertEqual(
+                        ohm.verify_injected(Path("/nonexistent"), "%0", self.PROBE),
+                        expected,
+                    )
+
+    def test_a_consumed_draft_is_never_given_an_enter(self):
+        """send_message must not submit something Orc already holds."""
+        sent_keys = []
+
+        def fake_run_tmux(socket, *args):
+            sent_keys.append(args)
+            return ""
+
+        capture, _ = self._patch(self._screen(""), f"[user]\n{self.PROBE}\n")
+        with _patched(
+            ohm,
+            capture_pane=capture,
+            run_tmux=fake_run_tmux,
+            inject_message=lambda *a, **k: None,
+            wait_for_ready_composer=lambda *a, **k: ohm.Composer(text="", state="idle"),
+            message_probe=lambda _m: self.PROBE,
+            INJECT_ATTEMPTS=2,
+            INJECT_RETRY_SLEEP=0.0,
+        ):
+            ack = ohm.send_message(Path("/nonexistent"), "%0", "irrelevant body")
+        self.assertTrue(ack.consumed_without_submit)
+        self.assertEqual(ack.evidence, "consumed-before-submit+echo")
+        self.assertFalse(
+            any("Enter" in a for call in sent_keys for a in call),
+            f"Enter must not be sent for an already-consumed draft: {sent_keys}",
+        )
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
