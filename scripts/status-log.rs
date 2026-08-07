@@ -90,6 +90,14 @@ Other:
                          two timestamps.
   --ready-prs N          OPTIONAL, and a DISTINCT field. The ready/non-draft
                          subset. Recorded as `ready_prs`, never as `open_prs`.
+  --open-prs-observed N  Supply the dereferenced open-PR total instead of
+                         querying GitHub. The offline/test path, mirroring
+                         --task-states-json. Still COMPARED against --open-prs;
+                         it replaces the lookup, not the check.
+  --no-verify-counts     Skip the count dereference entirely. Recorded in the
+                         entry as open_prs_verified=false, because an unverified
+                         count that does not say so is the defect this guard
+                         exists to close.
   --open-prs-basis B     Assert the basis of --open-prs. The only accepted
                          value is total-open-including-drafts (the default).
                          A ready/non-draft basis is REFUSED here: pass it as
@@ -203,6 +211,8 @@ struct Args {
     repos: Option<String>,
     open_prs: Option<u64>,
     open_prs_basis: Option<String>,
+    open_prs_observed: Option<u64>,
+    no_verify_counts: bool,
     ready_prs: Option<u64>,
     genuine_reds: Option<u64>,
     fleet_count: Option<u64>,
@@ -633,6 +643,97 @@ fn parse_repos(raw: &str) -> Result<Vec<String>, String> {
 /// Refuse a subset basis under `open_prs`. This is THE negative case: a
 /// ready/non-draft count silently accepted here is exactly the defect that made
 /// a denominator change look like a 10x drop.
+/// DEREFERENCE THE COUNT, the way task ids are already dereferenced.
+///
+/// `--repos` was validated for SHAPE only and `--open-prs-basis` against an
+/// allow-list, so nothing connected the NUMBER to the SET it claimed to have
+/// counted. Entry 2026-08-07T02:55:39Z recorded `open_prs=7` under
+/// `total-open-including-drafts` over [rrnewton/hermit, rrnewton/reverie]; the
+/// true total across exactly those repositories was 102 when it was written and
+/// 105 when this guard was added. The 7 was ci-hub's monitored-ROLLUP subset
+/// (3 reds + 4 pending), a different population wearing the total's label.
+///
+/// That is the `open_prs=105` vs `open_prs=10` defect the denominator work was
+/// built to prevent, one layer up: the earlier fix made the basis explicit, and
+/// an explicit basis nobody checks is still just a label.
+///
+/// So when the basis claims the total, go and count it.
+fn dereference_open_prs(repo: &str) -> Result<u64, String> {
+    // `--limit` must exceed any plausible open-PR population: gh silently
+    // truncates at the limit, and a truncated list would UNDERCOUNT and so
+    // manufacture agreement with a subset -- the exact failure being closed.
+    let output = Command::new("with-proxy")
+        .args([
+            "gh", "pr", "list", "--repo", repo, "--state", "open",
+            "--limit", "1000", "--json", "number",
+        ])
+        .output()
+        .map_err(|e| format!("run `gh pr list` to dereference {repo}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`gh pr list --repo {repo} --state open` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(text.trim())
+        .map_err(|e| format!("parse `gh pr list --repo {repo}` output as JSON: {e}"))?;
+    let array = parsed
+        .as_array()
+        .ok_or_else(|| format!("`gh pr list --repo {repo}` did not return a JSON array"))?;
+    if array.len() >= 1000 {
+        return Err(format!(
+            "`gh pr list --repo {repo}` returned {} entries, at or above the --limit; the \
+             list may be truncated and a truncated count would UNDERSTATE the total",
+            array.len()
+        ));
+    }
+    Ok(array.len() as u64)
+}
+
+/// Sum the open-PR population over exactly the declared repository set.
+fn observed_open_prs(repos: &[String]) -> Result<(u64, Vec<(String, u64)>), String> {
+    let mut per_repo = Vec::new();
+    let mut total = 0u64;
+    for repo in repos {
+        let count = dereference_open_prs(repo)?;
+        total += count;
+        per_repo.push((repo.clone(), count));
+    }
+    Ok((total, per_repo))
+}
+
+/// Compare the declared count against the observed population. Pure so both
+/// directions are testable without a network or a filesystem.
+fn check_open_prs(
+    declared: u64,
+    observed: u64,
+    basis: &str,
+    repos: &[String],
+    per_repo: Option<&[(String, u64)]>,
+) -> Result<(), String> {
+    if declared == observed {
+        return Ok(());
+    }
+    let breakdown = per_repo
+        .map(|rows| {
+            rows.iter()
+                .map(|(repo, n)| format!("{repo}={n}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_else(|| "supplied via --open-prs-observed".to_string());
+    Err(format!(
+        "--open-prs {declared} does not match the {basis} population over --repos {}: \
+         observed {observed} ({breakdown}).\n\nA count that disagrees with the set it claims \
+         to have counted is not a measurement of that set. If {declared} is a monitored \
+         SUBSET -- ci-hub's rollup, for instance -- it needs its own field and basis the way \
+         --ready-prs does; it may not borrow open_prs. Entry 2026-08-07T02:55:39Z recorded 7 \
+         here while the true total was 102.",
+        repos.join(",")
+    ))
+}
+
 fn validate_open_prs_basis(basis: &str) -> Result<(), String> {
     if basis == BASIS_TOTAL_OPEN {
         return Ok(());
@@ -874,6 +975,11 @@ fn parse_args() -> Args {
             "--repos" => parsed.repos = Some(take_value(&arg, &mut args)),
             "--open-prs" => parsed.open_prs = Some(parse_count(&arg, take_value(&arg, &mut args))),
             "--open-prs-basis" => parsed.open_prs_basis = Some(take_value(&arg, &mut args)),
+            "--open-prs-observed" => {
+                parsed.open_prs_observed =
+                    Some(parse_count(&arg, take_value(&arg, &mut args)))
+            }
+            "--no-verify-counts" => parsed.no_verify_counts = true,
             "--ready-prs" => {
                 parsed.ready_prs = Some(parse_count(&arg, take_value(&arg, &mut args)))
             }
@@ -1244,6 +1350,32 @@ fn main() {
         .unwrap_or_else(|e| die(&e));
 
     let open_prs = args.open_prs.unwrap_or_else(|| die("missing --open-prs"));
+
+    // ---- bind the count to the set it claims to have counted ----
+    let basis = args.open_prs_basis.as_deref().unwrap_or(BASIS_TOTAL_OPEN);
+    let mut open_prs_verified = false;
+    let mut observed_detail: Option<Vec<(String, u64)>> = None;
+    if basis == BASIS_TOTAL_OPEN && !args.no_verify_counts {
+        let (observed, per_repo) = match args.open_prs_observed {
+            // Offline/test injection, mirroring --task-states-json. It replaces
+            // the LOOKUP, never the COMPARISON.
+            Some(injected) => (injected, None),
+            None => {
+                let (total, per_repo) = observed_open_prs(&repos).unwrap_or_else(|e| {
+                    die(&format!(
+                        "{e}\n\nCannot dereference --open-prs against --repos. Supply the \
+                         observed total with --open-prs-observed, or pass --no-verify-counts \
+                         to record the count as unverified."
+                    ))
+                });
+                (total, Some(per_repo))
+            }
+        };
+        check_open_prs(open_prs, observed, basis, &repos, per_repo.as_deref())
+            .unwrap_or_else(|e| die(&e));
+        observed_detail = per_repo;
+        open_prs_verified = true;
+    }
     let genuine_reds = args
         .genuine_reds
         .unwrap_or_else(|| die("missing --genuine-reds"));
@@ -1287,8 +1419,17 @@ fn main() {
             "basis": BASIS_TOTAL_OPEN,
             "includes_drafts": true,
             "repos": repos,
+            // Carry the condition with the value: a count that does not say
+            // whether it was checked is indistinguishable from one that was.
+            "verified": open_prs_verified,
         },
     });
+    if let Some(per_repo) = &observed_detail {
+        count_semantics["open_prs"]["observed_per_repo"] = json!(per_repo
+            .iter()
+            .map(|(repo, n)| (repo.clone(), *n))
+            .collect::<BTreeMap<String, u64>>());
+    }
     // ---- coverage: which hour does this row describe, and when was it written ----
     let written_at = timestamp_from_date();
     let write_hour = hour_of_timestamp(&written_at);
@@ -2266,4 +2407,64 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         assert!(COUNT_SEMANTICS_SCHEMA < COVERAGE_SCHEMA);
         assert_eq!(SCHEMA_VERSION, COVERAGE_SCHEMA);
     }
+    // ============ the count must be bound to the set it names ============
+
+    fn repos2() -> Vec<String> {
+        vec!["rrnewton/hermit".to_string(), "rrnewton/reverie".to_string()]
+    }
+
+    #[test]
+    fn a_subset_may_not_wear_the_total_open_basis() {
+        // THE MEASURED DEFECT. Entry 2026-08-07T02:55:39Z recorded open_prs=7
+        // under total-open-including-drafts over these two repositories while
+        // the true population was 102 (105 when this guard was written). The 7
+        // was ci-hub's monitored rollup: a different population in the total's
+        // clothing, and ~15x smaller.
+        let err = check_open_prs(7, 105, BASIS_TOTAL_OPEN, &repos2(), None)
+            .expect_err("a subset under the total basis must be refused");
+        assert!(err.contains("does not match"), "{err}");
+        assert!(err.contains("observed 105"), "{err}");
+        // The remedy must be named, not merely the refusal.
+        assert!(err.contains("--ready-prs"), "the message must point at the subset field: {err}");
+        assert!(err.contains("may not borrow open_prs"), "{err}");
+    }
+
+    #[test]
+    fn the_true_total_records() {
+        // Positive control: the guard is not simply refusing everything.
+        assert!(check_open_prs(105, 105, BASIS_TOTAL_OPEN, &repos2(), None).is_ok());
+        assert!(check_open_prs(0, 0, BASIS_TOTAL_OPEN, &repos2(), None).is_ok());
+    }
+
+    #[test]
+    fn off_by_one_in_either_direction_is_refused() {
+        // The check is equality, not a tolerance. A count "about right" is the
+        // same class of claim as a subset wearing the total's label.
+        for (declared, observed) in [(104u64, 105u64), (106, 105), (1, 0), (0, 1)] {
+            assert!(
+                check_open_prs(declared, observed, BASIS_TOTAL_OPEN, &repos2(), None).is_err(),
+                "declared {declared} vs observed {observed} must refuse"
+            );
+        }
+    }
+
+    #[test]
+    fn the_refusal_names_the_repositories_and_their_per_repo_counts() {
+        // A bare total tells the reader nothing about WHICH repository drifted.
+        let per_repo = vec![
+            ("rrnewton/hermit".to_string(), 96u64),
+            ("rrnewton/reverie".to_string(), 9u64),
+        ];
+        let err = check_open_prs(7, 105, BASIS_TOTAL_OPEN, &repos2(), Some(&per_repo))
+            .expect_err("must refuse");
+        assert!(err.contains("rrnewton/hermit=96"), "{err}");
+        assert!(err.contains("rrnewton/reverie=9"), "{err}");
+        assert!(err.contains("rrnewton/hermit,rrnewton/reverie"), "the declared set: {err}");
+
+        // Without a breakdown it must say where the number came from rather
+        // than implying a lookup that did not happen.
+        let injected = check_open_prs(7, 105, BASIS_TOTAL_OPEN, &repos2(), None).unwrap_err();
+        assert!(injected.contains("--open-prs-observed"), "{injected}");
+    }
+
 }
