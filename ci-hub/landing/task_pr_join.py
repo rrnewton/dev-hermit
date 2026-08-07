@@ -353,7 +353,12 @@ def compute_join(tasks: list[dict], prs: list[dict]) -> dict:
         for e in m["confirmed"] + m["probable"]:
             owned_task_ids.add(e["task"])
     impl_no_pr, impl_research = [], []
-    impl_tasks = [t for t in tasks if "implemented" in _task_tags(t) and _task_is_open(t)]
+    # Close-on-implemented lifecycle: an implemented task is CLOSED immediately
+    # and its landing debt is enumerated from CLOSED+implemented records. Also
+    # requiring _task_is_open() here excluded exactly the population this join
+    # exists to find, so population C silently emptied as the lifecycle took
+    # effect. The `implemented` tag is the population, at any status.
+    impl_tasks = [t for t in tasks if "implemented" in _task_tags(t)]
     for t in impl_tasks:
         if t["id"] in owned_task_ids:
             continue
