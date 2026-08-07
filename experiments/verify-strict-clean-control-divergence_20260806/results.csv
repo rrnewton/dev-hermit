@@ -1,0 +1,16 @@
+case,lines_run1,lines_run2,differing_lines,C1_tracer_cpuid,C2_vdso_order,C3_tracer_heap_ptr,C4_guest_rbx_cpuid,C5_declared_wallclock,C6_other,info_lines_total,info_lines_differing,info_restricted_verdict
+clean_ctrl_probe_strict_rep1,290,290,18,4,10,1,2,1,0,56,0,EQUAL
+clean_ctrl_probe_strict_rep2,290,290,18,4,10,1,2,1,0,56,0,EQUAL
+clean_ctrl_probe_strict_rep3,290,290,14,4,6,1,2,1,0,56,0,EQUAL
+clean_ctrl_probe_strict_rep4,290,290,16,4,8,1,2,1,0,56,0,EQUAL
+clean_ctrl_probe_strict_rep5,290,290,14,4,6,1,2,1,0,56,0,EQUAL
+clean_ctrl_probe_strict_rep6,290,290,18,4,10,1,2,1,0,56,0,EQUAL
+clean_ctrl_strict_plus_log_info,290,290,16,4,8,1,2,1,0,56,0,EQUAL
+clean_ctrl_strict_cpuid_virtualized_rep1,239,239,14,4,8,1,0,1,0,56,0,EQUAL
+clean_ctrl_strict_cpuid_virtualized_rep2,239,239,12,4,6,1,0,1,0,56,0,EQUAL
+clean_ctrl_strict_cpuid_virtualized_rep3,239,239,14,4,8,1,0,1,0,56,0,EQUAL
+mut_stdout_probe_strict,319,319,24,4,10,2,6,1,1,66,1,UNEQUAL
+mut_exit_probe_strict,319,319,20,4,8,1,4,1,2,66,2,UNEQUAL
+mut_detlog_only_probe_strict,344,344,16,4,4,2,3,1,2,74,2,UNEQUAL
+mut_addr_probe_strict,331,331,23,4,8,2,5,1,3,69,3,UNEQUAL
+mut_path_probe_strict,338,338,21,4,8,1,3,1,4,72,3,UNEQUAL

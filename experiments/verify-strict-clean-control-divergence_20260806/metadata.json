@@ -1,0 +1,64 @@
+{
+  "question": "Why does `hermit run --verify-strict` report nondeterminism for a trivially deterministic clean control (a static binary whose whole body is printf(\"constant-output\"); return 0)?",
+  "date_utc": "2026-08-07",
+  "agent": "hermit-w10",
+  "task": "research-verify-strict-clean-control-divergence",
+  "repos": {
+    "hermit": {
+      "sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+      "branch": "main",
+      "checkout": "/home/newton/work/dev-hermit/hermit (primary, READ-ONLY use)",
+      "binary": "hermit/target/debug/hermit",
+      "binary_version_string": "hermit 0.2.0 (2026-08-06, gf89c69766371-dirty)",
+      "dirty_paths_at_run_time": [
+        "README.md",
+        "scripts/check-script-sigpipe.sh",
+        "scripts/core-review-protocol-lint.sh",
+        "scripts/progress-report.sh",
+        "validate.sh",
+        "docs/progress-reports/v3-2026-08-06.md (untracked)"
+      ],
+      "dirty_note": "Zero Rust sources are modified, so the built binary is functionally hermit main f89c6976. The dirty paths are another agent's concurrent work in the primary; they were neither created, staged, nor modified by this experiment."
+    },
+    "reverie": {
+      "sha": "9470712afa9b421c72850ab7955fb335692e43a0",
+      "how_determined": "cargo git `rev` pin in hermit/hermit-cli/Cargo.toml:54 (identical rev in detcore-dbi, detcore-sabre, hermit-install)",
+      "note": "The reverie/ primary checkout is at dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6, which is NOT what the binary links. All reverie source citations in README.md were re-read via `git show 9470712a:<path>`."
+    },
+    "parent": {
+      "repo": "rrnewton/dev-hermit",
+      "branch": "main"
+    }
+  },
+  "guests": {
+    "source": "experiments/strict-certification-mutation-sweep_20260806/mutants/ (owned by hermit-w7; READ-ONLY, not modified)",
+    "built_by": "mutants/gen.sh -- gcc -O0 -static",
+    "used": ["clean_ctrl", "mut_stdout", "mut_exit", "mut_detlog_only", "mut_addr", "mut_path"]
+  },
+  "commands": {
+    "producer_probe_plus_strict": "hermit/target/debug/hermit run --strict --verify --verify-allow both --verify-strict --no-virtualize-cpuid --verify-json=<path> --base-env=minimal --max-timeslice=disabled --tmp=/tmp -- <guest>",
+    "control_B_cpuid_virtualized": "same, minus --no-virtualize-cpuid",
+    "control_C_explicit_log_level": "hermit/target/debug/hermit --log=info run --strict --verify --verify-allow both --verify-strict --no-virtualize-cpuid ... -- clean_ctrl",
+    "analysis": "python3 classify.py <run1.log> <run2.log> <label>"
+  },
+  "environment": {
+    "host": "devbig014.atn7.facebook.com",
+    "cores": 316,
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "rustc": "1.99.0-nightly (26ae60a9e 2026-07-28)",
+    "gcc": "11.5.0 20240719 (Red Hat 11.5.0-15)",
+    "backend": "ptrace",
+    "boxing": "none -- runs launched directly from the agent shell; these are short (<30s) single-threaded guest runs, not validate.sh"
+  },
+  "denominators": {
+    "hermit_verify_double_runs": 15,
+    "guest_executions": 30,
+    "double_runs_that_completed": 15,
+    "double_runs_that_timed_out": 0,
+    "clean_control_pairs_with_producer_probe": 6,
+    "clean_control_pairs_with_cpuid_virtualized": 3,
+    "planted_defect_guests": 5,
+    "note": "Every row of results.csv is one hermit --verify double-run = two guest executions. 1 guest x 1 backend x 1 host; these are counts, not rates over the 618-row scorecard."
+  },
+  "seed": "N/A -- scheduler seed is fixed at 0 by --strict (see 'DETLOG SCHEDRAND: seeding scheduler runqueue with seed 0' in every log)"
+}
