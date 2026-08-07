@@ -53,6 +53,7 @@ A cell a backend never ran counts as `0` in both (honest 0/0, never blank-as-gre
 | `scorecard.csv` | Hermit Detcore-envelope results (schema below). |
 | `reverie-scorecard.csv` | Reverie B1.5 Guest/Tool-boundary results (same schema). |
 | `e9patch-scorecard.csv` | e9patch preprocessing-invariance results over the ptrace backend (same schema). |
+| `pre-tightening-baseline-20260806/` | **Frozen, self-contained HISTORICAL snapshot**, not part of the live pipeline: one `collect-fullcorpus.sh` sweep at Hermit `4c70658e` / Reverie `dd3c178e`, captured as the matched *before* state for an upcoming strictness tightening of the comparison contract. Carries its own `scorecard.csv` (the 19-column schema plus a `verify_compare` tier column), `metadata.json`, `no-results.csv`, `sweep-transcript.txt`, `loadavg.tsv`, and a `generate.py --check` that asserts the README still matches its inputs. Nothing else reads it; do not append to it. |
 
 All `.rs` files are [`rust-script`](https://rust-script.org) executables
 (`chmod +x`, run directly). They resolve their own directory via

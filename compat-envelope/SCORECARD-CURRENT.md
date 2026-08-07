@@ -1,5 +1,31 @@
 # Compat-Envelope Scorecard — Current Rendered Output
 
+> ## 🕐 HISTORICAL — SUPERSEDED FOR "WHAT DOES MAIN DO TODAY?"
+>
+> **Its Tables 1, 3 and 4 are 2026-08-01 measurements at Hermit `82a8e853`, and
+> Hermit `main` has advanced by dozens of commits since** (this is Limitation L5
+> below, promoted here because the numbers are quoted more often than the
+> limitation is read). Nothing here was re-measured after 2026-08-05.
+>
+> For a **same-corpus, single-SHA measurement on current `main`**, read
+> [`pre-tightening-baseline-20260806/README.md`](pre-tightening-baseline-20260806/README.md)
+> — Hermit `4c70658e`, Reverie `dd3c178e`, measured 2026-08-07T02:17Z–03:47Z on
+> the same host. That file is itself explicitly labelled **PRE-TIGHTENING**: it
+> is the matched before-state for an upcoming strictness tightening of the
+> comparison contract, not a replacement status page.
+>
+> **Do not diff this file's Table 1 against that one row-for-row.** The corpus
+> is not the same population: this file's 200-cell/backend sweep predates the
+> 30-cell `performance` bucket that the parent corpus now lists, and 30 of those
+> cells are unbuildable on current Hermit `main` anyway. Denominators differ
+> (179 here vs 182 there) and the backend sets differ (`kvm` was measurable on
+> 2026-08-01 and is not measurable today).
+>
+> This file stays in place as the standing rendering of the four committed CSVs
+> and as the reference for the certification-tier and denominator caveats in §6,
+> which all still apply. Replace it when the collectors are re-run into those
+> CSVs.
+
 **This file is the clear, human-readable rendering of the four scorecard CSVs
 that sit beside it.** It is the entry point: `README.md` documents the *system*,
 `SCORECARD.md` and `REPORT.md` are older narrative analyses written on 2026-08-04
