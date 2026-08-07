@@ -1,0 +1,7 @@
+NATIVE  figlet,"(import <nixpkgs> {}).figlet",native,"native",/nix/store/qf5szhhdgbhaga91d9m10c0n0i98ccb3-figlet-2.2.5.drv,2,1,reproducible,0xjjizc42fhmrv92bd24xcwha8n6j89hk4kibgwxy5pagl3a570i 0xjjizc42fhmrv92bd24xcwha8n6j89hk4kibgwxy5pagl3a570i,3 3,
+HERMIT  figlet,"(import <nixpkgs> {}).figlet",hermit,"run --tmp=/tmp --no-rcb-time --max-timeslice disabled",/nix/store/k955cxvc4gn5mgw74z0ihsvy85a2adj7-figlet-2.2.5.drv,0,,build-fail,,,build1-failed
+NATIVE  which,"(import <nixpkgs> {}).which",native,"native",/nix/store/8j1ppvc6n2i1cwmchmzk8sxyxp8f163p-which-2.23.drv,2,1,reproducible,10akgdnskylvddfbn6v7y908r7nqp4h1ap0jbfm1pydhhqzjppb9 10akgdnskylvddfbn6v7y908r7nqp4h1ap0jbfm1pydhhqzjppb9,4 4,
+HERMIT  which,"(import <nixpkgs> {}).which",hermit,"run --tmp=/tmp --no-rcb-time --max-timeslice disabled",/nix/store/c9bd42ds2vwjqrlmr4ajff8g8ywwl6h0-which-2.23.drv,0,,build-fail,,,build1-failed
+NATIVE  bc,"(import <nixpkgs> {}).bc",native,"native",/nix/store/hv077sb3v305vrmhh9kp8kv4pzmsh4i8-bc-1.08.2.drv,2,1,reproducible,1wnriq90x07313nf6jixyhyy2p0ra7mmxd8xn93srmd6y7g86sh2 1wnriq90x07313nf6jixyhyy2p0ra7mmxd8xn93srmd6y7g86sh2,11 10,
+HERMIT  bc,"(import <nixpkgs> {}).bc",hermit,"run --tmp=/tmp --no-rcb-time --max-timeslice disabled",/nix/store/xxpgwavqg6aqni62dy67ln0hqch0rwpb-bc-1.08.2.drv,0,,build-fail,,,build1-failed
+NATIVE  hello,"(import <nixpkgs> {}).hello",native,"native",/nix/store/5g60vyp4cbgwl12pav5apyi571smp62s-hello-2.12.2.drv,2,1,reproducible,1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii 1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii,20 19,
