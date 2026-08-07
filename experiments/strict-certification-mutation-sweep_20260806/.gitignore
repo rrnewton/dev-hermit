@@ -1,0 +1,12 @@
+# Compiled mutation guests are build artifacts, never committed (binary policy).
+# Rebuild with: bash mutants/gen.sh   and the gcc loop in README.md.
+mutants/clean_ctrl
+mutants/clean_trivial
+mutants/mut_stdout
+mutants/mut_exit
+mutants/mut_detlog_only
+mutants/mut_addr
+mutants/mut_path
+mutants-dyn/
+# Retained hermit run logs (large, regenerable)
+logs_*.log
