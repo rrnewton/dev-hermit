@@ -1,0 +1,16 @@
+source,mode,runs,distinct_values,verdict
+at_random,native,10,10,LEAK
+gettimeofday,native,10,10,LEAK
+getpid,native,10,10,LEAK
+bash_random,native,10,10,LEAK
+procfs_uuid,native,10,10,LEAK
+at_random,hermit-default-namespace,10,1,determinized
+gettimeofday,hermit-default-namespace,10,1,determinized
+getpid,hermit-default-namespace,10,1,determinized
+bash_random,hermit-default-namespace,10,1,determinized
+procfs_uuid,hermit-default-namespace,10,1,determinized
+at_random,hermit-no-namespace,10,1,determinized
+gettimeofday,hermit-no-namespace,10,1,determinized
+getpid,hermit-no-namespace,10,10,LEAK
+bash_random,hermit-no-namespace,10,3,LEAK
+procfs_uuid,hermit-no-namespace,10,1,determinized
