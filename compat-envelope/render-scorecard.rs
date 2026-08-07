@@ -123,6 +123,15 @@ struct Cell {
     /// Cross-backend standard actually met. This is separate from `tier`,
     /// which describes the run1/run2 self-determinism comparator.
     comparison_tier: String,
+    /// Whether the row carries EVIDENCE that a determinism comparison actually
+    /// happened: a non-blank `parity_comparator` or a non-blank
+    /// `compared_log_messages`. Hermit refuses a determinism positive whose
+    /// evidence fields are blank (4da445156, "backend-parity: refuse a
+    /// determinism positive whose evidence fields are blank"); this is the
+    /// parent half of that refusal, which never got inherited across the repo
+    /// boundary. `deterministic=1` beside a blank comparator and blank counts is
+    /// a green with nothing behind it.
+    determinism_evidenced: bool,
 }
 
 const FULL_COMPARISON_TIER: &str = "full-stdout-info-stack-heap";
@@ -344,6 +353,12 @@ fn main() {
         idx("deterministic"),
         idx("comparison_tier"),
     );
+    // Evidence that a determinism comparison actually happened. OPTIONAL by
+    // design: pre-schema-5 rows do not carry these columns, and such a row must
+    // read as UNEVIDENCED rather than fail the whole render -- an old row cannot
+    // retroactively acquire evidence it never recorded.
+    let i_comparator = header.iter().position(|h| h == "parity_comparator");
+    let i_compared = header.iter().position(|h| h == "compared_log_messages");
 
     let mut cells: Vec<Cell> = Vec::new();
     for (n, line) in lines.enumerate() {
@@ -382,6 +397,11 @@ fn main() {
             deterministic: parse_bool(&get(i_det)),
             observable_parity: parse_bool(&get(i_par)),
             comparison_tier,
+            // Absent columns (pre-schema-5 rows) read as blank, i.e. NOT
+            // evidenced -- an older row cannot retroactively acquire evidence it
+            // never recorded.
+            determinism_evidenced: i_comparator.map(&get).is_some_and(|v| !v.trim().is_empty())
+                || i_compared.map(&get).is_some_and(|v| !v.trim().is_empty()),
         });
     }
     if cells.is_empty() {
@@ -480,6 +500,11 @@ fn main() {
     // internal double-run already proved run1==run2 for a passing verify cell).
     struct BCell {
         det: bool,
+        /// Rows carrying determinism EVIDENCE. `det_measured_count` must count
+        /// these, not rows -- counting rows reports the population size while
+        /// the evidenced count may be zero, which is the same proxy defect one
+        /// level up and would make the refusal invisible in the summary.
+        det_measured: bool,
         par: bool,
         /// Whether parity was actually measured (CSV field non-blank). A blank
         /// parity is "unknown", NOT a confirmed 0 — kept distinct so the
@@ -502,22 +527,28 @@ fn main() {
         // self-deterministic yet diverge from ptrace. The CSV `deterministic`
         // field is authoritative, and the strict comparison tier is required.
         // Never infer determinism from a raw execution pass.
-        let det = pass && c.deterministic.unwrap_or(false);
+        // BLANK-EVIDENCE REFUSAL (parent half of hermit 4da445156). A
+        // determinism positive requires evidence that a comparison verdict
+        // exists. Without it the row is UNMEASURED, not deterministic-by-
+        // default -- and not a negative either: refusing is zero qualifying
+        // evidence, never a confirmed fail.
+        let det = pass && c.deterministic.unwrap_or(false) && c.determinism_evidenced;
+        let det_measured = pass && c.determinism_evidenced;
         // Parity is true only when the collector recorded a bitwise match.
         let par = pass && c.observable_parity.unwrap_or(false);
         let par_measured = pass && c.observable_parity.is_some();
         by_backend
             .entry(c.backend.clone())
             .or_default()
-            .insert((c.bucket.clone(), c.test_id.clone()), BCell { det, par, par_measured, ran });
+            .insert((c.bucket.clone(), c.test_id.clone()), BCell { det, det_measured, par, par_measured, ran });
     }
 
     // Build per-bucket rows.
     #[derive(Default, Clone)]
     struct Row {
         ptrace: usize,
-        // backend -> (parity_count, det_count, parity_measured_count, ran_count)
-        back: BTreeMap<String, (usize, usize, usize, usize)>,
+        // backend -> (parity_count, det_count, parity_measured_count, ran_count, det_measured_count)
+        back: BTreeMap<String, (usize, usize, usize, usize, usize)>,
     }
     let mut rows: BTreeMap<String, Row> = BTreeMap::new();
     let mut total = Row::default();
@@ -529,6 +560,7 @@ fn main() {
             let mut det = 0usize;
             let mut par_meas = 0usize;
             let mut ran = 0usize;
+            let mut det_meas = 0usize;
             if let Some(map) = by_backend.get(b) {
                 for tid in &denom {
                     if let Some(bc) = map.get(&(bucket.clone(), tid.clone())) {
@@ -541,22 +573,26 @@ fn main() {
                         if bc.par_measured {
                             par_meas += 1;
                         }
+                        if bc.det_measured {
+                            det_meas += 1;
+                        }
                         if bc.ran {
                             ran += 1;
                         }
                     }
                 }
             }
-            row.back.insert(b.clone(), (par, det, par_meas, ran));
+            row.back.insert(b.clone(), (par, det, par_meas, ran, det_meas));
         }
         total.ptrace += row.ptrace;
         for b in &backend_cols {
-            let e = total.back.entry(b.clone()).or_insert((0, 0, 0, 0));
-            let (p, d, m, r) = row.back[b];
+            let e = total.back.entry(b.clone()).or_insert((0, 0, 0, 0, 0));
+            let (p, d, m, r, dm) = row.back[b];
             e.0 += p;
             e.1 += d;
             e.2 += m;
             e.3 += r;
+            e.4 += dm;
         }
         rows.insert(bucket.clone(), row);
     }
@@ -662,10 +698,14 @@ fn main() {
             let mut emit = |name: &str, row: &Row| {
                 let mut backs = serde_json::Map::new();
                 for b in &backend_cols {
-                    let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
+                    let (p, d, m, r, dm) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0, 0));
                     let mut metrics = serde_json::Map::new();
                     metrics.insert(format!("{parity_key}_count"), json!(p));
                     metrics.insert(format!("{parity_key}_measured_count"), json!(m));
+                    // Rows carrying determinism EVIDENCE, not rows. With a blank
+                    // comparator this is 0 while the population is large, which
+                    // is exactly the distinction the refusal exists to surface.
+                    metrics.insert("determinism_measured_count".to_string(), json!(dm));
                     metrics.insert(
                         format!("{parity_key}_pct"),
                         json!((pct(p, row.ptrace) * 10.0).round() / 10.0),
@@ -720,7 +760,7 @@ fn main() {
             let emit = |name: &str, row: &Row| {
                 let mut f = vec![name.to_string(), row.ptrace.to_string()];
                 for b in &backend_cols {
-                    let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
+                    let (p, d, m, r, _dm) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0, 0));
                     f.push(format!("{:.1}", pct(p, row.ptrace)));
                     f.push(format!("{:.1}", pct(d, row.ptrace)));
                     f.push(format!("{m}/{}", row.ptrace));
@@ -764,7 +804,7 @@ fn main() {
             let emit = |name: &str, row: &Row| {
                 let mut line = format!("{:<22} {:>7}", name, row.ptrace);
                 for b in &backend_cols {
-                    let (p, d, m, r) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0));
+                    let (p, d, m, r, _dm) = row.back.get(b).copied().unwrap_or((0, 0, 0, 0, 0));
                     // A backend that ran ZERO denom cells here is not measurable
                     // (binary absent / not enabled) — show n/a, never a 0% red.
                     let cell = if row.ptrace > 0 && r == 0 {

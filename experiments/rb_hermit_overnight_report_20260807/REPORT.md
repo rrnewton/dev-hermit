@@ -330,6 +330,38 @@ Caveat: hashes differ *between* `-N` values, so the guarantee is "reproducible f
 > argument for capture, made by example: the headline stopped being true and nothing noticed for
 > nine days.
 
+## 3b. A named defect class, found three times by three different routes
+
+The single most transferable product finding of the sprint:
+
+> **A Detcore handler that lets the guest execute an indefinitely-blocking syscall *while holding
+> the scheduler turn* deadlocks whenever the only task that can unblock it is queued behind.**
+
+Three instances turned up in one night, each with a **different proximate cause** — which is
+precisely why an audit is worth more than three point fixes:
+
+| # | syscall | why it blocked | status |
+|---|---|---|---|
+| 1 | `epoll_pwait` | **no nonblocking path existed.** glibc implements `epoll_wait(2)` as `epoll_pwait`, so real programs never reached the (correct) `handle_epoll_wait` | fixed — **#1864**, reproducer `rc=124` at 90 s → `rc=0` at 2 s |
+| 2 | `read` on a pipe | **the path existed and was not taken.** `openat` typed fds by *pathname string*, so `/dev/fd/63` — bash process substitution, actually a pipe — was classified `FdType::Regular` | fixed — patch on **#1850** |
+| 3 | `openat` on a **FIFO** | **no nonblocking path exists**; blocks in-kernel at `wait_for_partner` | **OPEN — this is what keeps Nix at N=0** |
+
+**Instance 2 is the same proxy trap as everything else in this report:** a pathname is a *proxy* for
+a file's type; the authority is `S_IFMT`. `Pipe` appeared **zero times** in 30 MB of pre-fix debug
+log. Detcore already classifies correctly on the SaBRe fallback path — `openat` had simply never
+been brought into line. Verified in isolation with #1864 reverted: the reproducer advances from
+`shrinking RPATHs` to `checking for references`.
+
+**Audit criterion, recorded for the follow-up:** every syscall that can block indefinitely must
+either yield the scheduler turn or be modeled in the `BlockedPool`. `(MAYHANG)` comments mark many
+of them; the gap is the unmarked ones **plus** those routed correctly only when upstream metadata
+happens to be right — which is how instance 2 hid.
+
+**Instance 3's exact stopping point is recorded so nobody re-derives it:** stopped task dtid 107 in
+`openat` at `wait_for_partner`; held turn 2261 with `queue len 3`; queued partner dtid 109;
+settling check is to confirm turn 2262 never commits. The reproducer is ~1 second of build
+(`nondet-demo` with `fixupPhase` enabled), not 25 minutes.
+
 ## 4. Product changes landed tonight (verified against GitHub, not taken from status)
 
 | change | merge commit | unblocked |
