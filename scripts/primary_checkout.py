@@ -117,6 +117,31 @@ def print_command_output(result: subprocess.CompletedProcess[str], stream: TextI
             print(output.rstrip(), file=stream)
 
 
+def live_main_sha(
+    repo: Path, *, use_proxy: bool = True
+) -> tuple[str, subprocess.CompletedProcess[str]]:
+    """Resolve the live main identity without downloading its objects.
+
+    The primary-snapshot tick used to fetch every product and then run ``pull``,
+    which fetched the same branch a second time even when HEAD was already
+    current.  ``ls-remote`` is the cheap cache validator: only an identity miss
+    needs an object transfer and work-tree operation.
+    """
+    result = run_git(
+        repo,
+        "ls-remote",
+        "--exit-code",
+        "origin",
+        MAIN_REF,
+        network=True,
+        use_proxy=use_proxy,
+    )
+    sha = result.stdout.split(maxsplit=1)[0] if result.stdout.strip() else ""
+    if not FULL_SHA.fullmatch(sha):
+        sha = ""
+    return sha, result
+
+
 def run_parent_main_write(
     root: Path, *args: str, use_proxy: bool = True
 ) -> subprocess.CompletedProcess[str]:
@@ -365,14 +390,23 @@ def publish_parent_snapshot(
             print(f"  {failure}", file=err)
         return 1
 
-    fetch = run_git(root, "fetch", "origin", "main", network=True, use_proxy=use_proxy)
-    print_command_output(fetch, out if fetch.returncode == 0 else err)
-    if fetch.returncode != 0:
-        print("ERROR: parent origin/main fetch failed; snapshot not published.", file=err)
-        return 1
     parent_branch = run_git(root, "branch", "--show-current").stdout.strip()
     parent_head = run_git(root, "rev-parse", "HEAD").stdout.strip()
     parent_remote = run_git(root, "rev-parse", "origin/main").stdout.strip()
+    live_parent, remote_query = live_main_sha(root, use_proxy=use_proxy)
+    if remote_query.returncode != 0 or not live_parent:
+        print_command_output(remote_query, err)
+        print("ERROR: parent live origin/main query failed; snapshot not published.", file=err)
+        return 1
+    if parent_remote != live_parent:
+        fetch = run_git(
+            root, "fetch", "origin", "main", network=True, use_proxy=use_proxy
+        )
+        print_command_output(fetch, out if fetch.returncode == 0 else err)
+        if fetch.returncode != 0:
+            print("ERROR: parent origin/main fetch failed; snapshot not published.", file=err)
+            return 1
+        parent_remote = run_git(root, "rev-parse", "origin/main").stdout.strip()
     if parent_branch != "main" or not parent_head or parent_head != parent_remote:
         print(
             "HARD WARNING: parent is not current on main; refusing automatic gitlink commit "
@@ -390,6 +424,18 @@ def publish_parent_snapshot(
             file=err,
         )
         return 1
+
+    committed_heads = {
+        product: run_git(root, "rev-parse", f"HEAD:{product}").stdout.strip()
+        for product in PRODUCTS
+    }
+    if committed_heads == heads:
+        print(
+            "Parent product snapshot already current: "
+            + ", ".join(f"{name}={heads[name][:12]}" for name in PRODUCTS),
+            file=out,
+        )
+        return 0
 
     add = run_git(root, "add", "--", *PRODUCTS)
     if add.returncode != 0:
@@ -481,6 +527,23 @@ def checkout_fresh(
             skipped += 1
             continue
 
+        branch = run_git(repo, "branch", "--show-current").stdout.strip()
+        head = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+        remote = run_git(repo, "rev-parse", "origin/main").stdout.strip()
+        live_remote, remote_query = live_main_sha(repo, use_proxy=use_proxy)
+        if remote_query.returncode != 0 or not live_remote:
+            print(f"ERROR: {product} live origin/main query failed:", file=err)
+            print_command_output(remote_query, err)
+            failures += 1
+            continue
+
+        if branch == "main" and head and head == remote == live_remote:
+            print(
+                f"{product}: main is current at {head} (live identity checked)",
+                file=out,
+            )
+            continue
+
         print(f"Refreshing {product}...", file=out)
         fetch = run_git(repo, "fetch", "origin", "main", network=True, use_proxy=use_proxy)
         print_command_output(fetch, out if fetch.returncode == 0 else err)
@@ -500,17 +563,14 @@ def checkout_fresh(
             failures += 1
             continue
 
-        pull = run_git(
-            repo,
-            "pull",
-            "--ff-only",
-            "origin",
-            "main",
-            network=True,
-            use_proxy=use_proxy,
+        # Reuse the tracking ref populated by the fetch above. `git pull` would
+        # perform a second fetch of the same branch and was the dominant
+        # multiplicative source of SCM telemetry during the five-minute tick.
+        fast_forward = run_git(repo, "merge", "--ff-only", "origin/main")
+        print_command_output(
+            fast_forward, out if fast_forward.returncode == 0 else err
         )
-        print_command_output(pull, out if pull.returncode == 0 else err)
-        if pull.returncode != 0:
+        if fast_forward.returncode != 0:
             print(f"ERROR: {product} could not fast-forward main.", file=err)
             failures += 1
             continue

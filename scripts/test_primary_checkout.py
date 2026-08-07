@@ -299,6 +299,78 @@ _PrimaryFixture = _ParentWorkspaceFixture
 
 
 class PrimaryCheckoutTests(_ParentWorkspaceFixture):
+    def test_fresh_reuses_matching_live_tracking_refs_without_fetch_or_checkout(self) -> None:
+        calls: list[tuple[Path, tuple[str, ...]]] = []
+        real_run_git = primary_checkout.run_git
+
+        def tracked(repo: Path, *args: str, **kwargs: object):
+            calls.append((repo, args))
+            return real_run_git(repo, *args, **kwargs)
+
+        out, err = StringIO(), StringIO()
+        with patch.object(primary_checkout, "run_git", side_effect=tracked):
+            result = primary_checkout.checkout_fresh(
+                self.root, use_proxy=False, out=out, err=err
+            )
+
+        self.assertEqual(result, 0, err.getvalue())
+        for product in primary_checkout.PRODUCTS:
+            repo = self.root / product
+            commands = [args[0] for called_repo, args in calls if called_repo == repo]
+            self.assertIn("ls-remote", commands)
+            self.assertFalse(
+                {"fetch", "checkout", "pull", "merge"}.intersection(commands),
+                f"unchanged {product} performed a mutating/network refresh: {commands}",
+            )
+        self.assertIn("live identity checked", out.getvalue())
+
+    def test_fresh_fetches_changed_product_once_and_never_pulls(self) -> None:
+        hermit_remote = self.advance("hermit")
+        calls: list[tuple[Path, tuple[str, ...]]] = []
+        real_run_git = primary_checkout.run_git
+
+        def tracked(repo: Path, *args: str, **kwargs: object):
+            calls.append((repo, args))
+            return real_run_git(repo, *args, **kwargs)
+
+        out, err = StringIO(), StringIO()
+        with patch.object(primary_checkout, "run_git", side_effect=tracked):
+            result = primary_checkout.checkout_fresh(
+                self.root, use_proxy=False, out=out, err=err
+            )
+
+        self.assertEqual(result, 0, err.getvalue())
+        hermit_commands = [
+            args[0]
+            for repo, args in calls
+            if repo == self.root / "hermit"
+        ]
+        self.assertEqual(hermit_commands.count("fetch"), 1, hermit_commands)
+        self.assertEqual(hermit_commands.count("merge"), 1, hermit_commands)
+        self.assertNotIn("pull", hermit_commands)
+        self.assertEqual(git(self.root / "hermit", "rev-parse", "HEAD"), hermit_remote)
+
+    def test_current_parent_snapshot_reuses_live_tracking_ref(self) -> None:
+        calls: list[tuple[Path, tuple[str, ...]]] = []
+        real_run_git = primary_checkout.run_git
+
+        def tracked(repo: Path, *args: str, **kwargs: object):
+            calls.append((repo, args))
+            return real_run_git(repo, *args, **kwargs)
+
+        out, err = StringIO(), StringIO()
+        with patch.object(primary_checkout, "run_git", side_effect=tracked):
+            result = primary_checkout.publish_parent_snapshot(
+                self.root, use_proxy=False, out=out, err=err
+            )
+
+        self.assertEqual(result, 0, err.getvalue())
+        parent_commands = [args[0] for repo, args in calls if repo == self.root]
+        self.assertIn("ls-remote", parent_commands)
+        self.assertNotIn("fetch", parent_commands)
+        self.assertNotIn("add", parent_commands)
+        self.assertIn("snapshot already current", out.getvalue())
+
     def test_fresh_updates_clean_repos_and_preserves_dirty_repo(self) -> None:
         hermit_remote = self.advance("hermit")
         git(self.root / "reverie", "checkout", "--detach")
