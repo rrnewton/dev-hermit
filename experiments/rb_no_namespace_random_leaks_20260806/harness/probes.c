@@ -1,4 +1,4 @@
-/* Probes the four candidate nondeterminism sources named by
+/* Probes the candidate nondeterminism sources named by
  * experiments/nix-hermit-execbuilder-prototype_20260729. One line per source so
  * a caller can diff sources independently. */
 #include <stdio.h>
