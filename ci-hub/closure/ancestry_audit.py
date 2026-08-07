@@ -2,9 +2,9 @@
 """Standing post-landing ancestry audit: which implemented tasks are ACTUALLY on main?
 
 Run this after every landing wave. A one-off run of this check on 2026-08-06 found
-163 of a 302-task pile were already on main -- the real backlog was 143. Closure
-here is ancestry-only, so without this the pile grows monotonically whether or not
-work lands.
+163 of a 302-task pile were already on main -- the real backlog was 143. The audit
+population comes from canonical implementation references in task notes, NOT from
+task status or tags: a closed task can still name code that never reached main.
 
 WHAT MAKES A LANDING CLAIM SOUND, and what does not:
 
@@ -20,9 +20,10 @@ TWO TRAPS THIS TOOL HANDLES EXPLICITLY, both learned the hard way:
   1. SHAs CHANGE. Something rewrote local main here, so a task's recorded SHA can
      be orphaned while its CONTENT sits on main under a different SHA. Testing
      only by SHA reports those as NOT-LANDED, which is wrong in the expensive
-     direction -- it inflates the drain queue with work that is already done. So
-     a SHA miss falls back to matching the commit SUBJECT against main, reported
-     as its own state (`landed-by-subject`), never silently merged into `landed`.
+     direction -- it inflates the drain queue with work that is already done. A
+     SHA miss therefore checks normalized subject AND stable patch-id, then falls
+     back to a unique stable patch-id match for a rewritten subject. Subject alone
+     is never landing evidence: two unrelated commits can share one subject.
   2. A TRUNCATED PR WINDOW READS EXACTLY LIKE MISSING WORK. At `--limit 400`
      three branches looked PR-less; at 900 all three resolved. So the limit is
      stated in the output, and if the API returns exactly the limit the audit
@@ -42,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -65,17 +67,26 @@ PR_URL = re.compile(
     r"(hermit|reverie|dev-hermit|agent-utils)/pull/(\d+)"
 )
 BARE_PR = re.compile(r"\bPR\s*#(\d{3,5})\b")
-SHA40 = re.compile(r"\b[0-9a-f]{40}\b")
+EXPLICIT_SHA = re.compile(
+    r"\b(?:sha|commit|mergecommit(?:\.oid)?|main)\s*(?:[:=@]|is\b|at\b)?\s*"
+    r"([0-9a-f]{40})\b",
+    re.I,
+)
+TUPLE_SHA = re.compile(r"@([0-9a-f]{40})\b", re.I)
 ARTIFACT = re.compile(
     r"\b((?:ai_docs|experiments|compat-envelope|ci-hub|scripts|docs)/[A-Za-z0-9_./\-]+"
     r"\.(?:md|csv|json|py|sh|rs|tsv|txt))"
 )
+IMPLEMENTATION_NOTE = re.compile(r"\b(?:IMPLEMENTED|CLOSURE-VERIFIED)\b", re.I)
 
 
 def git(root: Path, repo: str, *args: str) -> subprocess.CompletedProcess[str]:
     rel, _ = REPOS[repo]
+    environment = dict(os.environ)
+    environment["GIT_NO_LAZY_FETCH"] = "1"
     return subprocess.run(
-        ["git", "-C", str(root / rel), *args], capture_output=True, text=True
+        ["git", "-C", str(root / rel), *args], capture_output=True, text=True,
+        env=environment,
     )
 
 
@@ -135,39 +146,70 @@ def load_prs(root: Path, repo: str, limit: int, herdr_agent: str | None) -> dict
 
 
 def pile(db: Path) -> list[dict]:
+    """Load code-bearing implementation claims without consulting task state.
+
+    The old population used task status and then the ``implemented`` tag. Both
+    are assertions about workflow, not proof that code reached a repository.
+    Notes are the only TaskGraph input now, and only canonical implementation or
+    closure notes may contribute a code identity. Status and tags travel for
+    diagnosis but never select or classify a candidate.
+    """
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     con.text_factory = lambda b: b.decode("utf-8", "replace")
     rows = con.execute(
-        """select t.local_id, coalesce(group_concat(n.content,' ~~ '),''), t.title
-           from tasks t left join task_notes n on n.task_id=t.local_id
-           where t.tags like '%"implemented"%'
-           -- Close-on-implemented lifecycle: implemented tasks are CLOSED
-           -- immediately, so filtering on IN_PROGRESS here selected ~nothing
-           -- and silently made this audit inert. The `implemented` TAG is the
-           -- population, at any status (same rule as status-log.rs
-           -- classify_task and ci-hub/health awaiting_landing).
-           group by t.local_id"""
+        """select t.local_id, coalesce(t.status,''), coalesce(t.tags,''),
+                  coalesce(t.title,''), coalesce(n.content,'')
+           from tasks t join task_notes n on n.task_id=t.local_id
+           order by t.local_id"""
     ).fetchall()
-    out = []
-    for tid, notes, title in rows:
-        out.append({
+    grouped: dict[str, dict] = {}
+    for tid, status, tags, title, note in rows:
+        if not IMPLEMENTATION_NOTE.search(note):
+            continue
+        item = grouped.setdefault(tid, {
             "task": tid,
-            "title": (title or "")[:70],
-            "prs": sorted({(m.group(1), int(m.group(2))) for m in PR_URL.finditer(notes)}),
-            "bare_prs": sorted({int(m.group(1)) for m in BARE_PR.finditer(notes)}),
-            "shas": sorted(set(SHA40.findall(notes))),
-            "artifacts": sorted(set(ARTIFACT.findall(notes))),
+            "status": status,
+            "tags": tags,
+            "title": title[:70],
+            "prs": set(),
+            "bare_prs": set(),
+            "shas": set(),
+            "artifacts": set(),
         })
-    return out
+        item["prs"].update(
+            (m.group(1), int(m.group(2))) for m in PR_URL.finditer(note)
+        )
+        item["bare_prs"].update(int(m.group(1)) for m in BARE_PR.finditer(note))
+        item["shas"].update(sha.lower() for sha in EXPLICIT_SHA.findall(note))
+        if "CLOSURE-VERIFIED" in note.upper():
+            item["shas"].update(sha.lower() for sha in TUPLE_SHA.findall(note))
+        item["artifacts"].update(ARTIFACT.findall(note))
+
+    out = []
+    for item in grouped.values():
+        # Artifact-only research is checked by close-task --artifact, not by a
+        # code-ancestry drain and therefore is outside this denominator.
+        if not (item["prs"] or item["bare_prs"] or item["shas"]):
+            continue
+        out.append({
+            **item,
+            "prs": sorted(item["prs"]),
+            "bare_prs": sorted(item["bare_prs"]),
+            "shas": sorted(item["shas"]),
+            "artifacts": sorted(item["artifacts"]),
+        })
+    return sorted(out, key=lambda item: item["task"])
 
 
 class Ancestry:
-    """Ancestry tests plus the subject-match fallback, memoized."""
+    """Ancestry plus content-equivalence fallbacks, memoized."""
 
     def __init__(self, root: Path):
         self.root = root
         self._anc: dict[tuple[str, str], tuple[bool, bool]] = {}
         self._subjects: dict[str, dict[str, list[str]]] = {}
+        self._patch_ids: dict[tuple[str, str], str | None] = {}
+        self._patch_indexes: dict[str, dict[str, list[str]]] = {}
 
     def test(self, repo: str, sha: str) -> tuple[bool, bool]:
         """(is_ancestor_of_origin_main, object_present_locally)"""
@@ -194,21 +236,98 @@ class Ancestry:
             self._subjects[repo] = idx
         return self._subjects[repo]
 
-    def by_subject(self, repo: str, sha: str) -> tuple[str | None, str]:
-        """CAVEAT 1. Local main was rewritten, so a recorded SHA can be orphaned
-        while its content is on main under a different SHA. Match the subject.
+    def _patch_id(self, repo: str, sha: str) -> str | None:
+        """Return the stable first-parent patch-id for one commit."""
+        key = (repo, sha)
+        if key in self._patch_ids:
+            return self._patch_ids[key]
+        patch = git(
+            self.root, repo, "show", "--first-parent", "--pretty=format:",
+            "--binary", sha,
+        )
+        if patch.returncode != 0 or not patch.stdout.strip():
+            self._patch_ids[key] = None
+            return None
+        rel, _ = REPOS[repo]
+        run = subprocess.run(
+            ["git", "-C", str(self.root / rel), "patch-id", "--stable"],
+            input=patch.stdout, capture_output=True, text=True,
+        )
+        fields = run.stdout.split()
+        value = fields[0] if run.returncode == 0 and fields else None
+        self._patch_ids[key] = value
+        return value
 
-        Returns (main_sha, detail). Ambiguity is reported, never guessed at.
+    def _patch_index(self, repo: str) -> dict[str, list[str]]:
+        """stable patch-id -> main-side SHA, built once per repository."""
+        if repo in self._patch_indexes:
+            return self._patch_indexes[repo]
+        history = git(
+            self.root, repo, "log", "--first-parent", "-p", "--binary",
+            "--pretty=format:commit %H", "origin/main",
+        )
+        rel, _ = REPOS[repo]
+        run = subprocess.run(
+            ["git", "-C", str(self.root / rel), "patch-id", "--stable"],
+            input=history.stdout, capture_output=True, text=True,
+        )
+        idx: dict[str, list[str]] = {}
+        if history.returncode == 0 and run.returncode == 0:
+            for line in run.stdout.splitlines():
+                fields = line.split()
+                if len(fields) != 2:
+                    continue
+                patch_id, commit = fields
+                idx.setdefault(patch_id, []).append(commit)
+                self._patch_ids[(repo, commit)] = patch_id
+        self._patch_indexes[repo] = idx
+        return idx
+
+    def by_equivalent_patch(self, repo: str, sha: str) -> tuple[str | None, str | None, str]:
+        """Find a rewritten main commit by observable content identity.
+
+        Returns ``(main_sha, mode, detail)``. Subject-only matches are refused,
+        and ambiguous patch identities are reported rather than guessed.
         """
         subj = git(self.root, repo, "log", "-1", "--format=%s", sha).stdout.strip()
         if not subj:
-            return None, "orphaned SHA and its object is gone, so no subject to match"
-        hits = self._index(repo).get(normalize_subject(subj), [])
-        if len(hits) == 1:
-            return hits[0], f"subject match: {subj[:60]!r}"
-        if len(hits) > 1:
-            return None, f"AMBIGUOUS: {len(hits)} commits on main share subject {subj[:50]!r}"
-        return None, f"no commit on main carries subject {subj[:60]!r}"
+            return None, None, "orphaned SHA and its object is gone, so no content to match"
+        candidate_patch = self._patch_id(repo, sha)
+        if not candidate_patch:
+            return None, None, f"commit {sha[:12]} has no stable patch-id"
+
+        subject_hits = self._index(repo).get(normalize_subject(subj), [])
+        bound_hits = [
+            hit for hit in subject_hits
+            if self._patch_id(repo, hit) == candidate_patch
+        ]
+        if len(bound_hits) == 1:
+            return (
+                bound_hits[0],
+                "subject+patch-id",
+                f"normalized subject and stable patch-id match: {subj[:60]!r}",
+            )
+        if len(bound_hits) > 1:
+            return None, None, (
+                f"AMBIGUOUS: {len(bound_hits)} main commits share subject and patch-id"
+            )
+
+        patch_hits = self._patch_index(repo).get(candidate_patch, [])
+        if len(patch_hits) == 1:
+            return (
+                patch_hits[0],
+                "patch-id",
+                f"unique stable patch-id match (recorded subject {subj[:60]!r})",
+            )
+        if len(patch_hits) > 1:
+            return None, None, (
+                f"AMBIGUOUS: stable patch-id occurs {len(patch_hits)} times on main"
+            )
+        if subject_hits:
+            return None, None, (
+                f"subject exists on main but patch-id differs: {subj[:60]!r}"
+            )
+        return None, None, f"no equivalent stable patch-id on main for {subj[:60]!r}"
 
 
 def normalize_subject(subject: str) -> str:
@@ -251,21 +370,27 @@ def classify(item: dict, prs: dict, anc: Ancestry) -> dict:
             return {**item, "bucket": "LANDED", "repo": repo, "sha": sha,
                     "why": why, "pr_states": notes}
 
-    # CAVEAT 1: SHA miss -> try subject. Reported as its own state.
+    # CAVEAT 1: SHA miss -> prove rewritten content by subject+patch-id or a
+    # unique stable patch-id. Subject alone is a correlated proxy, not proof.
     for repo, sha, why in cands:
         _, present = anc.test(repo, sha)
         if not present:
             continue
-        main_sha, detail = anc.by_subject(repo, sha)
+        main_sha, mode, detail = anc.by_equivalent_patch(repo, sha)
         if main_sha:
-            return {**item, "bucket": "LANDED-BY-SUBJECT", "repo": repo, "sha": main_sha,
+            bucket = (
+                "LANDED-BY-SUBJECT+PATCH-ID"
+                if mode == "subject+patch-id"
+                else "LANDED-BY-PATCH-ID"
+            )
+            return {**item, "bucket": bucket, "repo": repo, "sha": main_sha,
                     "why": f"recorded {sha[:12]} is not an ancestor, but {detail}",
                     "pr_states": notes}
 
     if present_any:
         return {**item, "bucket": "NOT-LANDED",
                 "why": "candidate commit(s) exist locally; none is an ancestor of origin/main "
-                       "and no commit on main carries their subject",
+                       "and no subject+patch-id or unique patch-id equivalent exists on main",
                 "pr_states": notes}
     return {**item, "bucket": "UNKNOWN",
             "why": ("no PR link and no 40-hex SHA in any note" if not cands
@@ -292,6 +417,7 @@ def main() -> int:
 
     print(f"ancestry-audit: pr-limit={args.pr_limit} (fails closed on truncation)")
     bases = {}
+    fresh = {}
     for repo in REPOS:
         if args.no_fetch:
             head = git(args.root, repo, "rev-parse", "origin/main").stdout.strip()
@@ -301,9 +427,11 @@ def main() -> int:
             ok, head = fetch_main(args.root, repo, args.herdr_agent)
             note = "freshly fetched" if ok else "FETCH FAILED"
         bases[repo] = head
+        fresh[repo] = ok and not args.no_fetch
         print(f"  {repo:12s} origin/main {head[:12] or '<none>':12s}  {note}")
-    if not args.no_fetch and not all(bases.values()):
-        print("ancestry-audit: refusing to report against a repo with no origin/main",
+    if not args.no_fetch and not all(fresh.values()):
+        failed = ", ".join(repo for repo, ok in fresh.items() if not ok)
+        print(f"ancestry-audit: refusing to report without a fresh origin/main for: {failed}",
               file=sys.stderr)
         return 2
 
@@ -317,13 +445,23 @@ def main() -> int:
     counts = Counter(r["bucket"] for r in results)
 
     print("\n=== buckets ===")
-    for b in ("LANDED", "LANDED-BY-SUBJECT", "NOT-LANDED", "UNKNOWN"):
+    for b in (
+        "LANDED",
+        "LANDED-BY-SUBJECT+PATCH-ID",
+        "LANDED-BY-PATCH-ID",
+        "NOT-LANDED",
+        "UNKNOWN",
+    ):
         print(f"  {b:18s} {counts[b]:4d}")
     print(f"  {'TOTAL':18s} {len(results):4d}")
-    closable = counts["LANDED"] + counts["LANDED-BY-SUBJECT"]
+    closable = (
+        counts["LANDED"]
+        + counts["LANDED-BY-SUBJECT+PATCH-ID"]
+        + counts["LANDED-BY-PATCH-ID"]
+    )
     real = counts["NOT-LANDED"]
     print(f"\nclosable on ancestry now : {closable}")
-    print(f"real drain queue         : {real}")
+    print(f"real drain queue         : {real} / {len(results)} candidate tasks")
     print(f"UNKNOWN (NOT not-landed) : {counts['UNKNOWN']}  "
           f"-- research/artifact closure, needs close-task --artifact")
     if args.agents:
@@ -332,7 +470,7 @@ def main() -> int:
 
     if args.json:
         args.json.write_text(json.dumps(
-            {"bases": bases, "pr_limit": args.pr_limit,
+            {"bases": bases, "fresh": fresh, "pr_limit": args.pr_limit,
              "counts": dict(counts), "results": results}, indent=1) + "\n")
         print(f"\nwrote {args.json}")
 
