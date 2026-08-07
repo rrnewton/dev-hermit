@@ -17,8 +17,28 @@ committed resource sequence, not just what the guest printed.
 
 ## Results — every rung, not just the top
 
-`golden_sha=f89c69766371806d3c9b2c3003531df2d59d6118` · `flags: --log=info --backend <be>` ·
-`date=2026-08-06` · host devbig014 · single run per cell
+`golden_sha=gf89c69766371-dirty` ·
+`binary_sha256=cb30922b78c8cb091a72d860b28f7e115fb76ae19a8b15403ed807eb89dd9c89` ·
+`flags: --log=info --backend <be>` · `date=2026-08-06` · host devbig014 · single run per cell
+
+> **Provenance corrected 2026-08-07 — the numbers below are unchanged; only their attribution was
+> wrong.** This line previously read `golden_sha=f89c69766371806d3c9b2c3003531df2d59d6118`. That
+> 40-hex was never the binary's provenance: the harness stamped
+> `git -C <parent>/hermit rev-parse HEAD`, the *primary checkout's* HEAD, which has no causal link
+> to the binary that produced this table. Fixed in parent `844cb6a`, which now stamps what the
+> artifact self-reports.
+>
+> **The `-dirty` is load-bearing: this table is NOT reproducible from a commit.** The build tree
+> carried uncommitted tracked changes, so `f89c6976` does not identify the source and checking it
+> out will not necessarily reproduce these numbers. The only handle on what actually ran is the
+> `binary_sha256` above — `ignored/prefix-build/target/release/hermit`, mtime 2026-08-06 07:57.
+> Treat any cell here as bound to that artifact, not to a revision.
+>
+> Re-identification evidence (2026-08-07): that binary has third-party backends compiled in, as the
+> Build note below requires, and re-running the goldens reproduces this table's exact denominators
+> — Z = 14 / 43 / 44 for `/bin/true`, `/bin/echo hello`, `wc -c /etc/hostname`. Strong
+> corroboration that it is the same binary; **not** proof of byte-identity with the 2026-08-06
+> artifact, which a dirty build cannot supply.
 
 | guest | backend | **Y/Z raw** | +pid-norm | +time-norm | note |
 |---|---|---|---|---|---|
@@ -96,6 +116,9 @@ coherent offline build with `--features third-party-backends` plus `-p detcore-s
 
 ## Honest limits
 
+- **Not bound to a revision.** The binary was built from a dirty tree (`gf89c69766371-dirty`), so
+  no commit identifies the source. These cells are bound to the artifact hash in the Results
+  header, not to `f89c6976`. See the corrected provenance note there.
 - **Single run per cell.** These are parity-vs-golden numbers, not double-run determinism numbers.
   A cell could be identical to golden yet nondeterministic run-to-run.
 - **demo05 boot is not measured here.** It is the headline target, not the starting rung.
