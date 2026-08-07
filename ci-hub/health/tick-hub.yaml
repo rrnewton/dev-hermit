@@ -4,6 +4,29 @@ description: |-
   cadence and only emits actions when a hard warning is required.
 
 reminders:
+  # merge-gate-v4 is fail-closed: on a queued leg it records NO_RESULT, RE-DISPATCHES
+  # the leg and CANCELS ITSELF, leaving `refire-on-ci-completion` to restart it. That
+  # refire CANNOT ARRIVE for the runs the gate itself dispatched: it re-dispatches with
+  # GH_TOKEN=github.token, so the runs carry triggering_actor=github-actions[bot], and
+  # GitHub suppresses workflow_run events for GITHUB_TOKEN-triggered runs. Measured on
+  # hermit#1750 (both legs completed SUCCESS, no refire ever came) and again at its
+  # rebased head. Census 2026-08-07: 41 of 121 open PRs sit in this state.
+  # PAGES, DOES NOT AUTO-FIRE: re-running 41 gates at once is a mass dispatch that would
+  # starve the very runners the legs need. `gate_refire.py --refire` performs the action
+  # under a human decision; this reminder only makes the state impossible to miss.
+  - name: merge_gate_refire_due
+    cadence_secs: 1800
+    gate:
+      cmd: python3 ci-hub/health/gate_refire.py --repo rrnewton/hermit --fail-on-due
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: merge-gate-refire
+      title: "merge gates parked with all legs finished; refire is due: {summary}"
+
   # DELTA, not standing state. 70 slots are dead-owner RIGHT NOW and none may be
   # reclaimed (they hold unprotected work), so `--fail-on-dead` would fire on every
   # tick forever and be muted within a day -- the permanently-on failure this repo
