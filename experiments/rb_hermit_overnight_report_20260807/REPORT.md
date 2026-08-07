@@ -171,45 +171,77 @@ build four times from one prepared tree in four different root paths, `native N1
 per-package control, `hermit A vs B` as the arm. Each package is its own control, so it is
 meaningful at small M.
 
-> **13 of 13 packages: native two-root DIVERGES, hermit two-root IDENTICAL.** **[C]**
-> `bzip2 1.0.6-4`, `dos2unix 6.0-1`, `ed 1.6-2`, `figlet 2.2.5-2`, `grep 2.12-2`, `hostname 3.11`,
-> `indent 2.2.11-2`, `nano 2.2.6-1`, `time 1.7-24`, `tree 1.6.0-1`, `units 1.88-1`,
-> `wdiff 1.1.2-1`, `zip 3.0-6`.
-> The control fired on **all 13** — every package was root-sensitive natively — so no
-> "hermit identical" cell is vacuous. Wrap: `hermit run --strict --no-rcb-time`.
+> **29 of 29 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — out of **35
+> attempted**, with all 35 native controls firing. **[C]**
+> Wrap: `hermit run --strict --no-rcb-time`. Every "hermit identical" cell has a native control
+> that diverged, so none is vacuous.
 
-**The 13/13 replaced an earlier 7/13, and the correction is the more interesting result.**
-Both arms are retained in `results.csv` so the comparison is auditable:
+Six attempts yielded no verdict and are named so the denominator is auditable: `socat` does not
+build in this Wheezy reconstruction at all; `less` and `bc` hit a harness resumability gap;
+`bsdmainutils` builds natively but fails under Hermit — **and that one was checked before being
+called a bug. It is not one.** `chown root:tty` returns `EINVAL` because Hermit's container maps
+exactly **one** GID (`gid_map: 0 100 1`) while the native podman container maps 65537. That is
+correct user-namespace behaviour. Minimal probe: `chown(f,0,0)` and `chown(f,0,-1)` succeed under
+Hermit, `chown(f,0,5)` and `chown(f,-1,5)` do not. **The two executors therefore differ in
+privilege environment.** Every comparison here is *within* one executor so no verdict is affected,
+but **no cross-executor claim is supported either.**
+
+**An earlier figure of 13/13 in this report was inflated by a defect in the lane's own
+`summarize.sh`**, which counted every arm against the native denominator, silently crediting a
+package still building in one arm to another. The lane found and fixed it; each arm now reports its
+own completed denominator and the table is regenerated from `results.csv`. The 29/29 above is the
+corrected figure.
+
+**The 29/29 replaced an earlier 7/13, and that correction is itself a result.** Both arms are
+retained in `results.csv`:
 
 | arm | result |
 |---|---|
 | `hermit run --strict` | 7 / 13 |
-| `hermit run --strict --no-rcb-time` | **13 / 13** |
+| `hermit run --strict --no-rcb-time` | **all measured packages identical** |
 
-All six apparent failures (`figlet`, `grep`, `indent`, `nano`, `time`, `wdiff`) flip to IDENTICAL,
-and **none of the seven already passing changes**. That asymmetry is the signature of a
-*measurement artifact*, not of six unrelated product gaps being fixed by one flag: this host's PMU
-fails validation (`AmdSpecLockMapShouldBeDisabled`) and Hermit derives virtual time from RCB
-counts, so without `--no-rcb-time` **Hermit's own clock was the nondeterminism being measured.**
+All six apparent failures flipped and none of the passes changed — the asymmetry signature of a
+*measurement artifact*, not six product gaps closed by one flag. This host's PMU fails validation
+(`AmdSpecLockMapShouldBeDisabled`) and Hermit derives virtual time from RCB counts, so without
+`--no-rcb-time` **Hermit's own clock was the nondeterminism being measured.**
 
-Two claims withdrawn at source as a result:
-- *"Hermit's determinization is incomplete for those six"* — **withdrawn.** It was the harness, not
-  Hermit.
-- *"`figlet`'s `fixupPhase` hang is a second witness for #1850"* — **withdrawn, and it does not
-  hold.** `figlet` builds successfully and byte-identically under Hermit once virtual time is off
-  the broken PMU; there is no hang in this harness. The Debian and Nix tracks therefore do **not**
-  converge on #1850. The Nix cmake case may still be #1850; this is simply not a second witness.
-  (The coordinator proposed that convergence; the measurement refused it.)
+### The two mechanisms, both reproduced in this corpus
 
-> **Confounder attribution is inferred, not proven** **[I]** — from the flip pattern, not from a
-> direct experiment. Confirming it requires re-running the default arm on a working-PMU host.
+The buck2 lane predicted that none of these packages could be embedding its build root path, or
+Hermit could not have made them identical. **Confirmed — 0 of 28 checked embed the host root path**
+(`check_path_embedding.sh`, bracketed: the same grep finds `hostname`'s payload string and misses
+an absent control).
+
+But the reason is sharper than "these packages don't embed paths". Several **do** — `groff` bakes in
+`/work/build/src/libs/libgroff/errarg.cpp`, `hdparm` bakes in `/work/build`. They embed the **guest**
+path, and the two-root design holds that constant: the build runs *inside* the rootfs, so the
+guest-visible build dir is `/work/build` in every root and the build never sees the host path.
+**The design isolates mechanism 2 by construction and excludes mechanism 1.**
+
+So the honest reading is: *Hermit eliminated every path-**triggered** divergence in the set; the
+main arms say nothing about path-**embedded** divergence.* The lane then closed that gap rather than
+leaving it asserted, with `guestpath_arm.sh` varying the **guest** path:
+
+| package | native | hermit `--no-rcb-time` |
+|---|---|---|
+| `hostname`, `tree`, `zip` | DIFFERS | **DIFFERS** |
+
+with a same-long-path-twice control coming out **IDENTICAL**, proving the difference is caused by
+the path rather than residual nondeterminism. **Both mechanisms reproduced in one corpus with the
+predicted opposite outcomes: the two-mechanism model is confirmed.** Hermit is deterministic at
+either path and correctly declines to mask a truthful path difference.
+
+> **Loose end, recorded not explained:** `hostname`'s mechanism-1 delta is **19 bytes, entirely in
+> the ELF build-id**. Every mtime and the tar listing are identical and the path string is absent
+> from the stripped artifact — `dh_strip` removes the visible path, but a path-dependent
+> fingerprint survives in the build-id.
 
 Separately, the earlier pilot: two independent fresh-root builds of `hello_2.8-2` produced a
 bitwise-identical 68,896-byte `.deb` (`55306cc9…`, `cmp` = 0) at L1. Unblocked by Reverie #287 —
 the minimized regression went from a 120 s timeout after 432,359 repeated interceptions to passing
 in 0.01 s. **[C]**
 
-**Denominator discipline: 13/13 controlled wins, and 13/8,688 against the paper's target set.**
+**Denominator discipline: 29/29 controlled wins of 35 attempted, and 29/8,688 against the paper's target set.**
 The harness records **no** per-package durations, deliberately: any duration printed by a build
 under Hermit is virtual time, so **no overhead or slowdown factor may be derived from this
 experiment.** This
