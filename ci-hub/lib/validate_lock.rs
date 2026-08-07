@@ -30,9 +30,8 @@ use thiserror::Error;
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
     capture_and_freeze_residuals, cgroup_population, current_host, enable_child_subreaper,
-    exact_process_liveness, exit_status_code, heartbeat_test_helper_delay, print_cleanup_record,
-    payload_cgroup_anchor, process_group_exists,
-    process_start_ticks, reap_exited_children,
+    exact_process_liveness, exit_status_code, heartbeat_test_helper_delay, payload_cgroup_anchor,
+    print_cleanup_record, process_group_exists, process_start_ticks, reap_exited_children,
     remove_cleanup_record, safe_ci_slice_for, signal_group, spawn_gated_child, suffix,
     verify_cleanup_record, write_cleanup_record, CgroupCensus, CleanupPhase, CleanupRecord,
     CleanupVerification, GatedChild, ProcessIdentity, ResidualCapture,
@@ -2678,7 +2677,10 @@ wait
             CTX,
         )
         .unwrap();
-        assert!(ok.contains("PROVEN") && !ok.contains("ATTESTED"), "got: {ok}");
+        assert!(
+            ok.contains("PROVEN") && !ok.contains("ATTESTED"),
+            "got: {ok}"
+        );
     }
 
     // A live domain is refused by DEFAULT: no attestation, no discharge.
@@ -2692,7 +2694,10 @@ wait
         )
         .expect_err("a populated domain must not discharge on its own");
         assert!(refusal.contains("NOT empty"), "got: {refusal}");
-        assert!(refusal.contains("11,22"), "must name the occupants, got: {refusal}");
+        assert!(
+            refusal.contains("11,22"),
+            "must name the occupants, got: {refusal}"
+        );
     }
 
     // An override IS possible -- refusing outright would create a NEW
@@ -2714,7 +2719,10 @@ wait
             "an override must be labelled as one, got: {ok}"
         );
         assert!(ok.contains("11,22"), "must carry the occupants, got: {ok}");
-        assert!(!ok.contains("PROVEN"), "must never read as mechanical: {ok}");
+        assert!(
+            !ok.contains("PROVEN"),
+            "must never read as mechanical: {ok}"
+        );
     }
 
     // ...and an anonymous override is still refused.
@@ -2743,7 +2751,10 @@ wait
         .unwrap_err();
         assert!(refusal.contains("no cgroup anchor"), "got: {refusal}");
         assert!(refusal.contains("--attest-domain-empty"), "got: {refusal}");
-        assert!(refusal.contains(CTX), "must state what DID pass, got: {refusal}");
+        assert!(
+            refusal.contains(CTX),
+            "must state what DID pass, got: {refusal}"
+        );
     }
 
     // The attestation must stay auditable; an anonymous one is still refused.
@@ -2771,8 +2782,14 @@ wait
         )
         .unwrap();
         assert!(ok.contains("ATTESTED"), "got: {ok}");
-        assert!(ok.contains("safe-ci.slice 0 procs"), "evidence must be echoed: {ok}");
-        assert!(!ok.contains("PROVEN:"), "must not claim mechanical proof: {ok}");
+        assert!(
+            ok.contains("safe-ci.slice 0 procs"),
+            "evidence must be echoed: {ok}"
+        );
+        assert!(
+            !ok.contains("PROVEN:"),
+            "must not claim mechanical proof: {ok}"
+        );
     }
 
     // LEGACY FALLBACK PRESERVED: a record written before cgroup anchoring has

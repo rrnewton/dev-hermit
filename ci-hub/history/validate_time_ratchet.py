@@ -32,7 +32,13 @@ import statistics
 import sys
 from pathlib import Path
 
-DEFAULT_LEDGER = Path("ignored/validate-run-ledger.jsonl")
+VALIDATE_DIR = Path(__file__).resolve().parents[1] / "validate"
+sys.path.insert(0, str(VALIDATE_DIR))
+
+import qualified_rows as qualified  # noqa: E402
+
+
+DEFAULT_LEDGER = qualified.DEFAULT_LEDGER
 
 # A baseline needs enough samples to have a meaningful p90. Below this the tool
 # refuses to emit one rather than inventing a threshold from three runs.
@@ -50,28 +56,18 @@ def cpu_seconds(row: dict) -> float | None:
 
 
 def load(path: Path, profile: str | None) -> list[dict]:
-    rows = []
-    with path.open() as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if profile and row.get("profile") != profile:
-                continue
-            rows.append(row)
-    return rows
+    rows, _malformed = qualified.load_rows(path)
+    ordered = qualified.qualified_rows(rows)
+    return [row for row in ordered if not profile or row.get("profile") == profile]
 
 
 def baseline(rows: list[dict]) -> dict | None:
-    """p90 CPU over runs that carry timing. None when the sample is too small.
+    """p90 CPU over qualified runs carrying timing; refuse a small sample.
 
     Comparable runs only: a `quick` profile and a `full` profile are different
     workloads, so mixing them would make the p90 meaningless. Callers scope with
-    --profile.
+    --profile. ``load`` has already dropped incomplete, failed, zero-executed,
+    and unordered rows through the shared qualified-row authority.
     """
     samples = sorted(c for c in (cpu_seconds(r) for r in rows) if c is not None)
     if len(samples) < MIN_SAMPLES:

@@ -2757,8 +2757,11 @@ class ProtocolTest(unittest.TestCase):
         clock, records, fake_poll = self._budget_fixture(5, seconds_per_poll=10.0)
         output = io.StringIO()
         with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
-             mock.patch.object(protocol.obligations, "unresolved_records",
-                               return_value=records), \
+             mock.patch.object(
+                 protocol.obligations,
+                 "latest_records",
+                 return_value={record["obligation_id"]: record for record in records},
+             ), \
              mock.patch.object(protocol, "poll_obligation", fake_poll), \
              redirect_stdout(output):
             rc = protocol.watch(
@@ -2786,8 +2789,11 @@ class ProtocolTest(unittest.TestCase):
         clock, records, fake_poll = self._budget_fixture(3, seconds_per_poll=1.0)
         output = io.StringIO()
         with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
-             mock.patch.object(protocol.obligations, "unresolved_records",
-                               return_value=records), \
+             mock.patch.object(
+                 protocol.obligations,
+                 "latest_records",
+                 return_value={record["obligation_id"]: record for record in records},
+             ), \
              mock.patch.object(protocol, "poll_obligation", fake_poll), \
              redirect_stdout(output):
             protocol.watch(
@@ -2812,8 +2818,11 @@ class ProtocolTest(unittest.TestCase):
         clock, records, fake_poll = self._budget_fixture(2, seconds_per_poll=1.0)
         output = io.StringIO()
         with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
-             mock.patch.object(protocol.obligations, "unresolved_records",
-                               return_value=records), \
+             mock.patch.object(
+                 protocol.obligations,
+                 "latest_records",
+                 return_value={record["obligation_id"]: record for record in records},
+             ), \
              mock.patch.object(protocol, "poll_obligation", fake_poll), \
              redirect_stdout(output):
             protocol.watch(

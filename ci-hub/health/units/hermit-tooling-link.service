@@ -15,9 +15,9 @@ Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/main-tool
 
 [Service]
 Type=oneshot
-Environment=HOME=/home/newton
-Environment=PATH=/home/newton/.cargo/bin:/usr/local/bin:/usr/bin:/bin
-WorkingDirectory=/home/newton/work/dev-hermit
+Environment=HOME=%h
+Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/work/dev-hermit
 # refresh materialises origin/main into the store; link publishes symlinks for
 # absent managed paths only. Both are idempotent (measured: repeat run exits 0
 # and leaves disposition AlreadyLinked/matches=true).

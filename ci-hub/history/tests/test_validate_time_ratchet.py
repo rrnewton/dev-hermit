@@ -24,10 +24,35 @@ SPEC.loader.exec_module(vtr)
 def ledger(tmp: str, cpus: list[float], profile: str = "full") -> Path:
     p = Path(tmp) / "ledger.jsonl"
     with p.open("w") as f:
-        for c in cpus:
-            f.write(json.dumps({"profile": profile, "user_seconds": c * 0.8,
-                                "sys_seconds": c * 0.2, "real_seconds": c / 4}) + "\n")
+        for index, c in enumerate(cpus):
+            f.write(json.dumps(row(c, profile, commit=f"{index:040x}")) + "\n")
     return p
+
+
+def row(
+    cpu: float,
+    profile: str = "full",
+    *,
+    commit: str = "a" * 40,
+    finished_at: str | None = "2026-08-07T00:00:00Z",
+    result: str = "pass",
+    executed_tests: int = 1,
+) -> dict:
+    value = {
+        "schema_version": 3,
+        "commit": commit,
+        "profile": profile,
+        "result": result,
+        "executed_tests": executed_tests,
+        "gates_run": 1,
+        "gates_expected": 1,
+        "user_seconds": cpu * 0.8,
+        "sys_seconds": cpu * 0.2,
+        "real_seconds": cpu / 4,
+    }
+    if finished_at is not None:
+        value["finished_at"] = finished_at
+    return value
 
 
 class RatchetTest(unittest.TestCase):
@@ -63,12 +88,10 @@ class RatchetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "l.jsonl"
             with p.open("w") as f:
-                for _ in range(40):
-                    f.write(json.dumps({"profile": "quick", "user_seconds": 8,
-                                        "sys_seconds": 2, "real_seconds": 3}) + "\n")
-                for _ in range(40):
-                    f.write(json.dumps({"profile": "full", "user_seconds": 400,
-                                        "sys_seconds": 100, "real_seconds": 120}) + "\n")
+                for index in range(40):
+                    f.write(json.dumps(row(10, "quick", commit=f"1{index:039x}")) + "\n")
+                for index in range(40):
+                    f.write(json.dumps(row(500, "full", commit=f"2{index:039x}")) + "\n")
             self.assertEqual(0, vtr.main(["--ledger", str(p), "--profile", "full",
                                           "--cpu-seconds", "500", "--gate"]))
             # Judged against the cheap quick baseline, the same number IS a regression.
@@ -79,14 +102,32 @@ class RatchetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "l.jsonl"
             with p.open("w") as f:
-                for _ in range(40):
-                    f.write(json.dumps({"profile": "full", "user_seconds": 80,
-                                        "sys_seconds": 20}) + "\n")
-                for _ in range(20):
-                    f.write(json.dumps({"profile": "full"}) + "\n")  # untimed
+                for index in range(40):
+                    f.write(json.dumps(row(100, commit=f"3{index:039x}")) + "\n")
+                for index in range(20):
+                    f.write(
+                        json.dumps(
+                            row(100, commit=f"4{index:039x}", finished_at=None)
+                        )
+                        + "\n"
+                    )
             rows = vtr.load(p, "full")
-            self.assertEqual(60, len(rows))
+            self.assertEqual(40, len(rows))
             self.assertEqual(40, vtr.baseline(rows)["n"], "untimed rows must be excluded")
+
+    def test_load_uses_canonical_qualification_and_event_order(self):
+        """Negative rows are refused while both valid rows remain time-ordered."""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "l.jsonl"
+            values = [
+                row(200, commit="b" * 40, finished_at="2026-08-07T02:00:00Z"),
+                row(900, commit="c" * 40, result="fail"),
+                row(900, commit="d" * 40, executed_tests=0),
+                row(100, commit="a" * 40, finished_at="2026-08-07T01:00:00Z"),
+            ]
+            p.write_text("".join(json.dumps(value) + "\n" for value in values))
+            selected = vtr.load(p, "full")
+            self.assertEqual(["a" * 40, "b" * 40], [value["commit"] for value in selected])
 
 
 if __name__ == "__main__":

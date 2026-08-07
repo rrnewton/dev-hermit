@@ -674,8 +674,17 @@ fn dereference_open_prs(repo: &str) -> Result<u64, String> {
     // manufacture agreement with a subset -- the exact failure being closed.
     let output = Command::new("with-proxy")
         .args([
-            "gh", "pr", "list", "--repo", repo, "--state", "open",
-            "--limit", GH_PR_LIST_LIMIT_ARG, "--json", "number",
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            GH_PR_LIST_LIMIT_ARG,
+            "--json",
+            "number",
         ])
         .output()
         .map_err(|e| format!("run `gh pr list` to dereference {repo}: {e}"))?;
@@ -790,7 +799,9 @@ fn validate_auto_mode(
         return Ok(());
     }
     if declared.is_some() {
-        return Err("--open-prs auto adopts the dereferenced total; do not also assert a number".into());
+        return Err(
+            "--open-prs auto adopts the dereferenced total; do not also assert a number".into(),
+        );
     }
     if no_verify {
         return Err(
@@ -805,9 +816,11 @@ fn validate_auto_mode(
         ));
     }
     if supplied_observation.is_some() {
-        return Err("--open-prs auto performs the lookup; --open-prs-observed would replace it \
+        return Err(
+            "--open-prs auto performs the lookup; --open-prs-observed would replace it \
                     with a number nothing checked"
-            .into());
+                .into(),
+        );
     }
     Ok(())
 }
@@ -1063,8 +1076,7 @@ fn parse_args() -> Args {
             }
             "--open-prs-basis" => parsed.open_prs_basis = Some(take_value(&arg, &mut args)),
             "--open-prs-observed" => {
-                parsed.open_prs_observed =
-                    Some(parse_count(&arg, take_value(&arg, &mut args)))
+                parsed.open_prs_observed = Some(parse_count(&arg, take_value(&arg, &mut args)))
             }
             "--no-verify-counts" => parsed.no_verify_counts = true,
             "--ready-prs" => {
@@ -1481,9 +1493,9 @@ fn main() {
         observed_detail = Some(obs.per_repo);
         obs.total
     } else {
-        let declared = args
-            .open_prs
-            .unwrap_or_else(|| die("missing --open-prs (pass a number, or `auto` to adopt the dereferenced total)"));
+        let declared = args.open_prs.unwrap_or_else(|| {
+            die("missing --open-prs (pass a number, or `auto` to adopt the dereferenced total)")
+        });
         if basis == BASIS_TOTAL_OPEN && !args.no_verify_counts {
             match args.open_prs_observed {
                 // Offline/test injection, mirroring --task-states-json. It
@@ -2553,7 +2565,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
     // ============ the count must be bound to the set it names ============
 
     fn repos2() -> Vec<String> {
-        vec!["rrnewton/hermit".to_string(), "rrnewton/reverie".to_string()]
+        vec![
+            "rrnewton/hermit".to_string(),
+            "rrnewton/reverie".to_string(),
+        ]
     }
 
     #[test]
@@ -2568,7 +2583,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         assert!(err.contains("does not match"), "{err}");
         assert!(err.contains("observed 105"), "{err}");
         // The remedy must be named, not merely the refusal.
-        assert!(err.contains("--ready-prs"), "the message must point at the subset field: {err}");
+        assert!(
+            err.contains("--ready-prs"),
+            "the message must point at the subset field: {err}"
+        );
         assert!(err.contains("may not borrow open_prs"), "{err}");
     }
 
@@ -2602,7 +2620,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
             .expect_err("must refuse");
         assert!(err.contains("rrnewton/hermit=96"), "{err}");
         assert!(err.contains("rrnewton/reverie=9"), "{err}");
-        assert!(err.contains("rrnewton/hermit,rrnewton/reverie"), "the declared set: {err}");
+        assert!(
+            err.contains("rrnewton/hermit,rrnewton/reverie"),
+            "the declared set: {err}"
+        );
 
         // Without a breakdown it must say where the number came from rather
         // than implying a lookup that did not happen.
@@ -2616,10 +2637,38 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
     fn auto_is_exclusive_with_every_way_of_supplying_the_number() {
         // Each of these would record a value whose provenance is a lie.
         let cases: Vec<(&str, bool, Option<u64>, bool, &str, Option<u64>)> = vec![
-            ("auto plus an asserted number", true, Some(99), false, BASIS_TOTAL_OPEN, None),
-            ("auto plus --no-verify-counts", true, None, true, BASIS_TOTAL_OPEN, None),
-            ("auto on a non-total basis", true, None, false, BASIS_READY, None),
-            ("auto plus a supplied observation", true, None, false, BASIS_TOTAL_OPEN, Some(50)),
+            (
+                "auto plus an asserted number",
+                true,
+                Some(99),
+                false,
+                BASIS_TOTAL_OPEN,
+                None,
+            ),
+            (
+                "auto plus --no-verify-counts",
+                true,
+                None,
+                true,
+                BASIS_TOTAL_OPEN,
+                None,
+            ),
+            (
+                "auto on a non-total basis",
+                true,
+                None,
+                false,
+                BASIS_READY,
+                None,
+            ),
+            (
+                "auto plus a supplied observation",
+                true,
+                None,
+                false,
+                BASIS_TOTAL_OPEN,
+                Some(50),
+            ),
         ];
         for (label, auto, declared, no_verify, basis, supplied) in cases {
             assert!(
@@ -2638,7 +2687,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
     fn an_explicit_count_is_still_checked_after_auto_exists() {
         // Adding an adopt path must not soften the assert path: a subset under
         // the total basis is still refused, which is the whole point of 9fdb9ad.
-        let repos = vec!["rrnewton/hermit".to_string(), "rrnewton/reverie".to_string()];
+        let repos = vec![
+            "rrnewton/hermit".to_string(),
+            "rrnewton/reverie".to_string(),
+        ];
         assert!(check_open_prs(7, 106, BASIS_TOTAL_OPEN, &repos, None).is_err());
         assert!(check_open_prs(106, 106, BASIS_TOTAL_OPEN, &repos, None).is_ok());
     }
@@ -2653,7 +2705,10 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         assert!(check_not_truncated(1001, 1000, "rrnewton/hermit").is_err());
         let err = check_not_truncated(1000, 1000, "rrnewton/hermit").unwrap_err();
         assert!(err.contains("UNDERSTATE"), "{err}");
-        assert!(err.contains("rrnewton/hermit"), "the message must name the repo: {err}");
+        assert!(
+            err.contains("rrnewton/hermit"),
+            "the message must name the repo: {err}"
+        );
         // The argument passed to gh and the bound compared against must agree,
         // or the check is off by whatever they differ by.
         assert_eq!(GH_PR_LIST_LIMIT_ARG, GH_PR_LIST_LIMIT.to_string());
@@ -2676,5 +2731,4 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         assert_eq!(obs.total, obs.per_repo.iter().map(|(_, n)| n).sum::<u64>());
         assert!(obs.window_start <= obs.window_end);
     }
-
 }
