@@ -42,8 +42,16 @@ Required:
                          count below was taken over, e.g.
                          rrnewton/hermit,rrnewton/reverie. This is the
                          denominator; it is recorded with the counts.
-  --open-prs N           TOTAL open PRs INCLUDING DRAFTS across --repos.
-                         This is the only permitted meaning of `open_prs`.
+  --open-prs N|auto      TOTAL open PRs INCLUDING DRAFTS across --repos. This
+                         is the only permitted meaning of `open_prs`.
+                         `auto` DEREFERENCES the declared repo set once and
+                         adopts that total, recording the exact per-repo
+                         breakdown and the window it was taken over. Prefer it:
+                         measuring in the caller and re-checking in the writer
+                         is a TOCTOU, and a real append failed when the
+                         population moved 104 -> 105 between the two.
+                         A NUMBER is still an assertion and is still CHECKED
+                         against the population; only `auto` is adopted.
   --genuine-reds N       Current number of genuine-red PRs.
   --fleet-count N        Current active fleet size.
   --covers-hour HOUR     The UTC hour bucket YYYY-MM-DDTHH that the narrative and
@@ -211,6 +219,8 @@ struct Args {
     repos: Option<String>,
     open_prs: Option<u64>,
     open_prs_basis: Option<String>,
+    /// `--open-prs auto`: adopt the dereferenced total instead of asserting one.
+    open_prs_auto: bool,
     open_prs_observed: Option<u64>,
     no_verify_counts: bool,
     ready_prs: Option<u64>,
@@ -665,7 +675,7 @@ fn dereference_open_prs(repo: &str) -> Result<u64, String> {
     let output = Command::new("with-proxy")
         .args([
             "gh", "pr", "list", "--repo", repo, "--state", "open",
-            "--limit", "1000", "--json", "number",
+            "--limit", GH_PR_LIST_LIMIT_ARG, "--json", "number",
         ])
         .output()
         .map_err(|e| format!("run `gh pr list` to dereference {repo}: {e}"))?;
@@ -681,18 +691,19 @@ fn dereference_open_prs(repo: &str) -> Result<u64, String> {
     let array = parsed
         .as_array()
         .ok_or_else(|| format!("`gh pr list --repo {repo}` did not return a JSON array"))?;
-    if array.len() >= 1000 {
-        return Err(format!(
-            "`gh pr list --repo {repo}` returned {} entries, at or above the --limit; the \
-             list may be truncated and a truncated count would UNDERSTATE the total",
-            array.len()
-        ));
-    }
+    check_not_truncated(array.len(), GH_PR_LIST_LIMIT, repo)?;
     Ok(array.len() as u64)
 }
 
 /// Sum the open-PR population over exactly the declared repository set.
-fn observed_open_prs(repos: &[String]) -> Result<(u64, Vec<(String, u64)>), String> {
+///
+/// A multi-repository total CANNOT be atomic: each repository is a separate
+/// query, so the sum spans a window rather than an instant. Pretending
+/// otherwise is how a count acquires false precision, so the window is measured
+/// and returned to be recorded with the value. Callers get ONE observation --
+/// there is no second lookup to disagree with the first.
+fn observed_open_prs(repos: &[String]) -> Result<Observation, String> {
+    let started = timestamp_from_date();
     let mut per_repo = Vec::new();
     let mut total = 0u64;
     for repo in repos {
@@ -700,7 +711,20 @@ fn observed_open_prs(repos: &[String]) -> Result<(u64, Vec<(String, u64)>), Stri
         total += count;
         per_repo.push((repo.clone(), count));
     }
-    Ok((total, per_repo))
+    Ok(Observation {
+        total,
+        per_repo,
+        window_start: started,
+        window_end: timestamp_from_date(),
+    })
+}
+
+/// One dereference of the declared repository set, with the window it spans.
+struct Observation {
+    total: u64,
+    per_repo: Vec<(String, u64)>,
+    window_start: String,
+    window_end: String,
 }
 
 /// Compare the declared count against the observed population. Pure so both
@@ -732,6 +756,60 @@ fn check_open_prs(
          here while the true total was 102.",
         repos.join(",")
     ))
+}
+
+/// gh truncates SILENTLY at --limit, and a truncated list undercounts. An
+/// undercount drifts toward a subset, i.e. it would manufacture agreement with
+/// exactly the wrong number, so the bound refuses rather than trusting length.
+const GH_PR_LIST_LIMIT: usize = 1000;
+const GH_PR_LIST_LIMIT_ARG: &str = "1000";
+
+fn check_not_truncated(returned: usize, limit: usize, repo: &str) -> Result<(), String> {
+    if returned >= limit {
+        return Err(format!(
+            "`gh pr list --repo {repo}` returned {returned} entries, at or above the --limit \
+             of {limit}; the list may be truncated and a truncated count would UNDERSTATE the \
+             total"
+        ));
+    }
+    Ok(())
+}
+
+/// `auto` and every way of supplying the number are mutually exclusive. Each
+/// combination below would otherwise record a value whose provenance is a lie:
+/// adopted-and-asserted, adopted-without-looking, or adopted-from-a-basis with
+/// no population behind it.
+fn validate_auto_mode(
+    auto: bool,
+    declared: Option<u64>,
+    no_verify: bool,
+    basis: &str,
+    supplied_observation: Option<u64>,
+) -> Result<(), String> {
+    if !auto {
+        return Ok(());
+    }
+    if declared.is_some() {
+        return Err("--open-prs auto adopts the dereferenced total; do not also assert a number".into());
+    }
+    if no_verify {
+        return Err(
+            "--open-prs auto IS the dereference; --no-verify-counts would leave nothing to adopt"
+                .into(),
+        );
+    }
+    if basis != BASIS_TOTAL_OPEN {
+        return Err(format!(
+            "--open-prs auto only defines a value for {BASIS_TOTAL_OPEN}; basis {basis} has no \
+             population to dereference"
+        ));
+    }
+    if supplied_observation.is_some() {
+        return Err("--open-prs auto performs the lookup; --open-prs-observed would replace it \
+                    with a number nothing checked"
+            .into());
+    }
+    Ok(())
 }
 
 fn validate_open_prs_basis(basis: &str) -> Result<(), String> {
@@ -973,7 +1051,16 @@ fn parse_args() -> Args {
                 parsed.task_states_json = Some(take_value(&arg, &mut args).into())
             }
             "--repos" => parsed.repos = Some(take_value(&arg, &mut args)),
-            "--open-prs" => parsed.open_prs = Some(parse_count(&arg, take_value(&arg, &mut args))),
+            "--open-prs" => {
+                let raw = take_value(&arg, &mut args);
+                // `auto` ADOPTS the dereferenced total. Anything else is an
+                // assertion the caller must stand behind, and is still checked.
+                if raw.eq_ignore_ascii_case("auto") {
+                    parsed.open_prs_auto = true;
+                } else {
+                    parsed.open_prs = Some(parse_count(&arg, raw));
+                }
+            }
             "--open-prs-basis" => parsed.open_prs_basis = Some(take_value(&arg, &mut args)),
             "--open-prs-observed" => {
                 parsed.open_prs_observed =
@@ -1349,33 +1436,82 @@ fn main() {
     validate_open_prs_basis(args.open_prs_basis.as_deref().unwrap_or(BASIS_TOTAL_OPEN))
         .unwrap_or_else(|e| die(&e));
 
-    let open_prs = args.open_prs.unwrap_or_else(|| die("missing --open-prs"));
-
-    // ---- bind the count to the set it claims to have counted ----
     let basis = args.open_prs_basis.as_deref().unwrap_or(BASIS_TOTAL_OPEN);
+    validate_auto_mode(
+        args.open_prs_auto,
+        args.open_prs,
+        args.no_verify_counts,
+        basis,
+        args.open_prs_observed,
+    )
+    .unwrap_or_else(|e| die(&e));
+
+    // ---- ONE observation, adopted or checked, never re-derived ----
+    //
+    // The caller-measures-then-writer-remeasures shape has a TOCTOU: a real
+    // append failed because the population moved 104 -> 105 between the
+    // caller's `gh pr list` and the writer's. Both numbers were honest; the
+    // window between them was the defect. `auto` closes it by making the
+    // writer's dereference the ONLY measurement, so there is no second reading
+    // to disagree with the first.
+    //
+    // An explicitly supplied count is still CHECKED, not adopted: a caller who
+    // states a number is making a claim, and a claim that disagrees with the
+    // population is exactly the subset-wearing-the-total defect this guard
+    // exists to refuse.
     let mut open_prs_verified = false;
     let mut observed_detail: Option<Vec<(String, u64)>> = None;
-    if basis == BASIS_TOTAL_OPEN && !args.no_verify_counts {
-        let (observed, per_repo) = match args.open_prs_observed {
-            // Offline/test injection, mirroring --task-states-json. It replaces
-            // the LOOKUP, never the COMPARISON.
-            Some(injected) => (injected, None),
-            None => {
-                let (total, per_repo) = observed_open_prs(&repos).unwrap_or_else(|e| {
-                    die(&format!(
-                        "{e}\n\nCannot dereference --open-prs against --repos. Supply the \
-                         observed total with --open-prs-observed, or pass --no-verify-counts \
-                         to record the count as unverified."
-                    ))
-                });
-                (total, Some(per_repo))
-            }
-        };
-        check_open_prs(open_prs, observed, basis, &repos, per_repo.as_deref())
-            .unwrap_or_else(|e| die(&e));
-        observed_detail = per_repo;
+    let mut count_window: Option<(String, String)> = None;
+    let mut count_source = if args.no_verify_counts {
+        "declared-unverified"
+    } else {
+        "declared-and-verified"
+    };
+
+    let open_prs = if args.open_prs_auto {
+        let obs = observed_open_prs(&repos).unwrap_or_else(|e| {
+            die(&format!(
+                "{e}\n\nCannot dereference --open-prs auto against --repos. Supply the total \
+                 explicitly, or pass --no-verify-counts to record it as unverified."
+            ))
+        });
         open_prs_verified = true;
-    }
+        count_source = "dereferenced-auto";
+        count_window = Some((obs.window_start.clone(), obs.window_end.clone()));
+        observed_detail = Some(obs.per_repo);
+        obs.total
+    } else {
+        let declared = args
+            .open_prs
+            .unwrap_or_else(|| die("missing --open-prs (pass a number, or `auto` to adopt the dereferenced total)"));
+        if basis == BASIS_TOTAL_OPEN && !args.no_verify_counts {
+            match args.open_prs_observed {
+                // Offline/test injection, mirroring --task-states-json. It
+                // replaces the LOOKUP, never the COMPARISON.
+                Some(injected) => {
+                    check_open_prs(declared, injected, basis, &repos, None)
+                        .unwrap_or_else(|e| die(&e));
+                    count_source = "declared-and-verified-supplied-observation";
+                }
+                None => {
+                    let obs = observed_open_prs(&repos).unwrap_or_else(|e| {
+                        die(&format!(
+                            "{e}\n\nCannot dereference --open-prs against --repos. Supply the \
+                             observed total with --open-prs-observed, pass --open-prs auto to \
+                             adopt the dereferenced total, or pass --no-verify-counts to record \
+                             the count as unverified."
+                        ))
+                    });
+                    check_open_prs(declared, obs.total, basis, &repos, Some(&obs.per_repo))
+                        .unwrap_or_else(|e| die(&e));
+                    count_window = Some((obs.window_start.clone(), obs.window_end.clone()));
+                    observed_detail = Some(obs.per_repo);
+                }
+            }
+            open_prs_verified = true;
+        }
+        declared
+    };
     let genuine_reds = args
         .genuine_reds
         .unwrap_or_else(|| die("missing --genuine-reds"));
@@ -1420,10 +1556,17 @@ fn main() {
             "includes_drafts": true,
             "repos": repos,
             // Carry the condition with the value: a count that does not say
-            // whether it was checked is indistinguishable from one that was.
+            // whether it was checked is indistinguishable from one that was,
+            // and one that does not say HOW cannot be audited.
             "verified": open_prs_verified,
+            "source": count_source,
         },
     });
+    if let Some((start, end)) = &count_window {
+        // A multi-repository total spans a window, not an instant. Recording it
+        // keeps the number from claiming a precision it does not have.
+        count_semantics["open_prs"]["observed_window"] = json!({"start": start, "end": end});
+    }
     if let Some(per_repo) = &observed_detail {
         count_semantics["open_prs"]["observed_per_repo"] = json!(per_repo
             .iter()
@@ -2465,6 +2608,73 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
         // than implying a lookup that did not happen.
         let injected = check_open_prs(7, 105, BASIS_TOTAL_OPEN, &repos2(), None).unwrap_err();
         assert!(injected.contains("--open-prs-observed"), "{injected}");
+    }
+
+    // ============ auto mode: one observation, adopted not re-derived ============
+
+    #[test]
+    fn auto_is_exclusive_with_every_way_of_supplying_the_number() {
+        // Each of these would record a value whose provenance is a lie.
+        let cases: Vec<(&str, bool, Option<u64>, bool, &str, Option<u64>)> = vec![
+            ("auto plus an asserted number", true, Some(99), false, BASIS_TOTAL_OPEN, None),
+            ("auto plus --no-verify-counts", true, None, true, BASIS_TOTAL_OPEN, None),
+            ("auto on a non-total basis", true, None, false, BASIS_READY, None),
+            ("auto plus a supplied observation", true, None, false, BASIS_TOTAL_OPEN, Some(50)),
+        ];
+        for (label, auto, declared, no_verify, basis, supplied) in cases {
+            assert!(
+                validate_auto_mode(auto, declared, no_verify, basis, supplied).is_err(),
+                "{label} must be refused"
+            );
+        }
+        // Positive controls: plain auto, and every non-auto shape, are fine.
+        assert!(validate_auto_mode(true, None, false, BASIS_TOTAL_OPEN, None).is_ok());
+        assert!(validate_auto_mode(false, Some(105), false, BASIS_TOTAL_OPEN, None).is_ok());
+        assert!(validate_auto_mode(false, Some(7), true, BASIS_TOTAL_OPEN, None).is_ok());
+        assert!(validate_auto_mode(false, Some(7), false, BASIS_READY, Some(7)).is_ok());
+    }
+
+    #[test]
+    fn an_explicit_count_is_still_checked_after_auto_exists() {
+        // Adding an adopt path must not soften the assert path: a subset under
+        // the total basis is still refused, which is the whole point of 9fdb9ad.
+        let repos = vec!["rrnewton/hermit".to_string(), "rrnewton/reverie".to_string()];
+        assert!(check_open_prs(7, 106, BASIS_TOTAL_OPEN, &repos, None).is_err());
+        assert!(check_open_prs(106, 106, BASIS_TOTAL_OPEN, &repos, None).is_ok());
+    }
+
+    #[test]
+    fn the_truncation_bound_refuses_at_or_above_the_limit() {
+        // A truncated list UNDERCOUNTS, and an undercount drifts toward a
+        // subset -- so truncation would manufacture agreement with exactly the
+        // wrong number. Refuse rather than trust the length.
+        assert!(check_not_truncated(999, 1000, "rrnewton/hermit").is_ok());
+        assert!(check_not_truncated(1000, 1000, "rrnewton/hermit").is_err());
+        assert!(check_not_truncated(1001, 1000, "rrnewton/hermit").is_err());
+        let err = check_not_truncated(1000, 1000, "rrnewton/hermit").unwrap_err();
+        assert!(err.contains("UNDERSTATE"), "{err}");
+        assert!(err.contains("rrnewton/hermit"), "the message must name the repo: {err}");
+        // The argument passed to gh and the bound compared against must agree,
+        // or the check is off by whatever they differ by.
+        assert_eq!(GH_PR_LIST_LIMIT_ARG, GH_PR_LIST_LIMIT.to_string());
+    }
+
+    #[test]
+    fn an_observation_carries_the_window_it_spans() {
+        // A multi-repository total is a sum over separate queries, so it spans
+        // a window rather than an instant. The row must not claim precision the
+        // measurement does not have.
+        let obs = Observation {
+            total: 106,
+            per_repo: vec![
+                ("rrnewton/hermit".to_string(), 97),
+                ("rrnewton/reverie".to_string(), 9),
+            ],
+            window_start: "2026-08-07T03:50:41Z".to_string(),
+            window_end: "2026-08-07T03:50:42Z".to_string(),
+        };
+        assert_eq!(obs.total, obs.per_repo.iter().map(|(_, n)| n).sum::<u64>());
+        assert!(obs.window_start <= obs.window_end);
     }
 
 }
