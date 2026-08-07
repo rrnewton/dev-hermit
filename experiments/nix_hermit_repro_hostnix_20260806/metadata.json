@@ -298,8 +298,8 @@
       }
     },
     {
-      "id": "pipe-readiness-eof-not-delivered",
-      "summary": "Two measured hangs in guest pipe wakeup, each with ZERO accumulated CPU. (1) cmake configure blocks in epoll_wait(epfd=3, maxevents=1024, timeout=-1) on pipes to a compiler-probe child that has exited; /proc/<pid>/wchan = do_epoll_wait. (2) figlet's stdenv fixupPhase: the guest builder bash blocks in read(fd 0, buf, 1) on pipe:[329546543] (also held on saved fd 63) with NO children alive; wchan = anon_pipe_read, TIME 00:00:00 after 29 minutes.",
+      "id": "epoll-pwait-blocks-the-scheduler",
+      "summary": "handle_epoll_pwait injected a blocking epoll_pwait(timeout=-1) and waited for it to return while holding the scheduler turn, so under --sequentialize-threads the only task that could satisfy the wait was queued behind it. Reachable by ordinary programs because glibc implements epoll_wait(2) as epoll_pwait with a NULL sigmask, so nothing reached handle_epoll_wait, which handles blocking correctly. epoll_pwait was also the only poll/epoll family member with no NonblockableSyscall/TimeoutableSyscall impl, though Ppoll (the sigmask variant of poll) has had both all along.",
       "reproducer": "harness/cmake-hang-repro.sh (3-line CMakeLists.txt): native rc=0 wall=1s; hermit rc=124 wall=90s with no output",
       "modes_affected": [
         "--tmp=/tmp",
@@ -309,7 +309,22 @@
       "suggested_fix": "audit detcore's pipe readiness/EOF delivery for both epoll registration and blocking read when the writer exits",
       "claim_strength": "The two hangs are measured from /proc on live processes. A SHARED root cause is a HYPOTHESIS, not established: one waits in epoll_wait and the other in a blocking read, and a bash `while read` holding the pipe on a saved fd has its own idioms. Defensible statement: hermit does not deliver pipe readiness/EOF to a guest reader after the writer exits, observed through two different waiting primitives.",
       "issue": "https://github.com/rrnewton/hermit/issues/1850",
-      "status": "OPEN - this is what keeps N=0"
+      "status": "FIXED",
+      "evidence": "hermit --log=debug scheduler log ends at 'COMMIT turn 198, dettid 3' injecting epoll_pwait(3,...,-1,NULL,8) with 'queue len 2', while dettid 5 has an inbound openat awaiting a turn; /proc shows the child in ptrace_stop with zero accumulated CPU across the guest tree",
+      "fix": {
+        "pr": "https://github.com/rrnewton/hermit/pull/1864",
+        "branch": "epoll-pwait-scheduler-deadlock",
+        "head_sha": "b0bfb1c635e81e4210f63ecdc2749edb633d9072",
+        "base": "590fcc9eeb0339c5cf23f72b84394a63333e88ff",
+        "effect": "cmake-hang-repro.sh rc=124@90s -> rc=0@2s wall; nixpkgs.lensfun completes configure, build and install under the wrap",
+        "deliberate_gap": "non-NULL sigmask epoll_pwait unchanged; a timeout-0 polling loop cannot reproduce the atomic mask swap, so that path can still block",
+        "validation_gap": "validate.sh / ci-hub validate-run NOT run (no lease); evidence produced at pre-rebase aa48b9cb and must be re-run at b0bfb1c6"
+      },
+      "retracted_original_diagnosis": {
+        "claim": "pipe readiness/EOF not delivered to a guest reader after the writer exits",
+        "why_wrong": "a six-probe differential (harness/pipe-wakeup-probe.c) shows hermit matches native exactly on read-EOF, epoll EPOLLHUP, poll POLLHUP, buffered data, and data+HUP, with a writer-alive control",
+        "invalid_evidence": "the supporting 'no children at all' observation was read from /proc/<pid>/task/<tid>/children, which does NOT EXIST on this kernel (no CONFIG_PROC_CHILDREN); empty output was recorded as an observation. Use ps -eo pid,ppid."
+      }
     },
     {
       "id": "rcb-clock-jitter-on-degraded-pmu",
