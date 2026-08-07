@@ -1,0 +1,24 @@
+[Unit]
+Description=Check every 2 minutes that ORC is actually alive
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/orc-liveness-watchdog.rs
+
+[Timer]
+OnBootSec=1min
+# OnUnitActiveSec re-arms off THIS timer's own last activation, not off ORC and
+# not off the operational health tick. Killing ORC, killing the tmux server, or
+# killing a watchdog run mid-flight therefore does not stop the next check.
+#
+# 2 min is chosen against the failure it must bound, not picked round: the
+# 2026-08-06 ORC+tmux death was detected by a human after a long silent
+# interval, and the check itself is one sqlite read plus one /proc read, so the
+# cadence is limited by nothing. Worst-case detection latency is 2 min; the
+# hourly alert cooldown in the watchdog is what keeps a sustained outage from
+# becoming spam.
+OnUnitActiveSec=2min
+# Run a missed check after suspend/downtime instead of silently skipping it.
+Persistent=true
+AccuracySec=15s
+Unit=hermit-orc-liveness.service
+
+[Install]
+WantedBy=timers.target
