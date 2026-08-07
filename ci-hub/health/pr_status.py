@@ -565,6 +565,15 @@ def _rollup_ci_state(rollup: object, *, head_sha: str = "") -> str:
 # hermit PR at that pin fails it at once, main included, and ONE shared bump
 # (PR #1840) clears them all. A single unrecognised check name defeated the
 # `all(...)` test below and turned shared pin drift into a phantom product break.
+#
+# BUT "one bump clears them all" HOLDS ONLY FOR THE SPECIAL CASE ABOVE, where the
+# PR's pin already EQUALS main's. Measured 2026-08-07 on the next red set: #1665,
+# #1762 and #1769 carried THREE DIFFERENT stale pins (dd3c178e / 79517704 /
+# d973a85b), each a genuine ancestor of reverie main -- i.e. heads stale at
+# different DEPTHS. Bumping main does not retroactively change a PR head's pinned
+# SHA, so each of those heads additionally needed its own REBASE. The emitted
+# actionability text said "one bump clears them all" and was wrong for that
+# population; it now states the per-head rebase requirement instead.
 _GATE_META_CHECK_NAMES = frozenset(
     {
         "merge-gate",
@@ -1504,9 +1513,11 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
                 "lacking a valid receipt, a completed review, or a current "
                 "dependency pin at head), not product breakage. Fix by "
                 "producing receipts, completing review, or landing the shared "
-                "pin bump — not by debugging tests. A pin-freshness red is "
-                "FLEET-WIDE: every PR at the stale pin fails it at once and one "
-                "bump clears them all."
+                "pin bump — not by debugging tests. A pin-freshness red "
+                "compares THIS HEAD's pin to the dependency's live main, so "
+                "heads of different ages carry different stale pins: bumping "
+                "main clears a head only after that head is REBASED onto it. "
+                "Check each head's pin before assuming one bump suffices."
             )
         else:
             hot = ", ".join(
