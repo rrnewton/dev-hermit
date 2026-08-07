@@ -115,6 +115,31 @@ write_comments() {
     } | [[.]]' >"$tmp/comments.json"
 }
 
+# --- mutation anchors -------------------------------------------------------
+# Every mutated fixture must be shown to have ACTUALLY changed the receipt
+# before its refusal is believed. A mutation expression that silently no-ops
+# would otherwise be scored as "the guard refused it", i.e. this bracket would
+# report robustness it never tested -- a proxy-binding defect in the bracket.
+#
+# The pre-merge harness compared with `cmp -s`. A byte compare is VACUOUS on
+# this harness: make_receipt/refresh_selected_identity emit pretty-printed JSON
+# while several mutations use `jq -cS`, so base and mutant differ in FORMATTING
+# alone and a no-op expression would still look mutated. Measured: a `jq -cS .`
+# no-op applied to a pretty base differs byte-wise but is identical once
+# normalized. So the anchor compares CANONICAL CONTENT (`jq -S -c`), which is
+# what "the mutation changed the receipt" actually means.
+mutation_anchor_failures=0
+mutation_anchors_total=10
+assert_mutated() { # assert_mutated <base> <mutant> <label>
+    local a b
+    a=$(jq -S -c . "$1" 2>/dev/null) || a="<unparseable:$1>"
+    b=$(jq -S -c . "$2" 2>/dev/null) || b="<unparseable:$2>"
+    if [[ "$a" == "$b" ]]; then
+        printf 'BAD  ANCHOR    mutation did not change the receipt: %s\n' "$3" >&2
+        mutation_anchor_failures=$((mutation_anchor_failures + 1))
+    fi
+}
+
 verify_file() {
     local file=$1 expected=$2 label=$3 role_tag=${4:-'[impl agent, ci-hub]'}
     local file_digest file_path status=0
@@ -156,6 +181,7 @@ write_comments "$path" "$digest"
 # artifact digest/path, and the final verifier must still refuse it.
 jq '.selected_receipt_identity.digest = ("f" * 64)' \
     "$tmp/receipt.json" >"$tmp/tampered-selected-digest.json"
+assert_mutated "$tmp/receipt.json" "$tmp/tampered-selected-digest.json" "IDENTITY tampered selected digest"
 verify_file "$tmp/tampered-selected-digest.json" fail \
     "tampered selected digest with recomputed outer artifact identity" \
     '[coordinator, gpt-5.6-sol]'
@@ -176,16 +202,19 @@ jq '
       .ledger_record.gates
     )
 ' "$tmp/receipt.json" >"$tmp/historical.json"
+assert_mutated "$tmp/receipt.json" "$tmp/historical.json" "IDENTITY legacy artifact without selected identity"
 verify_file "$tmp/historical.json" pass "legacy service artifact without selected identity"
 verify_file "$tmp/historical.json" fail "current role artifact without selected identity" \
     '[coordinator, gpt-5.6-sol]'
 jq '.selected_receipt_identity = false' "$tmp/receipt.json" >"$tmp/malformed-identity.json"
+assert_mutated "$tmp/receipt.json" "$tmp/malformed-identity.json" "IDENTITY malformed selected identity"
 verify_file "$tmp/malformed-identity.json" fail "legacy artifact with malformed selected identity"
 jq '
   .ledger_record.checks = 0
   | .ledger_record.gates_run = 0
   | .ledger_record.gates = []
 ' "$tmp/receipt.json" >"$tmp/current-weak-row-raw.json"
+assert_mutated "$tmp/receipt.json" "$tmp/current-weak-row-raw.json" "ROW weak selected row"
 refresh_selected_identity "$tmp/current-weak-row-raw.json" "$tmp/current-weak-row.json"
 verify_file "$tmp/current-weak-row.json" fail "current role artifact with weak selected row" \
     '[coordinator, gpt-5.6-sol]'
@@ -255,8 +284,10 @@ fi
 make_receipt 12 "$tmp/host-good.json"
 jq -cS '.run_id = (.commit + "@" + .ledger_record.started_at + "@other-host")' \
     "$tmp/host-good.json" >"$tmp/host-mismatch.json"
+assert_mutated "$tmp/host-good.json" "$tmp/host-mismatch.json" "HOST run_id host mismatch"
 verify_file "$tmp/host-mismatch.json" fail "run_id host disagrees with ledger host"
 jq -cS 'del(.ledger_record.host)' "$tmp/host-good.json" >"$tmp/host-absent-raw.json"
+assert_mutated "$tmp/host-good.json" "$tmp/host-absent-raw.json" "HOST ledger host absent"
 refresh_selected_identity "$tmp/host-absent-raw.json" "$tmp/host-absent.json"
 verify_file "$tmp/host-absent.json" fail "ledger host absent"
 
@@ -341,24 +372,28 @@ fi
 sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 make_receipt 12 "$tmp/schema5-base.json"
 jq '.ledger_record.schema_version = 5' "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
+assert_mutated "$tmp/schema5-base.json" "$tmp/schema5-missing-raw.json" "COVERAGE schema5 missing coverage block"
 refresh_selected_identity "$tmp/schema5-missing-raw.json" "$tmp/schema5-missing.json"
 verify_file "$tmp/schema5-missing.json" fail "schema5 missing coverage"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 0, executed_test_nodes: 0,
       zero_executed_nodes: [], absent_nodes: []
     }' "$tmp/schema5-missing.json" >"$tmp/schema5-zero-planned-raw.json"
+assert_mutated "$tmp/schema5-missing.json" "$tmp/schema5-zero-planned-raw.json" "COVERAGE schema5 zero planned nodes"
 refresh_selected_identity "$tmp/schema5-zero-planned-raw.json" "$tmp/schema5-zero-planned.json"
 verify_file "$tmp/schema5-zero-planned.json" fail "schema5 zero planned nodes"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 2, executed_test_nodes: 1,
       zero_executed_nodes: [], absent_nodes: ["test.missing"]
     }' "$tmp/schema5-missing.json" >"$tmp/schema5-absent-raw.json"
+assert_mutated "$tmp/schema5-missing.json" "$tmp/schema5-absent-raw.json" "COVERAGE schema5 absent node"
 refresh_selected_identity "$tmp/schema5-absent-raw.json" "$tmp/schema5-absent.json"
 verify_file "$tmp/schema5-absent.json" fail "schema5 absent node"
 jq '.ledger_record.coverage = {
       planned_test_nodes: 2, executed_test_nodes: 2,
       zero_executed_nodes: [], absent_nodes: []
     }' "$tmp/schema5-missing.json" >"$tmp/schema5-valid-raw.json"
+assert_mutated "$tmp/schema5-missing.json" "$tmp/schema5-valid-raw.json" "COVERAGE schema5 complete coverage (positive)"
 refresh_selected_identity "$tmp/schema5-valid-raw.json" "$tmp/schema5-valid.json"
 verify_file "$tmp/schema5-valid.json" pass "schema5 complete coverage"
 
@@ -369,5 +404,16 @@ if [[ -e $plant_root ]]; then
     exit 1
 fi
 trap - EXIT
+
+# Every mutant must be shown to have actually changed the receipt. A silently
+# no-op mutation would otherwise be scored as "the guard refused it", i.e. the
+# harness would report robustness it never tested.
+printf 'MUTATION ANCHORS: %s\n' \
+    "$([[ $mutation_anchor_failures -eq 0 ]] && echo "all $mutation_anchors_total mutants differed from their base" \
+       || echo "$mutation_anchor_failures of $mutation_anchors_total MUTANT(S) DID NOT DIFFER -- results not believable")"
+if [[ $mutation_anchor_failures -ne 0 ]]; then
+    echo "FAIL: receipt-consumer bracket: mutation anchors" >&2
+    exit 1
+fi
 
 echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and three incomplete schema5 controls refused; fixture plant deleted cleanly"
