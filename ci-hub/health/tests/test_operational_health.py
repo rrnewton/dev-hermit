@@ -195,7 +195,10 @@ class OperationalHealthTest(unittest.TestCase):
 
     def test_primary_snapshot_failure_is_a_structured_warning(self) -> None:
         def blocked(*_args: object, **kwargs: object) -> int:
-            kwargs["err"].write("dirty Hermit primary\n")  # type: ignore[attr-defined]
+            kwargs["err"].write(  # type: ignore[attr-defined]
+                "Parent snapshot preconditions: 17/18 satisfied\n"
+                "FAIL [hermit-clean] dirty Hermit primary\n"
+            )
             return 1
 
         with mock.patch.object(
@@ -206,7 +209,67 @@ class OperationalHealthTest(unittest.TestCase):
             result, output = self.capture(operational_health.primary_snapshot_gate)
         self.assertEqual(result, 1)
         self.assertIn("state=blocked", output)
-        self.assertIn("summary=dirty Hermit primary", output)
+        self.assertIn("dirty Hermit primary", output)
+
+    def test_primary_snapshot_success_reports_full_denominator(self) -> None:
+        def explicit_success(*_args, **kwargs):
+            kwargs["out"].write("Parent snapshot preconditions: 18/18 satisfied\n")
+            return 0
+
+        with mock.patch.object(
+            operational_health.primary_checkout,
+            "checkout_fresh",
+            side_effect=explicit_success,
+        ):
+            result, output = self.capture(operational_health.primary_snapshot_gate)
+
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertIn("summary=Parent snapshot preconditions: 18/18 satisfied", output)
+
+    def test_primary_snapshot_silent_success_is_refused(self) -> None:
+        with mock.patch.object(
+            operational_health.primary_checkout, "checkout_fresh", return_value=0
+        ):
+            result, output = self.capture(operational_health.primary_snapshot_gate)
+
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+        self.assertIn("summary=primary-snapshot-produced-no-output", output)
+
+    def test_primary_snapshot_nonempty_success_without_counts_is_refused(self) -> None:
+        def uncounted_success(*_args: object, **kwargs: object) -> int:
+            kwargs["out"].write("Published parent snapshot\n")
+            return 0
+
+        with mock.patch.object(
+            operational_health.primary_checkout,
+            "checkout_fresh",
+            side_effect=uncounted_success,
+        ):
+            result, output = self.capture(operational_health.primary_snapshot_gate)
+
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+        self.assertIn("primary-snapshot-missing-precondition-summary", output)
+
+    def test_primary_snapshot_failure_keeps_counts_and_runtime_error(self) -> None:
+        def runtime_failure(*_args: object, **kwargs: object) -> int:
+            kwargs["out"].write("Parent snapshot preconditions: 18/18 satisfied\n")
+            kwargs["err"].write("parent gitlink commit failed\n")
+            return 1
+
+        with mock.patch.object(
+            operational_health.primary_checkout,
+            "checkout_fresh",
+            side_effect=runtime_failure,
+        ):
+            result, output = self.capture(operational_health.primary_snapshot_gate)
+
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+        self.assertIn("18/18 satisfied", output)
+        self.assertIn("parent gitlink commit failed", output)
 
     def test_broken_and_silent_active_agents_are_stuck(self) -> None:
         agents = [

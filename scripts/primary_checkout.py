@@ -233,81 +233,246 @@ def reverie_generated_pin_errors(hermit: Path, expected: str) -> list[str]:
     return errors
 
 
+@dataclass(frozen=True)
+class SnapshotPrecondition:
+    """One fixed member of the parent-snapshot publication preflight."""
+
+    name: str
+    satisfied: bool
+    failure: str
+    details: tuple[str, ...] = ()
+
+
+def snapshot_preconditions(
+    root: Path,
+    *,
+    refresh_ok: bool = True,
+    refresh_detail: str = "",
+    use_proxy: bool = True,
+    out: TextIO = sys.stdout,
+    err: TextIO = sys.stderr,
+) -> tuple[dict[str, str], list[SnapshotPrecondition]]:
+    """Evaluate every read-only snapshot prerequisite without short-circuiting.
+
+    The population is fixed at 18 checks. A dependency that cannot be evaluated
+    is a failed precondition with an explicit reason, never a silently omitted
+    denominator member.
+    """
+    heads: dict[str, str] = {}
+    remote_heads: dict[str, str] = {}
+    checks = [
+        SnapshotPrecondition(
+            "checkout-refresh",
+            refresh_ok,
+            refresh_detail or "checkout-fresh did not complete every product",
+        )
+    ]
+    for product in PRODUCTS:
+        repo = root / product
+        initialized = (repo / ".git").exists()
+        checks.append(
+            SnapshotPrecondition(
+                f"{product}-initialized",
+                initialized,
+                f"{product}: primary checkout is not initialized",
+            )
+        )
+        if not initialized:
+            checks.extend(
+                (
+                    SnapshotPrecondition(
+                        f"{product}-clean",
+                        False,
+                        f"{product}: cleanliness unavailable because checkout is not initialized",
+                    ),
+                    SnapshotPrecondition(
+                        f"{product}-on-main",
+                        False,
+                        f"{product}: branch unavailable because checkout is not initialized",
+                    ),
+                    SnapshotPrecondition(
+                        f"{product}-current-main",
+                        False,
+                        f"{product}: HEAD/origin/main unavailable because checkout is not initialized",
+                    ),
+                )
+            )
+            continue
+
+        status = run_git(repo, "status", "--porcelain=v1", "--untracked-files=all")
+        clean = status.returncode == 0 and not status.stdout.strip()
+        checks.append(
+            SnapshotPrecondition(
+                f"{product}-clean",
+                clean,
+                (
+                    f"{product}: primary is dirty; parent snapshot not advanced"
+                    if status.returncode == 0
+                    else f"{product}: could not inspect primary cleanliness"
+                ),
+                (
+                    tuple(status.stdout.rstrip().splitlines()[:20])
+                    if status.returncode == 0
+                    else ()
+                ),
+            )
+        )
+
+        branch = run_git(repo, "branch", "--show-current")
+        branch_name = branch.stdout.strip()
+        on_main = branch.returncode == 0 and branch_name == "main"
+        checks.append(
+            SnapshotPrecondition(
+                f"{product}-on-main",
+                on_main,
+                f"{product}: primary is on {branch_name or 'DETACHED'}, expected main",
+            )
+        )
+
+        head = run_git(repo, "rev-parse", "HEAD")
+        remote = run_git(repo, "rev-parse", "origin/main")
+        head_sha = head.stdout.strip()
+        remote_sha = remote.stdout.strip()
+        if head.returncode == 0 and head_sha:
+            heads[product] = head_sha
+        if remote.returncode == 0 and remote_sha:
+            remote_heads[product] = remote_sha
+        current = (
+            head.returncode == 0
+            and remote.returncode == 0
+            and bool(head_sha)
+            and head_sha == remote_sha
+        )
+        checks.append(
+            SnapshotPrecondition(
+                f"{product}-current-main",
+                current,
+                f"{product}: HEAD {head_sha or 'unknown'} does not equal fetched "
+                f"origin/main {remote_sha or 'unknown'}",
+            )
+        )
+
+    expected = remote_heads.get("reverie", "")
+    pin_details: list[str] = []
+    if not (root / "hermit" / ".git").exists():
+        pin_details.append("hermit checkout is not initialized")
+    elif not expected:
+        pin_details.append("reverie origin/main is unavailable")
+    else:
+        pins, pin_count, pin_errors = reverie_manifest_pins(root / "hermit")
+        pin_details.extend(pin_errors)
+        if pin_count == 0:
+            pin_details.append("no tracked Cargo manifest pins rrnewton/reverie")
+        elif pins != {expected}:
+            pin_details.append(
+                "Hermit Reverie pins are not globally consistent: "
+                f"manifests={','.join(sorted(pins)) or 'none'} reverie/main={expected}"
+            )
+    checks.append(
+        SnapshotPrecondition(
+            "hermit-manifest-pins",
+            not pin_details,
+            "Hermit manifest Reverie pins are not coherent",
+            tuple(pin_details),
+        )
+    )
+
+    generated_details: list[str] = []
+    if not (root / "hermit" / ".git").exists():
+        generated_details.append("hermit checkout is not initialized")
+    elif not expected:
+        generated_details.append("reverie origin/main is unavailable")
+    else:
+        generated_details.extend(
+            reverie_generated_pin_errors(root / "hermit", expected)
+        )
+    checks.append(
+        SnapshotPrecondition(
+            "hermit-generated-pins",
+            not generated_details,
+            "Hermit generated lock/cache pins are not coherent",
+            tuple(generated_details),
+        )
+    )
+
+    fetch = run_git(root, "fetch", "origin", "main", network=True, use_proxy=use_proxy)
+    print_command_output(fetch, out if fetch.returncode == 0 else err)
+    fetch_ok = fetch.returncode == 0
+    checks.append(
+        SnapshotPrecondition(
+            "parent-origin-main-fetch",
+            fetch_ok,
+            "parent origin/main fetch failed",
+            (fetch.stderr.strip(),) if fetch.stderr.strip() else (),
+        )
+    )
+    parent_branch = run_git(root, "branch", "--show-current").stdout.strip()
+    parent_head = run_git(root, "rev-parse", "HEAD").stdout.strip()
+    parent_remote = run_git(root, "rev-parse", "origin/main").stdout.strip()
+    parent_current = (
+        fetch_ok
+        and parent_branch == "main"
+        and bool(parent_head)
+        and parent_head == parent_remote
+    )
+    checks.append(
+        SnapshotPrecondition(
+            "parent-current-main",
+            parent_current,
+            "parent is not current on main: "
+            f"branch={parent_branch or 'DETACHED'} HEAD={parent_head or 'unknown'} "
+            f"origin/main={parent_remote or 'unknown'}",
+        )
+    )
+
+    staged = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
+    checks.append(
+        SnapshotPrecondition(
+            "parent-gitlinks-unstaged",
+            staged.returncode == 0,
+            (
+                "product gitlinks are already staged; refusing to overwrite another "
+                "coordinator operation"
+                if staged.returncode == 1
+                else "could not inspect staged product gitlinks"
+            ),
+        )
+    )
+    assert len(checks) == 18
+    return heads, checks
+
+
 def publish_parent_snapshot(
     root: Path,
     *,
+    refresh_ok: bool = True,
+    refresh_detail: str = "",
     use_proxy: bool = True,
     out: TextIO = sys.stdout,
     err: TextIO = sys.stderr,
 ) -> int:
     """Commit and push exact product-main gitlinks when the snapshot is coherent."""
-    heads: dict[str, str] = {}
-    failures: list[str] = []
-    for product in PRODUCTS:
-        repo = root / product
-        status = run_git(repo, "status", "--porcelain=v1", "--untracked-files=all")
-        branch = run_git(repo, "branch", "--show-current")
-        head = run_git(repo, "rev-parse", "HEAD")
-        remote = run_git(repo, "rev-parse", "origin/main")
-        if status.returncode != 0 or status.stdout.strip():
-            failures.append(f"{product}: primary is dirty; parent snapshot not advanced")
-            continue
-        if branch.returncode != 0 or branch.stdout.strip() != "main":
-            failures.append(f"{product}: primary is not on main")
-            continue
-        head_sha = head.stdout.strip()
-        remote_sha = remote.stdout.strip()
-        if head.returncode != 0 or remote.returncode != 0 or head_sha != remote_sha:
-            failures.append(f"{product}: primary HEAD does not equal fetched origin/main")
-            continue
-        heads[product] = head_sha
-
-    if not failures and len(heads) == len(PRODUCTS):
-        pins, pin_count, pin_errors = reverie_manifest_pins(root / "hermit")
-        failures.extend(f"hermit: {message}" for message in pin_errors)
-        expected = heads["reverie"]
-        if pin_count == 0:
-            failures.append("hermit: no tracked Cargo manifest pins rrnewton/reverie")
-        elif pins != {expected}:
-            failures.append(
-                "Hermit Reverie pins are not globally consistent: "
-                f"manifests={','.join(sorted(pins)) or 'none'} reverie/main={expected}"
-            )
-        failures.extend(
-            f"hermit: {message}"
-            for message in reverie_generated_pin_errors(root / "hermit", expected)
-        )
-
-    if failures:
+    heads, preconditions = snapshot_preconditions(
+        root,
+        refresh_ok=refresh_ok,
+        refresh_detail=refresh_detail,
+        use_proxy=use_proxy,
+        out=out,
+        err=err,
+    )
+    satisfied = sum(check.satisfied for check in preconditions)
+    destination = out if satisfied == len(preconditions) else err
+    print(
+        f"Parent snapshot preconditions: {satisfied}/{len(preconditions)} satisfied",
+        file=destination,
+    )
+    failed = [check for check in preconditions if not check.satisfied]
+    if failed:
         print("HARD WARNING: PARENT SUBMODULE SNAPSHOT NOT PUBLISHED", file=err)
-        for failure in failures:
-            print(f"  {failure}", file=err)
-        return 1
-
-    fetch = run_git(root, "fetch", "origin", "main", network=True, use_proxy=use_proxy)
-    print_command_output(fetch, out if fetch.returncode == 0 else err)
-    if fetch.returncode != 0:
-        print("ERROR: parent origin/main fetch failed; snapshot not published.", file=err)
-        return 1
-    parent_branch = run_git(root, "branch", "--show-current").stdout.strip()
-    parent_head = run_git(root, "rev-parse", "HEAD").stdout.strip()
-    parent_remote = run_git(root, "rev-parse", "origin/main").stdout.strip()
-    if parent_branch != "main" or not parent_head or parent_head != parent_remote:
-        print(
-            "HARD WARNING: parent is not current on main; refusing automatic gitlink commit "
-            f"(branch={parent_branch or 'DETACHED'} HEAD={parent_head or 'unknown'} "
-            f"origin/main={parent_remote or 'unknown'}).",
-            file=err,
-        )
-        return 1
-
-    staged = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
-    if staged.returncode != 0:
-        print(
-            "HARD WARNING: product gitlinks are already staged; refusing to overwrite "
-            "another coordinator operation.",
-            file=err,
-        )
+        for check in failed:
+            print(f"  FAIL [{check.name}] {check.failure}", file=err)
+            for detail in check.details:
+                print(f"    {detail}", file=err)
         return 1
 
     add = run_git(root, "add", "--", *PRODUCTS)
@@ -457,15 +622,18 @@ def checkout_fresh(
             failures += 1
             continue
         print(f"{product}: main is current at {head}", file=out)
-    if publish_parent and failures == 0 and skipped == 0:
+    if publish_parent:
+        refresh_ok = failures == 0 and skipped == 0
         failures += publish_parent_snapshot(
-            root, use_proxy=use_proxy, out=out, err=err
-        )
-    elif publish_parent and skipped:
-        print(
-            "HARD WARNING: parent snapshot not published because a primary checkout "
-            "was dirty and preserved.",
-            file=err,
+            root,
+            refresh_ok=refresh_ok,
+            refresh_detail=(
+                f"checkout-fresh had {failures} failure(s) and preserved "
+                f"{skipped} dirty checkout(s)"
+            ),
+            use_proxy=use_proxy,
+            out=out,
+            err=err,
         )
     return 1 if failures or (strict and skipped) else 0
 

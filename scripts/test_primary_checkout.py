@@ -356,7 +356,48 @@ class PrimaryCheckoutTests(_ParentWorkspaceFixture):
             git(self.root, "rev-parse", "HEAD"),
             git(self.root, "rev-parse", "origin/main"),
         )
+        self.assertIn("Parent snapshot preconditions: 18/18 satisfied", out.getvalue())
         self.assertIn("Published parent snapshot", out.getvalue())
+
+    def test_snapshot_lists_three_simultaneous_failures_with_denominator(self) -> None:
+        (self.root / "hermit" / "untracked-benchmark.out").write_text("artifact\n")
+        git(self.root / "reverie", "checkout", "-b", "work-in-progress")
+
+        # Make the parent diverge: one clean local commit and one different
+        # commit pushed to origin/main from a sibling clone.
+        (self.root / "local-parent.txt").write_text("local\n")
+        git(self.root, "add", "local-parent.txt")
+        git(self.root, "commit", "-m", "local parent work")
+        sibling = Path(self.temp.name) / "parent-sibling"
+        subprocess.run(
+            (
+                "git",
+                "clone",
+                git(self.root, "remote", "get-url", "origin"),
+                str(sibling),
+            ),
+            check=True,
+            capture_output=True,
+        )
+        git(sibling, "config", "user.email", "test@example.com")
+        git(sibling, "config", "user.name", "Test")
+        (sibling / "remote-parent.txt").write_text("remote\n")
+        git(sibling, "add", "remote-parent.txt")
+        git(sibling, "commit", "-m", "remote parent work")
+        git(sibling, "push", "origin", "main")
+
+        out, err = StringIO(), StringIO()
+        result = primary_checkout.publish_parent_snapshot(
+            self.root, use_proxy=False, out=out, err=err
+        )
+
+        report = err.getvalue()
+        self.assertEqual(result, 1)
+        self.assertIn("Parent snapshot preconditions: 15/18 satisfied", report)
+        self.assertEqual(report.count("  FAIL ["), 3, report)
+        self.assertIn("FAIL [hermit-clean]", report)
+        self.assertIn("FAIL [reverie-on-main]", report)
+        self.assertIn("FAIL [parent-current-main]", report)
 
     def test_snapshot_refuses_reverie_manifest_mismatch(self) -> None:
         original_parent = git(self.root, "rev-parse", "HEAD")

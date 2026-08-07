@@ -310,11 +310,39 @@ def primary_snapshot_gate() -> int:
         out=output,
         err=errors,
     )
-    report = errors.getvalue().strip() or output.getvalue().strip()
+    report = "\n".join(
+        part for part in (output.getvalue().strip(), errors.getvalue().strip()) if part
+    )
+    if not report:
+        _emit(
+            {
+                "state": "blocked",
+                "summary": "primary-snapshot-produced-no-output",
+            }
+        )
+        return 1
+    summary = re.search(r"Parent snapshot preconditions: (\d+)/(\d+) satisfied", report)
+    if summary is None:
+        _emit(
+            {
+                "state": "blocked",
+                "summary": f"primary-snapshot-missing-precondition-summary:{report}",
+            }
+        )
+        return 1
+    satisfied, total = (int(value) for value in summary.groups())
+    if total == 0 or satisfied > total or (result == 0 and satisfied != total):
+        _emit(
+            {
+                "state": "blocked",
+                "summary": f"primary-snapshot-invalid-precondition-summary:{report}",
+            }
+        )
+        return 1
     _emit(
         {
             "state": "ok" if result == 0 else "blocked",
-            "summary": report or "primary-snapshot-produced-no-output",
+            "summary": report,
         }
     )
     return result
