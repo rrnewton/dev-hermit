@@ -269,3 +269,68 @@ def test_fail_on_dead_exit_codes(tmp_path):
     assert wl.main(["--root", str(root), "report", "--fail-on-dead"]) == 1
     root2 = build_root(tmp_path / "clean", {"ok": {"status": "released"}})
     assert wl.main(["--root", str(root2), "report", "--fail-on-dead"]) == 0
+
+
+# --------------------------------------------------------------------------
+# The DELTA gate -- the only form that is wireable as a recurring alarm.
+# --------------------------------------------------------------------------
+
+def test_first_run_adopts_the_backlog_without_alarming(tmp_path):
+    """A standing backlog is not news. 70 slots are flagged today and none may be
+    reclaimed, so a first tick that paged all of them would be muted immediately."""
+    rep = {"verdicts": [{"slot": "a", "classification": wl.DEAD_OWNER},
+                        {"slot": "b", "classification": wl.DEAD_OWNER}]}
+    state = tmp_path / "s.json"
+    fresh, current = wl.new_dead(rep, state)
+    assert fresh == set()
+    assert current == {"a", "b"}
+
+
+def test_a_newly_dead_slot_DOES_alarm(tmp_path):
+    state = tmp_path / "s.json"
+    wl.write_state(state, {"a"})
+    rep = {"verdicts": [{"slot": "a", "classification": wl.DEAD_OWNER},
+                        {"slot": "b", "classification": wl.DEAD_OWNER}]}
+    fresh, current = wl.new_dead(rep, state)
+    assert fresh == {"b"}
+
+
+def test_an_unchanged_backlog_does_NOT_alarm(tmp_path):
+    state = tmp_path / "s.json"
+    wl.write_state(state, {"a", "b"})
+    rep = {"verdicts": [{"slot": "a", "classification": wl.DEAD_OWNER},
+                        {"slot": "b", "classification": wl.DEAD_OWNER}]}
+    fresh, _ = wl.new_dead(rep, state)
+    assert fresh == set()
+
+
+def test_a_slot_that_revives_and_dies_again_alarms_again(tmp_path):
+    """State is the CURRENT flagged set, not a cumulative union."""
+    state = tmp_path / "s.json"
+    wl.write_state(state, {"a"})
+    revived = {"verdicts": [{"slot": "a", "classification": wl.LIVE}]}
+    fresh, current = wl.new_dead(revived, state)
+    wl.write_state(state, current)
+    assert fresh == set() and current == set()
+    died = {"verdicts": [{"slot": "a", "classification": wl.DEAD_OWNER}]}
+    fresh2, _ = wl.new_dead(died, state)
+    assert fresh2 == {"a"}
+
+
+def test_live_slots_never_enter_the_delta_set(tmp_path):
+    state = tmp_path / "s.json"
+    wl.write_state(state, set())
+    rep = {"verdicts": [{"slot": "live1", "classification": wl.LIVE},
+                        {"slot": "live2", "classification": wl.LIVE},
+                        {"slot": "rel", "classification": wl.RELEASED},
+                        {"slot": "dead", "classification": wl.DEAD_OWNER}]}
+    fresh, current = wl.new_dead(rep, state)
+    assert fresh == {"dead"} and current == {"dead"}
+
+
+def test_corrupt_state_adopts_baseline_rather_than_paging_everything(tmp_path):
+    state = tmp_path / "s.json"
+    state.write_text("not json", encoding="utf-8")
+    rep = {"verdicts": [{"slot": "a", "classification": wl.DEAD_OWNER}]}
+    fresh, _ = wl.new_dead(rep, state)
+    assert fresh == set()

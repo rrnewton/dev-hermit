@@ -4,6 +4,60 @@ description: |-
   cadence and only emits actions when a hard warning is required.
 
 reminders:
+  # DELTA, not standing state. 70 slots are dead-owner RIGHT NOW and none may be
+  # reclaimed (they hold unprotected work), so `--fail-on-dead` would fire on every
+  # tick forever and be muted within a day -- the permanently-on failure this repo
+  # already hit with the fired-state staleness alarm. The alarmable event is a slot
+  # that was LIVE last tick and is DEAD now: that fires at the tick that caused it.
+  # Liveness is derived from /proc cwd, so it cannot go stale. DETECT ONLY -- this
+  # never reclaims, resets or cleans anything.
+  - name: worktree_new_dead_owner
+    cadence_secs: 900
+    gate:
+      cmd: python3 scripts/worktree_liveness.py report --fail-on-new-dead
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: worktree-liveness
+      title: "a worktree slot's owner died since the last tick: {summary}"
+
+  # Emits ONLY a supportable verdict. Today the series cannot support one
+  # (retention 3.91d < 90d; conditioning 4/26 = 15% < 90%), so this HOLDS at rc=0
+  # and says so on stdout rather than claiming "no regression". Wiring
+  # --fail-over-budget instead would fire every tick forever: the main median is
+  # already 659s against a 600s budget -- a standing condition, not an event.
+  - name: validate_wall_regression
+    cadence_secs: 3600
+    gate:
+      cmd: python3 ci-hub/main-metrics/wall_series.py --gate-regression
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: validate-wall-time
+      title: "validate wall time regressed on main: {summary}"
+
+  # The reason the gate above is holding, surfaced ONCE A DAY so the blocker stays
+  # visible instead of the check being silently inert. Daily because it is a
+  # backlog condition; a per-tick page would be noise.
+  - name: validate_wall_series_readiness
+    cadence_secs: 86400
+    gate:
+      cmd: python3 ci-hub/main-metrics/wall_series.py --readiness
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: validate-wall-time
+      title: "validate wall series still cannot support a verdict: {summary}"
+
   - name: owner_tooling_directives
     cadence_secs: 3600
     gate:

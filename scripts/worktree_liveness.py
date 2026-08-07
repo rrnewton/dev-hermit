@@ -290,9 +290,61 @@ def render(report: dict) -> str:
     return "\n".join(lines)
 
 
+def flagged_slots(report: dict) -> set[str]:
+    return {v["slot"] for v in report["verdicts"]
+            if v["classification"] in (DEAD_OWNER, PHANTOM_PATH, BARE_GIT_BYPASS)}
+
+
+def new_dead(report: dict, state_path: Path) -> tuple[set[str], set[str]]:
+    """Slots that became flagged SINCE THE LAST TICK, and the current flagged set.
+
+    THIS IS WHAT MAKES THE CHECK WIREABLE. `--fail-on-dead` is correct as a
+    one-shot audit and useless as a recurring alarm: 70 slots are flagged right
+    now and none may be reclaimed (they hold unprotected work), so a standing
+    gate would fire on every tick forever and be muted within a day -- the
+    "permanently-on" failure mode this repo has already hit once with the
+    fired-state staleness alarm.
+
+    A DELTA is the alarmable event: a slot that was live at the last tick and is
+    dead at this one is news, and it fires at the tick that caused it. The
+    standing 70 are a backlog, reported by `report`, not paged.
+
+    The state is the CURRENT flagged set, not a cumulative union: a slot that
+    revives and later dies again must alarm again.
+    """
+    current = flagged_slots(report)
+    try:
+        known = set(json.loads(state_path.read_text(encoding="utf-8")).get("flagged", []))
+    except (OSError, ValueError, AttributeError):
+        # No prior state: adopt the baseline WITHOUT alarming. A first run must
+        # not page the whole standing backlog as if it just happened.
+        known = current
+    return current - known, current
+
+
+def write_state(state_path: Path, flagged: set[str]) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
+    tmp.write_text(json.dumps({"flagged": sorted(flagged)}, indent=2) + "\n",
+                   encoding="utf-8")
+    tmp.replace(state_path)
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     root = repo_root(Path(args.root) if args.root else None)
     report = build_report(root, args.stale_hours)
+
+    if args.fail_on_new_dead:
+        state_path = Path(args.state) if args.state else root / ".tick-hub" / "worktree-liveness-state.json"
+        fresh, current = new_dead(report, state_path)
+        write_state(state_path, current)
+        if fresh:
+            print(f"NEW dead-owner/bypass slot(s) since last tick: {len(fresh)} "
+                  f"({', '.join(sorted(fresh))}); {len(current)} flagged in total")
+            return 1
+        print(f"no new dead-owner slots; {len(current)} flagged in total (standing backlog, not paged)")
+        return 0
+
     print(json.dumps(report, indent=2) if args.json else render(report))
     if args.fail_on_dead:
         bad = sum(report["tally"].get(k, 0)
@@ -329,7 +381,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--json", action="store_true")
     r.add_argument("--stale-hours", type=float, default=6.0)
     r.add_argument("--fail-on-dead", action="store_true",
-                   help="exit 1 if any dead-owner/phantom/bypass slot is found")
+                   help="exit 1 if ANY dead-owner/phantom/bypass slot is found "
+                        "(one-shot audit; unusable as a recurring alarm)")
+    r.add_argument("--fail-on-new-dead", action="store_true",
+                   help="exit 1 only for slots newly flagged since the last tick "
+                        "(the wireable form; standing backlog is not paged)")
+    r.add_argument("--state", default=None,
+                   help="delta state file (default .tick-hub/worktree-liveness-state.json)")
     r.set_defaults(func=cmd_report)
 
     t = sub.add_parser("touch", help="record owner_pid+heartbeat for a slot")

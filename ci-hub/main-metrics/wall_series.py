@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+from datetime import datetime
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -296,15 +297,101 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--result", default="pass")
     ap.add_argument("--format", choices=("json", "text"), default="text")
     ap.add_argument("--fail-over-budget", action="store_true",
-                    help="exit 1 if the median on main exceeds the wall budget")
+                    help="exit 1 if the median on main exceeds the wall budget "
+                         "(one-shot audit; NOT wireable -- see --gate-regression)")
+    ap.add_argument("--gate-regression", action="store_true",
+                    help="tick-hub form: exit 1 ONLY on a supportable regression verdict")
+    ap.add_argument("--baseline-frac", type=float, default=0.5,
+                    help="fraction of the conditioned series used as baseline")
+    ap.add_argument("--threshold", type=float, default=0.20)
+    ap.add_argument("--readiness", action="store_true",
+                    help="exit 1 if the series CANNOT yet support a verdict "
+                         "(retention or conditioning shortfall)")
+    ap.add_argument("--min-days", type=float, default=90.0)
+    ap.add_argument("--min-conditioned-frac", type=float, default=0.9)
     args = ap.parse_args(argv)
     rep = build(Path(args.ledger), Path(args.repo), not args.all_commits,
                 args.profile or None, args.result or None)
+
+    if args.gate_regression or args.readiness:
+        return _gate(rep, args)
+
     print(json.dumps(rep, indent=2) if args.format == "json" else render(rep))
     if args.fail_over_budget:
         m = rep["summary"]["wall_median"]
         return 1 if (m is not None and m > WALL_BUDGET_SECONDS) else 0
     return 0
+
+
+def series_readiness(rep: dict, min_days: float, min_conditioned_frac: float) -> dict:
+    """Can this series support a regression verdict yet? Both conditions, ANDed.
+
+    Measured and carried from the series' own design: raising EITHER alone fails.
+    Ninety days of unqualified walls is still a refusal, because a wall time
+    without its concurrency is not comparable (median 490s at 0-3 concurrent vs
+    852s at 14+). So retention AND conditioning are both preconditions, and the
+    shortfall names which one is missing rather than reporting a bare "not ready".
+    """
+    s = rep["summary"]
+    n = s["n"] or 0
+    frac = (s["conditioned"] / n) if n else 0.0
+    days = 0.0
+    if s["span"] and all(s["span"]):
+        try:
+            a, b = (datetime.fromisoformat(x.replace("Z", "+00:00")) for x in s["span"])
+            days = (b - a).total_seconds() / 86400.0
+        except ValueError:
+            days = 0.0
+    shortfalls = []
+    if days < min_days:
+        shortfalls.append(f"retention {days:.2f}d < {min_days}d")
+    if frac < min_conditioned_frac:
+        shortfalls.append(
+            f"conditioning {s['conditioned']}/{n} = {frac:.0%} < {min_conditioned_frac:.0%}")
+    return {"ready": not shortfalls, "span_days": round(days, 2),
+            "conditioned": s["conditioned"], "n": n,
+            "conditioned_frac": round(frac, 4), "shortfalls": shortfalls}
+
+
+def _gate(rep: dict, args) -> int:
+    ready = series_readiness(rep, args.min_days, args.min_conditioned_frac)
+    if args.readiness:
+        if ready["ready"]:
+            print(f"wall series READY: {ready['span_days']}d, "
+                  f"conditioned {ready['conditioned']}/{ready['n']}")
+            return 0
+        print("wall series CANNOT support a regression verdict: "
+              + "; ".join(ready["shortfalls"]))
+        return 1
+    # --gate-regression. A series that cannot support a verdict must NOT emit one,
+    # and must NOT page either -- that is what the separate low-cadence readiness
+    # reminder is for. Silence here is deliberate and is stated on stdout so a
+    # reader can tell "no regression" from "could not look".
+    if not ready["ready"]:
+        print("HOLDING: series cannot support a verdict ("
+              + "; ".join(ready["shortfalls"]) + "). No regression claim made.")
+        return 0
+    pts = [p for p in _points_from(rep) if p.conditioned]
+    cut = max(1, int(len(pts) * args.baseline_frac))
+    verdict = compare(pts[:cut], pts[cut:], args.threshold)
+    if verdict["verdict"] == "REGRESSION":
+        print(f"WALL REGRESSION on main: {verdict['baseline_median']}s -> "
+              f"{verdict['candidate_median']}s "
+              f"(+{verdict['delta_fraction']:.1%}, threshold {args.threshold:.0%}); "
+              f"{verdict['cause']}")
+        return 1
+    print(f"wall OK: {verdict['verdict']} "
+          f"(baseline n={verdict.get('baseline_n')}, candidate n={verdict.get('candidate_n')})")
+    return 0
+
+
+def _points_from(rep: dict) -> list[Point]:
+    out = []
+    for d in rep["points"]:
+        d = dict(d)
+        d["gates"] = []
+        out.append(Point(**d))
+    return out
 
 
 if __name__ == "__main__":

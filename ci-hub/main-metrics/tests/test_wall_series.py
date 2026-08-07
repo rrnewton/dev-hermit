@@ -171,3 +171,37 @@ def test_only_main_filter_drops_non_ancestors():
             {"commit": "offmain", "real_seconds": 10, "user_seconds": 5, "sys_seconds": 5}]
     pts = ws.to_points(rows, {"onmain"})
     assert [p.commit for p in pts] == ["onmain"]
+
+
+# ------------------------------------------------- readiness / wireable gate
+
+def _rep(n_cond, n_total, span_days):
+    from datetime import datetime, timedelta
+    a = datetime(2026, 5, 1)
+    b = a + timedelta(days=span_days)
+    return {"summary": {"n": n_total, "conditioned": n_cond,
+                        "span": [a.isoformat() + "Z", b.isoformat() + "Z"]}}
+
+
+def test_readiness_needs_BOTH_retention_and_conditioning():
+    """Raising either alone fails -- 90 days of unqualified walls is still a refusal."""
+    only_days = ws.series_readiness(_rep(15, 100, 120), 90, 0.9)
+    assert only_days["ready"] is False
+    assert any("conditioning" in s for s in only_days["shortfalls"])
+    only_cond = ws.series_readiness(_rep(99, 100, 4), 90, 0.9)
+    assert only_cond["ready"] is False
+    assert any("retention" in s for s in only_cond["shortfalls"])
+    neither = ws.series_readiness(_rep(4, 26, 4), 90, 0.9)
+    assert len(neither["shortfalls"]) == 2
+
+
+def test_readiness_passes_when_both_are_met():
+    r = ws.series_readiness(_rep(95, 100, 120), 90, 0.9)
+    assert r["ready"] is True and r["shortfalls"] == []
+
+
+def test_todays_real_shape_is_not_ready_and_names_both_gaps():
+    r = ws.series_readiness(_rep(4, 26, 3.91), 90, 0.9)
+    assert r["ready"] is False
+    assert r["conditioned_frac"] < 0.2
+    assert len(r["shortfalls"]) == 2
