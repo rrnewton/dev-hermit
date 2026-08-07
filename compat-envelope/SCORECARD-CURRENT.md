@@ -148,13 +148,13 @@ TOTAL                      179          76%, 87%          63%, 72%          79%,
 
 Exact fractions from the `--tsv` projection (`X/Y` = measured/ran):
 
-| backend | stdout-parity% | determinism% | measured | ran | raw outcomes over 200 cells |
+| backend | stdout-parity% *(unqualified)* | determinism% | qualified measured | ran | raw outcomes over 200 cells |
 | --- | ---: | ---: | ---: | ---: | --- |
-| ptrace *(reference)* | — | — | — | 200/200 | 179 pass, 20 diverge, 1 timeout |
-| dbi | 76.0 | 86.6 | 179/179 | 179/179 | 156 pass, 36 diverge, 8 timeout |
-| kvm | 62.6 | 72.1 | 179/179 | 179/179 | 130 pass, 70 fail |
-| sabre | 78.8 | 91.6 | 179/179 | 179/179 | 164 pass, 30 diverge, 6 timeout |
-| liteinst | 60.3 | 65.9 | 179/179 | 179/179 | 118 pass, 82 diverge |
+| ptrace *(reference)* | — | — | 0/179 *(unqualified)* | 200/200 | 179 pass, 20 diverge, 1 timeout |
+| dbi | 76.0 | 86.6 | **0**/179 *(unqualified)* | 179/179 | 156 pass, 36 diverge, 8 timeout |
+| kvm | 62.6 | 72.1 | **0**/179 *(unqualified)* | 179/179 | 130 pass, 70 fail |
+| sabre | 78.8 | 91.6 | **0**/179 *(unqualified)* | 179/179 | 164 pass, 30 diverge, 6 timeout |
+| liteinst | 60.3 | 65.9 | **0**/179 *(unqualified)* | 179/179 | 118 pass, 82 diverge |
 
 **Denominator: 179.** The corpus is 200 ptrace-verify cells (13 buckets, static
 parse of `hermit/tests/e2e/manifests/*.toml`); **179 of those 200 passed the
@@ -163,8 +163,22 @@ denominator for another backend. The 21 ptrace non-passes (20 diverge, 1
 timeout) are excluded from every percentage in this table — they are a ptrace
 gap, not a backend gap, and they are not counted against dbi/kvm/sabre/liteinst.
 
-**Coverage is complete here:** every backend column reads `179/179` measured and
-`179/179` ran, so no cell in Table 1 is a "never measured" zero. The three
+**Coverage is NOT complete here, and the previous wording of this paragraph was
+wrong.** It read "Coverage is complete here: every backend column reads
+`179/179` measured", which was false. `179/179` counts cells that RAN. The
+QUALIFIED observable `stdout_parity` is **blank on 1000 of 1000 rows** in
+`fullcorpus-scorecard.csv` — all five backends, 200 rows each — and
+`comparison_tier` is `legacy-unqualified` on all 1000. Every percentage in this
+table is therefore derived from `legacy_parity_unqualified`, a column whose name
+states that it does not qualify (sabre: 142/180 = 78.9%, the published 78.8).
+**Qualified measured is 0/179 for every backend**, which is why that column now
+reads `0` rather than `179`. The numbers are retained because the underlying
+comparison did happen and is real history; they are marked unqualified because
+they were not produced under the current comparison tier. `render-scorecard.rs`
+REFUSES this data outright today (exit 3, "qualified green=0/179 raw passes"), so
+this table is a stale cache of a superseded computation and cannot be reproduced
+from its own inputs by its own renderer. Guarded by
+`tests/test_headline_measured_count_is_real.sh`. The three
 buckets showing `0` ptrace (`data-handling`, `shared-futex-c`, `util-c`) have an
 **empty denominator** — their `0%, 0%` is `0/0`, i.e. *no information*, not a
 confirmed failure (Limitation L3).
