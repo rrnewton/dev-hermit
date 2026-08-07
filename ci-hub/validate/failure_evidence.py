@@ -106,6 +106,50 @@ _INFRA_SIGNATURES = (
 
 _NODE_PREFIX_RE = per_node_counts.__globals__["_NODE_PREFIX_RE"]
 
+# The e2e harness's own PREPARATION-failure markers (hermit/ci/test_harness.sh).
+# A prepare/compile step that fails prints one of these naming the GUEST, then
+# `cat`s the guest's stderr as the next line(s). The marker is therefore the
+# anchor for the CAUSAL line, and it is what a `build.manifest_guests` red has
+# instead of a toolchain `error:` diagnostic. Without this, such a node falls all
+# the way through to its own terminal `✗ FAIL <lane> (…, exit 1)` summary, which
+# names no guest and no cause — the #1711 defect.
+_PREPARE_FAILURE_MARKERS = (
+    "prepare failed for ",
+    "C program compilation failed for ",
+    "Rust program compilation failed for ",
+)
+
+# Lines the harness emits for guests that SUCCEEDED, plus the markers themselves.
+# Used to bound a prepare failure's reason: the reason is the guest stderr that
+# the harness `cat`s immediately after the marker, so it ends at the next marker
+# or the next per-guest progress line.
+_PREPARE_PROGRESS_PREFIXES = ("BUILT ", "SKIP ", "PREBUILT ")
+
+# Host/environment signatures that a PRODUCT test cannot plausibly emit, so they
+# are honored anywhere on the failing node's own stream. Each names a provisioning
+# gap — a package or command the HOST does not provide — which is fixed by
+# provisioning the host, never by editing product code.
+_HOST_ENV_STRONG_SIGNATURES = (
+    ": command not found",            # shell: `foo: command not found`
+    "unable to locate package",       # apt-get
+    "has no installation candidate",  # apt-get
+    "no match for argument",          # dnf/yum
+    "executable file not found in $path",
+)
+
+# Weaker host/environment signatures. These shapes DO occur in ordinary product
+# output ("expected key not found"), so they are honored ONLY on a prepare-failure
+# REASON line — guest stderr the harness captured while preparing a fixture, where
+# the subject can only be a host tool. This is the bias the module already
+# declares, applied to the new class: a real code defect is never hidden as an
+# environment fault, so a generic phrase never reclassifies a test node's own
+# assertion output.
+_HOST_ENV_REASON_SIGNATURES = (
+    "not found",
+    "no such file or directory",
+    "command not found",
+)
+
 # An error-DIAGNOSTIC line, as emitted by rustc/cargo/gcc/clang/ld/collect2. Two
 # shapes: a body that STARTS with ``error:`` / ``error[E0432]:`` (rustc, cargo),
 # and a tool/file-prefixed ``<something>: error:`` (``collect2: error:``,
@@ -240,7 +284,57 @@ def _first_error_line_for(log_text: str, node: str) -> str | None:
             return _bounded_error_line(line)
     if fallback is not None:
         return _bounded_error_line(fallback)
+    cause = _prepare_failure_line_for(log_text, node)
+    if cause is not None:
+        return _bounded_error_line(cause)
     return _first_harness_failure_for(log_text, node)
+
+
+def _prepare_failures_for(log_text: str, node: str) -> list[tuple[str, str | None]]:
+    """Every ``(marker_line, reason_line_or_None)`` preparation failure on
+    ``node``'s own stream, in emission order.
+
+    The e2e harness prints ``prepare failed for <guest>`` (or the C/Rust compile
+    analogue) and then `cat`s the guest's captured stderr, so the CAUSE is the
+    line immediately following the marker on the SAME node's stream. Both halves
+    are verbatim node output — nothing is synthesized. The reason is taken only
+    when the very next node line is neither another marker nor a per-guest
+    progress line (``BUILT``/``SKIP``/``PREBUILT``), which is exactly the case
+    where the guest wrote nothing to stderr: that failure is genuinely
+    unattributable from the log and is reported as ``(marker, None)`` rather than
+    silently borrowing the next guest's text."""
+    lines = [body.strip() for body in _node_lines(log_text, node)]
+    out: list[tuple[str, str | None]] = []
+    for index, line in enumerate(lines):
+        if not any(line.startswith(marker) for marker in _PREPARE_FAILURE_MARKERS):
+            continue
+        reason: str | None = None
+        nxt = lines[index + 1] if index + 1 < len(lines) else None
+        if (
+            nxt
+            and not any(nxt.startswith(m) for m in _PREPARE_FAILURE_MARKERS)
+            and not any(nxt.startswith(p) for p in _PREPARE_PROGRESS_PREFIXES)
+        ):
+            reason = nxt
+        out.append((line, reason))
+    return out
+
+
+def _prepare_failure_line_for(log_text: str, node: str) -> str | None:
+    """The first preparation failure on ``node``, rendered as the causal line.
+
+    ``"prepare failed for language-runtimes/lua-random.sh: lua5.4 not found"`` —
+    the marker (WHICH guest) joined to the guest's own stderr (WHY), both
+    verbatim, separated by ``": "``. When the guest wrote no stderr the marker is
+    returned alone: it still names the failing guest, which the node's terminal
+    ``✗ FAIL <lane> (…, exit 1)`` summary does not. Ranked ABOVE that summary in
+    ``_first_error_line_for`` because a summary line carries no cause at all —
+    keying a triage decision on it is the proxy this function exists to remove."""
+    failures = _prepare_failures_for(log_text, node)
+    if not failures:
+        return None
+    marker, reason = failures[0]
+    return f"{marker}: {reason}" if reason else marker
 
 
 def _first_harness_failure_for(log_text: str, node: str) -> str | None:
@@ -285,6 +379,33 @@ def _infra_signature_for(log_text: str, node: str) -> str | None:
     return None
 
 
+def _host_env_signature_for(log_text: str, node: str) -> str | None:
+    """The first host/environment signature for ``node``, or None.
+
+    Two tiers, deliberately asymmetric. A STRONG signature (``: command not
+    found``, apt/dnf "unable to locate package", …) is scanned across the node's
+    whole stream: no product test emits those. A WEAK signature (``not found``,
+    ``no such file or directory``) is honored ONLY on a preparation-failure REASON
+    line — guest stderr the harness captured while preparing a fixture, where the
+    missing subject can only be a host tool. A test node that prints "expected key
+    not found" in its own assertion output therefore stays ``code``.
+
+    Returns the canonical signature string, not the raw line; the raw line is
+    already carried verbatim by ``first_error_line``."""
+    hay = "\n".join(_node_lines(log_text, node)).lower()
+    for sig in _HOST_ENV_STRONG_SIGNATURES:
+        if sig in hay:
+            return sig
+    for _marker, reason in _prepare_failures_for(log_text, node):
+        if reason is None:
+            continue
+        lowered = reason.lower()
+        for sig in _HOST_ENV_REASON_SIGNATURES:
+            if sig in lowered:
+                return sig
+    return None
+
+
 def classify_failed_substeps(
     log_text: str, *, flaky_registry: set[str] | None = None
 ) -> list[dict[str, object]]:
@@ -292,31 +413,53 @@ def classify_failed_substeps(
 
     For every node that terminated ``✗ FAIL`` this returns one record:
     ``{"node", "group", "sub_step_class", "fault_class", "infra_signature",
-    "first_error_line", "known_flaky"}`` — sorted by node. This is the read-side
-    answer to
+    "host_env_signature", "first_error_line", "known_flaky"}`` — sorted by node.
+    This is the read-side answer to
     "one-gate-name-for-three-unrelated-causes": instead of a single lane name and
     exit=1, a consumer sees WHICH node failed, whether it is a build/prep step or
     a product test, and whether the failure is an INFRASTRUCTURE fault (corrupt
-    artifact / poisoned cache) or a CODE fault.
+    artifact / poisoned cache), a HOST/ENVIRONMENT fault (a tool the host does not
+    provide), or a CODE fault.
 
-    ``fault_class`` rules (biased so a real code defect is never hidden as infra):
+    ``fault_class`` rules (biased so a real code defect is never hidden as
+    not-our-fault), checked in this order:
       * ``infrastructure`` — an infra signature (corrupt archive, poisoned cargo
         cache, …) appears on THIS node's own stream lines. This wins regardless of
         group: a build node dying on a corrupt ``.a`` and a test node whose prep
         hit a poisoned cache are both infra.
-      * ``code`` — otherwise. A failing build/setup node with no infra signature
-        is a genuine compile error in the change under test (still ``code``); a
-        failing test/e2e/lint/doc node is a product failure.
+      * ``host-environment`` — the host does not provide a tool the step needs
+        (``lua5.4 not found``, ``: command not found``, apt/dnf "unable to locate
+        package"). Fixed by provisioning the host or repairing the runner's PATH,
+        never by editing product code, so it must not route to a product-debugging
+        loop. Distinct from ``infrastructure``, which is a corrupt/stale artifact
+        in the build tree and is fixed by clearing state — different owner,
+        different remedy, so they are not merged. See
+        ``_host_env_signature_for`` for the two-tier scoping that keeps a product
+        test's own "… not found" assertion output out of this class.
+      * ``code`` — otherwise. A failing build/setup node with no infra or
+        host-environment signature is a genuine compile error in the change under
+        test (still ``code``); a failing test/e2e/lint/doc node is a product
+        failure.
     ``known_flaky`` is advisory only (a failing test node whose name is in the
     measured-flake registry); it never downgrades ``fault_class`` — a flake is
     still a code-domain result to be re-run, not an infra fault.
+
+    Both signature fields are always present so no evidence is discarded: a node
+    carrying BOTH a corrupt archive and a missing host tool records both, and only
+    the headline ``fault_class`` is forced to pick one.
     """
     registry = flaky_registry or set()
     records: list[dict[str, object]] = []
     for node in failed_substeps(log_text):
         group = node.split(".", 1)[0] if "." in node else ""
         signature = _infra_signature_for(log_text, node)
-        fault = "infrastructure" if signature else "code"
+        host_env = _host_env_signature_for(log_text, node)
+        if signature:
+            fault = "infrastructure"
+        elif host_env:
+            fault = "host-environment"
+        else:
+            fault = "code"
         sub_step = "dependency-build" if group in _BUILD_GROUPS else "lane-run"
         cell = node if "." in node else f"test.{node}"
         records.append(
@@ -326,6 +469,7 @@ def classify_failed_substeps(
                 "sub_step_class": sub_step,
                 "fault_class": fault,
                 "infra_signature": signature,
+                "host_env_signature": host_env,
                 "first_error_line": _first_error_line_for(log_text, node),
                 "known_flaky": fault == "code"
                 and sub_step == "lane-run"

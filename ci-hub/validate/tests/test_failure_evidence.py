@@ -489,5 +489,147 @@ def test_build_evidence_first_error_line_is_none_on_a_clean_run():
     assert ev["failed_substeps"] == []
 
 
+# --- Mutation 7: a MISSING HOST INTERPRETER is host-environment, not code -----
+#
+# The hermit #1711 defect (`validate_ledger_misclassifies_a`), replayed from the
+# exact node-stream shape of /tmp/hermit-validate.ZnkGIs.log at commit
+# 2d4866a067e3342b4d9f9d5bab4cc0d16e3a3237. The ledger recorded
+# fault_class='code' with first_error_line='✗ FAIL Prepare every CI-enabled
+# portable manifest guest (15s, exit 1)' — a summary line carrying no cause at
+# all, which is why the classifier had nothing to key on. Both halves are pinned
+# below: the CLASS must be host-environment, and the surfaced LINE must be the
+# causal one.
+
+_MANIFEST_GUESTS_1711 = (
+    "BUILT shell       language-runtimes/gawk-random",
+    "prepare failed for language-runtimes/lua-random.sh",
+    "lua5.4 not found",
+    "BUILT shell       language-runtimes/m4-macro-mkstemp",
+)
+
+
+def test_missing_host_interpreter_is_host_environment_not_code():
+    log = _fail("build.manifest_guests", *_MANIFEST_GUESTS_1711)
+    [rec] = classify_failed_substeps(log)
+    assert rec["node"] == "build.manifest_guests"
+    assert rec["sub_step_class"] == "dependency-build"
+    # THE REGRESSION BAR: this was "code", routing a host provisioning gap into a
+    # product-debugging loop.
+    assert rec["fault_class"] == "host-environment"
+    assert rec["host_env_signature"] == "not found"
+    assert rec["infra_signature"] is None
+
+
+def test_first_error_line_binds_to_the_cause_not_the_node_summary():
+    log = _fail("build.manifest_guests", *_MANIFEST_GUESTS_1711)
+    [rec] = classify_failed_substeps(log)
+    # Names WHICH guest and WHY, both verbatim from the node's own stream.
+    assert rec["first_error_line"] == (
+        "prepare failed for language-runtimes/lua-random.sh: lua5.4 not found"
+    )
+    # And explicitly NOT the causeless terminal summary the ledger recorded.
+    assert "✗ FAIL" not in rec["first_error_line"]
+
+
+def test_prepare_failure_with_no_reason_still_names_the_guest():
+    """The ruby-random half of #1711: the guest's prepare exits nonzero having
+    written nothing to stderr, so the harness emits a bare marker. The row must
+    still name the failing guest rather than collapsing to the lane summary, and
+    must NOT borrow the next guest's line as a cause."""
+    log = _fail(
+        "build.manifest_guests",
+        "BUILT shell       language-runtimes/python-random",
+        "prepare failed for language-runtimes/ruby-random.sh",
+        "BUILT rust        language-runtimes/rust-hashmap-iteration",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["first_error_line"] == "prepare failed for language-runtimes/ruby-random.sh"
+    # No reason was emitted, so nothing may be inferred about WHY.
+    assert rec["host_env_signature"] is None
+    assert rec["fault_class"] == "code"
+
+
+# --- Positive control: a genuine compile error MUST remain code ---------------
+
+def test_genuine_compile_error_remains_code():
+    """The fix must not launder real product defects into host-environment. A
+    rustc diagnostic at a build node stays `code` even though the surrounding
+    build also mentions files."""
+    log = _fail(
+        "build.workspace",
+        "   Compiling hermit-detcore v0.2.0",
+        "error[E0432]: unresolved import `detcore::sched::Foo`",
+        "error: could not compile `hermit-detcore`",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "code"
+    assert rec["host_env_signature"] is None
+    assert rec["first_error_line"] == (
+        "error[E0432]: unresolved import `detcore::sched::Foo`"
+    )
+
+
+def test_product_test_printing_not_found_is_not_reclassified():
+    """The anti-forgery bracket for the WEAK signatures. A test node's own
+    assertion output containing "not found" is product text, not guest stderr from
+    a prepare step, so it must stay `code`. Without the prepare-reason scoping
+    this exact log would flip to host-environment and route a real product failure
+    away from its owner."""
+    log = _fail(
+        "test.cli",
+        "running 12 tests",
+        "assertion failed: expected key `sched.seed` not found in output",
+        "test result: FAILED. 11 passed; 1 failed",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "code"
+    assert rec["host_env_signature"] is None
+
+
+def test_strong_host_signature_is_honored_outside_a_prepare_reason():
+    """A shell `command not found` cannot be product assertion text, so it is
+    honored anywhere on the failing node's stream — the counterpart to the weak
+    signatures above, proving the two tiers are really distinct rather than one
+    rule with unused branches."""
+    log = _fail(
+        "setup.toolchain",
+        "./ci/bootstrap.sh: line 12: shellcheck: command not found",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "host-environment"
+    assert rec["host_env_signature"] == ": command not found"
+
+
+def test_infrastructure_still_wins_over_host_environment():
+    """Precedence is explicit, and no evidence is discarded: a node carrying BOTH
+    a corrupt archive and a missing host tool headlines as infrastructure while
+    still recording the host_env signature."""
+    log = _fail(
+        "build.dbi_release",
+        "prepare failed for language-runtimes/lua-random.sh",
+        "lua5.4 not found",
+        "libdynamorio_static.a(mangle.c.o): in archive is not an object",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "infrastructure"
+    assert rec["infra_signature"] == "in archive is not an object"
+    assert rec["host_env_signature"] == "not found", "both signatures are retained"
+
+
+def test_host_environment_node_is_never_marked_known_flaky():
+    """`known_flaky` is gated on fault_class == 'code'; a host gap is not a flake
+    to re-run, and re-running it wastes a full validate."""
+    log = _fail(
+        "test.detcore_misc",
+        "prepare failed for language-runtimes/lua-random.sh",
+        "lua5.4 not found",
+    )
+    [rec] = classify_failed_substeps(
+        log, flaky_registry={"test.detcore_misc"}
+    )
+    assert rec["fault_class"] == "host-environment"
+    assert rec["known_flaky"] is False
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
