@@ -29,15 +29,19 @@ class FakeRunner:
         code_state="landed",
         *,
         artifact_present=True,
+        artifact_type="blob",
         artifact_ancestry_rc=0,
     ):
         self.code_state = code_state
         self.artifact_present = artifact_present
+        self.artifact_type = artifact_type
         self.artifact_ancestry_rc = artifact_ancestry_rc
         self.task_mutations: list[tuple[str, ...]] = []
+        self.commands: list[tuple[str, ...]] = []
 
     def __call__(self, command, **_kwargs):
         command = tuple(str(item) for item in command)
+        self.commands.append(command)
         if "protocol.py" in " ".join(command):
             if self.code_state == "landed":
                 payload = {
@@ -68,8 +72,6 @@ class FakeRunner:
                 "conclusion": "success",
             }
             return completed(command, stdout=json.dumps(payload))
-        if command[:4] == ("git", "-C", str(verified_close.ROOT), "ls-files"):
-            return completed(command, stdout="AGENTS.md\n")
         if command[:3] == ("with-proxy", "git", "-C"):
             return completed(command)
         if command[:5] == (
@@ -77,9 +79,13 @@ class FakeRunner:
             "-C",
             str(verified_close.ROOT),
             "cat-file",
-            "-e",
+            "-t",
         ):
-            return completed(command, rc=0 if self.artifact_present else 1)
+            if not self.artifact_present:
+                return completed(
+                    command, rc=1, stderr="fatal: path does not exist in 'origin/main'"
+                )
+            return completed(command, stdout=self.artifact_type + "\n")
         if command[:4] == ("git", "-C", str(verified_close.ROOT), "log"):
             return completed(command, stdout="d" * 40 + "\n")
         if command[:4] == (
@@ -173,6 +179,53 @@ class VerifiedCloseTest(unittest.TestCase):
         )
         self.assertEqual([], missing.task_mutations)
         self.assertEqual([], nonancestral.task_mutations)
+
+    def test_artifact_absent_from_this_working_tree_still_verifies(self):
+        # The regression this brackets: a parent artifact published the ONLY
+        # safe way -- from a worktree off origin/main -- is absent from the
+        # chronically-behind parent primary. Gating on the working tree refused
+        # it with "artifact is not a file" even though it was tracked, pushed,
+        # and ancestry-present. Authority is origin/main, not this checkout.
+        relative = "ai_docs/deliberately-absent-from-this-working-tree.md"
+        self.assertFalse(
+            (verified_close.ROOT / relative).exists(),
+            "fixture path must not exist locally or the test proves nothing",
+        )
+        runner = FakeRunner()
+
+        rc = verified_close.main(["absent-artifact", "--artifact", relative], run=runner)
+
+        self.assertEqual(verified_close.CLOSED, rc)
+        note = next(
+            command[3] for command in runner.task_mutations if command[1] == "note"
+        )
+        self.assertIn(f"rrnewton/dev-hermit:{relative}@" + "d" * 40, note)
+        self.assertNotIn(
+            "ls-files",
+            " ".join(" ".join(command) for command in runner.commands),
+            "the stale-index gate must be gone, not merely bypassed",
+        )
+
+    def test_directory_on_main_is_refused_not_closed(self):
+        # `cat-file -e origin/main:<dir>` succeeds for a TREE. Existence alone
+        # would let a caller close against a directory, so the type is checked.
+        runner = FakeRunner(artifact_type="tree")
+
+        rc = verified_close.main(["tree-artifact", "--artifact", "ai_docs"], run=runner)
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.task_mutations)
+
+    def test_artifact_outside_the_workspace_is_refused(self):
+        runner = FakeRunner()
+
+        rc = verified_close.main(
+            ["escaped-artifact", "--artifact", "/etc/hostname"], run=runner
+        )
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.task_mutations)
+        self.assertEqual([], runner.commands, "refusal must precede any git call")
 
 
 if __name__ == "__main__":

@@ -60,4 +60,34 @@ list it belongs to.
 a third party**: an agent asking "does this thing prove it landed?" previously
 had only prose to consult, and a rule that must be remembered is one that decays.
 
+## `--artifact`: the authority is `origin/main`, never your checkout
+
+A research-only task closes on a durable artifact rather than a PR. The gateway
+resolves a repo-relative `--artifact` path **entirely against the freshly
+fetched `origin/main`** — it does not look at your working tree or your index:
+
+| check | how it is established |
+|---|---|
+| exists, and is a file not a directory | `git cat-file -t origin/main:<path>` is `blob` |
+| content commit | `git log -1 --format=%H origin/main -- <path>` |
+| ancestry | `merge-base --is-ancestor <content-commit> origin/main` |
+| recorded tuple | `rrnewton/dev-hermit:<path>@<content-commit>;target=main@<tip>` |
+
+**This is deliberate, and it used to be wrong.** The gate previously required
+`path.is_file()` plus `git ls-files` in the parent primary. That primary runs
+tens of commits behind origin (41 behind on 2026-08-06), and the only safe way
+to publish a parent artifact is from a worktree off `origin/main` — so a
+correctly published artifact was routinely absent from the primary's working
+tree, and closure was refused with `artifact is not a file`, a message naming
+the wrong cause. Nothing was weakened by removing those two checks: existence,
+version-control, and blob-ness are all re-established against `origin/main`,
+which is strictly the stronger authority. A file that exists locally but was
+never pushed is now **refused** (`artifact is not on parent main`), where the
+old working-tree check would have waved a locally-modified copy through to the
+published content commit.
+
+`--check-only` runs every verification and records nothing — use it first.
+Absolute paths outside the workspace are refused before any git call; use a
+full `https://` URL for anything genuinely external.
+
 Tests: `python3 -m pytest ci-hub/closure/ -q`
