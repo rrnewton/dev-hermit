@@ -1,0 +1,24 @@
+[Unit]
+Description=dev-hermit operational health tick (durable replacement for ORC session-bound wf.loop)
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/hermit-health-tick.sh
+
+[Service]
+Type=oneshot
+# %h, not a literal home and not $HOME: systemd does not expand shell variables
+# in ExecStart/WorkingDirectory, and a hardcoded owner path fails the parent's
+# portability gate.
+Environment=PATH=%h/.cargo/bin:%h/orc-bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/work/dev-hermit
+# Runs the VERSION-CONTROLLED copy. This previously ran an untracked script
+# under ~/.local/bin, so the thing executing was not the thing reviewed and
+# could drift from the repository silently.
+ExecStart=%h/work/dev-hermit/scripts/hermit-health-tick.sh
+# The tick's own pin-guard exit is expected signal, not a unit failure.
+SuccessExitStatus=0 1
+# NOTE: a tick that exceeds this is KILLED before it can append its invocation
+# line, which is why the alarm reads the timer's LastTriggerUSec rather than the
+# invocation log's mtime -- see scripts/hermit-health-staleness.sh.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target
