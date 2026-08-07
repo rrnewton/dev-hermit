@@ -1,4 +1,0 @@
-# label<TAB>nix-expr
-lensfun	(import <nixpkgs> {}).lensfun
-lensfun-tarfix	(import ./nix/real-candidates.nix {}).lensfun-tarfix
-urandom-temp-names	(import ./nix/real-candidates.nix {}).urandom-temp-names
