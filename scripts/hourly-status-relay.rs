@@ -123,7 +123,24 @@ Options:
                           (default: 900). 0 means never reclaim.
   --no-release-on-failure Keep the claim on a failed wake, making that hour
                           terminal rather than retryable.
+  --ack-wait-secs N       How long a `wake_accepted` hour waits for a GChat
+                          acknowledgement before the driver re-wakes it
+                          (default: 600).
+  --max-wake-attempts N   Bound on re-waking an unacknowledged hour (default: 3).
+                          After this the hour is left OPEN and un-delivered.
   --dry-run               Decide and print, but write no state and run no relay.
+
+Recording a GChat acknowledgement (promotes an hour to `gchat_delivered`):
+  --ack-hour YYYY-MM-DDTHH   The hour being acknowledged.
+  --ack-message-name NAME    spaces/<space>/messages/<id> returned by the send.
+  --ack-space spaces/<id>    The space the message landed in.
+  --ack-thread NAME          spaces/<space>/threads/<id>.
+  --ack-text-file PATH       The EXACT bytes the API reports as sent. The digest
+                             is computed from this file, never taken on trust.
+  --ack-text-sha256 HEX      Optional cross-check; must equal that digest.
+  All five --ack-* identifiers are required together. `wake_accepted` alone is
+  never `delivered`: relay rc=0 proves only that the coordinator PANE accepted
+  text.
   -h, --help              Print this pure help text.
 
 Exit codes:
@@ -143,8 +160,13 @@ struct Args {
     hour: Option<String>,
     now_epoch: Option<u64>,
     stale_pending_secs: u64,
+    ack_wait_secs: u64,
+    max_wake_attempts: u32,
     release_on_failure: bool,
     dry_run: bool,
+    /// Present iff this invocation is recording a GChat acknowledgement rather
+    /// than running a tick. Kept on Args so there is one parse and one dispatch.
+    ack: Option<AckArgs>,
 }
 
 /// One scheduled hour's record. `state` is the deduplication authority; the
@@ -160,10 +182,98 @@ struct Claim {
     delivered_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+
+    // ---- stage 1: the pane accepted a wake. Proves NOTHING about GChat. ----
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wake_accepted_at: Option<u64>,
+    /// How many wakes this hour has cost. The bound on re-waking an
+    /// unacknowledged hour; without it a coordinator that never answers is
+    /// re-woken every tick forever.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    wake_attempts: u32,
+
+    // ---- stage 2: the coordinator returned a real GChat API record. ----
+    // All four are required together. A messageName without its text digest
+    // cannot be audited, and a digest without its messageName cannot be
+    // dereferenced, so neither alone may promote an hour to delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gchat_message_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gchat_space: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gchat_thread: Option<String>,
+    /// sha256 of the EXACT bytes the API reports as sent. Deliberately not the
+    /// status-log text: those differed by a trailing 0x0A on 2026-08-07T02, so
+    /// hashing the log makes a correct delivery look tampered to any auditor
+    /// who dereferences gchat_message_name and hashes what they get back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gchat_text_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gchat_text_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    gchat_acked_at: Option<u64>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl Claim {
+    fn new(hour: &str, state: &str, now: u64) -> Claim {
+        Claim {
+            hour: hour.to_string(),
+            state: state.to_string(),
+            claimed_at: now,
+            claimed_by_pid: std::process::id(),
+            delivered_at: None,
+            detail: None,
+            wake_accepted_at: None,
+            wake_attempts: 0,
+            gchat_message_name: None,
+            gchat_space: None,
+            gchat_thread: None,
+            gchat_text_sha256: None,
+            gchat_text_bytes: None,
+            gchat_acked_at: None,
+        }
+    }
+
+    /// The ONLY predicate that may close an hour on delivery grounds. Every
+    /// field must be present: this is what "delivered" is allowed to mean.
+    fn has_gchat_ack(&self) -> bool {
+        self.state == STATE_GCHAT_DELIVERED
+            && non_empty(&self.gchat_message_name)
+            && non_empty(&self.gchat_space)
+            && non_empty(&self.gchat_thread)
+            && non_empty(&self.gchat_text_sha256)
+    }
+}
+
+fn non_empty(field: &Option<String>) -> bool {
+    field.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
 const STATE_PENDING: &str = "pending";
+/// Stage 1. The relay typed the wake into the coordinator pane and got rc=0.
+/// This is the state the old driver mislabelled `delivered`.
+const STATE_WAKE_ACCEPTED: &str = "wake_accepted";
+/// Stage 2. A dereferenceable GChat API record exists for this hour.
+const STATE_GCHAT_DELIVERED: &str = "gchat_delivered";
+/// LEGACY, pre-split. Written by the old driver on relay rc=0, so it means
+/// "a wake was accepted" and NOT that the owner saw anything. Kept dedupe-final
+/// on purpose: these hours are historical, and re-opening them would send a
+/// burst of stale statuses. Migration is forward-only.
 const STATE_DELIVERED: &str = "delivered";
+
+/// How long an unacknowledged `wake_accepted` hour waits for the coordinator
+/// before the driver re-wakes it. Long enough that a working coordinator
+/// finishes first (the observed 2026-08-07T02 recovery took ~8 min from wake to
+/// send), short enough that a dead one is retried inside the hour.
+const DEFAULT_ACK_WAIT_SECS: u64 = 600;
+/// Bound on re-waking. After this many wakes with no ack the driver stops
+/// waking and leaves the hour openly unacknowledged rather than spamming a
+/// coordinator that is not answering.
+const DEFAULT_MAX_WAKE_ATTEMPTS: u32 = 3;
 
 /// What this invocation should do about its hour. Kept separate from the I/O so
 /// the dedupe rule is unit-testable without a filesystem full of fixtures.
@@ -175,6 +285,17 @@ enum Decision {
     ReclaimStale { age_secs: u64 },
     /// This hour already went out. The negative case the whole design exists for.
     DuplicateHour,
+    /// The pane accepted a wake but no GChat acknowledgement has arrived yet,
+    /// and the ack window has not expired. NOT delivered and NOT closed -- the
+    /// hour stays retryable; this tick simply must not wake again yet.
+    AwaitingAck { age_secs: u64, attempts: u32 },
+    /// Woken, unacknowledged, and the ack window expired. Re-wake: the previous
+    /// wake demonstrably produced no owner-visible message.
+    RewakeNoAck { age_secs: u64, attempts: u32 },
+    /// Woken and unacknowledged up to the attempt bound. The driver stops
+    /// waking. The hour is deliberately left OPEN and un-delivered rather than
+    /// closed, so it reads as an unmet obligation instead of a success.
+    AckExhausted { age_secs: u64, attempts: u32 },
     /// A `pending` claim is young enough that another run may still be working.
     InFlight { age_secs: u64 },
     /// The claim file exists but did not parse. A file we cannot read is a file
@@ -186,7 +307,10 @@ enum Decision {
 
 impl Decision {
     fn proceeds(&self) -> bool {
-        matches!(self, Decision::Deliver | Decision::ReclaimStale { .. })
+        matches!(
+            self,
+            Decision::Deliver | Decision::ReclaimStale { .. } | Decision::RewakeNoAck { .. }
+        )
     }
 }
 
@@ -204,7 +328,13 @@ enum ClaimRead {
 /// THE dedupe rule. A delivered hour is closed forever; a pending hour is
 /// someone else's until it is provably abandoned; an unreadable hour is nobody's
 /// to take.
-fn decide(existing: &ClaimRead, now: u64, stale_pending_secs: u64) -> Decision {
+fn decide(
+    existing: &ClaimRead,
+    now: u64,
+    stale_pending_secs: u64,
+    ack_wait_secs: u64,
+    max_wake_attempts: u32,
+) -> Decision {
     let claim = match existing {
         ClaimRead::Absent => return Decision::Deliver,
         ClaimRead::Corrupt { reason } => {
@@ -214,8 +344,52 @@ fn decide(existing: &ClaimRead, now: u64, stale_pending_secs: u64) -> Decision {
         }
         ClaimRead::Valid(claim) => claim,
     };
+    // A legacy `delivered` hour is historical and stays closed; see the constant.
     if claim.state == STATE_DELIVERED {
         return Decision::DuplicateHour;
+    }
+    if claim.state == STATE_GCHAT_DELIVERED {
+        // Fail CLOSED on a half-written ack. `gchat_delivered` without its
+        // record is not evidence of delivery, but it is evidence that something
+        // wrote a terminal state, so re-waking could double-send. Refuse to act
+        // and say so, exactly as for a corrupt claim.
+        if !claim.has_gchat_ack() {
+            return Decision::CorruptClaim {
+                reason: format!(
+                    "state={STATE_GCHAT_DELIVERED} but the acknowledgement is incomplete \
+                     (message_name={} space={} thread={} text_sha256={})",
+                    claim.gchat_message_name.as_deref().unwrap_or("<missing>"),
+                    claim.gchat_space.as_deref().unwrap_or("<missing>"),
+                    claim.gchat_thread.as_deref().unwrap_or("<missing>"),
+                    claim.gchat_text_sha256.as_deref().unwrap_or("<missing>"),
+                ),
+            };
+        }
+        return Decision::DuplicateHour;
+    }
+    if claim.state == STATE_WAKE_ACCEPTED {
+        // THE DEFECT THIS TASK EXISTS TO FIX. rc=0 from the relay proves the
+        // pane accepted text; it does not prove the owner saw anything. So this
+        // hour is NOT closed. It is waited on, re-woken, and finally left open
+        // -- never silently converted into a success.
+        let age = now.saturating_sub(claim.wake_accepted_at.unwrap_or(claim.claimed_at));
+        let attempts = claim.wake_attempts;
+        if attempts >= max_wake_attempts {
+            return Decision::AckExhausted {
+                age_secs: age,
+                attempts,
+            };
+        }
+        if age < ack_wait_secs {
+            return Decision::AwaitingAck {
+                age_secs: age,
+                attempts,
+            };
+        }
+        return Decision::RewakeNoAck {
+            age_secs: age,
+            attempts,
+        };
     }
     // saturating_sub: a claim stamped in the future (clock step) reads as age 0,
     // i.e. in-flight, which is the conservative side -- it delays a status
@@ -453,6 +627,239 @@ fn run_relay(args: &Args, message_file: &Path) -> (i32, String) {
 
 // ------------------------------------------------------------- the tick ----
 
+// ------------------------------------------------------------- sha256 -----
+
+// Implemented in-file rather than pulled from `sha2`. This script runs from a
+// systemd timer on a box where a cold `rust-script` dependency fetch is a real
+// failure mode, and the hourly driver must not be able to fail because crates.io
+// was unreachable. FIPS 180-4; bracketed against the published vectors in
+// `sha256_matches_published_vectors`.
+fn sha256_hex(bytes: &[u8]) -> String {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let mut msg = bytes.to_vec();
+    let bit_len = (bytes.len() as u64).wrapping_mul(8);
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in msg.chunks(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
+            (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let t1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(maj);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
+        }
+        for (slot, v) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
+            *slot = slot.wrapping_add(v);
+        }
+    }
+    h.iter().map(|w| format!("{w:08x}")).collect()
+}
+
+// ---------------------------------------------------------------- ack -----
+
+/// The coordinator's acknowledgement of one hour: the GChat API record, as
+/// returned by the send. Every field is required -- see `Claim::has_gchat_ack`.
+#[derive(Debug, Clone)]
+struct AckArgs {
+    hour: String,
+    message_name: String,
+    space: String,
+    thread: String,
+    text_file: PathBuf,
+    /// Optional cross-check. When supplied it must equal the digest computed
+    /// from `text_file`; a mismatch means the caller hashed something other
+    /// than what it is handing us, which is the exact confusion this binds out.
+    expect_sha256: Option<String>,
+}
+
+/// Validate that the three GChat identifiers are (a) well-shaped and (b) name
+/// the SAME conversation. Three unrelated non-empty strings would satisfy a
+/// naive presence check while proving nothing, so the space must be a prefix of
+/// both the message and the thread.
+fn validate_gchat_identity(message_name: &str, space: &str, thread: &str) -> Result<(), String> {
+    for (label, value) in [
+        ("--ack-message-name", message_name),
+        ("--ack-space", space),
+        ("--ack-thread", thread),
+    ] {
+        if value.trim().is_empty() {
+            return Err(format!("{label} must be a non-empty GChat identifier"));
+        }
+    }
+    if !space.starts_with("spaces/") || space.matches('/').count() != 1 {
+        return Err(format!(
+            "--ack-space must look like spaces/<id>, got {space:?}"
+        ));
+    }
+    let want_msg = format!("{space}/messages/");
+    if !message_name.starts_with(&want_msg) || message_name.len() == want_msg.len() {
+        return Err(format!(
+            "--ack-message-name must be {want_msg}<id> so it dereferences inside \
+             the acknowledged space, got {message_name:?}"
+        ));
+    }
+    let want_thread = format!("{space}/threads/");
+    if !thread.starts_with(&want_thread) || thread.len() == want_thread.len() {
+        return Err(format!(
+            "--ack-thread must be {want_thread}<id>, got {thread:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Record a GChat acknowledgement against an hour, promoting it to
+/// `gchat_delivered`. Atomic typed rewrite -- never a plaintext append, which is
+/// the corruption class `delivered_claim_plus_trailing_content_is_not_deliverable`
+/// brackets.
+fn apply_ack(state_dir: &Path, ack: &AckArgs, now: u64) -> Result<String, String> {
+    validate_gchat_identity(&ack.message_name, &ack.space, &ack.thread)?;
+    let text = fs::read(&ack.text_file)
+        .map_err(|e| format!("read --ack-text-file {}: {e}", ack.text_file.display()))?;
+    if text.is_empty() {
+        return Err(format!(
+            "--ack-text-file {} is empty; an empty delivered text is not an acknowledgement",
+            ack.text_file.display()
+        ));
+    }
+    // The digest is COMPUTED from the exact bytes handed over, never taken on
+    // the caller's word. That is what makes it evidence rather than a label.
+    let digest = sha256_hex(&text);
+    if let Some(expected) = &ack.expect_sha256 {
+        if !expected.eq_ignore_ascii_case(&digest) {
+            return Err(format!(
+                "--ack-text-sha256 {expected} does not match the digest of \
+                 --ack-text-file ({digest}); refusing to record a digest that does \
+                 not derive from the text being acknowledged"
+            ));
+        }
+    }
+
+    let claim = match read_claim(state_dir, &ack.hour) {
+        ClaimRead::Absent => {
+            return Err(format!(
+                "no claim for hour {} at {}; an hour that was never woken cannot be \
+                 acknowledged",
+                ack.hour,
+                claim_path(state_dir, &ack.hour).display()
+            ));
+        }
+        ClaimRead::Corrupt { reason } => {
+            return Err(format!(
+                "claim for hour {} is unreadable ({reason}); refusing to overwrite a \
+                 claim whose current state cannot be established",
+                ack.hour
+            ));
+        }
+        ClaimRead::Valid(claim) => claim,
+    };
+
+    // Idempotent for a repeat of the SAME message; refused for a different one,
+    // because two message names for one hour is a double-delivery report and
+    // silently keeping the last would erase the evidence.
+    if let Some(existing) = &claim.gchat_message_name {
+        if existing == &ack.message_name {
+            return Ok(format!(
+                "ack-noop hour={} message-name={} already-recorded",
+                ack.hour, existing
+            ));
+        }
+        return Err(format!(
+            "hour {} is already acknowledged by {existing}; refusing to replace it \
+             with {} -- two message names for one hour means the hour was delivered \
+             twice, which is a finding, not an update",
+            ack.hour, ack.message_name
+        ));
+    }
+
+    let acked = Claim {
+        state: STATE_GCHAT_DELIVERED.to_string(),
+        gchat_message_name: Some(ack.message_name.clone()),
+        gchat_space: Some(ack.space.clone()),
+        gchat_thread: Some(ack.thread.clone()),
+        gchat_text_sha256: Some(digest.clone()),
+        gchat_text_bytes: Some(text.len() as u64),
+        gchat_acked_at: Some(now),
+        delivered_at: claim.delivered_at.or(Some(now)),
+        detail: None,
+        ..claim
+    };
+    debug_assert!(acked.has_gchat_ack());
+    write_claim(state_dir, &acked)?;
+    append_line(
+        &state_dir.join("invocations.log"),
+        &format!(
+            "{} ack hour={} state={STATE_GCHAT_DELIVERED} message-name={} space={} \
+             thread={} text-sha256={} text-bytes={}",
+            format_utc(now),
+            ack.hour,
+            ack.message_name,
+            ack.space,
+            ack.thread,
+            digest,
+            text.len()
+        ),
+    )?;
+    Ok(format!(
+        "ack-recorded hour={} state={STATE_GCHAT_DELIVERED} message-name={} \
+         text-sha256={} text-bytes={}",
+        ack.hour,
+        ack.message_name,
+        digest,
+        text.len()
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TickResult {
     hour: String,
@@ -503,7 +910,13 @@ fn execute(args: &Args) -> Result<TickResult, String> {
     }
 
     let existing = read_claim(&args.state_dir, &hour);
-    let decision = decide(&existing, now, args.stale_pending_secs);
+    let decision = decide(
+        &existing,
+        now,
+        args.stale_pending_secs,
+        args.ack_wait_secs,
+        args.max_wake_attempts,
+    );
     match &decision {
         Decision::CorruptClaim { reason } => {
             // Actionable on purpose: name the file, because the ONLY safe repair
@@ -535,10 +948,40 @@ fn execute(args: &Args) -> Result<TickResult, String> {
                 format!("pending-age-secs={age_secs} claimed=no-op"),
             ));
         }
+        Decision::AwaitingAck { age_secs, attempts } => {
+            return Ok(done(
+                "awaiting-gchat-ack",
+                format!(
+                    "wake-age-secs={age_secs} wake-attempts={attempts} \
+                     ack-wait-secs={} delivered=no claimed=no-op \
+                     note=wake-accepted-is-not-delivery",
+                    args.ack_wait_secs
+                ),
+            ));
+        }
+        Decision::AckExhausted { age_secs, attempts } => {
+            // Loud, and deliberately NOT an error exit: the driver did its job.
+            // The hour is left open and un-delivered so it reads as an unmet
+            // obligation instead of a success.
+            return Ok(done(
+                "gchat-ack-missing",
+                format!(
+                    "wake-age-secs={age_secs} wake-attempts={attempts} \
+                     max-wake-attempts={} delivered=no claimed=no-op \
+                     repair=coordinator-must-send-and-run---ack-hour",
+                    args.max_wake_attempts
+                ),
+            ));
+        }
         other => debug_assert!(other.proceeds()),
     }
 
     let reclaimed = matches!(decision, Decision::ReclaimStale { .. });
+    let rewake = matches!(decision, Decision::RewakeNoAck { .. });
+    let prior_attempts = match &existing {
+        ClaimRead::Valid(c) => c.wake_attempts,
+        _ => 0,
+    };
     let prompt_body = fs::read_to_string(&args.prompt_file)
         .map_err(|e| format!("read {}: {e}", args.prompt_file.display()))?;
     let message = build_message(&hour, now, &args.state_dir, &prompt_body);
@@ -554,21 +997,22 @@ fn execute(args: &Args) -> Result<TickResult, String> {
     }
 
     let claim = Claim {
-        hour: hour.clone(),
-        state: STATE_PENDING.to_string(),
-        claimed_at: now,
-        claimed_by_pid: std::process::id(),
-        delivered_at: None,
+        wake_attempts: prior_attempts,
         detail: if reclaimed {
             Some("reclaimed a stale pending claim".to_string())
+        } else if rewake {
+            Some(format!(
+                "re-waking: {prior_attempts} previous wake(s) produced no GChat acknowledgement"
+            ))
         } else {
             None
         },
+        ..Claim::new(&hour, STATE_PENDING, now)
     };
     // The claim is taken BEFORE the relay runs. Claim-then-send can at worst lose
     // one hour; send-then-claim can double-send, and a duplicate owner status is
     // the failure this design is required to exclude.
-    if !try_claim(&args.state_dir, &claim, reclaimed)? {
+    if !try_claim(&args.state_dir, &claim, reclaimed || rewake)? {
         return Ok(done(
             "in-flight",
             "reason=lost-claim-race claimed=no-op".to_string(),
@@ -580,18 +1024,34 @@ fn execute(args: &Args) -> Result<TickResult, String> {
 
     let (rc, summary) = run_relay(args, &message_file);
     if rc == 0 {
+        // STAGE 1 ONLY. rc=0 means orc-hermit-msg.py typed the wake into the
+        // coordinator pane. It does NOT mean a status reached the owner: on
+        // 2026-08-07T01 the pane accepted a wake at 01:19:49Z, the old driver
+        // wrote state=delivered at 01:19:52Z, and zero hourly statuses were sent
+        // that hour. So this records wake_accepted and leaves the hour OPEN.
+        // Only `--ack-hour` with a dereferenceable GChat record closes it.
+        let attempts = claim.wake_attempts.saturating_add(1);
         write_claim(
             &args.state_dir,
             &Claim {
-                state: STATE_DELIVERED.to_string(),
-                delivered_at: Some(now_epoch()),
+                state: STATE_WAKE_ACCEPTED.to_string(),
+                // The tick's own time base, NOT now_epoch(): --now-epoch must move
+                // the ack window with it, or the window is untestable and a clock
+                // step silently resets it.
+                wake_accepted_at: Some(now),
+                wake_attempts: attempts,
+                delivered_at: None,
                 detail: None,
                 ..claim
             },
         )?;
         return Ok(done(
-            "delivered",
-            format!("relay-rc=0 wake={}", message_file.display()),
+            "wake-accepted",
+            format!(
+                "relay-rc=0 wake={} wake-attempts={attempts} delivered=no \
+                 awaiting=gchat-ack",
+                message_file.display()
+            ),
         ));
     }
 
@@ -629,7 +1089,15 @@ fn main() {
 
 fn run() -> Result<i32, String> {
     let args = parse_args()?;
-    let stamp = format_utc(args.now_epoch.unwrap_or_else(now_epoch));
+    let now = args.now_epoch.unwrap_or_else(now_epoch);
+    if let Some(ack) = &args.ack {
+        // Recording an acknowledgement is not a tick: it writes no heartbeat and
+        // runs no relay. It only promotes an already-woken hour on evidence.
+        let line = apply_ack(&args.state_dir, ack, now)?;
+        println!("{line}");
+        return Ok(EXIT_OK);
+    }
+    let stamp = format_utc(now);
     let result = execute(&args)?;
     let line = result.line(&stamp);
     if args.dry_run {
@@ -698,10 +1166,15 @@ fn parse_args() -> Result<Args, String> {
         hour: None,
         now_epoch: None,
         stale_pending_secs: DEFAULT_STALE_PENDING_SECS,
+        ack_wait_secs: DEFAULT_ACK_WAIT_SECS,
+        max_wake_attempts: DEFAULT_MAX_WAKE_ATTEMPTS,
         release_on_failure: true,
         dry_run: false,
+        ack: None,
     };
 
+    let (mut ack_hour, mut ack_message_name, mut ack_space) = (None, None, None);
+    let (mut ack_thread, mut ack_text_file, mut ack_expect_sha) = (None, None, None);
     let mut raw = env::args().skip(1);
     while let Some(flag) = raw.next() {
         let mut next = |name: &str| -> Result<String, String> {
@@ -728,6 +1201,22 @@ fn parse_args() -> Result<Args, String> {
                         .map_err(|_| "--now-epoch must be a non-negative integer".to_string())?,
                 );
             }
+            "--ack-wait-secs" => {
+                args.ack_wait_secs = next("--ack-wait-secs")?
+                    .parse()
+                    .map_err(|e| format!("--ack-wait-secs: {e}"))?
+            }
+            "--max-wake-attempts" => {
+                args.max_wake_attempts = next("--max-wake-attempts")?
+                    .parse()
+                    .map_err(|e| format!("--max-wake-attempts: {e}"))?
+            }
+            "--ack-hour" => ack_hour = Some(next("--ack-hour")?),
+            "--ack-message-name" => ack_message_name = Some(next("--ack-message-name")?),
+            "--ack-space" => ack_space = Some(next("--ack-space")?),
+            "--ack-thread" => ack_thread = Some(next("--ack-thread")?),
+            "--ack-text-file" => ack_text_file = Some(PathBuf::from(next("--ack-text-file")?)),
+            "--ack-text-sha256" => ack_expect_sha = Some(next("--ack-text-sha256")?),
             "--stale-pending-secs" => {
                 let value = next("--stale-pending-secs")?;
                 args.stale_pending_secs = value.parse::<u64>().map_err(|_| {
@@ -742,6 +1231,38 @@ fn parse_args() -> Result<Args, String> {
             }
             other => return Err(format!("unknown argument: {other}\n\n{USAGE}")),
         }
+    }
+
+    // Ack mode is all-or-nothing on purpose. A partial ack is exactly the shape
+    // this task exists to forbid: a messageName with no digest, or a digest with
+    // no messageName, cannot establish that the owner received anything.
+    let ack_flags = [
+        ("--ack-hour", ack_hour.is_some()),
+        ("--ack-message-name", ack_message_name.is_some()),
+        ("--ack-space", ack_space.is_some()),
+        ("--ack-thread", ack_thread.is_some()),
+        ("--ack-text-file", ack_text_file.is_some()),
+    ];
+    let supplied: Vec<&str> = ack_flags.iter().filter(|(_, p)| *p).map(|(n, _)| *n).collect();
+    if !supplied.is_empty() {
+        let missing: Vec<&str> = ack_flags.iter().filter(|(_, p)| !*p).map(|(n, _)| *n).collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "incomplete acknowledgement: got {} but missing {}. All of \
+                 --ack-hour/--ack-message-name/--ack-space/--ack-thread/--ack-text-file \
+                 are required together -- a partial acknowledgement cannot prove delivery.\n\n{USAGE}",
+                supplied.join(" "),
+                missing.join(" ")
+            ));
+        }
+        args.ack = Some(AckArgs {
+            hour: ack_hour.unwrap(),
+            message_name: ack_message_name.unwrap(),
+            space: ack_space.unwrap(),
+            thread: ack_thread.unwrap(),
+            text_file: ack_text_file.unwrap(),
+            expect_sha256: ack_expect_sha,
+        });
     }
     Ok(args)
 }
@@ -822,6 +1343,9 @@ mod tests {
                 relay: self.root.join("relay-stub"),
                 socket: self.root.join("fake.socket"),
                 relay_command: Some(self.relay_command(relay_succeeds)),
+                ack_wait_secs: DEFAULT_ACK_WAIT_SECS,
+                max_wake_attempts: DEFAULT_MAX_WAKE_ATTEMPTS,
+                ack: None,
                 hour: Some(hour.to_string()),
                 now_epoch: Some(now),
                 stale_pending_secs: DEFAULT_STALE_PENDING_SECS,
@@ -848,23 +1372,16 @@ mod tests {
 
     fn pending(hour: &str, claimed_at: u64) -> Claim {
         Claim {
-            hour: hour.to_string(),
-            state: STATE_PENDING.to_string(),
-            claimed_at,
             claimed_by_pid: 4242,
-            delivered_at: None,
-            detail: None,
+            ..Claim::new(hour, STATE_PENDING, claimed_at)
         }
     }
 
     fn delivered_claim(hour: &str, at: u64) -> Claim {
         Claim {
-            hour: hour.to_string(),
-            state: STATE_DELIVERED.to_string(),
-            claimed_at: at,
             claimed_by_pid: 4242,
             delivered_at: Some(at),
-            detail: None,
+            ..Claim::new(hour, STATE_DELIVERED, at)
         }
     }
 
@@ -897,7 +1414,7 @@ mod tests {
     fn positive_fresh_hour_delivers_exactly_once() {
         let fixture = Fixture::new("positive");
         let result = execute(&fixture.args("2026-08-07T01", 1_786_064_436, true)).unwrap();
-        assert_eq!(result.outcome, "delivered", "detail: {}", result.detail);
+        assert_eq!(result.outcome, "wake-accepted", "detail: {}", result.detail);
 
         // Exactly one delivery, and it was handed the real message file.
         let deliveries = fixture.deliveries();
@@ -916,8 +1433,13 @@ mod tests {
 
         // Finalizing the claim is what actually closes the hour.
         let claim = expect_valid(&fixture.state, "2026-08-07T01");
-        assert_eq!(claim.state, STATE_DELIVERED);
-        assert!(claim.delivered_at.is_some());
+        assert_eq!(claim.state, STATE_WAKE_ACCEPTED);
+        // THE POINT OF THIS TASK: a pane that accepted a wake has delivered
+        // NOTHING. No delivery timestamp, and no GChat record to dereference.
+        assert!(claim.delivered_at.is_none(), "wake acceptance is not a delivery");
+        assert!(claim.wake_accepted_at.is_some());
+        assert_eq!(claim.wake_attempts, 1);
+        assert!(!claim.has_gchat_ack());
 
         // Heartbeat and outcome are separately observable.
         let invocations = fs::read_to_string(fixture.state.join("invocations.log")).unwrap();
@@ -930,11 +1452,11 @@ mod tests {
     fn dedupe_second_invocation_in_same_hour_does_not_deliver() {
         let fixture = Fixture::new("dedupe");
         let first = execute(&fixture.args("2026-08-07T01", 1_786_064_436, true)).unwrap();
-        assert_eq!(first.outcome, "delivered");
+        assert_eq!(first.outcome, "wake-accepted");
 
         // A catch-up run, a manual `systemctl start`, a duplicate timer fire.
         let second = execute(&fixture.args("2026-08-07T01", 1_786_064_436 + 464, true)).unwrap();
-        assert_eq!(second.outcome, "duplicate-hour", "detail: {}", second.detail);
+        assert_eq!(second.outcome, "awaiting-gchat-ack", "detail: {}", second.detail);
 
         assert_eq!(
             fixture.deliveries().len(),
@@ -946,16 +1468,19 @@ mod tests {
 
     #[test]
     fn dedupe_survives_many_repeats_including_a_much_later_one() {
+        // Post-ack this hour is closed FOREVER. Pre-ack it is deliberately
+        // retryable (see unacknowledged_hour_is_bounded_retryable_then_left_open),
+        // so the forever-property is a property of the ACKNOWLEDGED hour.
         let fixture = Fixture::new("dedupe-many");
+        let hour = "2026-08-07T01";
+        let base = 1_786_064_436;
         assert_eq!(
-            execute(&fixture.args("2026-08-07T01", 1_786_064_436, true))
-                .unwrap()
-                .outcome,
-            "delivered"
+            execute(&fixture.args(hour, base, true)).unwrap().outcome,
+            "wake-accepted"
         );
+        ack_ok(&fixture, hour, base + 5, "hello owner");
         for offset in [1, 60, 600, 3_599, 86_400, 7 * 86_400] {
-            let result =
-                execute(&fixture.args("2026-08-07T01", 1_786_064_436 + offset, true)).unwrap();
+            let result = execute(&fixture.args(hour, base + offset, true)).unwrap();
             assert_eq!(
                 result.outcome, "duplicate-hour",
                 "offset {offset}s re-delivered hour 01"
@@ -969,7 +1494,7 @@ mod tests {
         // Guards against a future "did I run recently" rewrite.
         let claim = delivered_claim("2026-08-07T01", 1_786_064_436);
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), 1_786_064_436 + 86_400, DEFAULT_STALE_PENDING_SECS),
+            decide(&ClaimRead::Valid(claim.clone()), 1_786_064_436 + 86_400, DEFAULT_STALE_PENDING_SECS, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
             Decision::DuplicateHour
         );
     }
@@ -983,7 +1508,7 @@ mod tests {
             execute(&fixture.args("2026-08-07T01", 1_786_064_436, true))
                 .unwrap()
                 .outcome,
-            "delivered"
+            "wake-accepted"
         );
         // ORC, tmux, or the whole box goes away and comes back. This driver keeps
         // no in-memory clock and no in-memory sleep, so a "restart" is simply the
@@ -993,7 +1518,7 @@ mod tests {
             execute(&fixture.args("2026-08-07T02", 1_786_068_036, true))
                 .unwrap()
                 .outcome,
-            "delivered",
+            "wake-accepted",
             "the hour AFTER a restart must fire -- this IS the defect being fixed"
         );
         assert_eq!(fixture.deliveries().len(), 2, "one delivery per hour");
@@ -1009,13 +1534,13 @@ mod tests {
             execute(&fixture.args("2026-08-06T15", 1_786_028_712, true))
                 .unwrap()
                 .outcome,
-            "delivered"
+            "wake-accepted"
         );
         assert_eq!(
             execute(&fixture.args("2026-08-07T01", 1_786_064_436, true))
                 .unwrap()
                 .outcome,
-            "delivered"
+            "wake-accepted"
         );
         assert_eq!(
             fixture.deliveries().len(),
@@ -1034,23 +1559,23 @@ mod tests {
         let claim = pending(hour, claimed_at);
 
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 60, 900),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 60, 900, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
             Decision::InFlight { age_secs: 60 },
             "a young pending claim may still be a live run; do not steal it"
         );
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 900, 900),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 900, 900, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
             Decision::ReclaimStale { age_secs: 900 },
             "past the window the owner is gone and the hour must be reclaimable"
         );
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 86_400, 0),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at + 86_400, 0, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
             Decision::InFlight { age_secs: 86_400 },
             "--stale-pending-secs 0 must disable reclaim entirely"
         );
         // A clock step backwards must not manufacture a reclaim.
         assert_eq!(
-            decide(&ClaimRead::Valid(claim.clone()), claimed_at - 5_000, 900),
+            decide(&ClaimRead::Valid(claim.clone()), claimed_at - 5_000, 900, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
             Decision::InFlight { age_secs: 0 }
         );
     }
@@ -1067,8 +1592,8 @@ mod tests {
         .unwrap();
 
         let result = execute(&fixture.args(hour, 1_786_064_436 + 1_200, true)).unwrap();
-        assert_eq!(result.outcome, "delivered", "detail: {}", result.detail);
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_DELIVERED);
+        assert_eq!(result.outcome, "wake-accepted", "detail: {}", result.detail);
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
         assert_eq!(fixture.deliveries().len(), 1);
     }
 
@@ -1114,7 +1639,7 @@ mod tests {
         assert_eq!(execute(&down).unwrap().outcome, "skipped");
 
         let up = fixture.args("2026-08-07T01", 1_786_064_436 + 1_200, true);
-        assert_eq!(execute(&up).unwrap().outcome, "delivered");
+        assert_eq!(execute(&up).unwrap().outcome, "wake-accepted");
         assert_eq!(fixture.deliveries().len(), 1);
     }
 
@@ -1132,7 +1657,7 @@ mod tests {
         assert_eq!(fixture.deliveries().len(), 1);
 
         let retried = execute(&fixture.args("2026-08-07T01", 1_786_064_436 + 64, true)).unwrap();
-        assert_eq!(retried.outcome, "delivered");
+        assert_eq!(retried.outcome, "wake-accepted");
         assert_eq!(fixture.deliveries().len(), 2);
     }
 
@@ -1174,6 +1699,8 @@ mod tests {
             &read_claim(&fixture.state, hour),
             1_786_064_436,
             DEFAULT_STALE_PENDING_SECS,
+            DEFAULT_ACK_WAIT_SECS,
+            DEFAULT_MAX_WAKE_ATTEMPTS,
         );
         assert!(matches!(decision, Decision::CorruptClaim { .. }));
         assert!(
@@ -1202,7 +1729,9 @@ mod tests {
             decide(
                 &read_claim(&fixture.state, hour),
                 at + 86_400,
-                DEFAULT_STALE_PENDING_SECS
+                DEFAULT_STALE_PENDING_SECS,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS,
             ),
             Decision::DuplicateHour,
             "control: a clean delivered claim must dedupe"
@@ -1218,6 +1747,8 @@ mod tests {
             &read_claim(&fixture.state, hour),
             at + 86_400,
             DEFAULT_STALE_PENDING_SECS,
+            DEFAULT_ACK_WAIT_SECS,
+            DEFAULT_MAX_WAKE_ATTEMPTS,
         );
         assert!(
             matches!(decision, Decision::CorruptClaim { .. }),
@@ -1262,15 +1793,17 @@ mod tests {
             decide(
                 &read_claim(&fixture.state, hour),
                 1_786_064_436,
-                DEFAULT_STALE_PENDING_SECS
+                DEFAULT_STALE_PENDING_SECS,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS,
             ),
             Decision::Deliver
         );
 
         let result = execute(&fixture.args(hour, 1_786_064_436, true)).unwrap();
-        assert_eq!(result.outcome, "delivered");
+        assert_eq!(result.outcome, "wake-accepted");
         assert_eq!(fixture.deliveries().len(), 1);
-        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_DELIVERED);
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
     }
 
     /// The documented safe workaround: write the outcome into `detail` by atomic
@@ -1299,7 +1832,7 @@ mod tests {
         assert_eq!(after.delivered_at, original.delivered_at);
         // Still dedupes afterwards -- the whole point of using `detail`.
         assert_eq!(
-            decide(&read_claim(&fixture.state, hour), at + 86_400, DEFAULT_STALE_PENDING_SECS),
+            decide(&read_claim(&fixture.state, hour), at + 86_400, DEFAULT_STALE_PENDING_SECS, DEFAULT_ACK_WAIT_SECS, DEFAULT_MAX_WAKE_ATTEMPTS),
             Decision::DuplicateHour
         );
     }
@@ -1344,4 +1877,314 @@ mod tests {
         assert!(result.detail.contains("prompt-unreadable"));
         assert_eq!(read_claim(&fixture.state, "2026-08-07T01"), ClaimRead::Absent);
     }
+    // ================= wake_accepted vs gchat_delivered =================
+    // The whole point: relay rc=0 is stage ONE. Only a dereferenceable GChat
+    // API record closes an hour. Every fixture below is INERT -- no network, no
+    // relay beyond the shell stub, and no owner-visible message anywhere.
+
+    const SPACE: &str = "spaces/AAQAA6Irlwg";
+
+    fn ack_args(fixture: &Fixture, hour: &str, text: &str) -> AckArgs {
+        let text_file = fixture.root.join(format!("acktext-{hour}.txt"));
+        fs::write(&text_file, text).unwrap();
+        AckArgs {
+            hour: hour.to_string(),
+            message_name: format!("{SPACE}/messages/QF7vBsq-DXc.QF7vBsq-DXc"),
+            space: SPACE.to_string(),
+            thread: format!("{SPACE}/threads/QF7vBsq-DXc"),
+            text_file,
+            expect_sha256: None,
+        }
+    }
+
+    fn ack_ok(fixture: &Fixture, hour: &str, now: u64, text: &str) -> String {
+        apply_ack(&fixture.state, &ack_args(fixture, hour, text), now).unwrap()
+    }
+
+    #[test]
+    fn sha256_matches_published_vectors() {
+        // The digest is the evidence; if it is wrong every ack below is theatre.
+        // FIPS 180-4 / NIST published vectors.
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        // Multi-block, exercises the length padding across a 64-byte boundary.
+        assert_eq!(
+            sha256_hex(&[b'a'; 1000]),
+            "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
+        );
+    }
+
+    #[test]
+    fn digest_binds_to_the_api_bytes_not_the_logged_text() {
+        // Observed 2026-08-07T02: the status-log copy carried one extra 0x0A, so
+        // hashing the LOG makes a correct delivery look tampered to an auditor
+        // who dereferences the messageName. These must not collide.
+        assert_ne!(sha256_hex(b"status text"), sha256_hex(b"status text\n"));
+    }
+
+    // ---- NEGATIVE: a wake that the pane accepted is NOT a delivery ----
+
+    #[test]
+    fn wake_rc_zero_without_an_ack_never_reads_as_delivered() {
+        let fixture = Fixture::new("wake-not-delivered");
+        let hour = "2026-08-07T01";
+        let result = execute(&fixture.args(hour, 1_786_064_436, true)).unwrap();
+
+        assert_eq!(result.outcome, "wake-accepted");
+        assert!(
+            result.detail.contains("delivered=no"),
+            "the outcome line must say so out loud: {}",
+            result.detail
+        );
+        let claim = expect_valid(&fixture.state, hour);
+        assert_eq!(claim.state, STATE_WAKE_ACCEPTED);
+        assert_ne!(claim.state, STATE_DELIVERED);
+        assert_ne!(claim.state, STATE_GCHAT_DELIVERED);
+        assert!(!claim.has_gchat_ack());
+        assert!(claim.gchat_message_name.is_none());
+        assert!(claim.gchat_text_sha256.is_none());
+        assert!(claim.delivered_at.is_none());
+        // And it is NOT closed: the hour remains reachable for a retry.
+        assert!(matches!(
+            decide(
+                &read_claim(&fixture.state, hour),
+                1_786_064_436 + 1,
+                DEFAULT_STALE_PENDING_SECS,
+                DEFAULT_ACK_WAIT_SECS,
+                DEFAULT_MAX_WAKE_ATTEMPTS,
+            ),
+            Decision::AwaitingAck { .. }
+        ));
+    }
+
+    #[test]
+    fn unacknowledged_hour_is_bounded_retryable_then_left_open() {
+        // Crash-between-wake-and-ack: the coordinator never answers. The hour
+        // must be retried a BOUNDED number of times and then left visibly
+        // un-delivered -- never closed, never retried forever.
+        let fixture = Fixture::new("bounded-retry");
+        let hour = "2026-08-07T01";
+        let base = 1_786_064_436;
+
+        assert_eq!(
+            execute(&fixture.args(hour, base, true)).unwrap().outcome,
+            "wake-accepted"
+        );
+        // Inside the ack window: no second wake.
+        let quiet = execute(&fixture.args(hour, base + 60, true)).unwrap();
+        assert_eq!(quiet.outcome, "awaiting-gchat-ack");
+        assert_eq!(fixture.deliveries().len(), 1, "must not re-wake inside the window");
+
+        // Past the window: re-wake, up to the bound.
+        let second = execute(&fixture.args(hour, base + DEFAULT_ACK_WAIT_SECS + 1, true)).unwrap();
+        assert_eq!(second.outcome, "wake-accepted");
+        assert_eq!(expect_valid(&fixture.state, hour).wake_attempts, 2);
+        let third =
+            execute(&fixture.args(hour, base + 2 * DEFAULT_ACK_WAIT_SECS + 2, true)).unwrap();
+        assert_eq!(third.outcome, "wake-accepted");
+        assert_eq!(expect_valid(&fixture.state, hour).wake_attempts, 3);
+        assert_eq!(fixture.deliveries().len(), 3);
+
+        // Bound reached: stop waking, and say the obligation is unmet.
+        let exhausted =
+            execute(&fixture.args(hour, base + 9 * DEFAULT_ACK_WAIT_SECS, true)).unwrap();
+        assert_eq!(exhausted.outcome, "gchat-ack-missing");
+        assert!(exhausted.detail.contains("delivered=no"));
+        assert_eq!(
+            fixture.deliveries().len(),
+            3,
+            "the bound must actually stop the waking"
+        );
+        // Still not delivered, and still not closed as a success.
+        let claim = expect_valid(&fixture.state, hour);
+        assert_eq!(claim.state, STATE_WAKE_ACCEPTED);
+        assert!(!claim.has_gchat_ack());
+    }
+
+    // ---- POSITIVE: a real API record closes the hour, exactly once ----
+
+    #[test]
+    fn ack_promotes_to_gchat_delivered_and_records_the_api_record() {
+        let fixture = Fixture::new("ack-positive");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+
+        let text = "## Hourly status\nowner-visible body\n";
+        let line = ack_ok(&fixture, hour, base + 470, text);
+        assert!(line.contains("ack-recorded"), "{line}");
+
+        let claim = expect_valid(&fixture.state, hour);
+        assert_eq!(claim.state, STATE_GCHAT_DELIVERED);
+        assert!(claim.has_gchat_ack());
+        assert_eq!(
+            claim.gchat_message_name.as_deref(),
+            Some("spaces/AAQAA6Irlwg/messages/QF7vBsq-DXc.QF7vBsq-DXc")
+        );
+        assert_eq!(claim.gchat_space.as_deref(), Some(SPACE));
+        assert_eq!(
+            claim.gchat_thread.as_deref(),
+            Some("spaces/AAQAA6Irlwg/threads/QF7vBsq-DXc")
+        );
+        // The digest is COMPUTED from the exact bytes, not copied from a caller.
+        assert_eq!(claim.gchat_text_sha256.as_deref(), Some(sha256_hex(text.as_bytes()).as_str()));
+        assert_eq!(claim.gchat_text_bytes, Some(text.len() as u64));
+        assert_eq!(claim.gchat_acked_at, Some(base + 470));
+        // The two stages are separately visible in the durable log.
+        let log = fs::read_to_string(fixture.state.join("invocations.log")).unwrap();
+        assert!(log.contains("tick start hour=2026-08-07T02"), "stage 1 heartbeat: {log}");
+        assert!(log.contains("ack hour=2026-08-07T02"), "stage 2 must be visible: {log}");
+        assert!(log.contains(&format!("text-sha256={}", sha256_hex(text.as_bytes()))));
+        assert!(log.contains("message-name=spaces/AAQAA6Irlwg/messages/"));
+    }
+
+    #[test]
+    fn same_hour_retrigger_dedupes_after_the_ack() {
+        let fixture = Fixture::new("ack-dedupe");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+        ack_ok(&fixture, hour, base + 10, "body");
+        let again = execute(&fixture.args(hour, base + 20, true)).unwrap();
+        assert_eq!(again.outcome, "duplicate-hour");
+        assert_eq!(fixture.deliveries().len(), 1, "no second wake after an ack");
+    }
+
+    // ---- NEGATIVE: partial or unbound acknowledgements are refused ----
+
+    #[test]
+    fn ack_refuses_an_incomplete_or_unbound_identity() {
+        let fixture = Fixture::new("ack-incomplete");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+        let good = ack_args(&fixture, hour, "body");
+
+        let cases: Vec<(&str, AckArgs)> = vec![
+            ("empty message name", AckArgs { message_name: String::new(), ..good.clone() }),
+            ("empty space", AckArgs { space: String::new(), ..good.clone() }),
+            ("empty thread", AckArgs { thread: String::new(), ..good.clone() }),
+            ("blank message name", AckArgs { message_name: "   ".into(), ..good.clone() }),
+            // Three well-shaped strings that do NOT name one conversation: the
+            // exact case a naive non-empty check would wave through.
+            ("message name in a different space", AckArgs {
+                message_name: "spaces/OTHER/messages/x".into(), ..good.clone() }),
+            ("thread in a different space", AckArgs {
+                thread: "spaces/OTHER/threads/x".into(), ..good.clone() }),
+            ("space is not spaces/<id>", AckArgs { space: "AAQAA6Irlwg".into(), ..good.clone() }),
+            ("message name has no id", AckArgs {
+                message_name: format!("{SPACE}/messages/"), ..good.clone() }),
+        ];
+        for (label, ack) in cases {
+            let err = apply_ack(&fixture.state, &ack, base + 10)
+                .expect_err(&format!("{label} must be refused"));
+            assert!(!err.is_empty(), "{label}");
+            let claim = expect_valid(&fixture.state, hour);
+            assert_eq!(claim.state, STATE_WAKE_ACCEPTED, "{label} must not mutate the claim");
+            assert!(!claim.has_gchat_ack(), "{label}");
+        }
+    }
+
+    #[test]
+    fn ack_refuses_a_digest_that_does_not_derive_from_the_text() {
+        let fixture = Fixture::new("ack-digest");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+
+        let mut ack = ack_args(&fixture, hour, "the real body");
+        ack.expect_sha256 = Some(sha256_hex(b"a different body"));
+        let err = apply_ack(&fixture.state, &ack, base + 10).unwrap_err();
+        assert!(err.contains("does not match"), "{err}");
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+
+        // Positive control: the matching digest is accepted, so the check is not inert.
+        ack.expect_sha256 = Some(sha256_hex(b"the real body"));
+        apply_ack(&fixture.state, &ack, base + 11).unwrap();
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_GCHAT_DELIVERED);
+    }
+
+    #[test]
+    fn ack_refuses_an_empty_text_and_an_hour_that_was_never_woken() {
+        let fixture = Fixture::new("ack-preconditions");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+
+        // Never woken: there is no claim to acknowledge.
+        let err = apply_ack(&fixture.state, &ack_args(&fixture, hour, "body"), base).unwrap_err();
+        assert!(err.contains("never woken") || err.contains("no claim"), "{err}");
+
+        execute(&fixture.args(hour, base, true)).unwrap();
+        let err = apply_ack(&fixture.state, &ack_args(&fixture, hour, ""), base + 5).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+    }
+
+    #[test]
+    fn ack_is_idempotent_for_one_message_and_refuses_a_second_one() {
+        let fixture = Fixture::new("ack-idempotent");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+
+        ack_ok(&fixture, hour, base + 10, "body");
+        let before = fs::read_to_string(claim_path(&fixture.state, hour)).unwrap();
+        // Same message replayed: a no-op, not an error and not a rewrite.
+        let again = ack_ok(&fixture, hour, base + 20, "body");
+        assert!(again.contains("ack-noop"), "{again}");
+        assert_eq!(fs::read_to_string(claim_path(&fixture.state, hour)).unwrap(), before);
+
+        // A DIFFERENT message name for the same hour is a double-delivery
+        // report. Refuse it rather than silently keeping the newer one.
+        let mut other = ack_args(&fixture, hour, "body");
+        other.message_name = format!("{SPACE}/messages/SECOND-SEND");
+        let err = apply_ack(&fixture.state, &other, base + 30).unwrap_err();
+        assert!(err.contains("already acknowledged"), "{err}");
+        assert_eq!(fs::read_to_string(claim_path(&fixture.state, hour)).unwrap(), before);
+    }
+
+    #[test]
+    fn a_gchat_delivered_claim_without_its_record_fails_closed() {
+        // Half-written ack: terminal state, no evidence. Never deliverable and
+        // never silently repaired -- same treatment as a corrupt claim.
+        let claim = Claim {
+            state: STATE_GCHAT_DELIVERED.to_string(),
+            gchat_message_name: Some(format!("{SPACE}/messages/x")),
+            ..Claim::new("2026-08-07T02", STATE_GCHAT_DELIVERED, 1_786_068_000)
+        };
+        let decision = decide(
+            &ClaimRead::Valid(claim),
+            1_786_068_000 + 60,
+            DEFAULT_STALE_PENDING_SECS,
+            DEFAULT_ACK_WAIT_SECS,
+            DEFAULT_MAX_WAKE_ATTEMPTS,
+        );
+        assert!(matches!(decision, Decision::CorruptClaim { .. }), "{decision:?}");
+        assert!(!decision.proceeds());
+    }
+
+    #[test]
+    fn legacy_delivered_claims_stay_closed_and_are_not_resent() {
+        // Pre-split hours are historical. Re-opening them would send a burst of
+        // stale statuses; migration is forward-only.
+        let decision = decide(
+            &ClaimRead::Valid(delivered_claim("2026-08-07T01", 1_786_064_436)),
+            1_786_064_436 + 7 * 86_400,
+            DEFAULT_STALE_PENDING_SECS,
+            DEFAULT_ACK_WAIT_SECS,
+            DEFAULT_MAX_WAKE_ATTEMPTS,
+        );
+        assert_eq!(decision, Decision::DuplicateHour);
+    }
+
 }
