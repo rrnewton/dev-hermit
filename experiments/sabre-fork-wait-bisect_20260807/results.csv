@@ -1,0 +1,9 @@
+commit,role,cell,guest_sha256_prefix,build_aid,trials,verdict,rc,signature,comparable,reason
+82a8e853,range-endpoint-good,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,none,1,GOOD,0,deterministic;no substantive differences,yes,
+1fadc037,range-endpoint-bad,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,none,1,BAD,1,child 0 exit mismatch,yes,
+c3472722c,last-good,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,36ee7e70a-2line,3,GOOD,0,deterministic;no substantive differences,yes,
+9c233ed0b,FIRST-BAD,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,36ee7e70a-2line,3,BAD,1,child 0 exit mismatch,yes,
+1bc63c230,band-probe,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,36ee7e70a-2line,1,BAD,124,timeout-300s,no,load artifact from concurrent build; retested at 600s bound
+1bc63c230,band-probe-retest,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,36ee7e70a-2line,1,BAD,1,child 0 exit mismatch,yes,0s wall; supersedes the rc=124 row above
+c3472722c,second-cell,c-programs/wait-on-child,n/a-separate-binary,36ee7e70a-2line,1,NOT-COMPARABLE,124,timeout-300s,no,side=GOOD-side dimension=timeout; a cell failing on the good side cannot discriminate
+ptrace-control,control,determinism-stress-c/fork-tree,0c880f36bfdd1952014c,none,1,GOOD,0,5815|5815 DETLOG messages compared,yes,establishes the divergence is SaBRe-specific

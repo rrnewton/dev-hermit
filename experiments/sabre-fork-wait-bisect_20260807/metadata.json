@@ -1,0 +1,73 @@
+{
+  "question": "Which commit in hermit 82a8e853..1fadc037 regressed SaBRe determinism on fork/wait cells?",
+  "answer_first_bad_commit": "9c233ed0bfd63fbce4a54ac486cece448d4988ab",
+  "last_good_commit": "c3472722c",
+  "adjacency_verified": "git rev-parse 9c233ed0b^ == c3472722c",
+  "range": {
+    "good_endpoint": "82a8e853357584a3a567fd80812e015572a607c7",
+    "bad_endpoint": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+    "commits_in_range": 309
+  },
+  "cell": "determinism-stress-c/fork-tree",
+  "guest": {
+    "source": "tests/e2e/determinism-stress/fork_tree.c",
+    "pinned_binary_sha256_prefix": "0c880f36bfdd1952014c",
+    "commits_touching_guest_in_range": 0,
+    "built_outside_tmp": true,
+    "compiler": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "command": "hermit run --backend sabre --strict --verify --no-virtualize-cpuid --max-timeslice=disabled --base-env minimal -e LC_ALL=C -e TZ=UTC -- <pinned fork_tree>",
+  "build": {
+    "invocation": "cargo build --release --features sabre --bin hermit",
+    "feature_note": "hermit-cli 'sabre = []' is a pure feature flag; no added Rust deps",
+    "measured_build_seconds": 64,
+    "bisect_aid": {
+      "commit": "36ee7e70a",
+      "lines_changed": 2,
+      "change": "config -> guest.config()",
+      "semantic_change": false,
+      "why": "21-commit band unbuildable on detcore/src/lib.rs:1484"
+    }
+  },
+  "unbuildable_band": {
+    "size": 21,
+    "tested_directly": 3,
+    "excluded_by_bracket": 18,
+    "dropped": 0
+  },
+  "control": {
+    "backend": "ptrace",
+    "verdict": "GOOD",
+    "detlog": "5815 | 5815 messages compared"
+  },
+  "not_comparable": [
+    {
+      "commit": "1bc63c230",
+      "dimension": "timeout",
+      "side": "n/a",
+      "rc": 124,
+      "resolution": "retested at 600s bound -> rc=1 in 0s wall; load artifact, reclassified BAD-DIVERGE"
+    },
+    {
+      "cell": "c-programs/wait-on-child",
+      "dimension": "timeout",
+      "side": "GOOD-side",
+      "rc": 124,
+      "resolution": "fails at c3472722c which is GOOD for fork-tree; cannot discriminate; not counted"
+    }
+  ],
+  "parity_percentage_stated": false,
+  "parity_percentage_omitted_because": "originating sweep is stripped-probe scored, misses 3 of 5 planted defects, and strict diverged on its own clean_ctrl; a percentage would rest on a nondeterministic side",
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316
+  },
+  "toolchain": {
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+  },
+  "worktree": "worktrees/cc/hermit",
+  "primary_untouched": true,
+  "reverie_pin_at_first_bad": "reverie.git?rev=d973a85b328610c14c41c39fa57495b9f77c3c90"
+}
