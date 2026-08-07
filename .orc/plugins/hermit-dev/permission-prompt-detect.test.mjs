@@ -237,10 +237,42 @@ const CAPTURED_PROSE_ABOUT_PROMPTS = `
   - a numbered menu → key=1
 ✻ Baked for 3s
 `;
+// The live capture carries a spinner-duration counter, so the ACTIVITY VETO
+// catches it first -- which is the intended ordering, not a weaker result. The
+// owner's rule: a pane showing live activity is WORKING whatever strings it
+// contains, and that must win over any prompt reading.
 check(
-  "prose ABOUT (y/n) in a working pane is not a prompt (live regression)",
+  "live working pane full of prompt fixtures -> vetoed as working",
   decide({ pane: CAPTURED_PROSE_ABOUT_PROMPTS, status: "unknown", priorSends: 0 }),
+  { send: false, reason: "working" },
+);
+// Same prose with the activity indicator REMOVED, so this isolates the evidence
+// rule rather than re-testing the veto. Both layers must refuse independently:
+// if the veto ever regresses, this still catches the prose match.
+const PROSE_ABOUT_PROMPTS_IDLE = `
+● The predicate maps each form to a key:
+  - (y/n) → key=y · [y/N] → key=y
+`;
+check(
+  "prose ABOUT (y/n), no activity -> refused on evidence, not on the veto",
+  decide({ pane: PROSE_ABOUT_PROMPTS_IDLE, status: "unknown", priorSends: 0 }),
   { send: false, reason: "no-prompt-evidence" },
+);
+// THE OWNER'S CASE, stated directly: yn=true AND working=true simultaneously.
+check(
+  "a REAL (y/n) in an actively working pane is still vetoed",
+  decide({ pane: "✻ Churned for 3s\nAllow this command to run? (y/n)\n", status: "unknown", priorSends: 0 }),
+  { send: false, reason: "working" },
+);
+check(
+  "the same real prompt with NO activity still fires (veto is not a blanket refusal)",
+  decide({ pane: "Allow this command to run? (y/n)\n", status: "unknown", priorSends: 0 }),
+  { send: true, key: "y", evidence: "question", status: "unknown" },
+);
+check(
+  "spinner-duration alone is activity (the shape the veto was missing)",
+  looksWorking("✻ Churned for 3s"),
+  true,
 );
 check(
   "a question form mid-line with content after it is prose, not a prompt",
@@ -265,8 +297,8 @@ check(
   "question",
 );
 
-const negatives = 9;
-const positives = 6;
+const negatives = 12;
+const positives = 7;
 console.log(
   `permission-prompt-detect: ${pass} passed, ${fail} failed ` +
     `(${negatives} negative-direction fixtures, ${positives} positive-direction, ` +

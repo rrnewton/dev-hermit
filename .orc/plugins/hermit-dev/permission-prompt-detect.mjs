@@ -59,8 +59,32 @@ const FOOTER_PATTERNS = [
 
 /// Evidence that the agent is RUNNING right now. If any of these is present the
 /// pane is not idle, whatever else it says, and must not be sent input.
+/// ACTIVITY VETOES THE PROMPT CLASSIFICATION, and it is checked FIRST.
+///
+/// A pane showing a live duration/token counter or an in-flight tool call is
+/// WORKING, whatever strings it contains. This ordering is what makes the
+/// detector safe for the one population most likely to trip it: agents working
+/// ON prompt handling, whose legitimate output contains prompt fixtures as test
+/// data. Such a pane can be simultaneously `yn=true` and `working=true`; working
+/// must win.
+///
+/// The asymmetry is deliberate. A missed prompt costs a delay. A stray `y` typed
+/// into a working agent corrupts its turn -- observed live, an agent answered
+/// "Holding." twice to keystrokes it never needed. So this list is GENEROUS: it
+/// over-vetoes on purpose.
+///
+/// Shapes below are DERIVED from 29 live panes 2026-08-07, not guessed:
+///   esc to interrupt            10   in-flight tool call
+///   (2m 3s · ↓ 1.2k tokens)      7   duration + token counter
+///   ✻ Churned for 3s            25   spinner + duration, ACROSS ALL GERUNDS
+///   (5s) / (2m 3s)               4   bare parenthesised duration
+/// The spinner form was the single most common indicator on the fleet and was
+/// entirely UNMATCHED, which is why the veto failed open on a working pane.
+/// Its gerund is randomised (Churned/Worked/Baked/Crunched/Brewed/Cooked...), so
+/// match the STRUCTURE, never the word list.
 const WORKING_PATTERNS = [
   /\(\s*\d+\s*[sm]\b/i, // "(44s", "(2m 3s"
+  /\bfor\s+\d+\s*[sm]\b/i, // "✻ Churned for 3s" — spinner + duration
   /esc to interrupt/i,
   /↓\s*[\d.]+k?\s*tokens/i,
   /\btokens\b/i,
