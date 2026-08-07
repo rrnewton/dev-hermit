@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Owner-authorized exact-head landing authority: local OR hosted, with any
-# genuine red blocking. Labels and copied statuses are never inputs.
+# Owner-authorized exact-head landing authority with named coverage sets.
+# Hermit's local full run and hosted portable run cover complementary execution
+# dimensions, so neither may stand in for the other. Labels and copied statuses
+# are never inputs.
 set -uo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -44,6 +46,11 @@ if [[ $local_rc -eq 0 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
     .repo == $repo and .sha == $sha and .verdict == "VALIDATED"
     and .exit_code == 0 and (.qualifying_count | type == "number" and . > 0)
     and (.newest_qualifying.sha == $sha)
+    and (.newest_qualifying.gates | type == "array")
+    and any(.newest_qualifying.gates[];
+        .name == "portable CI DAG lane" and .result == "pass")
+    and any(.newest_qualifying.gates[];
+        .name == "privileged CI DAG lane" and .result == "pass")
 ' "$local_report" >/dev/null 2>&1; then
     local_state=green
 elif [[ $local_rc -eq 3 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
@@ -85,23 +92,58 @@ elif [[ $hosted_rc -eq 3 ]] && jq -e --arg repo "$repo" --arg sha "$sha" '
     hosted_state=red
 fi
 
+local_coverage=none
+hosted_coverage=none
+required_coverage=unsupported
+case "$repo" in
+    rrnewton/hermit)
+        required_coverage=local:portable+privileged,hosted:portable
+        [[ $local_state == green ]] && local_coverage=portable+privileged
+        if [[ $hosted_state == green ]] && jq -e '
+            .policy_schema_version == 3
+            and .required_positive_count == 1
+            and (.jobs | length == 1)
+            and .jobs[0].job_name == "Regular tests (GitHub-managed portable)"
+        ' "$hosted_report" >/dev/null 2>&1; then
+            hosted_coverage=portable
+        else
+            [[ $hosted_state == green ]] && hosted_state=no_result
+        fi
+        ;;
+    rrnewton/reverie)
+        required_coverage=hosted:regular+host-dependent
+        if [[ $hosted_state == green ]] && jq -e '
+            .policy_schema_version == 2
+            and .required_positive_count == 2
+            and ([.jobs[].job_name] | sort) ==
+                (["Host-dependent tests (self-hosted)", "Regular tests (GitHub-hosted)"] | sort)
+        ' "$hosted_report" >/dev/null 2>&1; then
+            hosted_coverage=regular+host-dependent
+        else
+            [[ $hosted_state == green ]] && hosted_state=no_result
+        fi
+        ;;
+esac
+
 if [[ $local_state == red || $hosted_state == red ]]; then
-    printf 'AUTHORITY=refused LOCAL=%s HOSTED=%s SHA=%s\n' \
-        "$local_state" "$hosted_state" "$sha"
+    printf 'AUTHORITY=refused LOCAL=%s HOSTED=%s LOCAL_COVERAGE=%s HOSTED_COVERAGE=%s REQUIRED_COVERAGE=%s SHA=%s\n' \
+        "$local_state" "$hosted_state" "$local_coverage" "$hosted_coverage" \
+        "$required_coverage" "$sha"
     exit 3
 fi
-if [[ $local_state == green || $hosted_state == green ]]; then
-    if [[ $local_state == green && $hosted_state == green ]]; then
-        authority=local+hosted
-    elif [[ $local_state == green ]]; then
-        authority=local
-    else
-        authority=hosted
-    fi
-    printf 'AUTHORITY=%s LOCAL=%s HOSTED=%s SHA=%s\n' \
-        "$authority" "$local_state" "$hosted_state" "$sha"
+if [[ $repo == rrnewton/hermit && $local_state == green && $hosted_state == green ]]; then
+    printf 'AUTHORITY=local+hosted LOCAL=%s HOSTED=%s LOCAL_COVERAGE=%s HOSTED_COVERAGE=%s REQUIRED_COVERAGE=%s SHA=%s\n' \
+        "$local_state" "$hosted_state" "$local_coverage" "$hosted_coverage" \
+        "$required_coverage" "$sha"
     exit 0
 fi
-printf 'AUTHORITY=no_result LOCAL=%s HOSTED=%s SHA=%s\n' \
-    "$local_state" "$hosted_state" "$sha"
+if [[ $repo == rrnewton/reverie && $hosted_state == green ]]; then
+    printf 'AUTHORITY=hosted LOCAL=%s HOSTED=%s LOCAL_COVERAGE=%s HOSTED_COVERAGE=%s REQUIRED_COVERAGE=%s SHA=%s\n' \
+        "$local_state" "$hosted_state" "$local_coverage" "$hosted_coverage" \
+        "$required_coverage" "$sha"
+    exit 0
+fi
+printf 'AUTHORITY=no_result LOCAL=%s HOSTED=%s LOCAL_COVERAGE=%s HOSTED_COVERAGE=%s REQUIRED_COVERAGE=%s SHA=%s\n' \
+    "$local_state" "$hosted_state" "$local_coverage" "$hosted_coverage" \
+    "$required_coverage" "$sha"
 exit 4

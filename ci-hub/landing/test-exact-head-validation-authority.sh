@@ -28,7 +28,7 @@ observed_sha=${STALE_SHA:-$sha}
 if [[ $command == validate-status ]]; then
     case ${LOCAL_STATE:-no_result} in
         green)
-            printf '{"repo":"%s","sha":"%s","verdict":"VALIDATED","exit_code":0,"qualifying_count":1,"newest_qualifying":{"sha":"%s"}}\n' "$repo" "$observed_sha" "$observed_sha"
+            printf '{"repo":"%s","sha":"%s","verdict":"VALIDATED","exit_code":0,"qualifying_count":1,"newest_qualifying":{"sha":"%s","gates":[{"name":"portable CI DAG lane","result":"pass"},{"name":"privileged CI DAG lane","result":"pass"}]}}\n' "$repo" "$observed_sha" "$observed_sha"
             exit 0 ;;
         red)
             printf '{"repo":"%s","sha":"%s","verdict":"FAILED","exit_code":3,"qualifying_count":0,"newest_qualifying":null}\n' "$repo" "$observed_sha"
@@ -40,7 +40,7 @@ if [[ $command == validate-status ]]; then
 fi
 case ${HOSTED_STATE:-no_result} in
     green)
-        printf '{"authority":"github-actions-exact-head-jobs","repo":"%s","sha":"%s","state":"green","required_positive_count":1,"positive_count":1,"jobs":[{"state":"green","run_id":1,"job_id":2}]}\n' "$repo" "$observed_sha"
+        printf '{"authority":"github-actions-exact-head-jobs","repo":"%s","sha":"%s","policy_schema_version":3,"state":"green","required_positive_count":1,"positive_count":1,"jobs":[{"state":"green","run_id":1,"job_id":2,"job_name":"Regular tests (GitHub-managed portable)"}]}\n' "$repo" "$observed_sha"
         exit 0 ;;
     red)
         printf '{"authority":"github-actions-exact-head-jobs","repo":"%s","sha":"%s","state":"red","required_positive_count":1,"positive_count":0,"jobs":[{"state":"red","run_id":1,"job_id":2}]}\n' "$repo" "$observed_sha"
@@ -70,10 +70,21 @@ run_case() {
             "$label" "$expected" "$rc" "$output" >&2
         exit 1
     fi
+    last_output=$output
 }
 
-run_case 0 "local exact-head positive" env LOCAL_STATE=green HOSTED_STATE=no_result
-run_case 0 "hosted exact-head positive" env LOCAL_STATE=no_result HOSTED_STATE=green
+run_case 4 "local-only coverage is incomplete" env LOCAL_STATE=green HOSTED_STATE=no_result
+run_case 4 "weaker hosted-only coverage is incomplete" env LOCAL_STATE=no_result HOSTED_STATE=green
+run_case 0 "complementary local and hosted coverage" env LOCAL_STATE=green HOSTED_STATE=green
+[[ $last_output == *"LOCAL_COVERAGE=portable+privileged"* ]] || {
+    echo "FAIL: successful authority did not name local coverage" >&2; exit 1;
+}
+[[ $last_output == *"HOSTED_COVERAGE=portable"* ]] || {
+    echo "FAIL: successful authority did not name hosted coverage" >&2; exit 1;
+}
+[[ $last_output == *"REQUIRED_COVERAGE=local:portable+privileged,hosted:portable"* ]] || {
+    echo "FAIL: successful authority did not name the required coverage set" >&2; exit 1;
+}
 run_case 3 "local genuine red blocks hosted green" env LOCAL_STATE=red HOSTED_STATE=green
 run_case 3 "hosted genuine red blocks local green" env LOCAL_STATE=green HOSTED_STATE=red
 run_case 4 "both authorities no-result" env LOCAL_STATE=no_result HOSTED_STATE=no_result
@@ -87,9 +98,11 @@ env CI_HUB_BIN="$tmp/ci-hub" VERIFY_RECEIPT_BIN="$tmp/verify-receipt" \
     "$authority" --repo rrnewton/hermit --sha "$sha" --comments "$comments" \
     >/dev/null || rc=$?
 [[ $rc -eq 4 ]] || { echo "FAIL: unbound local receipt passed final boundary" >&2; exit 1; }
+rc=0
 env CI_HUB_BIN="$tmp/ci-hub" VERIFY_RECEIPT_BIN="$tmp/verify-receipt" \
     LOCAL_STATE=green HOSTED_STATE=green RECEIPT_RC=1 \
     "$authority" --repo rrnewton/hermit --sha "$sha" --comments "$comments" \
-    >/dev/null
+    >/dev/null || rc=$?
+[[ $rc -eq 4 ]] || { echo "FAIL: hosted-only coverage passed after local receipt refusal" >&2; exit 1; }
 
-echo "PASS: local/hosted OR positives=3; red/partial/no-result/stale/unbound negatives=7"
+echo "PASS: complementary named coverage positive=1; weaker/single/red/partial/no-result/stale/unbound negatives=9"

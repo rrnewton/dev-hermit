@@ -207,6 +207,14 @@ _BUILD_SCRIPT_FAILURE_MARKERS = (
     "failed to run custom build command for",  # cargo build-script failure line
 )
 _BUILD_SCRIPT_PANIC_RE = re.compile(r"panicked at [^\n]*build\.rs")
+# Build helpers can fail after the DAG node has started but before the named
+# product test runs.  The DAG summary still renders these as ``N failed``, which
+# is test-looking vocabulary; the concrete operation is the binding.  These are
+# the two verbatim DynamoRIO failures carried by obligation 3801a7df.
+_BUILD_TOOL_FAILURE_MARKERS = (
+    "failed to build and install dynamorio",
+    "failed to configure dynamorio",
+)
 # An inner-MemoryMax OOM inside a boxed DAG node — the safe-ci-dag-runner reaped a
 # step because it crossed its cgroup memory.max — is an ENVIRONMENTAL cap breach,
 # not a product test verdict, even when its victim happens to be a test process and
@@ -326,6 +334,12 @@ def _is_build_phase_failure(output: str) -> bool:
     return _BUILD_SCRIPT_PANIC_RE.search(lowered) is not None
 
 
+def _is_build_tool_failure(output: str) -> bool:
+    """Whether a named external build/configure step failed before tests ran."""
+    lowered = output.lower()
+    return any(marker in lowered for marker in _BUILD_TOOL_FAILURE_MARKERS)
+
+
 def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
     """Map a local validate (exit_code, output) to (state, human reason).
 
@@ -362,6 +376,11 @@ def _classify_local(exit_code: int, output: str = "") -> tuple[str, str]:
         # through the DAG runner's "N failed" / "panicked at" summary is a
         # build-layer flake, NOT a failing test verdict: re-dispatch, never revert.
         return "no_result", "non-test-failure:build-script"
+    if _is_build_tool_failure(output):
+        # The runner's aggregate ``N failed`` counts DAG nodes, not product
+        # tests.  The named configure/install operation proves this failure is
+        # in the build layer, so remediation must repair/re-dispatch the box.
+        return "no_result", "non-test-failure:build-tool"
     if _has_test_failures(output):
         return "red", "test-failure"
     # Nonzero, but no product test rendered a failing verdict: the failure came
@@ -575,6 +594,40 @@ def _local_receipt_problem(
     return None
 
 
+def _local_failed_receipt_problem(
+    report: object,
+    *,
+    repo: str,
+    sha: str,
+    returncode: int,
+) -> str | None:
+    """Validate the canonical authority's distinct known-failing answer."""
+    if returncode != 3:
+        return f"canonical verifier did not exit 3 for FAILED (exit={returncode})"
+    if repo != DEFAULT_REPO:
+        return (
+            f"canonical local receipt authority is bound to {DEFAULT_REPO}, not {repo}"
+        )
+    if not isinstance(report, Mapping):
+        return "canonical failed report is not an object"
+    if type(report.get("schema_version")) is not int or report["schema_version"] != 1:
+        return "canonical failed report schema is unsupported"
+    if report.get("repo") != repo or report.get("sha") != sha:
+        return "canonical failed report is not bound to the repository and SHA"
+    if report.get("verdict") != "FAILED" or report.get("exit_code") != 3:
+        return "canonical verifier did not return FAILED/3"
+    if report.get("qualifying_count") != 0 or report.get("newest_qualifying") is not None:
+        return "canonical failed report also claims a qualifying receipt"
+    if report.get("qualifying_receipts") != []:
+        return "canonical failed report has a nonempty qualifying receipt set"
+    failed_count = report.get("failed_record_count")
+    if type(failed_count) is not int or failed_count <= 0:
+        return "canonical failed report has no counted failing receipt"
+    if not isinstance(report.get("ledger"), str) or not report["ledger"]:
+        return "canonical failed report has no ledger provenance"
+    return None
+
+
 def _persisted_local_receipt_problem(
     evidence: object, *, repo: str, sha: str
 ) -> str | None:
@@ -606,6 +659,39 @@ def _persisted_local_receipt_problem(
     canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
     if evidence.get("report_sha256") != hashlib.sha256(canonical).hexdigest():
         return "persisted local receipt report hash does not match its cached report"
+    return None
+
+
+def _persisted_local_failed_receipt_problem(
+    evidence: object, *, repo: str, sha: str
+) -> str | None:
+    if not isinstance(evidence, Mapping) or evidence.get("state") != "failed":
+        return "persisted local receipt is not canonical failed evidence"
+    command = evidence.get("command")
+    expected_command = [
+        str(LOCAL_RECEIPT_AUTHORITY),
+        "validate-status",
+        "--sha",
+        sha,
+        "--repo",
+        repo,
+        "--json",
+    ]
+    if command != expected_command or evidence.get("repo") != repo:
+        return "persisted failed receipt is not bound to the requested repo and SHA"
+    report = evidence.get("report")
+    returncode = evidence.get("returncode")
+    if type(returncode) is not int:
+        return "persisted failed receipt has no integer verifier return code"
+    report_problem = _local_failed_receipt_problem(
+        report, repo=repo, sha=sha, returncode=returncode
+    )
+    if report_problem is not None:
+        return report_problem
+    assert isinstance(report, Mapping)
+    canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+    if evidence.get("report_sha256") != hashlib.sha256(canonical).hexdigest():
+        return "persisted failed receipt report hash does not match its cached report"
     return None
 
 
@@ -728,13 +814,25 @@ def verify_local_receipt(
     problem = _local_receipt_problem(
         parsed, repo=repo, sha=sha, returncode=result.returncode
     )
+    failed_problem = _local_failed_receipt_problem(
+        parsed, repo=repo, sha=sha, returncode=result.returncode
+    )
     canonical = (
         json.dumps(parsed, sort_keys=True, separators=(",", ":")).encode()
         if isinstance(parsed, Mapping)
         else None
     )
+    if problem is None:
+        evidence_state = "verified"
+        evidence_reason = None
+    elif failed_problem is None:
+        evidence_state = "failed"
+        evidence_reason = "canonical verifier returned FAILED/3"
+    else:
+        evidence_state = "refused"
+        evidence_reason = problem
     evidence = {
-        "state": "verified" if problem is None else "refused",
+        "state": evidence_state,
         "authority": "ci-hub-validate-status",
         "repo": repo,
         "command": command,
@@ -742,7 +840,7 @@ def verify_local_receipt(
         "returncode": result.returncode,
         "report": dict(parsed) if isinstance(parsed, Mapping) else None,
         "report_sha256": hashlib.sha256(canonical).hexdigest() if canonical else None,
-        "reason": problem,
+        "reason": evidence_reason,
     }
     return problem is None, evidence
 
@@ -820,8 +918,61 @@ def bind_local_receipt_authority(
             store_path,
         )
     local = record.get("local")
-    if not isinstance(local, Mapping) or local.get("state") != "green":
+    if not isinstance(local, Mapping) or local.get("state") not in {"green", "red"}:
         return record
+    if local.get("state") == "red":
+        # Pre-binding legacy rows may have no receipt observation at all.  This
+        # migration handles the concrete bug class here: a row that DID call the
+        # authority and persisted its refused/failed answer.
+        if not isinstance(local.get("receipt_verification"), Mapping):
+            return record
+        # A raw validate exit and test-looking DAG summary are not a durable red.
+        # Re-dereference the canonical authority: only its counted FAILED/3
+        # answer may preserve red.  Every refusal/error is a no-result hole.
+        _accepted, current = _dereference_current_local_receipt(repo, sha)
+        if _persisted_local_failed_receipt_problem(current, repo=repo, sha=sha) is None:
+            if local.get("receipt_verification") == current:
+                return record
+            return obligations.transition(
+                obligation_id,
+                "local-failure-confirmed",
+                {
+                    "local": {
+                        "state": "red",
+                        "receipt_verification": current,
+                        "classification_reason": "canonical-receipt-failed",
+                    }
+                },
+                store_path,
+            )
+        if _persisted_local_receipt_problem(current, repo=repo, sha=sha) is None:
+            return obligations.transition(
+                obligation_id,
+                "local-failure-superseded",
+                {
+                    "local": {
+                        "state": "green",
+                        "receipt_verification": current,
+                        "classification_reason": "canonical-receipt-validated",
+                    }
+                },
+                store_path,
+            )
+        return obligations.transition(
+            obligation_id,
+            "local-receipt-refused",
+            {
+                "local": {
+                    "state": "no_result",
+                    "receipt_verification": current,
+                    "classification_reason": (
+                        "canonical-receipt-refused:"
+                        f"{current.get('reason') or 'unknown reason'}"
+                    ),
+                }
+            },
+            store_path,
+        )
     matches, current, comparison_problem = _compare_persisted_local_receipt(
         local.get("receipt_verification"), repo=repo, sha=sha
     )

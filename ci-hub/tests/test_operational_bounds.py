@@ -714,8 +714,11 @@ class OperationalBoundsTest(unittest.TestCase):
             text=True,
             timeout=WALL_SECONDS,
         )
-        self.assertIn("local/hosted OR positives=3", result.stdout)
-        self.assertIn("red/partial/no-result/stale/unbound negatives=7", result.stdout)
+        self.assertIn("complementary named coverage positive=1", result.stdout)
+        self.assertIn(
+            "weaker/single/red/partial/no-result/stale/unbound negatives=9",
+            result.stdout,
+        )
 
     def test_skill_denylist_guards_against_local_only_landing_claims(self) -> None:
         denylist = (

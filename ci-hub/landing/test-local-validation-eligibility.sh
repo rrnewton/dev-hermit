@@ -2,7 +2,7 @@
 # INERT both-sided bracket of the landing eligibility predicate.
 #
 # `local-validation-eligibility.sh` exposes the local-receipt predicate used by
-# the exact-head local-or-hosted landing authority. The GitHub
+# the local half of the complementary exact-head coverage authority. The GitHub
 # `locally-validated` label is a CACHE of that result; the ledger is the truth
 # (#231/#243). This test exercises the local predicate DIRECTLY against synthetic
 # ledger fixtures in a temp dir, then audits the production combiner and lander:
@@ -251,7 +251,7 @@ fi
 # 2. The lander refuses on each non-zero code rather than only on rc 3/4.
 for pat in \
   'exact-head authority reported a genuine red' \
-  'neither exact-head authority produced green' \
+  'required exact-head coverage set is incomplete' \
   'could not evaluate exact-head validation authority' \
   'has no accepted exact-head validation authority' \
   'exact-head validation authority REFUSED'; do
@@ -329,4 +329,4 @@ if [ "$fail" -ne 0 ] || [ "$audit_fail" -ne 0 ] ||
   echo "FAIL: local-validation eligibility bracket" >&2
   exit 1
 fi
-echo "PASS: local eligibility refuses every unbacked/stale/tampered/failing head and still admits a ledger-backed one; lander uses the exact-head OR authority; no merge path outside land-pr.sh"
+echo "PASS: local eligibility refuses every unbacked/stale/tampered/failing head and still admits a ledger-backed one; lander requires complementary named exact-head coverage; no merge path outside land-pr.sh"

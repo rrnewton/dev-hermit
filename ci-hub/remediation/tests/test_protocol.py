@@ -168,6 +168,23 @@ def counted_receipt_report(sha: str = SHA) -> dict:
     return report
 
 
+def failed_receipt_report(sha: str = SHA) -> dict:
+    return {
+        "schema_version": 1,
+        "repo": "rrnewton/hermit",
+        "sha": sha,
+        "verdict": "FAILED",
+        "exit_code": 3,
+        "qualifying_count": 0,
+        "disqualified_count": 1,
+        "failed_record_count": 1,
+        "withheld_nonpass_record_count": 0,
+        "newest_qualifying": None,
+        "qualifying_receipts": [],
+        "ledger": "/durable/validate-run-ledger.jsonl",
+    }
+
+
 def ledger_receipt(sha: str = SHA) -> dict:
     return {
         "schema_version": 4,
@@ -219,6 +236,30 @@ def verified_local_receipt(sha: str = SHA) -> dict:
         "report": report,
         "report_sha256": hashlib.sha256(canonical).hexdigest(),
         "reason": None,
+    }
+
+
+def failed_local_receipt(sha: str = SHA) -> dict:
+    report = failed_receipt_report(sha)
+    canonical = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "state": "failed",
+        "authority": "ci-hub-validate-status",
+        "repo": "rrnewton/hermit",
+        "command": [
+            str(protocol.LOCAL_RECEIPT_AUTHORITY),
+            "validate-status",
+            "--sha",
+            sha,
+            "--repo",
+            "rrnewton/hermit",
+            "--json",
+        ],
+        "checked_at": "2026-08-05T00:11:00Z",
+        "returncode": 3,
+        "report": report,
+        "report_sha256": hashlib.sha256(canonical).hexdigest(),
+        "reason": "canonical verifier returned FAILED/3",
     }
 
 
@@ -2972,6 +3013,17 @@ class ProtocolTest(unittest.TestCase):
             "sha256",
         )
 
+        failed = failed_receipt_report()
+        with mock.patch.object(
+            protocol,
+            "_run",
+            return_value=subprocess.CompletedProcess([], 3, json.dumps(failed), ""),
+        ):
+            accepted, evidence = protocol.verify_local_receipt("rrnewton/hermit", SHA)
+        self.assertFalse(accepted)
+        self.assertEqual(evidence["state"], "failed")
+        self.assertEqual(evidence["report"]["failed_record_count"], 1)
+
         negatives = {
             "bare-rc0": "",
             "malformed": "{not-json",
@@ -3127,6 +3179,63 @@ class ProtocolTest(unittest.TestCase):
         record = protocol.evaluate_obligation("test-obligation", store_path=self.store)
         self.assertEqual(record["local"]["state"], "no_result")
         self.assertEqual(record["overall_state"], "open")
+
+    def test_refused_receipt_downgrades_raw_red_without_remediation(self) -> None:
+        self.create()
+        refused = {
+            "state": "refused",
+            "authority": "ci-hub-validate-status",
+            "repo": "rrnewton/hermit",
+            "reason": "canonical verifier exited 4",
+        }
+        self.transition(
+            {
+                "local": {
+                    "state": "red",
+                    "exit_code": 1,
+                    "classification_reason": "test-failure",
+                    "receipt_verification": refused,
+                    "redispatch_count": protocol.DEFAULT_LOCAL_REDISPATCH_LIMIT,
+                },
+                "github": {"state": "no_result"},
+            }
+        )
+        self.current_local_receipt.side_effect = None
+        self.current_local_receipt.return_value = (False, refused)
+        with mock.patch.object(protocol, "trigger_remediation") as actuator:
+            record = protocol.evaluate_obligation(
+                "test-obligation", store_path=self.store, main_sha=SHA
+            )
+        actuator.assert_not_called()
+        self.assertEqual(record["local"]["state"], "no_result")
+        self.assertEqual(record["overall_state"], "open")
+        self.assertTrue(
+            record["local"]["classification_reason"].startswith(
+                "canonical-receipt-refused:"
+            )
+        )
+
+    def test_canonical_failed_receipt_is_the_only_local_red_authority(self) -> None:
+        self.create()
+        failed = failed_local_receipt()
+        self.transition(
+            {
+                "local": {
+                    "state": "red",
+                    "exit_code": 1,
+                    "classification_reason": "test-failure",
+                    "receipt_verification": failed,
+                },
+                "github": {"state": "running"},
+            }
+        )
+        self.current_local_receipt.side_effect = None
+        self.current_local_receipt.return_value = (False, failed)
+        record = protocol.bind_local_receipt_authority(
+            "test-obligation", self.store
+        )
+        self.assertEqual(record["local"]["state"], "red")
+        self.assertEqual(record["local"]["receipt_verification"]["state"], "failed")
 
     def test_local_run_persists_tool_cost_payload(self) -> None:
         self.create()
@@ -3352,6 +3461,24 @@ class EnvironmentalLocalClassificationTest(unittest.TestCase):
         state, reason = protocol._classify_local(1, output)
         self.assertEqual(state, "no_result")
         self.assertEqual(reason, "non-test-failure:cold-build-flake")
+
+    def test_dynamorio_build_summary_is_build_no_result_not_test_failure(self) -> None:
+        # Exact 3801a7df shape: the DAG aggregate says ``1 failed``, but the
+        # first concrete operation is DynamoRIO configure/install, before the
+        # named product test.  The old count regex mislabeled this test-failure.
+        for operation in (
+            "failed to build and install DynamoRIO: exit status: 2",
+            "failed to configure DynamoRIO: exit status: 1",
+        ):
+            with self.subTest(operation=operation):
+                output = (
+                    "❌ portable CI DAG lane (0 passed, 1 failed, exit 1: "
+                    f"[doc.rustdoc] {operation})\n"
+                    "❌ Validation summary [full] (4 passed, 1 failed)\n"
+                )
+                state, reason = protocol._classify_local(1, output)
+                self.assertEqual(state, "no_result")
+                self.assertEqual(reason, "non-test-failure:build-tool")
 
     def test_build_script_panic_dag_summary_is_no_result_not_red(self) -> None:
         # REAL incident log (obligation 20260804-025419-0f891e43), planted verbatim:

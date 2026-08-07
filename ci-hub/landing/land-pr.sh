@@ -196,17 +196,18 @@ abandon(){
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
-# 1b. Owner-authorized exact-head OR gate. A counted local receipt and the
-# registered hosted job set are interchangeable positive authorities; a
-# genuine red from either blocks. Missing/partial/stale evidence is NO_RESULT,
-# never a green. The same predicate is checked again after a SHA-changing rebase.
+# 1b. Owner-authorized exact-head coverage gate. Hermit's counted local full
+# receipt binds portable+privileged coverage; its registered hosted job binds
+# hosted-portable coverage. Both complementary sets are required, and a genuine
+# red from either blocks. Missing/partial/stale evidence is NO_RESULT, never a
+# green. The same predicate is checked again after a SHA-changing rebase.
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
 VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$ORIG" 2>&1); VRC=$?
 say "exact-head validation(head=$ORIG) rc=$VRC: $VS"
 case "$VRC" in
   0) say "landing eligibility: exact-head authority green for $ORIG" ;;
   3) abandon "exact-head authority reported a genuine red for PR head $ORIG" 4 ;;
-  4) abandon "neither exact-head authority produced green for PR head $ORIG" 4 ;;
+  4) abandon "required exact-head coverage set is incomplete for PR head $ORIG" 4 ;;
   *) abandon "could not evaluate exact-head validation authority (rc=$VRC)" 4 ;;
 esac
 
@@ -230,9 +231,11 @@ esac
 # re-derives the exact-head authority at the NEW sha, and every exact-head green
 # earned at the old sha is orphaned -- a rebase can only ever downgrade an
 # already-authorized head to NO_RESULT. Measured 2026-08-07 on #1705/#1711/#1678:
-# all three held a qualifying `AUTHORITY=hosted` green (~30 min of hosted CI
-# each) that an unconditional rebase would have voided the moment another team
-# advanced main. See also rrnewton/hermit#1812, where an unconditional
+# all three held what the former OR rule called a qualifying
+# `AUTHORITY=hosted` green (~30 min of hosted CI each) that an unconditional
+# rebase would have voided the moment another team advanced main. Hosted-only is
+# no longer sufficient under the named coverage rule. See also
+# rrnewton/hermit#1812, where an unconditional
 # rebase-and-force-push in the union driver amended main's tip onto two PR
 # branches and landed #1188/#1209 as semantic no-ops.
 #
@@ -275,8 +278,8 @@ else
   say "pushed head=$HEAD"
 fi
 
-# 4. The pushed exact head needs a fresh positive from either registered
-# authority. A rebase that changed the SHA cannot inherit the old authorization.
+# 4. The pushed exact head needs the complete named local+hosted coverage set.
+# A rebase that changed the SHA cannot inherit the old authorization.
 # Only the ledger-guarded applier may materialize the optional local cache label.
 #
 # 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
@@ -373,9 +376,10 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. A
-# local positive now additionally dereferences its immutable receipt comment;
-# a hosted positive remains independently sufficient. Any genuine red blocks.
+# 5b. Re-evaluate the named exact-head coverage policy at the final mutation
+# boundary. The local positive now additionally dereferences its immutable
+# receipt comment; hosted portable remains complementary, not independently
+# sufficient. Any genuine red blocks.
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \
