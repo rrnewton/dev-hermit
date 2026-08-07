@@ -3,7 +3,7 @@
 **Published:** 2026-08-07T06:24:49Z
 **Host:** `devbig014.atn7.facebook.com`, kernel
 `6.18.39-0_fbk0_hardened_0_ga43d5727b443`
-**Publication main:** `rrnewton/dev-hermit`
+**Measured main:** `rrnewton/dev-hermit`
 `614644bc829adb22a365535357abaaed5405ab0d`
 **Last relevant tier/evidence change:**
 `f1e08b25ce732c8464140531008fbc361b00791d`
