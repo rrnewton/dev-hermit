@@ -140,7 +140,12 @@ def pile(db: Path) -> list[dict]:
     rows = con.execute(
         """select t.local_id, coalesce(group_concat(n.content,' ~~ '),''), t.title
            from tasks t left join task_notes n on n.task_id=t.local_id
-           where t.status='IN_PROGRESS' and t.tags like '%"implemented"%'
+           where t.tags like '%"implemented"%'
+           -- Close-on-implemented lifecycle: implemented tasks are CLOSED
+           -- immediately, so filtering on IN_PROGRESS here selected ~nothing
+           -- and silently made this audit inert. The `implemented` TAG is the
+           -- population, at any status (same rule as status-log.rs
+           -- classify_task and ci-hub/health awaiting_landing).
            group by t.local_id"""
     ).fetchall()
     out = []

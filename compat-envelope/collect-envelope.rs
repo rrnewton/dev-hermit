@@ -201,6 +201,32 @@ fn main() {
     if !csv_path.exists() {
         fs::write(&csv_path, format!("{HEADER}\n")).unwrap_or_else(|e| die(&format!("cannot create CSV: {e}")));
     }
+    // BIND TO THE FILE'S SCHEMA, not to ours.
+    //
+    // This producer's HEADER is wider than the canonical scorecard (it also records
+    // stdout_parity/parity_exercised/backend_engaged/native_output_hash/
+    // ref_output_hash/run_flags). It used to append its own row shape regardless of
+    // what the target file's header actually was, so appending into the canonical
+    // 23-column scorecard wrote 28-field rows: five values past the last column,
+    // which a reader surfaces as csv.DictReader's None key and which shifts nothing
+    // visibly until someone reads the tail. Read the header and project onto it.
+    let target_header: Vec<String> = {
+        let first = fs::read_to_string(&csv_path)
+            .unwrap_or_else(|e| die(&format!("cannot read CSV header: {e}")));
+        let line = first.lines().next().unwrap_or("").to_string();
+        line.split(',').map(|c| c.trim().to_string()).collect()
+    };
+    // A column this producer MUST fill has to exist; extras the file lacks are
+    // dropped, and columns the file has that we do not fill are written blank.
+    for required in ["run_id", "test_id", "backend", "outcome", "deterministic"] {
+        if !target_header.iter().any(|c| c == required) {
+            die(&format!(
+                "scorecard {} is missing the required column {required:?}; its header has {} \
+                 column(s): {}",
+                csv_path.display(), target_header.len(), target_header.join(",")
+            ));
+        }
+    }
     let mut out = fs::OpenOptions::new()
         .append(true)
         .open(&csv_path)
@@ -405,7 +431,21 @@ fn main() {
                 tier.to_string(),
                 run_flags,
             ];
-            let line = row.iter().map(|f| csv_field(f)).collect::<Vec<_>>().join(",");
+            // Project our named row onto the file's columns, in the file's order.
+            // `parity` and `stdout_parity` are the same observable under two spellings
+            // (the rename is in flight), so either target column accepts our value.
+            let names: Vec<&str> = HEADER.split(',').collect();
+            let line = target_header
+                .iter()
+                .map(|col| {
+                    let want: &str = if col == "parity" { "stdout_parity" } else { col.as_str() };
+                    match names.iter().position(|n| *n == want) {
+                        Some(i) => csv_field(&row[i]),
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             writeln!(out, "{line}").unwrap_or_else(|e| die(&format!("CSV write failed: {e}")));
             rows_written += 1;
         }

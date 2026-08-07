@@ -77,7 +77,7 @@ fixing, not that the flag needs working around.
   --expect-sha256 <sha256 of the API response text> \
   --expect-bytes <byte count of the API response text> \
   --repos <owner/name>[,<owner/name>...] \
-  --open-prs <N> --genuine-reds <N> --fleet-count <N> \
+  --open-prs auto --genuine-reds <N> --fleet-count <N> \
   [--ready-prs <N>] \
   [--recovery-for <YYYY-MM-DDTHH>]
 ```
@@ -115,16 +115,34 @@ apart, one counting all open PRs and the other a ready subset.
 `--awaiting-landing-json` is optional and is where implemented-but-unlanded work
 goes: it stays on the record without being counted as activity.
 
-Counts travel with their denominators: `--open-prs` is TOTAL open INCLUDING
+Counts travel with their denominators: `open_prs` is TOTAL open INCLUDING
 DRAFTS across exactly the repositories you passed to `--repos`, and
 `--genuine-reds` comes from `./ci-hub/ci-hub pr-status`, not from a glance at
 GitHub. If you also report the ready/non-draft subset, it goes in `--ready-prs`;
 it is a separate field and can no longer be written as `open_prs`.
 
-Take `--open-prs` and `--repos` from the same source in the same breath. Note
-that `ci-hub pr-status` polls TWO repositories (`rrnewton/hermit`,
-`rrnewton/reverie`), so if you intend a wider set you must count the extra
-repositories yourself rather than inheriting pr-status's total.
+**Pass `--open-prs auto` rather than counting yourself.** Auto dereferences
+exactly the repositories in `--repos`, once, and adopts that total — recording
+`source=dereferenced-auto`, the per-repo breakdown, and the window the lookup
+spanned. Counting in your head and passing a number is a race you cannot win:
+the writer re-derives it to check your claim, and a population that moves
+between the two readings is refused even though both readings were honest. That
+happened for real — a status was refused at 104 against an observed 105, and the
+count moved 104 → 105 → 106 over the following minutes.
+
+You may still pass an explicit `--open-prs <N>` when you genuinely mean to
+assert a number, and it is still CHECKED against the population and refused on
+mismatch. `auto` is the only value that is adopted. Do not combine `auto` with
+`--open-prs-observed` or `--no-verify-counts`; each would record a total whose
+stated provenance is untrue, and all three combinations are refused.
+
+Note that `ci-hub pr-status` polls TWO repositories (`rrnewton/hermit`,
+`rrnewton/reverie`) and reports its MONITORED ROLLUP — the ready/non-draft PRs
+it watches, a handful, not the hundred-odd total. That rollup is NOT `open_prs`:
+an entry once recorded 7 under the total-open basis while the true total was
+102. Take `--genuine-reds` from pr-status; let `auto` supply the total; and if
+you report the monitored subset at all, say so in the narrative rather than in a
+count field that means something else.
 
 **4. Report the outcome back into the hour's record — by ATOMIC TYPED REWRITE,
 never by appending.**

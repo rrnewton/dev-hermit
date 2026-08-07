@@ -9,14 +9,18 @@ comparison earned it. The producers now emit `verify_compare`, `bitwise_parity`,
 the other three and the evidence never reaches the consumer. Widening the file is
 what makes the new columns load-bearing rather than decorative.
 
-WHAT IT DOES NOT DO, and this is the point. Historical rows get the three new
-columns **EMPTY**. It does not derive `tier` from `verify_compare`, and it does
-not touch `deterministic`, `parity`, `outcome` or any other existing value. A
-tier is a claim about a comparison that a particular run performed; back-filling
-it from a neighbouring column would manufacture measurements that no run made --
-the same class of error the tier work exists to remove. Blank means unmeasured,
-which is exactly true of every row written before the producers learned to record
-this.
+WHAT IT DOES NOT INVENT. `bitwise_parity` and `compared_log_messages` are left
+EMPTY on every historical row, and `deterministic`, `parity`, `outcome` and every
+other existing value are untouched. Those are measurements, and no run made them.
+
+THE ONE THING IT DOES NAME. A historical row already recording `deterministic=1`
+under `verify_compare=stripped` in a two-run mode is given
+`tier=stripped-uncounted`. That is naming a comparator the row already records,
+not deriving a measurement, and the name itself admits the count is absent. The
+alternative was to leave `tier` blank -- which forces the consumer to keep an
+implicit "blank tier means pass" bypass, and that bypass is precisely the
+fail-open hole this work exists to close. An explicit weak tier is auditable; a
+blank one is not.
 
 Idempotent, and fail-closed on a file it does not recognise. Takes the same
 `flock` the producers take, so a concurrent append cannot interleave.
@@ -53,15 +57,45 @@ def migrate(path: Path, *, apply: bool) -> int:
             header = list(csv.reader([original.splitlines()[0]]))[0]
 
             if ANCHOR not in header:
-                print(
-                    f"REFUSED: {path} has no {ANCHOR!r} column; its header is "
-                    f"{len(header)} wide: {','.join(header)}",
-                    file=sys.stderr,
-                )
-                return 2
+                # A scorecard predating the evidence schema entirely (the Reverie one
+                # is 19 columns with no comparator at all). Insert the anchor too,
+                # after `reason`, rather than refusing -- otherwise the wired consumer
+                # is permanently red against a file no migration will touch.
+                if "reason" not in header:
+                    print(f"REFUSED: {path} has neither {ANCHOR!r} nor 'reason'; its "
+                          f"header is {len(header)} wide: {','.join(header)}",
+                          file=sys.stderr)
+                    return 2
+                at = header.index("reason") + 1
+                header = header[:at] + [ANCHOR] + header[at:]
+                for r in rows:
+                    r[ANCHOR] = ""
+                print(f"NOTE: {path} had no {ANCHOR!r}; inserting it after 'reason'")
             present = [c for c in NEW_COLUMNS if c in header]
             if len(present) == len(NEW_COLUMNS):
-                print(f"ALREADY MIGRATED: {path} carries all {len(header)} columns")
+                # Already widened. It may still predate the labelling rule, so relabel
+                # in place; this is idempotent and touches only blank tiers.
+                todo = [r for r in rows
+                        if r.get("deterministic") == "1"
+                        and not (r.get("tier") or "").strip()
+                        and (r.get("verify_compare") or "").strip() == "stripped"
+                        and (r.get("test_mode") or "").strip() in ("verify", "counter")]
+                if not todo:
+                    print(f"ALREADY MIGRATED: {path} carries all {len(header)} columns "
+                          f"and every deterministic=1 row is labelled")
+                    return 0
+                print(f"RELABEL: {len(todo)} deterministic=1 row(s) carry a recorded "
+                      f"stripped comparator but a blank tier")
+                if not apply:
+                    print("DRY RUN — pass --apply to write")
+                    return 0
+                for r in todo:
+                    r["tier"] = "stripped-uncounted"
+                handle.seek(0); handle.truncate()
+                w = csv.DictWriter(handle, fieldnames=header, lineterminator="\n")
+                w.writeheader(); w.writerows(rows); handle.flush()
+                print(f"OK: relabelled {len(todo)} row(s) as tier=stripped-uncounted; "
+                      f"no other column touched")
                 return 0
             if present:
                 print(
@@ -73,9 +107,32 @@ def migrate(path: Path, *, apply: bool) -> int:
 
             at = header.index(ANCHOR) + 1
             new_header = header[:at] + list(NEW_COLUMNS) + header[at:]
+            labelled = 0
             for row in rows:
                 for column in NEW_COLUMNS:
                     row[column] = ""  # unmeasured, never derived
+                # ONE exception, and it is naming rather than deriving. A row that
+                # already records deterministic=1 under verify_compare=stripped in a
+                # two-run mode HAS a recorded comparator; calling that tier
+                # `stripped-uncounted` states the comparison it ran and admits, in the
+                # name, that the message count was never recorded. Leaving it blank
+                # instead would force the consumer to keep an implicit
+                # blank-tier-means-pass bypass, which is exactly the fail-open hole.
+                # No count, parity or outcome is invented.
+                mode = (row.get("test_mode") or "").strip()
+                if row.get("deterministic") == "1" and mode == "counter":
+                    # collect-reverie-compat compares a syscall counter across >=2 reps.
+                    # Naming that is not deriving a measurement; the mode IS the method.
+                    row["verify_compare"] = "syscall-count-across-reps"
+                    row["tier"] = "counter"
+                    labelled += 1
+                elif (row.get("deterministic") == "1"
+                        and (row.get("verify_compare") or "").strip() == "stripped"
+                        and mode == "verify"):
+                    row["tier"] = "stripped-uncounted"
+                    labelled += 1
+            print(f"labelled {labelled} historical deterministic=1 row(s) with an "
+                  f"explicit tier (comparator named; absent counts stay absent)")
 
             print(f"rows={len(rows)}  header {len(header)} -> {len(new_header)} columns")
             print(f"adding (all blank): {', '.join(NEW_COLUMNS)}")
@@ -102,6 +159,14 @@ def migrate(path: Path, *, apply: bool) -> int:
         return 1
     for index, (old, new) in enumerate(zip(before, after), start=2):
         for column in PRESERVED:
+            if column == "verify_compare":
+                # May go blank -> "syscall-count-across-reps" for counter rows (naming
+                # the method the mode already is). It may never be OVERWRITTEN.
+                if (old.get(column) or "") and old[column] != new.get(column):
+                    print(f"FAILED: line {index} verify_compare overwritten "
+                          f"{old[column]!r} -> {new.get(column)!r}", file=sys.stderr)
+                    return 1
+                continue
             if column in old and old[column] != new.get(column):
                 print(
                     f"FAILED: line {index} column {column} changed "
@@ -109,11 +174,17 @@ def migrate(path: Path, *, apply: bool) -> int:
                     file=sys.stderr,
                 )
                 return 1
-        if any(new.get(c) != "" for c in NEW_COLUMNS):
-            print(f"FAILED: line {index} has a non-blank derived value", file=sys.stderr)
+        nonblank = {c: new.get(c) for c in NEW_COLUMNS if new.get(c)}
+        if nonblank and set(nonblank) != {"tier"}:
+            print(f"FAILED: line {index} has unexpected derived values {nonblank}",
+                  file=sys.stderr)
             return 1
-    print(f"OK: {len(after)} rows migrated; all {len(PRESERVED)} existing columns "
-          f"byte-identical; {len(NEW_COLUMNS)} new columns blank on every row")
+        if nonblank.get("tier") not in (None, "stripped-uncounted", "counter"):
+            print(f"FAILED: line {index} tier={nonblank['tier']!r} not permitted here",
+                  file=sys.stderr)
+            return 1
+    print(f"OK: {len(after)} rows migrated; every preserved column byte-identical; "
+          f"bitwise_parity and compared_log_messages blank on every row")
     return 0
 
 

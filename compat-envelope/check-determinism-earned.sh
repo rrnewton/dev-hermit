@@ -32,7 +32,12 @@ rows = list(csv.DictReader(open(path)))
 if not rows:
     print("check-determinism-earned: empty CSV", file=sys.stderr); sys.exit(2)
 
-TWO_RUN = {"verify"}     # the only mode that executes and compares a second run
+# Modes that actually execute and compare more than one run. `counter` qualifies:
+# collect-reverie-compat runs each cell --reps times (>=2, enforced at the flag) and
+# asserts the syscall counter is identical across them. It is the WEAKEST such mode --
+# one integer, not stdout, not a log -- but it is not a single run claiming
+# determinism, and treating it as one made the whole Reverie path structurally red.
+TWO_RUN = {"verify", "counter"}
 
 # THE ACCEPTANCE RULE, and it is deliberately TIER-AWARE.
 #
@@ -47,8 +52,17 @@ TWO_RUN = {"verify"}     # the only mode that executes and compares a second run
 # would refuse the 130 legitimate KVM guest-visible rows. So each tier states
 # exactly what evidence it needs.
 BITWISE_CAPABLE = {"canonical"}          # allowlist: unknown policy => no bitwise
-LOG_COMPARING_TIERS = {"bitwise", "stripped"}   # these compared a log; counts required
-KNOWN_TIERS = {"bitwise", "stripped", "guest", "gap"}
+# Every tier a deterministic=1 row may claim. A blank or unrecognised tier is now a
+# REFUSAL, not a pass -- see the note on the legacy bypass below.
+#   bitwise            DETLOG identical under a bitwise-capable comparator
+#   stripped           DETLOG compared under Stripped, with counts
+#   stripped-uncounted DETLOG compared under Stripped, count NOT recorded (historical
+#                      rows only; explicit and self-describing rather than blank)
+#   guest              stdout+exit compared, log deliberately not
+#   counter            a syscall counter compared across >=2 reps (weakest)
+#   gap                no positive claim
+KNOWN_TIERS = {"bitwise", "stripped", "stripped-uncounted", "guest", "counter", "gap"}
+COUNTLESS_TIERS = {"guest", "counter", "stripped-uncounted", "gap"}
 
 
 def parse_counts(raw):
@@ -86,8 +100,14 @@ for i, r in enumerate(rows, start=2):
     def reject(why):
         overtiered.append((i, compare, tier or "<blank>", f"{tid} :: {why}"))
 
-    if tier and tier not in KNOWN_TIERS:
-        reject(f"unknown tier {tier!r}")
+    # THE LEGACY BYPASS IS GONE. Previously a deterministic=1 row with a BLANK tier
+    # skipped every tier check, so a positive with an unknown comparator and no counts
+    # passed silently. A positive must now name the comparison that earned it.
+    if not tier:
+        reject("deterministic=1 with no tier — a positive must name the comparison "
+               "that earned it (historical rows carry tier=stripped-uncounted)")
+    elif tier not in KNOWN_TIERS:
+        reject(f"unknown tier {tier!r} (known: {sorted(KNOWN_TIERS)})")
     elif tier == "bitwise":
         if compare not in BITWISE_CAPABLE:
             reject(f"comparator {compare!r} is not bitwise-capable "
@@ -105,10 +125,13 @@ for i, r in enumerate(rows, start=2):
             reject("tier=stripped compared a log but has no compared_log_messages")
         elif counts[0] <= 0 or counts[1] <= 0:
             reject(f"tier=stripped with empty comparison {counts[0]}|{counts[1]}")
-    # tier == "guest": no log compared, absent counts are correct.
-    # tier == "" on a legacy row: caught by `unlabelled` only if compare is blank;
-    # a pre-migration row carrying verify_compare but no tier is historical and is
-    # reported separately below rather than failed.
+    elif tier in COUNTLESS_TIERS:
+        # guest / counter / stripped-uncounted compare no log (or record no count),
+        # so absent counts are CORRECT here rather than missing. Demanding them would
+        # refuse the legitimate KVM guest-visible rows and the whole Reverie path.
+        # What they still owe is a named comparator.
+        if counts is not None and (counts[0] <= 0 or counts[1] <= 0):
+            reject(f"tier={tier} recorded an empty comparison {counts[0]}|{counts[1]}")
 
 by_mode = collections.Counter(r["test_mode"] for r in rows if r.get("deterministic") == "1")
 blank    = sum(1 for r in rows if not (r.get("deterministic") or "").strip())
