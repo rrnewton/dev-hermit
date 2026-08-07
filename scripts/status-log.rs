@@ -50,6 +50,17 @@ Required:
 Status input:
   --status-file PATH     Read the full status text from PATH.
                          When omitted, read the full text from stdin.
+                         EITHER WAY at most one trailing line terminator is
+                         stripped, so a heredoc, an editor and a pipe all yield
+                         the SAME canonical bytes. A status logged from a file
+                         once carried one extra 0x0A that the sent message did
+                         not, which made a correct delivery hash as tampered.
+  --expect-sha256 HEX    Assert the canonical status text hashes to HEX, which
+                         is what the GChat API reported for the sent message.
+                         A mismatch REFUSES the append instead of recording a
+                         status that is not the one delivered.
+  --expect-bytes N       Assert the canonical status text is N bytes, the byte
+                         count the API reported. Refuses on mismatch.
 
 Other:
   --awaiting-landing-json JSON
@@ -165,6 +176,8 @@ struct Args {
     genuine_reds: Option<u64>,
     fleet_count: Option<u64>,
     status_file: Option<PathBuf>,
+    expect_sha256: Option<String>,
+    expect_bytes: Option<usize>,
     log_file: Option<PathBuf>,
     describe_log: bool,
 }
@@ -698,6 +711,14 @@ fn parse_args() -> Args {
                 parsed.fleet_count = Some(parse_count(&arg, take_value(&arg, &mut args)))
             }
             "--status-file" => parsed.status_file = Some(take_value(&arg, &mut args).into()),
+            "--expect-sha256" => parsed.expect_sha256 = Some(take_value(&arg, &mut args)),
+            "--expect-bytes" => {
+                let raw = take_value(&arg, &mut args);
+                parsed.expect_bytes = Some(
+                    raw.parse()
+                        .unwrap_or_else(|e| die(&format!("--expect-bytes {raw}: {e}"))),
+                );
+            }
             "--log-file" => parsed.log_file = Some(take_value(&arg, &mut args).into()),
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -746,6 +767,121 @@ fn parse_mapping_flag(flag: &str, raw: &str) -> Vec<Workstream> {
     rows
 }
 
+/// THE CANONICAL STATUS TEXT: exactly one byte sequence, whatever transport
+/// carried it.
+///
+/// Measured defect, 2026-08-07T02. The GChat API reported the delivered text as
+/// 1843 bytes / sha256 `fd702682…`; the JSONL entry for the same status recorded
+/// 1844 bytes / `1ccab376…`. The difference was exactly one appended `0x0A` in
+/// the 1843-byte common prefix — zero differing bytes otherwise. The extra byte
+/// came from the `--status-file` round trip, because every ordinary way of
+/// producing a text file (an editor, a heredoc, `echo`, a shell redirect)
+/// terminates the last line. The sent message had no such byte.
+///
+/// That one byte is not cosmetic. The claim's digest then hashes the LOGGED text
+/// while `gchat_message_name` dereferences the SENT text, so an auditor who
+/// fetches the message and hashes what comes back gets a MISMATCH on a correct
+/// delivery — the record accuses itself of tampering.
+///
+/// It was also inconsistent, which is worse than uniformly wrong: entries at
+/// 01:00:36Z and 02:28:13Z (stdin) carried no trailing newline while 01:19:42Z
+/// and 02:14:31Z (file) did, so "the canonical bytes" depended on how the caller
+/// happened to pass the text.
+///
+/// So: strip AT MOST ONE trailing line terminator, identically for both
+/// transports. At most one, never `trim_end`, because trailing blank lines
+/// inside a status are author content and deleting them would silently rewrite
+/// the message. `hourly-status-relay.rs` applies the same rule to
+/// `--ack-text-file`, so the log digest and the claim digest agree by
+/// construction rather than by luck.
+// ------------------------------------------------------------- sha256 -----
+// Same in-file implementation as scripts/hourly-status-relay.rs, deliberately.
+// These two tools must produce the SAME digest for the same canonical text --
+// that identity is the whole point of this file's canonical_status_text -- so
+// they must not be able to drift onto different algorithms or crate versions.
+// FIPS 180-4; bracketed against the published vectors below.
+fn sha256_hex(bytes: &[u8]) -> String {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let mut msg = bytes.to_vec();
+    let bit_len = (bytes.len() as u64).wrapping_mul(8);
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    for chunk in msg.chunks(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
+            (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let t1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(maj);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
+        }
+        for (slot, v) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
+            *slot = slot.wrapping_add(v);
+        }
+    }
+    h.iter().map(|w| format!("{w:08x}")).collect()
+}
+
+fn canonical_status_text(mut text: String) -> String {
+    if text.ends_with('\n') {
+        text.pop();
+        if text.ends_with('\r') {
+            text.pop();
+        }
+    }
+    text
+}
+
 fn read_status_text(status_file: Option<&Path>) -> String {
     let mut text = String::new();
     match status_file {
@@ -759,6 +895,7 @@ fn read_status_text(status_file: Option<&Path>) -> String {
                 .unwrap_or_else(|e| die(&format!("read status text from stdin: {e}")));
         }
     }
+    let text = canonical_status_text(text);
     if text.is_empty() {
         die("status text must not be empty");
     }
@@ -854,6 +991,31 @@ fn main() {
         .fleet_count
         .unwrap_or_else(|| die("missing --fleet-count"));
     let status_text = read_status_text(args.status_file.as_deref());
+    // BIND THE LOG TO THE SEND. The caller passes what the GChat API reported;
+    // if the canonical text disagrees the append is REFUSED rather than written
+    // and reconciled later. A logged status that does not hash to the delivered
+    // message is not a record of that delivery.
+    let status_digest = sha256_hex(status_text.as_bytes());
+    if let Some(expected) = &args.expect_sha256 {
+        if !expected.eq_ignore_ascii_case(&status_digest) {
+            die(&format!(
+                "--expect-sha256 {expected} does not match the canonical status text \
+                 (sha256 {status_digest}, {} bytes). Refusing to append: the logged text \
+                 is not the text that was sent. If the difference is a trailing newline, \
+                 the sender added one the API did not receive.",
+                status_text.len()
+            ));
+        }
+    }
+    if let Some(expected) = args.expect_bytes {
+        if expected != status_text.len() {
+            die(&format!(
+                "--expect-bytes {expected} does not match the canonical status text \
+                 ({} bytes, sha256 {status_digest}). Refusing to append.",
+                status_text.len()
+            ));
+        }
+    }
 
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)
@@ -875,6 +1037,11 @@ fn main() {
         "genuine_reds": genuine_reds,
         "fleet_count": fleet_count,
         "status_text": status_text,
+        // The record carries the conditions of its own value. Without these an
+        // auditor must re-derive them and cannot tell which byte sequence was
+        // canonical -- which is exactly how the 1843/1844 skew stayed invisible.
+        "status_text_bytes": status_text.len(),
+        "status_text_sha256": sha256_hex(status_text.as_bytes()),
     });
     // The ready/non-draft subset is a DIFFERENT field with a DIFFERENT basis. It
     // is never allowed to occupy `open_prs`.
@@ -1431,4 +1598,72 @@ fix-post-1.0-codex-invalid-sandbox-flag | CLOSED | [\"implemented\"]
             "the comparable quantity now agrees: {a} / {b}"
         );
     }
+    // ============ one canonical byte sequence, log and claim ============
+
+    #[test]
+    fn sha256_matches_published_vectors() {
+        // status-log and hourly-status-relay must agree digit for digit, so both
+        // are pinned to the same published vectors rather than to each other.
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            sha256_hex(&[b'a'; 1000]),
+            "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"
+        );
+    }
+
+    #[test]
+    fn canonical_text_strips_at_most_one_terminator() {
+        // At most ONE: trailing blank lines inside a status are author content,
+        // and a trim_end would silently rewrite the delivered message.
+        assert_eq!(canonical_status_text("x\n".into()), "x");
+        assert_eq!(canonical_status_text("x\r\n".into()), "x");
+        assert_eq!(canonical_status_text("x".into()), "x");
+        assert_eq!(canonical_status_text("x\n\n".into()), "x\n");
+        assert_eq!(canonical_status_text("x\n\n\n".into()), "x\n\n");
+        assert_eq!(canonical_status_text("\n".into()), "");
+        assert_eq!(canonical_status_text("".into()), "");
+        // Interior newlines are untouched.
+        assert_eq!(canonical_status_text("a\nb\nc\n".into()), "a\nb\nc");
+    }
+
+    #[test]
+    fn both_transports_yield_the_same_canonical_bytes() {
+        // The skew was INCONSISTENT, which is worse than uniformly wrong: file
+        // entries carried the extra byte and stdin entries did not, so which
+        // bytes were canonical depended on how the caller passed the text.
+        let sent = "## Hourly status\nbody";
+        let from_file = canonical_status_text(format!("{sent}\n"));
+        let from_stdin = canonical_status_text(sent.to_string());
+        assert_eq!(from_file, from_stdin);
+        assert_eq!(sha256_hex(from_file.as_bytes()), sha256_hex(from_stdin.as_bytes()));
+        assert_eq!(from_file.len(), sent.len());
+    }
+
+    #[test]
+    fn reproduces_the_measured_t02_skew_and_closes_it() {
+        // The exact observed case, message QF7vBsq-DXc.QF7vBsq-DXc: the API
+        // reported N bytes and the JSONL recorded N+1, differing by one appended
+        // 0x0A in the common prefix. Reconstructed at small scale: the raw file
+        // form and the canonical form must NOT hash alike, and canonicalizing
+        // must land on the API form.
+        let api_text = "## Hourly status — recovery delivery for 10:00 p.m. EDT";
+        let file_form = format!("{api_text}\n");
+        assert_eq!(file_form.len(), api_text.len() + 1);
+        assert_ne!(
+            sha256_hex(file_form.as_bytes()),
+            sha256_hex(api_text.as_bytes()),
+            "one byte must change the digest, else the skew would have been invisible"
+        );
+        let canonical = canonical_status_text(file_form);
+        assert_eq!(canonical, api_text);
+        assert_eq!(sha256_hex(canonical.as_bytes()), sha256_hex(api_text.as_bytes()));
+    }
+
 }

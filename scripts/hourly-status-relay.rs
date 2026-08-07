@@ -137,6 +137,11 @@ Recording a GChat acknowledgement (promotes an hour to `gchat_delivered`):
   --ack-thread NAME          spaces/<space>/threads/<id>.
   --ack-text-file PATH       The EXACT bytes the API reports as sent. The digest
                              is computed from this file, never taken on trust.
+                             At most one trailing line terminator is stripped --
+                             the same canonical rule scripts/status-log.rs
+                             applies -- so a file written by an editor or a
+                             heredoc yields the digest of the SENT text, and the
+                             claim digest and the status-log digest agree.
   --ack-text-sha256 HEX      Optional cross-check; must equal that digest.
   All five --ack-* identifiers are required together. `wake_accepted` alone is
   never `delivered`: relay rc=0 proves only that the coordinator PANE accepted
@@ -708,6 +713,20 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 // ---------------------------------------------------------------- ack -----
 
+/// Strip at most one trailing line terminator. The counterpart of
+/// `canonical_status_text` in scripts/status-log.rs; see the call site in
+/// `apply_ack` for why the two must agree. At most one, never a full trim:
+/// trailing blank lines inside a status are author content.
+fn canonical_text_bytes(mut text: Vec<u8>) -> Vec<u8> {
+    if text.last() == Some(&b'\n') {
+        text.pop();
+        if text.last() == Some(&b'\r') {
+            text.pop();
+        }
+    }
+    text
+}
+
 /// The coordinator's acknowledgement of one hour: the GChat API record, as
 /// returned by the send. Every field is required -- see `Claim::has_gchat_ack`.
 #[derive(Debug, Clone)]
@@ -764,8 +783,18 @@ fn validate_gchat_identity(message_name: &str, space: &str, thread: &str) -> Res
 /// brackets.
 fn apply_ack(state_dir: &Path, ack: &AckArgs, now: u64) -> Result<String, String> {
     validate_gchat_identity(&ack.message_name, &ack.space, &ack.thread)?;
-    let text = fs::read(&ack.text_file)
+    let raw = fs::read(&ack.text_file)
         .map_err(|e| format!("read --ack-text-file {}: {e}", ack.text_file.display()))?;
+    // SAME CANONICAL RULE AS scripts/status-log.rs canonical_status_text: strip at
+    // most one trailing line terminator. Every ordinary way of writing the API
+    // text to a file (editor, heredoc, shell redirect) appends one that the sent
+    // message never had. Measured 2026-08-07T02: the API reported 1843 bytes /
+    // fd702682..., the file round trip produced 1844 / 1ccab376..., differing by
+    // exactly one 0x0A. Applying the identical rule in both tools is what makes
+    // the claim's gchat_text_sha256 and the log's status_text_sha256 comparable
+    // BY CONSTRUCTION rather than by luck -- which is the whole point, since an
+    // auditor's check is exactly that comparison.
+    let text = canonical_text_bytes(raw);
     if text.is_empty() {
         return Err(format!(
             "--ack-text-file {} is empty; an empty delivered text is not an acknowledgement",
@@ -2036,15 +2065,20 @@ mod tests {
             claim.gchat_thread.as_deref(),
             Some("spaces/AAQAA6Irlwg/threads/QF7vBsq-DXc")
         );
-        // The digest is COMPUTED from the exact bytes, not copied from a caller.
-        assert_eq!(claim.gchat_text_sha256.as_deref(), Some(sha256_hex(text.as_bytes()).as_str()));
-        assert_eq!(claim.gchat_text_bytes, Some(text.len() as u64));
+        // The digest is COMPUTED from the canonical bytes, not copied from a
+        // caller. `text` ends with a newline because that is how a file is
+        // written; the SENT message did not have it, so the recorded digest is
+        // of the canonical form -- that identity is this change's whole point.
+        let canonical = "## Hourly status\nowner-visible body";
+        assert_eq!(claim.gchat_text_sha256.as_deref(), Some(sha256_hex(canonical.as_bytes()).as_str()));
+        assert_eq!(claim.gchat_text_bytes, Some(canonical.len() as u64));
+        assert_eq!(claim.gchat_text_bytes, Some(text.len() as u64 - 1));
         assert_eq!(claim.gchat_acked_at, Some(base + 470));
         // The two stages are separately visible in the durable log.
         let log = fs::read_to_string(fixture.state.join("invocations.log")).unwrap();
         assert!(log.contains("tick start hour=2026-08-07T02"), "stage 1 heartbeat: {log}");
         assert!(log.contains("ack hour=2026-08-07T02"), "stage 2 must be visible: {log}");
-        assert!(log.contains(&format!("text-sha256={}", sha256_hex(text.as_bytes()))));
+        assert!(log.contains(&format!("text-sha256={}", sha256_hex(canonical.as_bytes()))));
         assert!(log.contains("message-name=spaces/AAQAA6Irlwg/messages/"));
     }
 
@@ -2185,6 +2219,96 @@ mod tests {
             DEFAULT_MAX_WAKE_ATTEMPTS,
         );
         assert_eq!(decision, Decision::DuplicateHour);
+    }
+
+    // ---- the file round trip must not invent a byte the API never saw ----
+
+    #[test]
+    fn ack_digest_is_of_the_sent_text_not_the_file_terminator() {
+        // THE MEASURED DEFECT, 2026-08-07T02, message QF7vBsq-DXc.QF7vBsq-DXc:
+        // the API reported 1843 bytes / fd702682...; the recorded digest was of
+        // 1844 bytes / 1ccab376..., one appended 0x0A. A correct delivery then
+        // hashes as tampered to anyone who dereferences the messageName.
+        let fixture = Fixture::new("ack-newline");
+        let base = 1_786_068_000;
+        let sent = "## Hourly status\nbody with no terminator";
+
+        // Same logical status, written the two ways a caller actually writes it.
+        for (label, hour, on_disk) in [
+            ("file with a trailing newline", "2026-08-07T02", format!("{sent}\n")),
+            ("file without one", "2026-08-07T03", sent.to_string()),
+        ] {
+            execute(&fixture.args(hour, base, true)).unwrap();
+            ack_ok(&fixture, hour, base + 10, &on_disk);
+            let claim = expect_valid(&fixture.state, hour);
+            assert_eq!(
+                claim.gchat_text_sha256.as_deref(),
+                Some(sha256_hex(sent.as_bytes()).as_str()),
+                "{label}: digest must be of the SENT text"
+            );
+            assert_eq!(
+                claim.gchat_text_bytes,
+                Some(sent.len() as u64),
+                "{label}: byte count must be the SENT count"
+            );
+        }
+
+        // ... and the two spellings agree, which is what "one canonical byte
+        // sequence" means. Before this change they differed by one byte.
+        let a = expect_valid(&fixture.state, "2026-08-07T02");
+        let b = expect_valid(&fixture.state, "2026-08-07T03");
+        assert_eq!(a.gchat_text_sha256, b.gchat_text_sha256);
+        assert_eq!(a.gchat_text_bytes, b.gchat_text_bytes);
+    }
+
+    #[test]
+    fn canonicalization_strips_at_most_one_terminator() {
+        // At most ONE. Trailing blank lines inside a status are author content;
+        // a trim_end would silently rewrite the delivered message.
+        assert_eq!(canonical_text_bytes(b"x\n".to_vec()), b"x".to_vec());
+        assert_eq!(canonical_text_bytes(b"x\r\n".to_vec()), b"x".to_vec());
+        assert_eq!(canonical_text_bytes(b"x".to_vec()), b"x".to_vec());
+        assert_eq!(canonical_text_bytes(b"x\n\n".to_vec()), b"x\n".to_vec());
+        assert_eq!(canonical_text_bytes(b"x\n\n\n".to_vec()), b"x\n\n".to_vec());
+        assert_eq!(canonical_text_bytes(b"".to_vec()), b"".to_vec());
+        assert_eq!(canonical_text_bytes(b"\n".to_vec()), b"".to_vec());
+    }
+
+    #[test]
+    fn a_file_that_is_only_a_terminator_is_refused_as_empty() {
+        // Canonicalizing "\n" yields "", which must hit the empty-text refusal
+        // rather than recording a delivery of nothing.
+        let fixture = Fixture::new("ack-only-newline");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+        let err = apply_ack(&fixture.state, &ack_args(&fixture, hour, "\n"), base + 5).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_WAKE_ACCEPTED);
+    }
+
+    #[test]
+    fn expect_sha256_is_compared_against_the_canonical_text() {
+        // A caller holding the API-reported digest must be able to pass it
+        // straight through, even though its local file has a terminator.
+        let fixture = Fixture::new("ack-expect-canonical");
+        let hour = "2026-08-07T02";
+        let base = 1_786_068_000;
+        execute(&fixture.args(hour, base, true)).unwrap();
+        let sent = "delivered body";
+        let mut ack = ack_args(&fixture, hour, &format!("{sent}\n"));
+        ack.expect_sha256 = Some(sha256_hex(sent.as_bytes()));
+        apply_ack(&fixture.state, &ack, base + 10).unwrap();
+        assert_eq!(expect_valid(&fixture.state, hour).state, STATE_GCHAT_DELIVERED);
+
+        // NEGATIVE control: the pre-canonicalization digest -- the one the old
+        // code would have produced -- is now correctly REFUSED.
+        let hour2 = "2026-08-07T03";
+        execute(&fixture.args(hour2, base, true)).unwrap();
+        let mut stale = ack_args(&fixture, hour2, &format!("{sent}\n"));
+        stale.expect_sha256 = Some(sha256_hex(format!("{sent}\n").as_bytes()));
+        let err = apply_ack(&fixture.state, &stale, base + 10).unwrap_err();
+        assert!(err.contains("does not match"), "{err}");
     }
 
 }
