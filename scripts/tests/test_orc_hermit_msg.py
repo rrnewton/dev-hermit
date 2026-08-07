@@ -17,6 +17,9 @@ message that names *which* condition refused it.
 from __future__ import annotations
 
 import contextlib
+import os
+import socket
+import threading
 import datetime
 import importlib.util
 import json
@@ -864,6 +867,174 @@ class VerifyInjectedConsumptionTests(unittest.TestCase):
             any("Enter" in a for call in sent_keys for a in call),
             f"Enter must not be sent for an already-consumed draft: {sent_keys}",
         )
+
+
+class _InertReceiver:
+    """A real HTTP server on a Unix socket that records what it was sent.
+
+    Inert by construction: it is a socket in a temp directory with no route to
+    any coordinator, agent, or chat surface. Nothing here can deliver a
+    user-facing message; the point is to prove the relay binds success to a
+    RECEIVER'S ACKNOWLEDGEMENT rather than to its own write succeeding.
+    """
+
+    def __init__(self, path, status=200, body='{"status":"accepted","message_id":"m-1"}'):
+        self.path = str(path)
+        self.status = status
+        self.body = body
+        self.requests: list[str] = []
+        self._stop = False
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.bind(self.path)
+        self._sock.listen(8)
+        self._sock.settimeout(0.25)
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        while not self._stop:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                continue
+            with conn:
+                conn.settimeout(2.0)
+                try:
+                    raw = b""
+                    while b"\r\n\r\n" not in raw:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        raw += chunk
+                    head, _, rest = raw.partition(b"\r\n\r\n")
+                    length = 0
+                    for line in head.decode("latin1").split("\r\n"):
+                        if line.lower().startswith("content-length:"):
+                            length = int(line.split(":", 1)[1].strip())
+                    while len(rest) < length:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        rest += chunk
+                    self.requests.append(rest.decode("utf-8", errors="replace"))
+                    payload = self.body.encode()
+                    conn.sendall(
+                        f"HTTP/1.1 {self.status} X\r\nContent-Type: application/json\r\n"
+                        f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n".encode()
+                        + payload
+                    )
+                except OSError:
+                    pass
+
+    def stop(self):
+        self._stop = True
+        with contextlib.suppress(OSError):
+            self._sock.close()
+        self._thread.join(timeout=2)
+        with contextlib.suppress(OSError):
+            os.unlink(self.path)
+
+
+class ApiDeliveryTests(unittest.TestCase):
+    """Delivery must bind to the receiver's acknowledgement.
+
+    The tmux path infers delivery from a rendered TUI, which is why this file
+    has a history of ambiguous outcomes. Here the receiver answers, so success
+    is a reply from the thing that will consume the message.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="ohm-api-"))
+        self.sock = self.tmp / "recv.sock"
+        self.receiver = None
+
+    def tearDown(self):
+        if self.receiver is not None:
+            self.receiver.stop()
+
+    def test_a_live_receiver_acknowledges_the_exact_payload_once(self):
+        self.receiver = _InertReceiver(self.sock)
+        ack = ohm.deliver_via_api(self.sock, "the exact hourly wake body")
+        self.assertEqual(ack.status, 200)
+        self.assertEqual(ack.ack_id, "m-1")
+        self.assertEqual(ack.evidence, "api-accepted:m-1")
+        # EXACTLY ONE request, carrying EXACTLY the payload.
+        self.assertEqual(len(self.receiver.requests), 1)
+        self.assertEqual(
+            json.loads(self.receiver.requests[0])["message"],
+            "the exact hourly wake body",
+        )
+
+    def test_a_missing_receiver_refuses_and_sends_nothing(self):
+        # Fail-closed: no socket means nothing can accept the message. The relay
+        # must not silently fall back to typing, which is how a refusal becomes
+        # a blind write.
+        with self.assertRaises(ohm.OrcMessageError) as caught:
+            ohm.deliver_via_api(self.tmp / "absent.sock", "must not be delivered")
+        self.assertIn("no Orc receiver", str(caught.exception))
+
+    def test_a_receiver_that_refuses_is_not_reported_as_delivered(self):
+        self.receiver = _InertReceiver(self.sock, status=503, body='{"error":"busy"}')
+        with self.assertRaises(ohm.OrcMessageError) as caught:
+            ohm.deliver_via_api(self.sock, "rejected body")
+        self.assertIn("503", str(caught.exception))
+        # It still reached the receiver once; the point is that a non-2xx is
+        # never laundered into success.
+        self.assertEqual(len(self.receiver.requests), 1)
+
+    def test_a_restarted_receiver_does_not_receive_a_duplicate(self):
+        """One send per invocation, across a receiver restart.
+
+        The dangerous shape is a relay that retries after an ambiguous outcome:
+        an unanswered POST may still have been processed, so a retry is how the
+        owner gets the same status twice. Each invocation posts exactly once.
+        """
+        self.receiver = _InertReceiver(self.sock)
+        ohm.deliver_via_api(self.sock, "before restart")
+        self.assertEqual(len(self.receiver.requests), 1)
+
+        # Restart the receiver on the same path, as a coordinator relaunch would.
+        self.receiver.stop()
+        self.receiver = _InertReceiver(self.sock)
+        self.assertEqual(len(self.receiver.requests), 0, "a fresh receiver starts empty")
+
+        ohm.deliver_via_api(self.sock, "after restart")
+        self.assertEqual(
+            len(self.receiver.requests), 1,
+            "the second invocation must post ONCE, not replay the first",
+        )
+        self.assertEqual(
+            json.loads(self.receiver.requests[0])["message"], "after restart"
+        )
+
+    def test_a_receiver_that_vanishes_mid_flight_refuses_without_retrying(self):
+        # Bound to the socket then gone: the relay must report failure rather
+        # than reconnect-and-resend.
+        self.receiver = _InertReceiver(self.sock)
+        self.receiver.stop()
+        self.sock.touch()  # path exists, nothing listening
+        with self.assertRaises(ohm.OrcMessageError) as caught:
+            ohm.deliver_via_api(self.sock, "nobody is listening")
+        self.assertIn("did not answer", str(caught.exception))
+
+    def test_an_acknowledgement_without_an_id_is_still_an_acknowledgement(self):
+        # A 2xx IS the ack; the id is extra provenance, and its absence must not
+        # invent a failure.
+        self.receiver = _InertReceiver(self.sock, body='{"status":"queued"}')
+        ack = ohm.deliver_via_api(self.sock, "no id in the reply")
+        self.assertIsNone(ack.ack_id)
+        self.assertEqual(ack.evidence, "api-accepted")
+
+    def test_the_ack_id_is_read_from_the_shapes_orc_actually_uses(self):
+        for body, expected in (
+            ('{"message_id":"a"}', "a"),
+            ('{"id":123}', "123"),
+            ('{"data":{"request_id":"r"}}', "r"),
+            ('{"result":{"queue_id":"q"}}', "q"),
+            ("not json at all", None),
+            ('["a","list"]', None),
+        ):
+            self.assertEqual(ohm._api_ack_id(body), expected, body)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
