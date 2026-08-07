@@ -30,6 +30,37 @@ REVERIE_CACHE_FILES = (
     Path("validate.sh"),
 )
 REVERIE_CACHE_KEY = re.compile(r"liteinst-runtime(?:-build)?-([0-9a-f]{8})")
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+# Repo-scoped git environment variables OVERRIDE `git -C <repo>`, and git exports
+# them into every hook child. Measured on this box with a probe pre-commit hook:
+#
+#   git commit -m m -- <path>   =>  GIT_INDEX_FILE=/ABS/.git/next-index-<pid>.lock
+#   git commit / --amend        =>  GIT_INDEX_FILE=.git/index      (relative)
+#
+# So an unscrubbed `git -C hermit ls-files` inside a pre-commit hook enumerates
+# the PARENT's index, after which this module resolves those paths under hermit/.
+# That is precisely the 2026-08-06 fleet-wide false block: the parent index holds
+# 47 `*Cargo.toml` entries (crates-squat-staging/**, experiments/**,
+# shmem_exec_obj/** -- none of which exist in the Hermit repo), every open
+# ENOENTed, and check-pins concluded "no tracked Cargo manifest pins", forcing
+# every agent onto HERMIT_PIN_DRIFT_OVERRIDE=1. `git -C <repo>` must mean <repo>,
+# so scrub these unless a caller explicitly wants the in-flight parent index.
+GIT_REPO_SCOPED_ENV = (
+    "GIT_INDEX_FILE",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+    "GIT_INDEX_VERSION",
+)
+# Reads of a recorded gitlink's tree must never trigger a promisor round trip:
+# a pre-commit hook has no business going to the network, and the Hermit primary
+# carries a partial-clone promisor remote for reverie.
+NO_LAZY_FETCH = {"GIT_NO_LAZY_FETCH": "1"}
 
 
 def run_git(
@@ -37,14 +68,28 @@ def run_git(
     *args: str,
     network: bool = False,
     use_proxy: bool = True,
+    inherit_repo_env: bool = False,
+    env_overrides: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Run git against ``repo``.
+
+    ``inherit_repo_env=True`` keeps GIT_INDEX_FILE and friends, which is correct
+    only when ``repo`` IS the repository whose in-flight commit set them (see
+    GIT_REPO_SCOPED_ENV). Every other call must be scrubbed.
+    """
+    env = dict(os.environ)
+    if not inherit_repo_env:
+        for name in GIT_REPO_SCOPED_ENV:
+            env.pop(name, None)
+    if env_overrides:
+        env.update(env_overrides)
     command: list[str] = []
     if network and use_proxy and not os.environ.get("PRIMARY_CHECKOUT_DISABLE_PROXY"):
         proxy = shutil.which(os.environ.get("WITH_PROXY", "with-proxy"))
         if proxy:
             command.append(proxy)
     command.extend(("git", "-C", str(repo), *args))
-    return subprocess.run(command, text=True, capture_output=True, check=False)
+    return subprocess.run(command, text=True, capture_output=True, check=False, env=env)
 
 
 def print_command_output(result: subprocess.CompletedProcess[str], stream: TextIO) -> None:
@@ -66,20 +111,81 @@ def _walk_reverie_dependencies(value: object) -> list[str]:
     return pins
 
 
-def reverie_manifest_pins(hermit: Path) -> tuple[set[str], int, list[str]]:
-    """Return exact Reverie revisions from tracked Hermit Cargo manifests."""
-    manifests = run_git(hermit, "ls-files", "-z", "--", "*Cargo.toml")
-    if manifests.returncode != 0:
-        return set(), 0, ["could not list tracked Hermit Cargo.toml files"]
+def indexed_submodule_commit(root: Path, product: str) -> tuple[str | None, str]:
+    """Return the ``product`` commit this parent commit will record, and its source.
 
-    pins: list[str] = []
-    errors: list[str] = []
-    for relative in filter(None, manifests.stdout.split("\0")):
-        path = hermit / relative
+    Deliberately INHERITS the git environment: inside a pre-commit hook,
+    GIT_INDEX_FILE names the exact index being committed -- for the mandated
+    pathspec form (``git commit -m msg -- <paths>``) a temporary index built from
+    HEAD plus the named paths -- so this yields the gitlink the commit will
+    actually record, whether or not the caller staged a submodule bump. Outside a
+    hook it reads .git/index. Falls back to HEAD, then to ``(None, reason)``.
+    """
+    staged = run_git(root, "ls-files", "--stage", "-z", "--", product, inherit_repo_env=True)
+    if staged.returncode == 0:
+        for entry in filter(None, staged.stdout.split("\0")):
+            metadata, _, name = entry.partition("\t")
+            fields = metadata.split()
+            if name == product and len(fields) >= 2 and fields[0] == "160000":
+                return fields[1], "parent index"
+    head = run_git(root, "rev-parse", f"HEAD:{product}")
+    recorded = head.stdout.strip()
+    if head.returncode == 0 and FULL_SHA.fullmatch(recorded):
+        return recorded, "parent HEAD"
+    return None, f"{product} is not recorded as a gitlink in the parent index or HEAD"
+
+
+def _tracked_manifest_paths(hermit: Path, commit: str | None) -> tuple[list[str], list[str]]:
+    """Tracked ``*Cargo.toml`` paths at ``commit``, or in the working tree if None."""
+    if commit is None:
+        listed = run_git(hermit, "ls-files", "-z", "--", "*Cargo.toml")
+        if listed.returncode != 0:
+            return [], ["could not list tracked Hermit Cargo.toml files"]
+        return list(filter(None, listed.stdout.split("\0"))), []
+    listed = run_git(
+        hermit, "ls-tree", "-r", "-z", "--name-only", commit, env_overrides=NO_LAZY_FETCH
+    )
+    if listed.returncode != 0:
+        return [], [f"could not list Cargo.toml files at {commit[:12]}"]
+    # `ls-files -- '*Cargo.toml'` globs across '/', so a basename suffix test is
+    # the equivalent filter over a flat ls-tree listing.
+    return [
+        name for name in filter(None, listed.stdout.split("\0")) if name.endswith("Cargo.toml")
+    ], []
+
+
+def _read_tracked(hermit: Path, commit: str | None, relative: Path | str) -> tuple[str | None, str]:
+    """Contents of a tracked Hermit file at ``commit``, or from the working tree if None."""
+    if commit is None:
         try:
-            with path.open("rb") as source:
-                pins.extend(_walk_reverie_dependencies(tomllib.load(source)))
-        except (OSError, tomllib.TOMLDecodeError) as error:
+            return (hermit / relative).read_text(), ""
+        except OSError as error:
+            return None, f"{error}"
+    blob = run_git(
+        hermit, "cat-file", "blob", f"{commit}:{relative}", env_overrides=NO_LAZY_FETCH
+    )
+    if blob.returncode != 0:
+        return None, (blob.stderr.strip() or f"missing at {commit[:12]}")
+    return blob.stdout, ""
+
+
+def reverie_manifest_pins(
+    hermit: Path, commit: str | None = None
+) -> tuple[set[str], int, list[str]]:
+    """Return exact Reverie revisions from tracked Hermit Cargo manifests.
+
+    ``commit`` selects the recorded submodule tree; None reads the working tree.
+    """
+    names, errors = _tracked_manifest_paths(hermit, commit)
+    pins: list[str] = []
+    for relative in names:
+        text, failure = _read_tracked(hermit, commit, relative)
+        if text is None:
+            errors.append(f"could not parse {relative}: {failure}")
+            continue
+        try:
+            pins.extend(_walk_reverie_dependencies(tomllib.loads(text)))
+        except tomllib.TOMLDecodeError as error:
             errors.append(f"could not parse {relative}: {error}")
     return set(pins), len(pins), errors
 
@@ -407,7 +513,9 @@ def check_freshness(
         if branch == "main" and head == remote:
             current.append(f"{product}={head[:12]}")
 
-        gitlink = run_git(root, "rev-parse", f":{product}")
+        # The parent's own index is exactly what we want here, so keep the
+        # in-flight GIT_INDEX_FILE a pre-commit hook hands us.
+        gitlink = run_git(root, "rev-parse", f":{product}", inherit_repo_env=True)
         recorded = gitlink.stdout.strip()
         if gitlink.returncode != 0 or not recorded:
             warnings.append(f"{product}: parent index has no gitlink")
@@ -472,9 +580,44 @@ def check_pins(
         7-char short SHAs and a heterogeneous key scheme (e.g.
         hermit-install/build.rs), so a blocking equality check on them would
         false-positive on a healthy tree. They remain a warning-only signal.
+
+    WHAT IT READS (changed 2026-08-06 after a fleet-wide false block): the
+    Hermit tree at the gitlink this parent commit will RECORD, never the Hermit
+    working tree. A parent commit records a submodule *commit*, so the recorded
+    commit is the only pin state it can possibly introduce; another agent's
+    in-flight edits under hermit/ are not part of it and must not block an
+    unrelated parent commit. Hermit's own pre-commit hook and CI guard the
+    Hermit working tree, and the warning-only ``check`` still reports it.
+
+    FAILURE POSTURE. Fail-CLOSED on real drift: the recorded tree is readable
+    and its Reverie references disagree -> exit 1. Fail-OPEN, loudly, when the
+    gate cannot be evaluated at all (no gitlink, or the recorded commit is
+    absent from the local object store) -- an unevaluable gate is not evidence
+    of drift, and blocking there is what turned a stale premise into an outage.
     """
+    hermit = root / "hermit"
+    commit, origin = indexed_submodule_commit(root, "hermit")
+    unevaluable = "" if commit is not None else origin
+    if commit is not None:
+        readable = run_git(
+            hermit, "cat-file", "-e", f"{commit}^{{commit}}", env_overrides=NO_LAZY_FETCH
+        )
+        if readable.returncode != 0:
+            unevaluable = (
+                f"recorded hermit gitlink {commit[:12]} ({origin}) is not in the local "
+                "Hermit object store"
+            )
+            commit = None
+    if commit is None:
+        print(
+            f"WARNING: {unevaluable}; Reverie pin drift NOT evaluated "
+            "(this gate never blocks on being unevaluable).",
+            file=err,
+        )
+        return 0
+
     errors: list[str] = []
-    pins, pin_count, pin_errors = reverie_manifest_pins(root / "hermit")
+    pins, pin_count, pin_errors = reverie_manifest_pins(hermit, commit)
     errors.extend(f"hermit: {message}" for message in pin_errors)
     expected: str | None = None
     if pin_count == 0:
@@ -486,13 +629,14 @@ def check_pins(
         )
     else:
         expected = next(iter(pins))
-        hermit = root / "hermit"
         for relative in REVERIE_LOCKFILES:
-            path = hermit / relative
+            text, failure = _read_tracked(hermit, commit, relative)
+            if text is None:
+                errors.append(f"hermit: could not parse {relative}: {failure}")
+                continue
             try:
-                with path.open("rb") as source:
-                    lock = tomllib.load(source)
-            except (OSError, tomllib.TOMLDecodeError) as error:
+                lock = tomllib.loads(text)
+            except tomllib.TOMLDecodeError as error:
                 errors.append(f"hermit: could not parse {relative}: {error}")
                 continue
             sources = [
@@ -510,21 +654,28 @@ def check_pins(
                     errors.append(f"hermit: {relative}: stale Reverie source {source}")
 
     if errors:
-        print("REVERIE PIN DRIFT: tracked Reverie references disagree - BLOCKED", file=err)
+        print(
+            f"REVERIE PIN DRIFT at recorded hermit gitlink {commit} ({origin}): "
+            "tracked Reverie references disagree - BLOCKED",
+            file=err,
+        )
         for message in errors:
             print(f"  {message}", file=err)
         print(
             "Every Cargo.toml rev and every tracked Cargo.lock source (including the "
             "nested liteinst-runtime-build/Cargo.lock) must reference ONE identical "
-            "Reverie SHA. Re-run the Reverie pin update (hermit/docs/updating-reverie.md) "
-            "so all references move together, or override a deliberate in-flight state "
+            "Reverie SHA. This is the pin state the commit would RECORD -- the Hermit "
+            "working tree was not read, so cleaning it will not clear this. Re-run the "
+            "Reverie pin update (hermit/docs/updating-reverie.md) so all references move "
+            "together and re-point the gitlink, or override a deliberate in-flight state "
             "with HERMIT_PIN_DRIFT_OVERRIDE=1 git commit ...",
             file=err,
         )
         return 1
     print(
-        f"Reverie pin is internally consistent: {expected} "
-        f"({pin_count} manifest revision entries; tracked Cargo.lock sources agree).",
+        f"Reverie pin is internally consistent at recorded hermit gitlink {commit[:12]} "
+        f"({origin}): {expected} ({pin_count} manifest revision entries; tracked "
+        "Cargo.lock sources agree).",
         file=out,
     )
     return 0

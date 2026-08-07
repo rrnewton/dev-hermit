@@ -108,11 +108,25 @@ fi
 
 # BLOCKING Reverie pin-drift guard. Distinct from the warning-only freshness
 # probe above: this is the offline *consistency* check -- it fails the commit
-# only when tracked Reverie references (Cargo.toml revs, both Cargo.lock
-# sources, and the LiteInst runtime cache keys) disagree with each other, i.e.
-# a silent pin drift. It never touches primary freshness/gitlinks/network, so it
-# cannot block a commit that repairs a stale gitlink. Override a deliberate
-# in-flight state with HERMIT_PIN_DRIFT_OVERRIDE=1.
+# only when the tracked Reverie references (every Cargo.toml rev and both
+# Cargo.lock sources) disagree with each other, i.e. a silent pin drift. It
+# never touches primary freshness/network, so it cannot block a commit that
+# repairs a stale gitlink. Override a deliberate in-flight state with
+# HERMIT_PIN_DRIFT_OVERRIDE=1.
+#
+# IT READS THE RECORDED GITLINK, NOT THE HERMIT WORKING TREE (since 2026-08-06).
+# A parent commit records a submodule *commit*, so check-pins resolves the
+# hermit gitlink this very commit will take -- from GIT_INDEX_FILE, which for
+# the mandated `git commit -m msg -- <paths>` form is the temporary index built
+# from HEAD plus the named paths -- and reads that tree out of hermit's object
+# store. Consequences, both deliberate: another agent's dirty hermit/ working
+# tree can no longer false-block an unrelated parent commit (that regression
+# put the whole fleet on HERMIT_PIN_DRIFT_OVERRIDE=1 for a day), and drift the
+# commit does not record is not this hook's business -- hermit's own
+# check-reverie-pin.rs hook and CI guard the hermit working tree.
+#
+# The hermit/Cargo.toml test below is a "hermit is checked out at all" probe:
+# without a hermit checkout there is no object store to read the gitlink from.
 if [ -x scripts/primary_checkout.py ] && [ -f hermit/Cargo.toml ]; then
   if ! scripts/primary_checkout.py check-pins >&2; then
     if [ "${HERMIT_PIN_DRIFT_OVERRIDE:-}" = "1" ]; then
