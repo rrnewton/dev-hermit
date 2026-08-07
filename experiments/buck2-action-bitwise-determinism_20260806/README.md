@@ -150,3 +150,97 @@ Exact SHAs, versions, host and commands: `metadata.json`.
 **If you get to the Hermit leg, do not use `--no-namespace`.** Hermit's default full-namespace mode does
 persist writes outside `/tmp`; what it discards is `/tmp`. Use `hermit run --tmp=/tmp`, which keeps all
 namespaces, gives deterministic PIDs, and leaves writes visible.
+
+---
+
+# Track B — fleet telemetry vs a controlled local rebuild
+
+**Status: the comparison is designed and half-executed. The control arm is measured; the flagged arm is
+blocked. The target sentence cannot yet be stated, and is not stated below.**
+
+## The fleet telemetry exists and is queryable
+
+`infrastructure.buck2_nondeterministic_actions_user` — Hive, daily, 365-day retention, oncall
+`build_infra`, partition `ds`. Definition: an action is flagged when it has more than one distinct set of
+output digests for the same `action_digest`. Schema (read from the checked-in UPM dataset definition, not
+guessed): `inferred_repository`, `action_digest`, `distinct_output_digests`, `target`, `category`,
+`identifier`, `action_id`, `output_digests_size`, `build_uuids`, `num_runs`.
+
+Queried via the `presto` CLI at `ds=2026-08-05`:
+
+| measurement | value |
+| --- | --- |
+| flagged action rows, all repositories | **85,674** |
+| distinct targets carrying at least one flagged action | **41,701** |
+| max flagged actions on a single fbcode target | **542** |
+
+**Two properties of this table change how it must be read, and neither is obvious from its name:**
+
+1. **It covers user builds only.** The pipeline filters out Sandcastle/CI, service accounts, cancelled
+   builds, and non-`v2` isolation dirs. It is interactive-developer-build telemetry, not whole-fleet.
+2. **RE's action-cache "paranoid" mode pins an action to its first result**, which suppresses the
+   observable divergence for the great majority of actions that execute remotely. The residual signal
+   therefore concentrates in **locally executed** actions. This cuts directly against the naive reading of
+   the owner's ask: re-running *RE* actions is where the signal is *least* visible, and a local A/B is
+   where it is most visible.
+
+Also relevant to interpretation: fbcode build-stamping makes nearly every binary nondeterministic by
+design, so a raw flag count includes a large intentional component. 41,701 flagged targets is not 41,701
+bugs.
+
+## What the flagged population actually looks like
+
+Top-30 fbcode targets by flagged-action count are dominated by three families:
+`cuda_cxx_compile` / `cudafepp` (GPU kernel compilation), `hip_compile`, and `genrule` (ASIC firmware
+images). Exactly one of the top 30 is `rustc`. Target paths are deliberately **not** reproduced in this
+public repo; the ranked list is in the coordinator handoff.
+
+## Control arm — measured
+
+Sampling frame, stated: **all 74 `rust_library` targets under one coherent fbcode package tree**
+(`common/rust/shed/...`), enumerated with `buck2 uquery kind('rust_library', …)`. These are *not*
+fleet-flagged; they are the control.
+
+Method: one isolation dir, `buck2 clean` between rounds, **one batched build over all 74 per round**
+(per-target cleans are quadratic), `--local-only --no-remote-cache`.
+
+| | |
+| --- | --- |
+| executed actions per round | **5,548** |
+| executor mix | `Local=5548, Cache=0, RE=0` |
+| divergent actions | **0** |
+
+A real negative with a denominator: 74 targets, 5,548 locally executed actions per round, twice, zero
+divergences.
+
+## Flagged arm — blocked, and the blocker is itself the finding
+
+Sampling rule, stated: from the `ds=2026-08-05` fbcode flagged set, restrict to targets whose flagged
+categories are **compile-only** (`rustc` / `cxx_compile` / `c_compile`), excluding CUDA, HIP and genrule
+because those need GPU toolchains or long firmware builds that do not fit the session budget. Within that
+filter, take the cheapest (fewest flagged actions). Note this rule **biases against** finding
+nondeterminism, which would have made a positive result stronger.
+
+**Round 1 of that batch failed to build locally.** The flagged population skews to MTIA / ASIC-firmware /
+GPU-adjacent targets that do not build on a generic devserver even after filtering by category — the
+category filter removes the CUDA *actions* but not the target's other configuration requirements.
+
+**So the honest result is: the fleet's flagged candidates are systematically harder to A/B locally than
+unflagged ones, and that obstacle — not compute cost — is what blocks the comparison.** Anyone repeating
+this needs a buildability pre-filter (attempt a single-target build, keep the survivors) before sampling,
+and should budget for a low survival rate.
+
+## What would finish Track B
+
+1. Add a **buildability pre-filter** pass: single-target `buck2 build --local-only` over the top ~200
+   flagged compile-only fbcode targets, keep the survivors. Expect heavy attrition.
+2. Batched two-round A/B over the survivors, same corrected method, with the executed-action guard.
+3. Only then state the sentence *"of the K flagged targets that build locally, J reproduced their
+   nondeterminism in a controlled two-round rebuild."*
+4. Any target that does reproduce is the **Hermit-leg candidate** — run its failing action under
+   `hermit run --tmp=/tmp` and re-compare. That join remains unbuilt.
+
+A cheaper alternative that avoids the buildability problem entirely: pick flagged targets by joining
+against the *control* frame — i.e. query the table for flagged actions whose `target` is already known to
+build locally — rather than by rank. That trades "the most-flagged targets" for "flagged targets we can
+actually test", and the report must say which was done.
