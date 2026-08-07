@@ -5,3 +5,4 @@ HERMIT  which,"(import <nixpkgs> {}).which",hermit,"run --tmp=/tmp --no-rcb-time
 NATIVE  bc,"(import <nixpkgs> {}).bc",native,"native",/nix/store/hv077sb3v305vrmhh9kp8kv4pzmsh4i8-bc-1.08.2.drv,2,1,reproducible,1wnriq90x07313nf6jixyhyy2p0ra7mmxd8xn93srmd6y7g86sh2 1wnriq90x07313nf6jixyhyy2p0ra7mmxd8xn93srmd6y7g86sh2,11 10,
 HERMIT  bc,"(import <nixpkgs> {}).bc",hermit,"run --tmp=/tmp --no-rcb-time --max-timeslice disabled",/nix/store/xxpgwavqg6aqni62dy67ln0hqch0rwpb-bc-1.08.2.drv,0,,build-fail,,,build1-failed
 NATIVE  hello,"(import <nixpkgs> {}).hello",native,"native",/nix/store/5g60vyp4cbgwl12pav5apyi571smp62s-hello-2.12.2.drv,2,1,reproducible,1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii 1q27ixp15f8ggr11gjfgqql5s10iwv9gnh3hqgwdwrrxwk0kc0ii,20 19,
+HERMIT  hello,"(import <nixpkgs> {}).hello",hermit,"run --tmp=/tmp --no-rcb-time --max-timeslice disabled",/nix/store/ywll4l8z587pxfdcq3k02n37ixln0dx6-hello-2.12.2.drv,0,,build-fail,,,build1-failed

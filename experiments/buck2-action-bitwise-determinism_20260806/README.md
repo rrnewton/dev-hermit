@@ -156,7 +156,8 @@ namespaces, gives deterministic PIDs, and leaves writes visible.
 # Track B — fleet telemetry vs a controlled local rebuild
 
 **Status: the comparison is designed and half-executed. The control arm is measured; the flagged arm is
-blocked. The target sentence cannot yet be stated, and is not stated below.**
+NOT measured (see the retraction below -- an earlier revision misattributed that to buildability). The
+target sentence cannot yet be stated, and is not stated below.**
 
 ## The fleet telemetry exists and is queryable
 
@@ -213,22 +214,45 @@ Method: one isolation dir, `buck2 clean` between rounds, **one batched build ove
 A real negative with a denominator: 74 targets, 5,548 locally executed actions per round, twice, zero
 divergences.
 
-## Flagged arm — blocked, and the blocker is itself the finding
+## Flagged arm — NOT measured. Retraction of an earlier claim in this file.
 
-Sampling rule, stated: from the `ds=2026-08-05` fbcode flagged set, restrict to targets whose flagged
-categories are **compile-only** (`rustc` / `cxx_compile` / `c_compile`), excluding CUDA, HIP and genrule
-because those need GPU toolchains or long firmware builds that do not fit the session budget. Within that
-filter, take the cheapest (fewest flagged actions). Note this rule **biases against** finding
-nondeterminism, which would have made a positive result stronger.
+**An earlier revision of this README stated that the flagged arm was "blocked by buildability" and that
+"the flagged population skews to MTIA/ASIC-firmware/GPU-adjacent targets that do not build on a generic
+devserver". That claim was WRONG and is retracted. The evidence did not support it.**
 
-**Round 1 of that batch failed to build locally.** The flagged population skews to MTIA / ASIC-firmware /
-GPU-adjacent targets that do not build on a generic devserver even after filtering by category — the
-category filter removes the CUDA *actions* but not the target's other configuration requirements.
+What actually happened: three separate flagged-target batches reported `BUILD FAILED`, and I inferred
+buildability. When I finally read the root cause instead of the exit status, it was:
 
-**So the honest result is: the fleet's flagged candidates are systematically harder to A/B locally than
-unflagged ones, and that obstacle — not compute cost — is what blocks the comparison.** Anyone repeating
-this needs a buildability pre-filter (attempt a single-target build, keep the survivors) before sampling,
-and should budget for a low survival rate.
+```
+Buck2 daemon was killed by an OOM killer due to high memory pressure. Common causes are
+large or numerous build or test targets or too many Buck2 daemons running simultaneously.
+  0: h2 protocol error: error reading a body from connection
+  2: stream closed because of a broken pipe
+```
+
+**That is my own harness defect, not a property of the targets.** Each `--isolation-dir` starts and keeps
+its own buck2 daemon. Over the session I created seven (`det-probe-A`, `det-probe-B`, `det-same`,
+`det-batch`, `det-flagged`, `det-fl2`, `det-one`) and never killed any, on a box shared with three other
+agents running concurrent Rust builds. The daemons were OOM-killed, and buck2 surfaced that as
+`BUILD FAILED` with a gRPC broken-pipe cause that reads nothing like a memory problem.
+
+`BUILD FAILED` was a **proxy** for "these targets cannot build here". The observable that actually binds
+the claim is the root cause line, and it says something entirely different.
+
+**Consequences for the results:**
+
+* The **empty intersection stands** — it is a pure query result and never touched a daemon.
+* The **control arm stands** — its 5,548 executed actions per round with zero divergences completed before
+  the daemon pileup, and its executor mix was verified.
+* The **flagged arm is simply NOT MEASURED.** Not blocked, not negative — unmeasured. Whether fleet-flagged
+  targets reproduce their nondeterminism in a controlled local rebuild remains an open question, and this
+  experiment says nothing about it either way.
+* Any downstream reader who took "buildability blocks the comparison" from the earlier revision should
+  discard it. It was one inference away from the evidence and it was the wrong one.
+
+**Harness fix required before retrying:** reuse ONE isolation dir for the whole session, and
+`buck2 --isolation-dir <dir> kill` between phases. Never `buck2 killall` on a shared box — it would kill
+other agents' daemons.
 
 ## What would finish Track B
 

@@ -25,6 +25,14 @@ TMO="${TMO:-1800}"
 
 cd "$FBSOURCE" || exit 2
 
+# DAEMON HYGIENE -- load-bearing. Each --isolation-dir starts and KEEPS its own
+# buck2 daemon. Leaving several alive on a shared box gets them OOM-killed, and
+# buck2 reports that as `BUILD FAILED` with a gRPC broken-pipe cause that reads
+# nothing like a memory problem -- which this experiment then misread as the
+# targets being unbuildable. Reuse one isolation dir and kill it on the way out.
+# NEVER `buck2 killall`: other agents share this box and it would kill theirs.
+trap 'buck2 --isolation-dir "$ISO" kill >/dev/null 2>&1' EXIT
+
 traces=()
 for run in 1 2; do
   echo "=== run $run: $TARGET ===" >&2
