@@ -631,5 +631,39 @@ def test_host_environment_node_is_never_marked_known_flaky():
     assert rec["known_flaky"] is False
 
 
+def test_reworded_guest_message_naming_path_still_classifies_host_environment():
+    """Regression for a coupling found by integration-checking the producer fix
+    against this classifier: hermit's lua guest was reworded from
+    "lua5.4 not found" to the more accurate
+    "no Lua interpreter on PATH (tried: lua5.4, lua)", which contains no
+    "not found" and silently fell back to `code`. Keying on prose means a message
+    edit can flip a class, so every phrasing the guests actually emit must be
+    pinned here."""
+    log = _fail(
+        "build.manifest_guests",
+        "prepare failed for language-runtimes/lua-random.sh",
+        "no Lua interpreter on PATH (tried: lua5.4, lua)",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "host-environment"
+    assert rec["host_env_signature"] == " on path"
+
+
+def test_ruby_guest_reason_added_by_the_producer_fix_classifies_host_environment():
+    """The other half of the same integration: hermit's ruby guest previously
+    emitted NO reason at all. With the producer fix it emits "ruby not found on
+    PATH", which must land as host-environment rather than code."""
+    log = _fail(
+        "build.manifest_guests",
+        "prepare failed for language-runtimes/ruby-random.sh",
+        "ruby not found on PATH",
+    )
+    [rec] = classify_failed_substeps(log)
+    assert rec["fault_class"] == "host-environment"
+    assert rec["first_error_line"] == (
+        "prepare failed for language-runtimes/ruby-random.sh: ruby not found on PATH"
+    )
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

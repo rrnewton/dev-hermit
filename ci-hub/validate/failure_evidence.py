@@ -148,6 +148,14 @@ _HOST_ENV_REASON_SIGNATURES = (
     "not found",
     "no such file or directory",
     "command not found",
+    # "no Lua interpreter on PATH (tried: lua5.4, lua)" — a reason that names
+    # PATH is talking about host tool visibility by construction. Included
+    # because a guest reworded from "lua5.4 not found" to the more accurate
+    # PATH phrasing silently fell back to `code`: keying on prose means a
+    # message edit can flip a class. See
+    # `emit-structured-host-fault-markers-instead-of-matching-prose` for the
+    # durable fix; until then this list must track the phrasings guests use.
+    " on path",
 )
 
 # An error-DIAGNOSTIC line, as emitted by rustc/cargo/gcc/clang/ld/collect2. Two
