@@ -140,6 +140,7 @@ const SKILL_DESCRIPTION = "Project-specific coordination, fork-only issue, " +
 const SKILL_FUNCTIONS = [
   PLUGIN_NAME + ".activate",
   PLUGIN_NAME + ".status",
+  PLUGIN_NAME + ".selftest",
 ];
 const SKILL_TRIGGERS = [
   "\\bdev-hermit\\b",
@@ -181,6 +182,7 @@ interface HermitDevSources {
 
 let resolvedSources: HermitDevSources | null = null;
 let lastSurfaceGap: string[] = [];
+let lastSelfTest: SelfTestResult | null = null;
 
 // The only safe capability probe on this build: ask the runtime what it
 // publishes rather than poking a name at the host object. Returns null when
@@ -219,16 +221,149 @@ function hasOrcSurface(name: string): boolean {
   return names === null ? false : names.has(name);
 }
 
-// Names this plugin depends on that the running build does not publish. Empty
-// when the surface is intact; also empty (not "everything missing") when
-// introspection is unavailable — an unreadable registry is not evidence of
-// removal, and failing closed on a probe is the bug this plugin just had.
-function missingOrcSurface(): string[] {
+// Which of `required` the running build does not publish. Empty when the
+// surface is intact; also empty (not "everything missing") when introspection is
+// unavailable — an unreadable registry is not evidence of removal, and failing
+// closed on a probe is the bug this plugin just had. Parameterised so the
+// self-test exercises this exact function rather than a lookalike.
+function missingFrom(required: string[]): string[] {
   const names = orcSurfaceNames();
   if (names === null) {
     return [];
   }
-  return REQUIRED_ORC_SURFACE.filter((required) => !names.has(required));
+  return required.filter((name) => !names.has(name));
+}
+
+function missingOrcSurface(): string[] {
+  return missingFrom(REQUIRED_ORC_SURFACE);
+}
+
+// --- self-test ---------------------------------------------------------------
+// The startup surface check reports "nothing missing" in two very different
+// situations: the surface really is intact, or the check is dead and returning
+// empty for its own reasons. An all-clear that cannot distinguish those is not
+// evidence. This runs at startup, against the real registry, and brackets the
+// check both ways.
+//
+// The probe name below is a bare string used only for a set-membership test. It
+// is never called and grants nothing — planting a working capability to test a
+// capability check would be the very mistake this is guarding against.
+const ABSENT_PROBE_NAME = "__hermit_dev_absent_probe__";
+
+interface SelfTestCheck {
+  name: string;
+  pass: boolean;
+  severity: "error" | "notice";
+  detail: string;
+}
+
+interface SelfTestResult {
+  pass: boolean;
+  checks: SelfTestCheck[];
+}
+
+function hermitDevSelfTest(): SelfTestResult {
+  const checks: SelfTestCheck[] = [];
+  const add = (
+    name: string,
+    pass: boolean,
+    detail: string,
+    severity: "error" | "notice" = "error",
+  ) => {
+    checks.push({ name, pass, severity, detail });
+  };
+
+  const names = orcSurfaceNames();
+  if (names === null) {
+    add(
+      "registry-readable",
+      false,
+      "orc.listEffects()/listUserFunctions() enumerated nothing, so " +
+        "missingOrcSurface() is empty because the check is blind, not because " +
+        "the surface is intact",
+    );
+    return { pass: false, checks };
+  }
+  add("registry-readable", true, names.size + " names enumerated");
+
+  // POSITIVE — the qualifying case: every required name really is enumerable,
+  // so the production check is quiet for the right reason.
+  const gap = missingOrcSurface();
+  add(
+    "required-surface-present",
+    gap.length === 0,
+    gap.length === 0
+      ? REQUIRED_ORC_SURFACE.length + "/" + REQUIRED_ORC_SURFACE.length +
+        " required names enumerated"
+      : "absent: " + gap.join(", "),
+  );
+
+  // NEGATIVE — the violating case, through the SAME function: a name that is
+  // genuinely not published must be reported, and it must be the ONLY thing the
+  // planted run adds. Without this, the empty result above would be
+  // indistinguishable from a detector that can no longer fire at all.
+  //
+  // Measured against the baseline gap rather than against zero, so a real
+  // missing dependency reds `required-surface-present` alone instead of reding
+  // this one too — one defect should light one check.
+  const planted = missingFrom(REQUIRED_ORC_SURFACE.concat([ABSENT_PROBE_NAME]));
+  add(
+    "detector-fires-on-absent-name",
+    planted.indexOf(ABSENT_PROBE_NAME) !== -1 &&
+      planted.length === gap.length + 1,
+    "planted " + ABSENT_PROBE_NAME + " -> reported " + JSON.stringify(planted) +
+      " against a baseline gap of " + gap.length,
+  );
+
+  // The two names that work but are not enumerable must stay OUT of the
+  // required list, or every startup reports two false positives — measured, and
+  // exactly what happened before this list was trimmed to 13.
+  const overlap = REQUIRED_ORC_SURFACE.filter((name) =>
+    UNVERIFIABLE_ORC_SURFACE.indexOf(name) !== -1
+  );
+  add(
+    "required-excludes-unverifiable",
+    overlap.length === 0,
+    overlap.length === 0
+      ? "required list holds none of: " + UNVERIFIABLE_ORC_SURFACE.join(", ")
+      : "false-positive names in the required list: " + overlap.join(", "),
+  );
+
+  // Notice, not error: if a future build starts enumerating them that is an
+  // improvement, but the split above is then stale and should be collapsed.
+  const nowEnumerable = UNVERIFIABLE_ORC_SURFACE.filter((name) =>
+    names.has(name)
+  );
+  add(
+    "unverifiable-still-unenumerable",
+    nowEnumerable.length === 0,
+    nowEnumerable.length === 0
+      ? UNVERIFIABLE_ORC_SURFACE.join(", ") +
+        " absent from the registry, as measured"
+      : "now enumerable, move into REQUIRED_ORC_SURFACE: " +
+        nowEnumerable.join(", "),
+    "notice",
+  );
+
+  const pass = checks.every((check) =>
+    check.pass || check.severity === "notice"
+  );
+  return { pass, checks };
+}
+
+function formatSelfTest(result: SelfTestResult): string {
+  const failed = result.checks.filter((check) => !check.pass);
+  const head = "hermit-dev self-test " + (result.pass ? "PASS" : "FAIL") +
+    " (" + (result.checks.length - failed.length) + "/" +
+    result.checks.length + " checks)";
+  if (failed.length === 0) {
+    return head;
+  }
+  return head + "\n" + failed
+    .map((check) =>
+      "  [" + check.severity + "] " + check.name + ": " + check.detail
+    )
+    .join("\n");
 }
 
 async function readFileIfPresent(path: string): Promise<string | null> {
@@ -559,6 +694,17 @@ function registerPluginSurface(): void {
   );
 
   orc.exposeFunction(
+    PLUGIN_NAME + ".selftest",
+    hermitDevSelfTest,
+    {
+      description:
+        "Re-run the orc.* surface self-check (brackets it both ways) against the live registry",
+      params: [],
+      sig: "orc.hermit-dev.selftest()",
+    },
+  );
+
+  orc.exposeFunction(
     PLUGIN_NAME + ".status",
     function hermitDevStatus() {
       const cachedPolicy = orc.kvGet(POLICY_CACHE_KEY);
@@ -588,6 +734,7 @@ function registerPluginSurface(): void {
         missingOrcSurface: missingOrcSurface(),
         missingOrcSurfaceAtStartup: lastSurfaceGap,
         unverifiableOrcSurface: UNVERIFIABLE_ORC_SURFACE,
+        selfTestAtStartup: lastSelfTest,
         hermitPrimary: "rrnewton/hermit",
         hermitUpstream: "facebookexperimental/hermit",
         reverieIssueRepo: "rrnewton/reverie",
@@ -632,10 +779,13 @@ function registerPluginSurface(): void {
   );
 
   orc.registerStartup(PLUGIN_NAME + ".startup", async function hermitDevStartup() {
+    // Report; never throw. A named-but-absent API is what crash-looped this
+    // plugin, and a startup hook that dies takes the policies down with it.
+    lastSelfTest = hermitDevSelfTest();
+    orc.log(lastSelfTest.pass ? "info" : "error", formatSelfTest(lastSelfTest));
+
     lastSurfaceGap = missingOrcSurface();
     if (lastSurfaceGap.length > 0) {
-      // Report the gap; do not throw. A named-but-absent API is what crash-looped
-      // this plugin, and a startup hook that dies takes the policies with it.
       orc.log(
         "error",
         "hermit-dev: the running ORC build no longer publishes " +
