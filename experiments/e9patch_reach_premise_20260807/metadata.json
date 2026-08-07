@@ -1,0 +1,24 @@
+{
+  "question": "Is the recorded premise -- that an e9patch-vs-ptrace parity sweep is vacuous because e9patch has zero reach on ordinary guests -- true at current source?",
+  "date_utc": "2026-08-07",
+  "agent": "hermit-w27 (claude-opus-5)",
+  "task": "ratchet-e9patch-strict-parity",
+  "hermit_sha": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "reverie_sha": "dd3c178ea9553004d7bf4c494e1b7fd80e7b6ae6",
+  "hermit_binary": "hermit/target/release/hermit (release, --features third-party-backends; e9tool resolved from the build tree, NOT from PATH -- e9tool is absent from PATH on this host)",
+  "host": "316-core x86_64 devbig, Linux 6.18.39",
+  "toolchain": "cc (system), objdump (binutils)",
+  "command_run": "hermit --backend e9patch run --strict -- <guest>",
+  "static_scanner": "scan.sh -- counts the ten mnemonics in hermit-cli/src/instruction_map.rs:338-352, taking the first token after the final tab of an objdump -d line so operands and symbol names cannot match",
+  "static_scanner_validation": "agreed with the observed banner candidate_sites on 5/5 checks spanning 0,1,2,3 sites across both populations",
+  "relaxations": "none (--strict throughout)",
+  "populations": {
+    "A-dedicated-freestanding": "hermit/tests/backend-parity/e9patch_corpus/*.c compiled with compat-envelope/collect-e9patch-compat.rs:58 FREESTANDING_FLAGS",
+    "B-shared-fullcorpus": "compat-envelope/corpus/corpus-c.tsv cells compiled with compat-envelope/collect-fullcorpus.sh:202 (default dynamic)"
+  },
+  "denominators": {
+    "A_built": 20, "A_attempted": 20, "A_reach_nonzero": 20, "A_vacuous": 0,
+    "B_corpus_rows": 213, "B_built_here": 137, "B_build_failed_here": 76,
+    "B_reach_nonzero": 4, "B_vacuous": 133
+  }
+}
