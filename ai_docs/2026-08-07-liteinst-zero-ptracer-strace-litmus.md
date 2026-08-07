@@ -168,8 +168,19 @@ same pidfd timeout on stderr, contained exactly one
   receipt, or copied status was used as authority. The direct litmus is the
   only measured result here.
 
-Base qualification: `Focused direct litmus only; no full validate; current main 303113c... unverified. Verified-green boundary d53550510d1e7d13e84cc8af9bb90269e90b3f07 was not tested by this task.`
+Repository/base qualification:
+
+- This PR is in `rrnewton/dev-hermit`. Its branch base is parent `origin/main` at
+  `6cda835ebd0d6145c1c720291c835a823ab926ef`. The dev-hermit parent main has
+  no verified-green boundary and is **UNVERIFIED**.
+- The runtime evidence tested Hermit
+  `303113c10522360de9051e21ed2d777c3436e17b`, and that Hermit main is
+  unverified.
+- `d53550510d1e7d13e84cc8af9bb90269e90b3f07` is the Hermit repository's
+  verified-green boundary. This task did not build or test it, and it is not a
+  valid dev-hermit parent branch base.
 
 No full validate, focused repository test suite, or performance benchmark was
 run. The observed failures establish the zero-ptracer architecture defect; they
 do not establish any Hermit L1/L2 determinism assurance for LiteInst.
+
