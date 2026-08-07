@@ -981,12 +981,72 @@ def parse_args() -> argparse.Namespace:
         "agent windows run claude/codex, never `orc`, so naming one matches "
         "no coordinator. Use a TaskGraph note for agent-to-agent handoff",
     )
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="mark this invocation as a self-test. Refuses before sending "
+        "anything unless --socket names an inert fixture server, so a test "
+        "cannot reach a human. Two probes have already leaked to the owner",
+    )
     args = parser.parse_args()
     if args.message_file is not None and args.message is not None:
         parser.error("message and --message-file are mutually exclusive")
     if args.message_file is None and args.message is None and not args.dry_run:
         parser.error("provide a message or use --message-file")
+    if args.self_test:
+        refusal = self_test_destination_refusal(args.socket)
+        if refusal:
+            parser.error(refusal)
     return args
+
+
+LIVE_SOCKET_DIR = DEFAULT_RUNTIME_DIR / "orc-tmux"
+
+
+def self_test_destination_refusal(socket: "Path | None") -> str | None:
+    """Reason a self-test must not run against this socket, or None if inert.
+
+    A self-test that can reach a person is a production side effect. This has
+    happened twice: `RELAY SELF-TEST from hermit-w12...` and a socket-fallback
+    probe both landed in front of the owner. So the destination is checked
+    BEFORE anything is composed or typed, and the check is structural rather
+    than a convention someone has to remember.
+
+    Inert means: an explicitly named socket that is not the live coordinator
+    server and does not live in the runtime directory where real orc servers
+    are published. Everything else refuses.
+
+    Note what is deliberately NOT accepted as sufficient: --dry-run. Dry-run
+    only promises not to type, and it still resolves and touches the live
+    coordinator pane. A self-test should be incapable of delivery by
+    construction, not merely well-behaved on the happy path -- the earlier leak
+    came precisely from a probe that was expected not to deliver.
+    """
+    if socket is None:
+        return (
+            "--self-test requires an explicit --socket naming an inert fixture "
+            "server. Without one the default socket is the LIVE coordinator, "
+            "and a self-test that reaches a human is a production side effect "
+            f"(default: {DEFAULT_SOCKET})"
+        )
+    resolved = Path(socket)
+    if resolved == DEFAULT_SOCKET:
+        return (
+            f"--self-test refuses the live coordinator socket {resolved}. Name a "
+            "fixture server instead; a self-test must be structurally incapable "
+            "of delivering to a person"
+        )
+    try:
+        inside_live_dir = LIVE_SOCKET_DIR in resolved.parents
+    except (OSError, ValueError):
+        inside_live_dir = False
+    if inside_live_dir:
+        return (
+            f"--self-test refuses {resolved}: it is under {LIVE_SOCKET_DIR}, where "
+            "real orc servers are published, so it may be a live user-facing "
+            "destination. Use a fixture socket outside that directory"
+        )
+    return None
 
 
 def main() -> int:

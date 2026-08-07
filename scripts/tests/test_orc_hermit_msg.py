@@ -23,6 +23,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "orc-hermit-msg.py"
@@ -866,3 +867,65 @@ class VerifyInjectedConsumptionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestSelfTestCannotReachAUser(unittest.TestCase):
+    """A self-test that can reach a person is a production side effect.
+
+    This has already happened twice -- `RELAY SELF-TEST from hermit-w12...` and
+    a socket-fallback probe both landed in front of the owner. The guard is
+    checked here structurally: the refusal happens on the DESTINATION, before
+    anything is composed or typed, so it cannot be defeated by a test that
+    merely intends not to send.
+
+    Bracketed both directions. Negatives alone would be satisfied by a guard
+    that refuses every self-test, which would make self-testing impossible
+    rather than safe -- so the inert-fixture positive is load-bearing.
+    """
+
+    def test_negative_self_test_without_an_explicit_socket_is_refused(self):
+        # No --socket means the LIVE coordinator, which is exactly the leak.
+        reason = ohm.self_test_destination_refusal(None)
+        self.assertIsNotNone(reason)
+        self.assertIn("explicit --socket", reason)
+
+    def test_negative_self_test_against_the_live_socket_is_refused(self):
+        reason = ohm.self_test_destination_refusal(ohm.DEFAULT_SOCKET)
+        self.assertIsNotNone(reason)
+        self.assertIn("live coordinator socket", reason)
+
+    def test_negative_any_socket_in_the_live_runtime_dir_is_refused(self):
+        """Naming a sibling server explicitly must not buy a way in.
+
+        Real orc servers are published under the runtime dir, so a socket there
+        is presumed user-facing even if it is not the default one.
+        """
+        sibling = ohm.LIVE_SOCKET_DIR / f"tmux-{ohm.UID}" / "some-other-server"
+        reason = ohm.self_test_destination_refusal(sibling)
+        self.assertIsNotNone(reason)
+        self.assertIn(str(ohm.LIVE_SOCKET_DIR), reason)
+
+    def test_positive_an_inert_fixture_socket_is_allowed(self):
+        """The guard must still permit a real self-test against a fixture."""
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture-server"
+            self.assertIsNone(ohm.self_test_destination_refusal(fixture))
+
+    def test_dry_run_is_not_accepted_as_a_substitute_for_an_inert_target(self):
+        """Dry-run promises not to type; it still touches the live pane.
+
+        The earlier leak came from a probe that was expected not to deliver, so
+        'well-behaved on the happy path' is not the property being enforced.
+        """
+        reason = ohm.self_test_destination_refusal(None)
+        self.assertIsNotNone(reason, "dry-run must not exempt the destination check")
+
+    def test_cli_refuses_a_self_test_aimed_at_the_live_coordinator(self):
+        """End to end through argparse: exit before any tmux call happens."""
+        argv = ["orc-hermit-msg", "--self-test", "hello"]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(ohm, "run_tmux") as never_called:
+            with self.assertRaises(SystemExit) as caught:
+                ohm.parse_args()
+        self.assertEqual(2, caught.exception.code, "argparse error exit")
+        never_called.assert_not_called()
