@@ -12,8 +12,12 @@ two-table format. The ptrace denominator is the **FULL e2e manifest corpus**, no
 the portable-CI subset.
 
 > **See `REPORT.md` for the authoritative MEASURED full-corpus scorecard** at
-> current `main` (hermit `82a8e853`): ptrace **179/200** L2, KVM det 130/200,
-> LiteInst det 118/200, all as real per-cell measurements. This file retains the
+> hermit `82a8e853` — the SHA it was measured at, **not** current `main`, which is
+> 301 commits ahead as of 2026-08-07: ptrace **179/200** L2, KVM det 130/200,
+> LiteInst det 118/200, all as real per-cell measurements. The KVM column is
+> additionally un-re-derivable between hermit `8b7345103` and the landing of
+> reverie PR #387 (livelock, not a host difference — see `REPORT.md`'s header
+> note for the both-sides bracket). This file retains the
 > corpus enumeration, the L1-sweep corroboration, and the portable/privileged
 > triage; its L2-green column below (`28`) is the older *calibrated-CI subset*,
 > now superseded by the 179 measured over the whole corpus.

@@ -12,10 +12,32 @@ Automated, machine-readable cross-backend compatibility measurement.
 Task: `automated-compat-envelope-measurement` /
 `scorecard-full-manifest-denominator`. Rendered from the CSVs in this directory.
 
-- Hermit SHA: `82a8e853357584a3a567fd80812e015572a607c7` (current `main`)
+- Hermit SHA: `82a8e853357584a3a567fd80812e015572a607c7` — **the SHA these numbers
+  were measured at, which is NOT current `main`.** It was current when this report
+  was written (2026-08-01); as of 2026-08-07 `main` is 301 commits ahead. Read
+  every figure below as "measured at `82a8e853`", never as "measured at `main`".
 - Reverie SHA: `a4f33d69a56ed4233a53b218c39d93807ffc8cd0`
 - Host: 316-core devbig, release hermit binary, load ~77 during the sweep.
 - **Denominator = the FULL e2e manifest corpus**, not the portable-CI subset.
+
+
+> **KVM: re-derivable at the SHA above, NOT at current `main` — and this is a
+> commit window, not a host difference.** Between hermit `8b7345103`
+> ("kvm: use canonical Detcore root pid") and the landing of reverie PR #387,
+> every `--backend kvm` run livelocks before guest output, so the KVM column
+> cannot be re-measured. `8b7345103` is a correct parity change that exposed a
+> latent reverie-kvm defect (`ExecutorState::ppid` conflated the guest-visible
+> `getppid` with the traced-tree parent, so `is_root_thread()` went false and
+> Detcore never admitted the root); the fix is reverie branch
+> `fix/kvm-tree-root-identity-vs-guest-ppid` @ `ad1b845c`, still unmerged.
+>
+> Do **not** annotate these rows "measured elsewhere" — that was checked and is
+> false. Bracketed on devbig014 on 2026-08-07, one guest (`/bin/true`), same base
+> commit `4c70658e7`, differing only by the reverie fix: **with** the fix
+> `rc=0 wall=13.59s`; **without** it `KILLED wall=60.54s cores_burned=1.016`.
+> The host's `/dev/kvm`, kernel and environment run KVM `--strict` to completion
+> today. Per-row provenance is already in `scorecard.csv` (`hermit_sha`,
+> `reverie_sha`, `dirty`, `run_utc`).
 
 ## The denominator: 200 (not 28)
 
@@ -134,7 +156,7 @@ TOTAL                      179          76%, 87%          63%, 72%          79%,
 | **Corpus / denominator** | **200** | ptrace-verify cells (202 `[[test]]`; 13 buckets). Replaces the "28". |
 | **ptrace L2 green** | **179/200 (89.5%)** | measured at `82a8e853`, uniform flags. |
 | ptrace L2 green (default flags) | 178/200 (89.0%) | preemption on; cross-validates the denominator is **flag-robust**. |
-| **KVM** | det **130/200 (65%)**, stdout parity **112** | of 184 stdout-parity-measurable cells (16 non-C: ptrace-side fail → stdout parity unmeasured). |
+| **KVM** | det **130/200 (65%)**, stdout parity **112** | of 184 stdout-parity-measurable cells (16 non-C: ptrace-side fail → stdout parity unmeasured). The 130 are `test_mode=verify` with `verify_compare=stripped` — two real runs compared, but by the **stripped** comparator, which normalises addresses and tmp paths and does not compare the detlog. So this is stripped-level determinism, not bitwise. Re-derivable only outside the `8b7345103`..PR-#387 window (see the header note). |
 | **LiteInst** | det **118/200 (59%)**, stdout parity **108** | hybrid (reverie-liteinst patch runtime + ptrace Detcore). |
 | **DBI** | det **156/200 (78%)**, stdout parity **137** | `--features third-party-backends` binary at `82a8e853`; stdout parity of 180 measurable cells. |
 | **SaBRe** | det **164/200 (82%)**, stdout parity **142** | real SaBRe loader (`libdetcore_sabre.so`, coordinator RPC), not ptrace fallback. |
