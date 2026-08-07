@@ -1,0 +1,86 @@
+== full-corpus gate: hermit=4c70658e785834737cbe1524f77330c781a6f5ea backends=[ptrace dbi sabre e9patch liteinst] par=16 ==
+   corpus = 214 C + 21 non-C cells
+== compiling/reusing C guests ==
+  build-fail: performance/barrier-rounds
+  build-fail: performance/barrier-yield-rounds
+  build-fail: performance/clock-query-churn
+  build-fail: performance/condvar-baton
+  build-fail: performance/condvar-signal-baton
+  build-fail: performance/dup-close-churn
+  build-fail: performance/epoll-eventfd-ring
+  build-fail: performance/eventfd-roundtrip
+  build-fail: performance/fork-wait-churn
+  build-fail: performance/futex-baton
+  build-fail: performance/getrandom-churn
+  build-fail: performance/mmap-churn
+  build-fail: performance/mutex-contention
+  build-fail: performance/nanosleep-yield
+  build-fail: performance/open-read-close-churn
+  build-fail: performance/pipe-fd-churn
+  build-fail: performance/pipe-nonblock-churn
+  build-fail: performance/pipe-roundtrip
+  build-fail: performance/poll-pipe-ring
+  build-fail: performance/rwlock-contention
+  build-fail: performance/rwlock-mixed-contention
+  build-fail: performance/semaphore-baton
+  build-fail: performance/sigmask-toggle
+  build-fail: performance/socketpair-roundtrip
+  build-fail: performance/socketpair-dgram-churn
+  build-fail: performance/spin-trylock-contention
+  build-fail: performance/syscall-mix
+  build-fail: performance/thread-churn
+  build-fail: performance/trylock-contention
+  build-fail: performance/yield-storm
+== sweep backend=ptrace ==
+environment: line 1: 958053 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/ptv.out" 2> "$cell/ptv.err"
+environment: line 1: 963973 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/ptv.out" 2> "$cell/ptv.err"
+   repair: re-running 2 timed-out ptrace cell(s) serially
+== sweep backend=dbi ==
+   repair: re-running 7 timed-out dbi cell(s) serially
+== sweep backend=sabre ==
+environment: line 1: 1166102 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 1166645 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 1166636 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 1166454 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 1177909 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 1179000 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 1177880 Aborted                 timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+   repair: re-running 6 timed-out sabre cell(s) serially
+== sweep backend=e9patch ==
+environment: line 1: 3920417 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+environment: line 1: 3924155 Segmentation fault      timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" > "$cell/$backend.out" 2> "$cell/$backend.err"
+   repair: re-running 1 timed-out e9patch cell(s) serially
+== sweep backend=liteinst ==
+== full-corpus scorecard written: /home/newton/work/dev-hermit/scratch/scorecard-baseline/compat-envelope/ignored/pre-tightening-raw.csv ==
+== green-stays-green ratchet (per-backend det floor over full corpus) ==
+  REGRESSION: ptrace det 182/205 < floor 214
+  REGRESSION: dbi det 157/205 < floor 190
+  REGRESSION: sabre det 152/205 < floor 199
+  REGRESSION: e9patch det 182/205 < floor 214
+  OK: liteinst det 121/205 (floor 118)
+== rendered scorecard ==
+Compat-envelope scorecard  (run: ALL (last-writer-wins), denominator: verify = tests passing golden ptrace strict+replay (verify))
+Input CSV: /home/newton/work/dev-hermit/scratch/scorecard-baseline/compat-envelope/ignored/pre-tightening-raw.csv
+Each backend cell is `stdout-parity%, determinism%` of the ptrace count. The two measurements are independent.
+CAVEAT: stdout-parity% compares piped guest stdout SHA-256 only. It is an upper bound on four-signal cross-backend parity; INFO logs, stack detlogs, and heap detlogs are not measured. TTY behavior is also outside this scorecard.
+stdout-parity suffix: `?` = the observable was never compared for that bucket (UNKNOWN, not confirmed 0); `~` = partial coverage (some cells unmeasured).
+`n/a` = backend not runnable here (binary absent / not enabled) — 0 cells run, NOT a confirmed fail.
+
+bucket                  ptrace               kvm               dbi             sabre          liteinst           e9patch
+------------------------------------------------------------------------------------------------------------------------
+applications                 1               n/a        100%, 100%        100%, 100%        100%, 100%        100%, 100%
+backend-parity-c             3               n/a        100%, 100%          67%, 67%          67%, 67%        100%, 100%
+bin-c                        1               n/a        100%, 100%        100%, 100%        100%, 100%        100%, 100%
+c-programs                 148               n/a          84%, 87%          83%, 86%          74%, 76%          99%, 99%
+chaos-c                      1               n/a        100%, 100%        100%, 100%            0%, 0%        100%, 100%
+data-handling                0            0%, 0%            0%, 0%            0%, 0%            0%, 0%            0%, 0%
+debugger-c                   1               n/a        100%, 100%        100%, 100%        100%, 100%        100%, 100%
+determinism-stress           3               n/a          33%, 33%        100%, 100%            0%, 0%        100%, 100%
+determinism-stress-c         9               n/a          67%, 78%          44%, 44%            0%, 0%        100%, 100%
+language-runtimes            7               n/a          29%, 57%          29%, 57%          14%, 14%        100%, 100%
+shared-futex-c               0            0%, 0%            0%, 0%            0%, 0%            0%, 0%            0%, 0%
+system-utils                 8               n/a          50%, 88%          50%, 88%          25%, 25%        100%, 100%
+util-c                       0            0%, 0%            0%, 0%            0%, 0%            0%, 0%            0%, 0%
+------------------------------------------------------------------------------------------------------------------------
+TOTAL                      182               n/a          79%, 85%          78%, 84%          65%, 66%          99%, 99%
+== full-corpus gate GREEN ==
