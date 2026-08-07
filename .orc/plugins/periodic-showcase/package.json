@@ -1,0 +1,6 @@
+{
+  "name": "periodic-showcase",
+  "version": "0.0.1",
+  "main": "./index.ts",
+  "description": "Recurring owner-facing Periodic showcase of newly-working compat cells"
+}
