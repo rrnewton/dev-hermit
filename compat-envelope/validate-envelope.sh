@@ -56,6 +56,27 @@ if [ "${do_reverie}" -eq 1 ]; then
   fi
 fi
 
+# A TRUNCATED CSV IS SYNTACTICALLY VALID AND SEMANTICALLY WRONG.
+#
+# The short file parses cleanly and reads as a COMPLETE one, because nothing in
+# it says how many rows there should have been -- so every denominator and pass
+# rate below is computed over a silently smaller population and reported as a
+# result. This runs on the CSVs the collectors just wrote, for the same reason
+# the determinism-claims gate below does: it gates freshly produced evidence
+# rather than a stale snapshot.
+#
+# Until the collectors emit a `#rows=N` trailer this reports UNVERIFIED rather
+# than failing -- 0 of 264 tracked CSVs carried a declared count when this
+# landed, so refusing on absence would break every consumer at once. A MISMATCH
+# is always a refusal. Making the gap visible is the point: today truncation is
+# undetectable AND unmentioned, which is strictly worse than undetectable and
+# named.
+echo "== compat-envelope: declared row count must match the file =="
+if ! "${here}/check-row-count.sh" "${here}/scorecard.csv" "${here}/reverie-scorecard.csv"; then
+  echo "validate-envelope: TRUNCATED OR CORRUPT scorecard CSV (declared row count mismatch)" >&2
+  fail=1
+fi
+
 # EVERY determinism claim must be EARNED, and must say what earned it.
 #
 # This gate had no production call site: it existed, it worked, and nothing ran
