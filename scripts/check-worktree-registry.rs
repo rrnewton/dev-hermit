@@ -15,11 +15,15 @@ const BEGIN: &str =
     "<!-- BEGIN worktree-state (managed by scripts/allocate-worktree.rs; do not edit inside) -->";
 const END: &str = "<!-- END worktree-state -->";
 
-const USAGE: &str = r#"Usage: check-worktree-registry.rs [--root PATH]
+const USAGE: &str = r#"Usage: check-worktree-registry.rs [--root PATH] [--slot NAME]
 
 Fail unless every worktree-state.json branch agrees with the actual checkout and
 the managed ACTIVE.md row agrees with worktree-state.json. Detached expectations
 may be `detached` (any detached SHA) or `detached:<sha-prefix>` (exact prefix).
+
+Without --slot this is the global fleet report. With --slot it verifies only the
+named operation target, so unrelated live branch movement cannot veto a local
+allocation or release.
 "#;
 
 #[derive(Debug)]
@@ -33,6 +37,13 @@ enum Actual {
 fn die(message: &str) -> ! {
     eprintln!("worktree-registry: ERROR {message}");
     exit(2);
+}
+
+fn valid_slot(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
 }
 
 fn find_root() -> PathBuf {
@@ -232,6 +243,7 @@ fn state_row(slot: &str, state: &Value) -> Vec<String> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut root = None;
+    let mut selected_slot = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -241,6 +253,16 @@ fn main() {
                     die("--root requires a path");
                 }
                 root = Some(PathBuf::from(&args[i]));
+            }
+            "--slot" => {
+                i += 1;
+                if i >= args.len() {
+                    die("--slot requires a name");
+                }
+                if !valid_slot(&args[i]) {
+                    die("--slot must be a lowercase [a-z0-9-]+ token");
+                }
+                selected_slot = Some(args[i].clone());
             }
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -264,6 +286,12 @@ fn main() {
     let mut issues: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut drift_cells = 0usize;
     for (slot, entry) in slots {
+        if selected_slot
+            .as_deref()
+            .is_some_and(|selected| selected != slot)
+        {
+            continue;
+        }
         if let Err(error) = validate_owners(slot, entry) {
             issues
                 .entry(slot.clone())
@@ -306,6 +334,12 @@ fn main() {
 
     let state_names: BTreeSet<&String> = slots.keys().collect();
     for slot in active.keys() {
+        if selected_slot
+            .as_deref()
+            .is_some_and(|selected| selected != *slot)
+        {
+            continue;
+        }
         if !state_names.contains(slot) {
             issues
                 .entry(slot.clone())
@@ -321,8 +355,22 @@ fn main() {
     }
     let rows = state_names
         .iter()
+        .filter(|name| {
+            selected_slot
+                .as_deref()
+                .is_none_or(|selected| selected == name.as_str())
+        })
         .map(|name| name.as_str())
-        .chain(active.keys().map(|name| name.as_str()))
+        .chain(
+            active
+                .keys()
+                .filter(|name| {
+                    selected_slot
+                        .as_deref()
+                        .is_none_or(|selected| selected == name.as_str())
+                })
+                .map(|name| name.as_str()),
+        )
         .collect::<BTreeSet<_>>()
         .len();
     let drift_rows = issues.len();

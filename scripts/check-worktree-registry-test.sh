@@ -59,7 +59,8 @@ cat >"$root/worktrees/ACTIVE.md" <<'MD'
 MD
 
 pass="$root/pass.out"
-"$script_dir/check-worktree-registry.rs" --root "$root" >"$pass" 2>&1
+"$script_dir/check-worktree-registry.rs" --root "$root" >"$pass" 2>&1 \
+  || { cat "$pass" >&2; echo 'expected clean global registry to pass' >&2; exit 1; }
 grep -Fq 'PASS rows=2 correct_rows=2 drift_rows=0 product_cells=6 drift_cells=0' "$pass"
 
 # The established reconciliation front door must invoke the same predicate.
@@ -106,6 +107,25 @@ if (cd "$root" && "$script_dir/allocate-worktree.rs" --check-only) \
 fi
 grep -Fq 'DRIFT slot=slot01 hermit recorded=wrong-01 actual=correct-01' \
   "$root/check-only-fail.out"
+
+# LOCAL-SCOPE BRACKET: unrelated slot01 drift remains visible to the global
+# report but cannot veto a slot02 operation. Selecting the drifting target must
+# still refuse, and selecting a genuinely unused target must be a zero-row pass.
+"$script_dir/check-worktree-registry.rs" --root "$root" --slot slot02 \
+  >"$root/scoped-clean.out" 2>&1
+grep -Fq 'PASS rows=1 correct_rows=1 drift_rows=0 product_cells=3 drift_cells=0' \
+  "$root/scoped-clean.out"
+if "$script_dir/check-worktree-registry.rs" --root "$root" --slot slot01 \
+    >"$root/scoped-drift.out" 2>&1; then
+  echo 'target-scoped verifier accepted drift in its own target' >&2
+  exit 1
+fi
+grep -Fq 'DRIFT slot=slot01 hermit recorded=wrong-01 actual=correct-01' \
+  "$root/scoped-drift.out"
+"$script_dir/check-worktree-registry.rs" --root "$root" --slot unused03 \
+  >"$root/scoped-unused.out" 2>&1
+grep -Fq 'PASS rows=0 correct_rows=0 drift_rows=0 product_cells=0 drift_cells=0' \
+  "$root/scoped-unused.out"
 
 # FALSE-ASCENT NEGATIVE: the requested product directory has only generated
 # residue and no .git. Git can see the fixture parent's `main`, but that parent
@@ -162,4 +182,4 @@ grep -Fq 'DRIFT slot=slot02 hermit path recorded=Some("worktrees/slot02/./hermit
 grep -Fq 'FAIL rows=3 correct_rows=1 drift_rows=2 product_cells=9 drift_cells=2' \
   "$root/alias.out"
 
-echo "check-worktree-registry-test: PASS (2/2 correct accepted; branch drift, parent-ascent residue, and lexical path alias refused; shared writer lock serialized; --check-only propagates both outcomes)"
+echo "check-worktree-registry-test: PASS (global report preserved; local clean/unused targets accepted despite unrelated drift; local drifting target refused; parent-ascent/path-alias negatives preserved; writer lock serialized)"
