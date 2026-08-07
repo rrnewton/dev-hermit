@@ -199,6 +199,27 @@ fn main() {
             "--buckets" => buckets_arg = Some(it.next().unwrap_or_else(|| die("--buckets needs a list"))),
             "--backends" => backends_arg = Some(it.next().unwrap_or_else(|| die("--backends needs a list"))),
             "--self-check" => std::process::exit(self_check()),
+            // Score a REAL `--verify-json` file through the same parser the
+            // collector uses. The self-check exercises that parser against
+            // synthetic records; this binds it to actual hermit output, so a
+            // shape drift in hermit's verdict is observable rather than
+            // silently degrading every row to the uncounted fallback.
+            "--verdict-file" => {
+                let path = it.next().unwrap_or_else(|| die("--verdict-file needs a path"));
+                match fs::read_to_string(&path).ok().as_deref().and_then(verify_tier_from_json) {
+                    Some(v) => {
+                        println!(
+                            "tier={} verify_compare={} bitwise_parity={} compared_log_messages={}",
+                            v.tier, v.verify_compare, v.bitwise_parity, v.compared_log_messages
+                        );
+                        exit(0);
+                    }
+                    None => {
+                        println!("no-verdict (fallback to stripped-uncounted): {path}");
+                        exit(1);
+                    }
+                }
+            }
             "--with-parity" => with_parity = true,
             "--csv" => csv = Some(PathBuf::from(it.next().unwrap_or_else(|| die("--csv needs a path")))),
             "--repo" => repo = Some(PathBuf::from(it.next().unwrap_or_else(|| die("--repo needs a path")))),
@@ -403,36 +424,42 @@ fn main() {
             } else {
                 None
             };
-            // WHAT the two runs were compared BY. hermit's `--verify` defaults to
-            // the STRIPPED comparison (this harness passes no compare-mode flag),
-            // which normalises addresses and tmp paths and does NOT compare the
-            // detlog. So `stripped` is a weaker claim than bitwise determinism and
-            // must be legible as such in the row rather than hidden behind a `1`.
-            let verify_compare = if deterministic == Some(true) && ran_two_run_comparison {
-                "stripped"
+            // WHAT the two runs were compared BY, read from hermit's OWN typed
+            // verdict instead of assumed from the flag or scraped from the banner.
+            // `detcore::logdiff` is the one real comparator in the system and this
+            // scorecard never called it: the banner
+            // `":: Success: deterministic. Determinism verified."` is printed by a
+            // run whose own `--verify-json` says `bitwise_parity:false`, so the
+            // banner cannot tell a stripped match from a bitwise one. `--verify-json`
+            // carries the comparison's CONDITIONS beside its result, so read that.
+            let verdict = if ran_two_run_comparison && available && outcome != "skip" && pass {
+                capture_verify_verdict(&repo, &lane, backend, c)
             } else {
-                ""
+                None
             };
-            // The tier this row EARNED, carried beside the comparator so a bare
-            // `deterministic=1` can never again stand in for "which comparison".
-            // `stripped` is the ceiling this harness can reach: it passes no
-            // compare-mode flag, so hermit runs the Stripped policy, whose own
-            // --verify-json reports bitwise_parity:false. `bitwise` is therefore
-            // NOT emittable here and is not merely unset -- it is unreachable.
-            // `stripped-uncounted`, NOT `stripped`. This harness does not read
-            // --verify-json, so it has no compared-message count to report -- and the
-            // wired verifier requires a count from anything claiming `stripped`,
-            // because a log comparison that cannot say how much it compared could have
-            // compared nothing. Emitting `stripped` here produced rows this very
-            // producer's own verifier refused. The uncounted tier states the comparator
-            // that ran and admits the missing count in its name, which is exactly what
-            // the historical rows carry, so fresh and migrated rows agree.
-            let tier = if verify_compare.is_empty() { "" } else { "stripped-uncounted" };
-            // Blank, not "0": this harness does not read --verify-json, so it has
-            // no parity boolean and no message counts to report. Blank means "not
-            // recorded"; a 0 would assert a measurement that was never taken.
-            let bitwise_parity = "";
-            let compared_log_messages = "";
+            // FALLBACK, retained deliberately: some backends produce no verdict at
+            // all (DBI accepts `--verify-json` and writes nothing -- measured rc=0,
+            // no file), so the absent-JSON path is a REAL case, not a defensive
+            // branch. `stripped-uncounted` states the comparator that ran and ADMITS
+            // the missing count in its name, because the wired verifier requires a
+            // count from anything claiming `stripped`: a log comparison that cannot
+            // say how much it compared could have compared nothing. Blank parity and
+            // counts mean NOT RECORDED; a `0` would assert a measurement never taken.
+            let (verify_compare, tier, bitwise_parity, compared_log_messages) = match &verdict {
+                Some(v) => (
+                    v.verify_compare.clone(),
+                    v.tier.clone(),
+                    v.bitwise_parity.clone(),
+                    v.compared_log_messages.clone(),
+                ),
+                None if deterministic == Some(true) && ran_two_run_comparison => (
+                    "stripped".to_string(),
+                    "stripped-uncounted".to_string(),
+                    String::new(),
+                    String::new(),
+                ),
+                None => (String::new(), String::new(), String::new(), String::new()),
+            };
             let (
                 parity,
                 parity_exercised,
@@ -741,6 +768,140 @@ fn split_run(r: Option<(String, Option<i64>)>) -> (Option<String>, Option<i64>) 
     }
 }
 
+/// The four comparison columns, carried together so a tier can never travel
+/// without the comparator and counts that justify it.
+struct VerifyVerdict {
+    tier: String,
+    verify_compare: String,
+    bitwise_parity: String,
+    compared_log_messages: String,
+}
+
+/// The tier a `--verify` run actually EARNED, parsed from the verdict hermit
+/// itself wrote. Pure over the JSON text so both directions are testable in
+/// `--self-check` without running a guest.
+///
+/// `bitwise` requires BOTH `bitwise_parity` AND a nonzero compared count on
+/// EACH side. The count is not redundant: an empty-vs-empty log comparison
+/// reports "no difference" under the strictest possible spec, so without it a
+/// run that produced no DETLOG at all would certify as bitwise parity. That is
+/// the ambiguous zero these columns exist to rule out.
+///
+/// Returns `None` when no usable record exists -- an absent file, unparseable
+/// text, or a `no_result` verdict, which is a REFUSAL (nothing was compared)
+/// and never a result.
+fn verify_tier_from_json(text: &str) -> Option<VerifyVerdict> {
+    let record: Value = serde_json::from_str(text.trim()).ok()?;
+    let record = record.as_object()?;
+    match record.get("verdict").and_then(Value::as_str) {
+        None | Some("no_result") => return None,
+        Some(_) => {}
+    }
+    let comparison = record.get("comparison").and_then(Value::as_object);
+    let counts = record.get("compared_log_messages").and_then(Value::as_object);
+    let left = counts.and_then(|c| c.get("left")).and_then(Value::as_i64);
+    let right = counts.and_then(|c| c.get("right")).and_then(Value::as_i64);
+    let compared = match (left, right) {
+        (Some(l), Some(r)) => format!("{l}|{r}"),
+        _ => String::new(),
+    };
+    let strictness = comparison
+        .and_then(|c| c.get("strictness"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let verified = record.get("verified").and_then(Value::as_bool).unwrap_or(false);
+    let bitwise = record.get("bitwise_parity").and_then(Value::as_bool).unwrap_or(false)
+        && left.unwrap_or(0) != 0
+        && right.unwrap_or(0) != 0;
+    let compare_logs = comparison
+        .and_then(|c| c.get("compare_logs"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let tier = if !verified {
+        "gap"
+    } else if bitwise {
+        "bitwise"
+    } else if compare_logs {
+        "stripped"
+    } else {
+        // Verified without comparing the log stream at all: stdout + exit only.
+        "guest"
+    };
+    Some(VerifyVerdict {
+        tier: tier.to_string(),
+        verify_compare: strictness,
+        bitwise_parity: if bitwise { "1".to_string() } else { "0".to_string() },
+        compared_log_messages: compared,
+    })
+}
+
+/// Run this cell's guest under `--verify` and read the verdict hermit wrote.
+///
+/// `--verify-strict` is what makes `canonical`/`bitwise` REACHABLE at all.
+/// Measured on this box against the same guest: plain `--verify` reports
+/// `strictness=stripped, bitwise_parity=false` over 236|236 messages, while
+/// `--verify-strict` reports `strictness=canonical, bitwise_parity=true` over
+/// 112|112. Strict is used HERE, in this measurement collector, and deliberately
+/// NOT pushed into hermit's gating `ci/test_harness.sh`: strict rejects
+/// divergences the stripped policy tolerates, so flipping the gate would change
+/// e2e pass/fail for every cell. This harness only measures, so it can afford
+/// the stronger comparison; the gate cannot, absent its own task.
+fn capture_verify_verdict(
+    repo: &Path,
+    lane: &str,
+    backend: &str,
+    cell: &PlanCell,
+) -> Option<VerifyVerdict> {
+    let guest = guest_command(repo, &cell.test)?;
+    let out_dir = repo.join("ignored/e2e/compat-envelope/verify-json");
+    let _ = fs::create_dir_all(&out_dir);
+    let slug: String = format!("{}-{}-{}", cell.bucket, cell.test, backend)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let json_path = out_dir.join(format!("{slug}.json"));
+    // Remove any stale verdict first: reading a previous run's file would bind
+    // this row's tier to a different execution.
+    let _ = fs::remove_file(&json_path);
+    let mut cmd = Command::new("timeout");
+    cmd.arg("120s")
+        .arg(hermit_bin(repo))
+        .arg("run")
+        .arg("--backend")
+        .arg(backend)
+        .arg("--strict")
+        .arg("--verify")
+        .arg("--verify-allow")
+        .arg("both")
+        .arg("--verify-strict")
+        .arg(format!("--verify-json={}", json_path.display()))
+        .arg("--summary")
+        // Same pinned guest environment as `run_and_hash`; see its comment for
+        // why an env delta would otherwise move every stack-derived observable.
+        .arg("--base-env")
+        .arg("minimal")
+        .arg("-e")
+        .arg("LC_ALL=C")
+        .arg("-e")
+        .arg("TZ=UTC");
+    if lane == "portable" {
+        cmd.arg("--no-virtualize-cpuid").arg("--max-timeslice=disabled");
+    }
+    cmd.arg("--");
+    for g in &guest {
+        cmd.arg(g);
+    }
+    cmd.env("LC_ALL", "C").env("TZ", "UTC").current_dir(repo);
+    // The run's EXIT STATUS is deliberately not consulted. A verify run that
+    // observes a divergence exits non-zero, and that divergence is exactly the
+    // measurement wanted here -- gating on rc would discard every negative
+    // result and leave only agreements, which is how a column comes to record
+    // nothing but greens. The verdict file is the authority.
+    let _ = cmd.output().ok()?;
+    verify_tier_from_json(&fs::read_to_string(&json_path).ok()?)
+}
+
 fn capture_parity(
     repo: &Path,
     lane: &str,
@@ -1041,11 +1202,109 @@ fn self_check() -> i32 {
         println!("SELF-CHECK FAIL: parser does not discriminate zero from nonzero");
         failures += 1;
     }
+    // --verify-json -> tier mapping, BOTH DIRECTIONS. A gate that only ever
+    // passes proves nothing, so every positive here is paired with the nearest
+    // negative that must NOT earn the same tier.
+    // (name, json, expected `tier|bitwise_parity|compared|verify_compare`)
+    let verdict_cases: &[(&str, &str, Option<&str>)] = &[
+        // POSITIVE: a real canonical comparison over nonzero messages.
+        (
+            "canonical-nonzero",
+            r#"{"verified":true,"bitwise_parity":true,"verdict":"matched",
+                "comparison":{"strictness":"canonical","compare_logs":true},
+                "compared_log_messages":{"left":112,"right":112}}"#,
+            Some("bitwise|1|112|112|canonical"),
+        ),
+        // NEGATIVE, the ambiguous zero: parity is TRUE but nothing was compared.
+        // An empty-vs-empty comparison "agrees" under any spec, so this must NOT
+        // reach `bitwise`.
+        (
+            "canonical-zero-counts",
+            r#"{"verified":true,"bitwise_parity":true,"verdict":"matched",
+                "comparison":{"strictness":"canonical","compare_logs":true},
+                "compared_log_messages":{"left":0,"right":0}}"#,
+            Some("stripped|0|0|0|canonical"),
+        ),
+        // NEGATIVE: one side empty is still not a comparison.
+        (
+            "canonical-one-side-zero",
+            r#"{"verified":true,"bitwise_parity":true,"verdict":"matched",
+                "comparison":{"strictness":"canonical","compare_logs":true},
+                "compared_log_messages":{"left":112,"right":0}}"#,
+            Some("stripped|0|112|0|canonical"),
+        ),
+        // The stripped policy's own verdict: counted, but never bitwise.
+        (
+            "stripped-nonzero",
+            r#"{"verified":true,"bitwise_parity":false,"verdict":"matched",
+                "comparison":{"strictness":"stripped","compare_logs":true},
+                "compared_log_messages":{"left":236,"right":236}}"#,
+            Some("stripped|0|236|236|stripped"),
+        ),
+        // A DIVERGENCE must be recorded, not dropped.
+        (
+            "diverged",
+            r#"{"verified":false,"bitwise_parity":false,"verdict":"diverged",
+                "comparison":{"strictness":"canonical","compare_logs":true},
+                "compared_log_messages":{"left":112,"right":109}}"#,
+            Some("gap|0|112|109|canonical"),
+        ),
+        // Verified without comparing the log stream at all: stdout + exit only.
+        (
+            "guest-only",
+            r#"{"verified":true,"bitwise_parity":false,"verdict":"matched",
+                "comparison":{"strictness":"stripped","compare_logs":false},
+                "compared_log_messages":{"left":0,"right":0}}"#,
+            Some("guest|0|0|0|stripped"),
+        ),
+        // REFUSALS, which must fall back rather than mint a tier.
+        (
+            "no-result",
+            r#"{"verified":false,"verdict":"no_result"}"#,
+            None,
+        ),
+        ("empty-file", "", None),
+        ("not-json", "Determinism verified.", None),
+    ];
+    for (name, json, expected) in verdict_cases {
+        let got = verify_tier_from_json(json).map(|v| {
+            format!(
+                "{}|{}|{}|{}",
+                v.tier, v.bitwise_parity, v.compared_log_messages, v.verify_compare
+            )
+        });
+        let got_ref = got.as_deref();
+        if got_ref != *expected {
+            println!("SELF-CHECK FAIL verdict/{name}: expected {expected:?} got {got_ref:?}");
+            failures += 1;
+        } else {
+            println!("self-check ok  verdict/{name:<22} {}", got_ref.unwrap_or("no-verdict"));
+        }
+    }
+    // The discrimination that matters, stated as a property: identical parity
+    // booleans must NOT produce the same tier when only the counts differ.
+    let counted = verify_tier_from_json(
+        r#"{"verified":true,"bitwise_parity":true,"verdict":"matched",
+            "comparison":{"strictness":"canonical","compare_logs":true},
+            "compared_log_messages":{"left":1,"right":1}}"#,
+    )
+    .map(|v| v.tier);
+    let uncounted = verify_tier_from_json(
+        r#"{"verified":true,"bitwise_parity":true,"verdict":"matched",
+            "comparison":{"strictness":"canonical","compare_logs":true},
+            "compared_log_messages":{"left":0,"right":0}}"#,
+    )
+    .map(|v| v.tier);
+    if counted == uncounted {
+        println!("SELF-CHECK FAIL: zero-count comparison earns the same tier as a real one");
+        failures += 1;
+    }
+    let total = cases.len() + verdict_cases.len();
     if failures == 0 {
-        println!("self-check: {} cases, all discriminating", cases.len());
+        println!("self-check: {total} cases, all discriminating");
         0
     } else {
-        println!("self-check: {failures} FAILED");
+        println!("self-check: {failures} FAILED of {total}");
         3
     }
 }
