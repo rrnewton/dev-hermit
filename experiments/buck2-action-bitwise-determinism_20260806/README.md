@@ -268,3 +268,83 @@ A cheaper alternative that avoids the buildability problem entirely: pick flagge
 against the *control* frame — i.e. query the table for flagged actions whose `target` is already known to
 build locally — rather than by rank. That trades "the most-flagged targets" for "flagged targets we can
 actually test", and the report must say which was done.
+
+---
+
+# Track B, flagged arm — measured on retry
+
+The retraction above stands and is now doubly confirmed: **these targets build locally without difficulty.**
+Round 1 completed in 3.5 minutes. The earlier `BUILD FAILED`s were resource exhaustion, twice — first my
+seven concurrent daemons, then host memory pressure from four build lanes sharing the box (round 2 showed
+**146 kill signals** across 13 third-party rustc/link actions). Dropping to `-j 4` made round 2 succeed.
+Neither failure was ever about the targets.
+
+## Sampling rule
+
+From `infrastructure.buck2_nondeterministic_actions_user` at `ds=2026-08-05`, `inferred_repository='fbcode'`,
+restricted to targets whose flagged categories are exactly `rustc` and whose paths avoid GPU/ASIC/torch
+domains, the largest coherent cluster was 30 unittest targets in a single Rust-port crate tree. **Took the
+first 8 by sorted target name** — an arbitrary but stated and reproducible cut, chosen for session budget.
+
+Method: one isolation dir, `buck2 clean` between rounds, batched build per round, `--local-only
+--no-remote-cache -j 4`, daemon killed on exit.
+
+## Result
+
+| | |
+| --- | --- |
+| flagged targets sampled | **8** |
+| flagged actions on them | **8** — exactly one each, all `category=rustc`, `identifier=link` |
+| executed actions per round | **3,287** |
+| executor mix | `Local=3287, Cache=0, RE=0` |
+| divergent actions | **0** |
+
+The binding was checked rather than assumed: the flagged action class for these targets is the final
+`rustc link` step, and those actions demonstrably executed in both rounds (the builds produced the test
+binaries). So this is not "the flagged action never ran".
+
+> **Of 8 fbcode targets the fleet flagged on 2026-08-05, 0 reproduced their nondeterminism in a controlled
+> two-round local rebuild over 3,287 executed actions per round.**
+
+## Interpretation — this is a statement about the telemetry, not about buck2
+
+**A same-host A/B cannot reproduce cross-environment nondeterminism, by construction.** The table flags an
+action when it observes more than one distinct output-digest set for the same `action_digest` — across
+different developers, machines, working-directory paths, times of day, and toolchain states. My two rounds
+are the same machine, the same commit, the same configuration, minutes apart. Any nondeterminism sourced
+from hostname, absolute path, wall-clock time, environment, or toolchain drift is *held constant* by my
+design and cannot appear.
+
+So 0/8 is the expected result if these flags encode **cross-environment** nondeterminism, and would have
+been a surprise only if they encoded **intra-host** nondeterminism (uninitialized memory, hash-map iteration
+order, parallelism races). The experiment therefore does not say "the fleet is wrong". It says the fleet's
+flags on this sample are **not same-host reproducible**, which narrows what they can be.
+
+That distinction matters for the Hermit question, and it cuts against the naive framing:
+
+* Hermit determinizes *within* a run — time, PIDs, scheduling, randomness. It is the right tool for
+  intra-host nondeterminism.
+* It does **not** by itself normalize hostname or absolute build paths across machines. If these flags are
+  path/host-sourced, Hermit is not the fix; a path-normalizing or hermetic-root change is.
+
+**No Hermit leg was run, because nothing reproduced locally for Hermit to fix.** Reporting a Hermit result
+here would have required first manufacturing a divergence, which would prove nothing about these targets.
+
+## Limitations
+
+* N=8 of 30 in the cluster, one day of telemetry, one repository area, `rustc`/`link` actions only.
+* Configuration was not pinned to the flagged rows' configuration; the flagged rows I inspected during the
+  failed round carried `cfg:dev-…asan-ubsan-dev`, and my `--local-only` build resolved its own default.
+  A stricter retry should pin `--target-platforms`/config to match the flagged row.
+* Two rounds only. A nondeterminism source with low per-run probability needs more rounds; the 2022 project
+  used repeated execution for this reason.
+* The control arm and this flagged arm used different frames, so they are not a matched comparison; both
+  returned zero, which is consistent but not a contrast.
+
+## The sharper next experiment
+
+Vary **one environment axis at a time** across the two rounds instead of holding everything constant —
+build the same target from two different absolute paths, or as two different users, or with a shifted
+clock — and see which axis makes the flagged action diverge. That directly identifies the nondeterminism
+source, and *then* Hermit has a defined job: determinize the axis that turns out to matter. That is a much
+better use of the next session than more same-host rounds.
