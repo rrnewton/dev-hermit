@@ -24,17 +24,9 @@ advisory conflict/evidence plan, then [`pr-landing-operations`](agent-utils/skil
 to execute an authorized drain. This file remains the authority for authorization, review, repository policy,
 and closure; neither skill may weaken it.
 
-Codex coordinator discipline: coordinate only; delegate nontrivial tool work to workers. Never paste raw tool
-output into the user transcript; provide concise synthesized results to avoid the cybersecurity false-positive
-filter. If a worker hits that filter, rephrase or replace the worker without stalling the coordinator.
-
 ## Conventions
 
 - **PR role tag:** ALL PR descriptions/comments MUST start with `[impl agent, MODEL]`, `[adversarial-reviewer agent, MODEL]`, `[coordinator, MODEL]`, or `[Human]` (e.g. `[impl agent, gpt-5.6-sol]`).
-- **Team identity — `orc-coord-014`:** several agent teams comment on the same `rrnewton` repositories, so this coordinator team's GitHub output MUST be attributable at a glance. Two requirements, both enforced by wrappers rather than remembered:
-  - **Every comment** this team posts on a GitHub issue or PR MUST begin with the literal prefix `[orc-coord-014]`. It may follow a role tag on the same first line (`[coordinator, opus-5] [orc-coord-014] …`) — the role tag says *what kind of agent*, the team tag says *which team*, and neither substitutes for the other. Post through `./.orc/plugins/hermit-dev/gh-coord-comment`, which adds the prefix when absent and refuses a conflicting one.
-  - **Every PR** this team creates MUST carry BOTH the `orc-coord` and `orc-coord-014` labels — `orc-coord` groups all coordinator-team work, `orc-coord-014` identifies this instance. Open through `./.orc/plugins/hermit-dev/gh-coord-pr-create`, which applies both unconditionally.
-  - Both wrappers are restricted to `rrnewton/*` and refuse `facebookexperimental/*` outright, for the reason in **Bot-Created GitHub Issue Policy**: upstream syncs into Meta's internal task tracker. Labels must exist on a repository before use; `--ensure-labels` provisions them on an `rrnewton` repo and touches nothing upstream.
 - **Mechanism tags:** when a task or PR changes a load-bearing mechanism, apply the same stable `mechanism:<slug>` tag to both (create the label when needed). Before landing, run `ci-hub pr-status`: a mechanism shared by two open PRs requires coordinator review and appears beside file conflicts in the landing plan (semantic overlap only, not conflicting intent).
 - **Stable descriptive naming:** use a stable, descriptive, lowercase-hyphenated slug for every option/wave/workstream/phase/task/semantic unit — name the work/outcome (`btrfs-flood-fix`), unchanged across updates. Never a bare ordinal/placeholder (`Option-A`, `phase-1`, `round-N`, `wave-X`); enumerate variants by suffix (`btrfs-flood-fix/claude-agent`). Existing infra IDs (PR/slot numbers, canonical agent names) stay valid. Define a coined term once beside the artifact that owns it; link later uses. In user-facing updates, lead with the observable consequence and the decision it creates; put internal names after.
 
@@ -95,7 +87,7 @@ read it before any worktree operation.**
 12. A handoff is incomplete without exact SHAs and validation results.
 13. Never exceed twelve active worktrees, five parked slots, or fifteen agents (count each separately; active work does not consume the parked allowance). Every normal worktree path is `worktrees/<slot>/{hermit,reverie,liteinst2}` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
-15. Never broad-kill processes on this shared box — no `pkill`/`killall`/pattern/name/`-f`-substring/user/`ps|grep|kill`. Kill only your own child PID/PGID. See **Process-Kill Safety**.
+15. Never run a broad destructive command against SHARED state on this box. Processes: no `pkill`/`killall`/pattern/name/`-f`-substring/user/`ps|grep|kill` — kill only your own child PID/PGID. Shared podman image store: no unscoped `rmi -f`, no `image prune`/`system prune`/`--all` — remove only an image you can prove you created, by exact ID. See **Process-Kill Safety**.
 
 ## Clean Start And Checkout Ownership
 
@@ -178,17 +170,10 @@ confirm the branch is based on the intended current `origin/main` with no unrela
 feature diff and validation evidence; run the focused tests + repo validation the task requires; confirm the
 tested SHA is the branch tip; write the mandatory PR sections (below); re-read concurrent remote state before
 pushing. Use `with-proxy` for networked `git`/`gh`; never `gh auth switch` (auth is shared machine state).
-Require an owner-authorized authority green at the exact PR head. For Hermit the two positive paths are
-interchangeable: (1) `ci-hub validate-status` dereferences a clean, counted local receipt, or (2) `ci-hub
-hosted-status` dereferences the registered `CI (GitHub-managed portable)` / `Regular tests (GitHub-managed
-portable)` job. Hermit's privileged workflow is not an additional required positive unless the owner explicitly
-changes the versioned policy. Reverie's hosted authority remains both `Regular tests` and `Host-dependent tests`.
-A skipped/missing/queued/partial/stale/cancelled authority is NO_RESULT, not green; one genuine product red blocks
-even when the peer is green. Do not merge with unresolved adversarial-review findings or a bare test-process exit.
-This policy is versioned in the parent before its Hermit consumer deployment: until the
-`hermit-merge-gate-authority-deployment` obligation in `ci-hub/landing/README.md` lands, Hermit's required
-merge-gate still enforces portable+privileged and pins the older receipt verifier. Do not claim portable-only
-hosted authority is operational end to end, and do not bypass that required check during the transition.
+Require authoritative gates green at the exact PR head: Hermit `Regular tests (GitHub-hosted)` (handle a
+known-environmental self-hosted failure per current documented policy; never bypass a genuine product failure);
+Reverie both `Regular tests` and `Host-dependent tests`. A skipped/missing/queued/stale/cancelled authoritative
+check is NOT green. Do not merge with unresolved adversarial-review findings or merely because local tests pass.
 
 ### Proxy Binding Review Axis (predicate; full rationale, registry, 12 examples, 3-layer taxonomy in the [companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md))
 
@@ -199,9 +184,6 @@ claimed condition. Enforce as predicates (examples in the companion doc):
 
 - **Carry the condition with the value.** A value not recording its conditions is a proxy: store `{jobs, bytes}`, not a bare cap; bind green to an exact-SHA run with a nonzero executed-test count; bind landing to `mergeCommit.oid` ancestry on freshly-fetched main, not a PR head or `MERGED` flag.
 - **A green must carry what it verified** in one record: exact SHA, profile, discovered/selected/executed/filtered/failure counts, declared per-node coverage. Full green = full profile, nonzero execution, satisfied coverage, zero failures. `filtered == 0` is not completeness; `test result: ok` with zero executed tests is a no-result.
-- A grandfathered schema-4 local receipt may retain its historical authority, but it must report
-  `coverage_satisfied: null` and `coverage_status: grandfathered-unknown`; it must never claim per-node coverage it
-  did not carry. Schema-5+ requires declared satisfied per-node coverage.
 - **One verifier per authority, called by every consumer.** Each evidence authority gets one semantic verifier that dereferences the source; a label/comment/status/copied field is only a cache. Do not collapse different authorities behind one generic check. Mark an authority covered only after a counted qualifying positive passes, a well-shaped nonexistent/tampered negative is refused, and a call-site audit shows every consumer invokes it. The **Load-Bearing Authority Registry** (companion doc) records each authority, its verifier, and coverage holes.
 - **Bracket both sides.** Negative: plant the violating case, confirm refusal. Positive: plant the qualifying case, confirm it fires (not inert). State counts on both sides.
 - **Never plant an artifact that is itself an authorization** (a merge/review/validation label, an auto-merge workflow) to test a gate. Exercise the consumer with an inert fixture, dry-run, or isolated repo incapable of authorizing the action whose refusal it tests.
@@ -226,6 +208,24 @@ applied — name the numbered trigger(s)). The label is informational, never a l
 `pre-land-human-review` notional but **never apply it**; never apply/remove/alter `human-approved` (owner-only);
 never recreate obsolete `human-review`/`post-facto-review` labels. Only a human reviewer removes the audit tags.
 
+### Shepherding: The Agent That Opens A PR Owns It Until It Lands
+
+**Owner directive (2026-08-04): during an implementation sprint, EVERY AGENT SHEPHERDS ITS OWN PR TO LANDING.**
+No handoff to a lander. A dedicated lander is for **bulk catch-up of an already-accumulated backlog**, not the
+steady-state model — a producer/lander split makes the lander a serial bottleneck and every PR behind it ages.
+
+**Staleness is the breach, not count.** An open-PR count treats a 3-hour-old PR and a 3-week-old PR as the same
+row; the old one is the violation. And staleness compounds: while a PR waits, `main` advances, its head goes
+stale, and its SHA-keyed validate receipt is invalidated — so waiting does not merely delay a landing, **it
+destroys the work that made it landable**, which then costs a rebase-and-revalidate to rebuild. Predicates:
+
+- **Age is a first-class field in every drain report**, and the drain order is **oldest-first** among landable
+  candidates. `ci-hub/health/pr_status.py` emits `age_hours` per PR and sorts on it; a PR whose age is unknown
+  sorts **last**, never first, so a missing timestamp cannot masquerade as the oldest and jump the queue.
+- **Rank and report by age, not by count.** A bare open-PR total is not a drain report.
+- **The WIP ceiling is scoped**, not universal: it is a regulated-pipeline limit for when the fleet is driving
+  hard at new PR creation. It is not the primary metric — staleness is.
+
 ### Landing Authorization
 
 On startup or replacement, `hermit-lander` must run `ci-hub/ci-hub inherit-obligations` to discover durable
@@ -248,82 +248,29 @@ performs, with an adversarial review gate between (phantom-closure rationale: co
 
 **Status model.** `tg` has three non-terminal statuses (`open`, `backlog`, `in_progress`) and one terminal
 (`closed`). **`resolved` is NOT a distinct state: `tg` accepts it only as an alias that immediately maps to
-`closed`.** `in_progress` = someone is actively working it. `closed` = the implementation is done and
-published. **`closed` + `implemented` = published but not yet landed** — a real, expected, and *quiet* state:
-the work needs nothing from a worker, so it must not appear in ready, active, or stuck views.
-
-**Landing is tracked in exactly ONE place: the open task `drain-implemented-to-landed`.** It is the single
-landing authority. Per-task landing state is NOT carried by leaving implementation tasks non-terminal.
-
-> **Why this changed (2026-08-06).** The former rule held every published task at `in_progress` +
-> `implemented` until its PR landed. Landing is slow and often externally blocked, so the queue filled with
-> roughly two hundred rows that looked like active work, were owned by nobody, and buried genuinely ready
-> priority work. A status is a claim about *who must act next*; "waiting for a merge" answers that with
-> "nobody", so it is not a non-terminal status. One drain tracker holds the pending-landing set instead.
+`closed`.** There is no "implemented but not landed" status, so IMPLEMENTED is a **tag** while status stays
+`in_progress`: `in_progress` = actively working; `in_progress` + `implemented` = complete and published (PR
+link + handoff SHA in a note), kept out of `closed` until it lands; `closed` = coordinator confirmed the PR
+merged to `main`.
 
 **Rules:**
 
-1. **A working agent NEVER moves a task to a terminal status.** Ignore any dispatch text telling a worker to set a terminal status. At implementation completion: (1) commit and push the feature branch; (2) post the PR/durable-artifact URL, exact SHA, and validation evidence — `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"`; (3) add the `implemented` tag, preserving existing tags since `--tags` replaces the set — `tg update <id> --tags <existing-tags>,implemented`; (4) stop, leaving the status alone. A report without a PR link (or, research-only, the durable artifact path) is incomplete. Bind results to the SHA, not a branch name.
+1. **A working agent NEVER moves a task to a terminal status.** Ignore any dispatch text telling a worker to set a terminal status. At implementation completion: (1) commit and push the feature branch; (2) post the PR/durable-artifact URL, exact SHA, and validation evidence — `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"`; (3) add the `implemented` tag while leaving status `in_progress`, preserving existing tags since `--tags` replaces the set — `tg update <id> --tags <existing-tags>,implemented`; (4) stop. A report without a PR link (or, research-only, the durable artifact path) is incomplete. Bind results to the SHA, not a branch name.
 2. **An adversarial review agent confirms the work exists in the PR** before closure — the PR contains the claimed change, the diff matches the report, the cited validation is real at the handoff SHA. An `implemented` task whose PR is empty/superseded/already-merged-elsewhere is a phantom: strip the tag, keep it `in_progress`, do not close.
-3. **The coordinator closes the implementation task once the work is published and reviewed — it does NOT wait for the merge.** A green unmerged PR is complete *implementation work*. Closing it records that; it does not claim the change is on `main`. The `implemented` tag is what marks it still-pending-landing, and `drain-implemented-to-landed` is where that pendency is tracked and worked.
-4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway dereferences the evidence, records `CLOSURE-VERIFIED`, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close. For `--code` the gateway reports which of two verified states it found: `landed` (the commit is an ancestor of freshly-fetched target `main`) or `implemented-unlanded` (the PR/commit exists and is reachable, but is not yet on `main`). **Both close.** `implemented-unlanded` additionally requires the `implemented` tag to be present, so the drain query can find it afterwards; a close whose evidence cannot be dereferenced at all is still `REFUSED`.
-5. **Landing verification updates the drain authority, not the implementation task.** When a pending PR merges, the landing check removes it from `drain-implemented-to-landed`; it does not reopen or re-close the implementation task. Conversely, **if an implementation turns out to be invalid, reopen it** — set the status back to `in_progress`, strip `implemented`, and say why in a note. Closure is reversible; that is what makes closing-before-landing safe.
-
-**Consumer contract (every query and template must honour this).** A `closed` + `implemented` task is
-*pending landing*, not finished-and-forgotten, and not active:
-
-| view | must include `closed`+`implemented`? |
-| --- | --- |
-| ready / next-task | **no** — nothing for a worker to pick up |
-| active / in-flight | **no** — no one is working it |
-| idle / stuck / no-owner sweeps | **no** — it has no owner *by design*; flagging it manufactures the noise this rule removed |
-| `drain-implemented-to-landed` | **yes** — this is the only view that lists it |
+3. **The task stays IMPLEMENTED until the PR lands on `main`.** A green unmerged PR is IMPLEMENTED, not LANDED. Do not close on local validation, a green check, or an approval alone.
+4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway freshly verifies code ancestry (via the PR replay SHA when applicable), confirms the artifact/run exists, records `CLOSURE-VERIFIED`, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close.
 
 **Exceptions:** **Research-only tasks** produce no PR. Their closure evidence is a typed tuple, not a bare
 path: repository identity + durable artifact path + the artifact's last content commit + fresh target-main
 ancestry. For parent artifacts, `./ci-hub/bin/close-task TASK --artifact ai_docs/path.md` derives and records
 `rrnewton/dev-hermit:path@content-commit;target=main@tip`. The coordinator separately confirms that the
 artifact answers the task's stated question; existence/ancestry proves publication, not goal completion.
-Tag `implemented` with the durable artifact path and exact content SHA. **A research closure has no landing
-step, so it must NOT enter the drain**: the drain authority selects on the closure note's
-`landing=implemented-unlanded`, which only `--code` evidence produces — `--artifact` and `--run-id` record
-`landing=n/a` and are simply done. Select the drain on that field, not on the `implemented` tag alone, or
-every closed research task will look like a pending merge. A memory slug
+Tag `implemented` (status `in_progress`) with the durable artifact path and exact content SHA. A memory slug
 must be exported to a versioned artifact or another typed durable authority before closure. **Blocked tasks**
 stay `in_progress` (or move to `open`) with
 the exact blocker and any partial committed SHA; never tag `implemented` or close to signal progress.
 **Stale-premise tasks** are tagged `implemented` with a note explaining the stale premise and evidence SHA; the
 coordinator closes after verifying it.
-
-## TaskGraph Label Taxonomy (strict, two axes)
-
-**Status answers "who must act next". Labels answer "what work is this" and "what stage is it in".**
-Keeping them apart is what stops progress being encoded in status — the mistake that produced the rows held
-at `in_progress` purely because a PR had not merged. Every **nonterminal** task carries **exactly one**
-label from each axis:
-
-- **Workstream (exactly one):** `release:0.3` · `strictness` · `main-health` · `backend:<name>` ·
-  `operations` · `owner-decision`. `backend:<name>` is a family (`backend:kvm`, `backend:dbi`, …) and counts
-  as one; adding a backend needs no policy edit.
-- **Lifecycle (exactly one):** `active-implementation` · `research` · `review` · `landing` · `awaiting-land` ·
-  `stale-premise` · `subsumed` · `duplicate`.
-
-The directive lists these fourteen as one set; they are **two orthogonal axes** and must be validated
-independently. Enforced as a single axis, every correctly-labelled task would read as "conflicting", because
-a task is always both some workstream and some stage.
-
-P0/P1 views sort by workstream before priority — `release:0.3`, then `main-health`, then `strictness` —
-so release and main-health surface above equally-prioritised background work. Other workstreams sort last;
-that is ordering, not an error. Any other tag (`source:gchat`, `integrity`, `mechanism:*`, …) is free-form
-and is ignored by both axes.
-
-**Enforcement:** `python3 ci-hub/taskgraph/label_taxonomy.py` reports the two axes against the full
-nonterminal denominator and exits nonzero on violations. It reads every row inside **one transaction** and
-requires the cursor walk and the aggregate to agree, refusing to report a number when they do not — the
-graph moves about a task a minute under a sprint, and a count taken across two statements cannot reconcile.
-`--gate p01` (the default) fails only on P0/P1 while reporting the tail: measured 2026-08-07, only 8 of 415
-nonterminal tasks carry both axes, so gating everything on day one would be red for weeks and get muted.
-Move to `--gate all` once the backlog is labelled.
 
 ## Bot-Created GitHub Issue Policy
 
@@ -413,11 +360,9 @@ name — always report: **Hermit SHA** (40-hex), **Reverie SHA** (40-hex or expl
 **Command**, **Result** (pass/fail/skipped with material output summarized), **Environment** (host/toolchain/
 hardware constraints when relevant). Hardware-dependent Hermit tests may be impossible on some hosts — report
 that fact and the observed failure; do not weaken, delete, or falsely bless a test to make the local
-environment green. When landing is authorized, the coordinator dereferences the owner-authorized exact-head
-authority at the Hermit PR head and final mutation boundary: a qualifying counted local receipt or the versioned
-hosted job policy is a green positive; missing/partial/stale evidence is NO_RESULT and a genuine red from either
-path blocks. Local feature-branch validation does not prove a hosted job is green, and a hosted job does not prove
-locally executed backend coverage beyond the job's declared scope.
+environment green. The coordinator verifies both required CI jobs at the exact Hermit PR head and the resulting
+target commit when landing is authorized. Local feature-branch validation does not prove hosted and self-hosted
+CI are green.
 
 ### Running validate — `systemd-run --user` Is The Producer Path
 
@@ -488,27 +433,6 @@ Other agents may update the parent, primaries, registries, or branches mid-task.
 integration or pinning step; unexpected movement is a reason to reassess, not to restore an older snapshot.
 
 - Do not use `git reset --hard`, `git checkout -- <path>`, or destructive cleanup on changes you did not create.
-- **Do not move a shared branch tip backwards — `git reset HEAD~1` counts, `--hard` or not.** This is called out
-  separately because it does not read as destructive: "undo my last commit" sounds private. On a branch with
-  ~15 concurrent committers it is not. `HEAD~1` is a **proxy** for "the commit I just made", and nothing binds
-  the two — if anyone committed in between, `HEAD~1` deletes *their* commit and says nothing.
-  **This has happened** (2026-08-06, parent main): an agent reset twice to redo its own commit and took a
-  second agent's commit with the second reset, then recommitted only its own. The lost commit was off the
-  branch for ~20 minutes while HEAD advanced twice on top of the deletion, and was noticed only by luck.
-  Safe forms, in preference order:
-  1. `git revert <sha>` — never removes anyone's commit, and is the right answer on a shared branch.
-  2. If you must reset, **bind the proxy first**: record your own SHA at commit time and reset only after
-     `test "$(git rev-parse HEAD)" = "$my_sha"` — i.e. confirm the tip is still *your* commit. A tip that
-     moved means someone is on top of you; stop and revert instead.
-  Detection is `ci-hub/health/rescue_ref_reconcile.py`, which reconciles the `rescue/auto-*` refs against
-  `main` and reports commits that exist only on a rescue ref. It does not prevent the reset; it makes a
-  silent drop loud, and its `--baseline` file is what keeps the known backlog from muting it.
-  **Prevention** is the `.githooks/reference-transaction` compare-and-swap guard: a rewind of a shared
-  branch is REFUSED unless you declare the tip you expect, `HERMIT_RESET_EXPECT=<sha> git reset …`, and it
-  still equals that SHA. Replaying the incident, reset 1 (the resetter's own commit) is allowed and reset 2
-  (the collateral one) is refused, naming the commit it protected. Ordinary commits, fast-forwards, feature
-  branches and detached HEAD are untouched. Branch DELETION is not covered — git reports it with no old
-  value, so the hook cannot see it.
 - Do not move uncommitted work between slots without recording its owner and exact recovery procedure. Do not silently adopt another agent's branch or worktree.
 - If a feature no longer fast-forwards, update the private branch and retest; never paper over divergence with a merge commit.
 - If a primary is dirty, integration stops until the changes are attributed.
@@ -523,6 +447,22 @@ user/`ps|grep|kill` match kills siblings' live work. Kill only processes you sta
 (`$!` for a backgrounded command) or run it in its own process group and signal the negative PGID (`setsid cmd
 & pgid=$!; kill -- -$pgid`). If you cannot prove a PID/PGID is your own child, do not kill it. (War story:
 companion doc.)
+
+**The same rule governs every OTHER shared store on this box, not just the process table.** A broad destructive
+command is dangerous because of the SHARED NAMESPACE it sweeps, and the process table is only one such
+namespace. The rootless **podman image store** (`~/.local/share/containers/storage`) is shared by every agent
+in exactly the same way. **NEVER run `podman rmi -f` unscoped, `podman image prune`, `podman system prune`, or
+any pattern/`--all` removal there** — remove only an image you can prove you created, by its exact ID.
+
+Measured incident, 2026-08-05: a cleanup `podman rmi -f` **cascaded and destroyed all five pre-existing images
+in the shared store**, and the originals were unrecoverable because registry egress returns 403. Recovery was a
+rebuild from the intact Hermit rootfs cache as `localhost/restored-ubuntu:24.04`. That is the pkill failure
+mode with a different noun.
+
+**Do not "tidy" that store.** Verified 2026-08-07: six images report ~80.7 MB each, but `podman system df` puts
+the WHOLE store at **85.37 MB** — the per-image numbers overlap almost entirely through shared overlay layers,
+so four untagged `<none>` images cost near zero. Summing the per-image column suggests ~400 MB of waste that
+does not exist, and acting on that phantom is precisely what triggered the incident.
 
 ## Coordinator Checklist
 

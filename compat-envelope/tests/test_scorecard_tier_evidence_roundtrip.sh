@@ -195,6 +195,34 @@ plant unkcmp2 '{"tier":"stripped-uncounted","verify_compare":"mystery"}'
 "$envelope/check-determinism-earned.sh" "$tmp/unkcmp2.csv" >/dev/null 2>&1
 [ $? -eq 1 ]; check "unknown comparator at tier=stripped-uncounted is REFUSED" $?
 
+echo "case NO-VERDICT SENTINEL — absence of a verdict can never authorise a positive"
+# THE LAST FAIL-OPEN PATH. verify_compare=unavailable:no-verify-json is the value a
+# producer writes when it could NOT obtain a typed verdict (DBI accepts
+# --verify-json and writes nothing). It has to be a legal value -- blank cannot
+# distinguish "no verdict existed" from "a verdict existed and was stripped" -- but
+# it was put in the comparator allowlist so such rows would parse, which also made
+# it a valid basis for deterministic=1 at EVERY tier. That defeated the whole B5
+# tightening: a run that never reached a comparison could still be published green.
+# Refused ahead of the tier logic, so no tier can readmit it.
+for tier_case in "stripped-uncounted::" "guest::" "counter::" "stripped::9|9" "bitwise:1:9|9"; do
+  t=${tier_case%%:*}; rest=${tier_case#*:}; bp=${rest%%:*}; cnt=${rest#*:}
+  plant "sent_$t" "{\"tier\":\"$t\",\"verify_compare\":\"unavailable:no-verify-json\",\"bitwise_parity\":\"$bp\",\"compared_log_messages\":\"$cnt\"}"
+  "$envelope/check-determinism-earned.sh" "$tmp/sent_$t.csv" >/dev/null 2>&1
+  [ $? -eq 1 ]; check "no-verdict sentinel at tier=$t is REFUSED" $?
+done
+grep -q 'NO_VERDICT_COMPARATORS' "$envelope/check-determinism-earned.sh"
+check "the sentinel is a named no-verdict class, not an allowlisted comparator" $?
+printf '%s' "$(grep -A2 'KNOWN_COMPARATORS = ' "$envelope/check-determinism-earned.sh")" | grep -q 'unavailable:no-verify-json'
+[ $? -ne 0 ]; check "the sentinel is NOT in KNOWN_COMPARATORS (regression guard)" $?
+
+echo "case SENTINEL DOES NOT OVER-REFUSE — genuine positives are untouched"
+plant pos_unc  '{"tier":"stripped-uncounted","verify_compare":"stripped"}'
+"$envelope/check-determinism-earned.sh" "$tmp/pos_unc.csv" >/dev/null 2>&1
+check "a real stripped-uncounted row still passes" $?
+plant pos_strp '{"tier":"stripped","verify_compare":"stripped","compared_log_messages":"239|239"}'
+"$envelope/check-determinism-earned.sh" "$tmp/pos_strp.csv" >/dev/null 2>&1
+check "a real stripped row with counts still passes" $?
+
 echo
 if [ "$FAILURES" -ne 0 ]; then echo "FAIL ($FAILURES assertions)"; exit 1; fi
 echo "PASS"

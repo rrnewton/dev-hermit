@@ -199,6 +199,28 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@# nothing, and an empty run starts reporting OK. `counted` binds it: it counts
 	@# the inputs, REFUSES on zero, and prints the count beside the verdict so the
 	@# log carries what was checked instead of asking to be trusted.
+	@# `ignored-artifacts` is REPORT-ONLY on purpose, and it is a ratchet.
+	@# check-ignored-experiment-artifacts.sh exists to make one silent failure
+	@# loud: the repo-root `*.log` rule (.gitignore:92) swallows experiment
+	@# evidence, and `git add` on an ignored path says nothing useful, so an
+	@# agent believes a golden is stored while the repo has never seen it. The
+	@# script landed at 8ce511d and was then invoked by NOTHING -- an inert
+	@# guard, which is the failure mode it was written to prevent, applied to
+	@# itself. It runs in report mode (rc=0) rather than --strict because 196
+	@# such files span 47 experiment directories today and most run spools
+	@# SHOULD stay ignored -- only their owners can say which are intended
+	@# evidence. Gating on day one would be red for weeks and get muted, the
+	@# same reasoning label_taxonomy.py records for its `--gate p01` default.
+	@# Move to --strict once the 47 directories are triaged.
+	@# `pin-invariant` is report-only for the same ratchet reason as
+	@# ignored-artifacts: the invariant is violated on 3 of 4 legs TODAY
+	@# (measured 2026-08-07 -- manifest 79517704 vs reverie gitlink dd3c178e,
+	@# and both product gitlinks behind their origin/main), so --strict would
+	@# be red from the first run. It reads RECORDED GITLINKS, not checkouts:
+	@# a colleague who clones and runs `git submodule update --init` receives
+	@# the gitlinks, so an invariant read off this box's working tree would
+	@# pass or fail on state nobody else can see. Move to --strict once the
+	@# pins are reconciled.
 	@set -u; failures=''; \
 	gate() { \
 	  name="$$1"; shift; \
@@ -238,6 +260,8 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	gate claude-md-size  '$(MAKE) --no-print-directory check-claude-md-size'; \
 	gate portability     '$(MAKE) --no-print-directory check-portability'; \
 	gate harness-help    '$(MAKE) --no-print-directory check-harness-help'; \
+	gate ignored-artifacts 'scripts/check-ignored-experiment-artifacts.sh'; \
+	gate pin-invariant   'scripts/check_reverie_pin_invariant.py'; \
 	gate compat-envelope '$(MAKE) --no-print-directory check-compat-envelope-tests'; \
 	echo; \
 	if [ -n "$$failures" ]; then \

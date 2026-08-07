@@ -71,9 +71,17 @@ ok "each of the 6 programs has 5 rows (one per backend)"
 
 echo "== 2. header carries absence_reason, appended last =="
 head -1 "$CSV" | grep -q ',absence_reason$' || fail "absence_reason must be the LAST column"
+# Derive the width and the absence_reason index FROM THE HEADER rather than
+# hardcoding them. The literal 20 here was already stale: the collector had
+# grown to 24 columns (bitwise_parity, compared_log_messages, tier,
+# absence_reason), so this asserted a false width AND every `col 20` below was
+# silently reading verify_compare instead of absence_reason -- the checks passed
+# or failed on the wrong column. Duplicating a schema is how it drifts.
 ncol=$(head -1 "$CSV" | awk -F, '{print NF}')
-[ "$ncol" -eq 33 ] || fail "expected 33 columns, got $ncol"
-ok "header is the full provenance contract + absence_reason"
+expected=$(awk -F'"' '/^const HEADER: &str =/{print $2}' "$ROOT/collect-reverie-compat.rs" | awk -F, '{print NF}')
+[ -n "$expected" ] || fail "cannot read HEADER from collect-reverie-compat.rs"
+[ "$ncol" -eq "$expected" ] || fail "header width $ncol != collector HEADER width $expected"
+ok "header width $ncol matches the full provenance collector contract"
 HEADER=$(head -1 "$CSV")
 
 echo "== 3. no blank ambiguous cells: unmeasured => typed token =="
