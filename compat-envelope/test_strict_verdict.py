@@ -13,6 +13,7 @@ the checks it meant to exercise unexecuted.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -185,6 +186,53 @@ class ScorecardFields(unittest.TestCase):
         )
         self.assertNotEqual(f["tier"], "strict")
         self.assertEqual(f["stack_records"], 0)
+
+    def test_a_DECIDED_stdout_verdict_REACHES_A_COLUMN(self):
+        """THE REGRESSION. This function used to accept `stdout`, compose the tier
+        from it, and then drop it -- so a row could be tiered on a stdout
+        comparison whose verdict appeared nowhere in the row. The tier asserted
+        the comparison and the evidence for it never reached the CSV.
+        """
+        f = sv.scorecard_fields(stdout=sv.PASS, info_log=sv.FAIL)
+        self.assertEqual(f["stdout_parity"], sv.PASS)
+        self.assertEqual(f["info_log_parity"], sv.FAIL)
+
+    def test_a_FAIL_is_written_too_not_only_a_pass(self):
+        """A guard that only records greens cannot show a regression."""
+        self.assertEqual(sv.scorecard_fields(stdout=sv.FAIL)["stdout_parity"], sv.FAIL)
+
+    def test_NOT_MEASURED_leaves_the_column_BLANK(self):
+        """A no-result must not become a string in a verdict column.
+
+        check_cell_comparison.py reads ANY non-blank value as "a comparison was
+        performed" and demands a reference beside it, so writing `not-measured`
+        would manufacture an unreferenced verdict out of an absence.
+        """
+        for absent in (sv.NOT_MEASURED, ""):
+            f = sv.scorecard_fields(stdout=absent, info_log=absent,
+                                    exit_code=absent, oracle=absent)
+            for col in ("stdout_parity", "info_log_parity",
+                        "exit_code_parity", "oracle_verdict"):
+                self.assertNotIn(col, f, f"{col} written for {absent!r}")
+
+    def test_the_three_new_columns_are_expressible_but_default_absent(self):
+        """Capacity exists; nothing is invented when no producer supplies it."""
+        self.assertNotIn("exit_code_parity", sv.scorecard_fields(stdout=sv.PASS))
+        self.assertEqual(
+            sv.scorecard_fields(exit_code=sv.PASS)["exit_code_parity"], sv.PASS)
+        self.assertEqual(
+            sv.scorecard_fields(oracle=sv.FAIL)["oracle_verdict"], sv.FAIL)
+
+    def test_detlog_parity_now_has_a_column_to_land_in(self):
+        """The producer already emitted this key; the schema had nowhere to put it."""
+        core = json.loads(
+            (Path(__file__).resolve().parent / "scorecard-schema.json").read_text()
+        )["core"]
+        f = sv.scorecard_fields(detlog=sv.detlog_verdict(raw(DETLOG), raw(DETLOG)))
+        self.assertIn("detlog_parity", f)
+        for col in ("stdout_parity", "detlog_parity", "exit_code_parity",
+                    "oracle_verdict"):
+            self.assertIn(col, core, f"{col} emitted/declared but absent from core")
 
 
 if __name__ == "__main__":

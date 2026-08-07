@@ -227,17 +227,58 @@ def compose_tier(verdicts: dict[str, str]) -> str:
     return "partial:" + "+".join(passed)
 
 
+#: A verdict is WRITTEN to its column only when a comparison actually decided
+#: something. `NOT_MEASURED` and `""` are no-results and must leave the column
+#: BLANK, never carry a string.
+#:
+#: This is not cosmetic. `check_cell_comparison.py` treats ANY non-blank value in
+#: a verdict column as the assertion "a comparison was performed", and demands a
+#: `ref_output_hash` beside it. Writing `not-measured` would therefore manufacture
+#: an unreferenced verdict out of an absence -- turning a no-result into a
+#: violation, which is the same collapse of the third outcome that this whole
+#: line of work exists to prevent, just pointed the other way.
+_DECIDED = (PASS, FAIL)
+
+
+def _decided(verdict: str) -> bool:
+    return verdict in _DECIDED
+
+
 def scorecard_fields(
     *, stdout: str = "", info_log: str = "", detlog: dict | None = None,
     stack: dict | None = None, heap: dict | None = None,
+    exit_code: str = "", oracle: str = "",
 ) -> dict:
     """Flatten verdicts into the columns a collector writes.
 
     Every value carries its denominator. A bare verdict cannot be audited:
     `pass` over 0 records and `pass` over 1245 are different facts.
+
+    A DECIDED verdict must reach a COLUMN. Until 2026-08-07 this function took
+    `stdout` and `info_log`, used them to compose the tier, and then dropped
+    them: neither was ever written to `out`. So a cell could be tiered on a
+    stdout comparison whose verdict appeared nowhere in the row -- the tier
+    asserted the comparison, and the evidence for it was discarded on the way to
+    the CSV. `stdout_parity` was consequently blank on all 2,290 published rows
+    while 1,671 stdout observations sat in `legacy_parity_unqualified` as
+    free text. `detlog_parity` had the mirror-image defect: written here since
+    the detlog producer landed, but with no such column in the scorecard schema
+    to receive it.
     """
     out: dict[str, object] = {}
     comp: dict[str, str] = {"stdout": stdout, "info_log": info_log}
+    if _decided(stdout):
+        out["stdout_parity"] = stdout
+    if _decided(info_log):
+        out["info_log_parity"] = info_log
+    # No producer computes these yet; the parameters exist so that when one does,
+    # it has a typed field to return rather than inventing a second convention.
+    # They stay blank until then -- see `unimplemented_comparisons` in
+    # scorecard-schema.json, which refuses a non-blank value in either column.
+    if _decided(exit_code):
+        out["exit_code_parity"] = exit_code
+    if _decided(oracle):
+        out["oracle_verdict"] = oracle
     if detlog:
         out["detlog_parity"] = detlog["verdict"]
         out["detlog_records"] = detlog["denominator_a"]
