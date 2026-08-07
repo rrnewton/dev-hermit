@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import csv as csvmod
+import json
 import re
 import sys
 from pathlib import Path
@@ -90,6 +91,80 @@ def check_widths(path: Path) -> list[str]:
         problems.append(f"{path.name}:{line}: {got} fields, header has {width}")
     if len(bad) > 5:
         problems.append(f"{path.name}: ... and {len(bad) - 5} more width mismatches")
+    return problems
+
+
+SCHEMA = "scorecard-schema.json"
+
+
+def expected_header(schema: dict, variant: str) -> list[str] | None:
+    """The one true column list for a variant: CORE + its extras, core order kept.
+
+    Derived from the single definition, never restated. A variant that omits a
+    core column says so explicitly in the definition, so the omission is a
+    recorded decision rather than a silent difference.
+    """
+    v = schema["variants"].get(variant)
+    if v is None:
+        return None
+    # The definition states each variant's ACTUAL order. It does not reconstruct
+    # it as core+extras, because one real variant (reverie) inserts an extra
+    # MID-CORE -- reconstructing would make the definition disagree with the file
+    # and report a difference it could not name. Truth first; the core-prefix
+    # RULE is then checked separately and reported as its own violation.
+    return list(v["columns"])
+
+
+def check_against_definition(root: Path) -> list[str]:
+    """Enforce BOTH directions between the definition and the files on disk.
+
+    definition -> file : a variant whose header does not equal core+extras FAILS.
+    file -> definition : a scorecard present but UNDECLARED fails too, otherwise a
+                         new scorecard could be added and escape the definition
+                         entirely -- the growing-set hole this exists to close.
+    """
+    spath = root / SCHEMA
+    if not spath.exists():
+        return [f"{SCHEMA}: MISSING -- there is no single definition to derive from"]
+    try:
+        schema = json.loads(spath.read_text())
+    except ValueError as e:
+        return [f"{SCHEMA}: malformed ({e})"]
+    for key in ("core", "variants"):
+        if key not in schema:
+            return [f"{SCHEMA}: missing required key {key!r}"]
+
+    problems: list[str] = []
+    on_disk = {p.name for p in root.glob("*scorecard*.csv")}
+    declared = set(schema["variants"])
+
+    for name in sorted(on_disk - declared):
+        problems.append(
+            f"{name}: UNDECLARED in {SCHEMA}. A scorecard the definition does not "
+            f"know about cannot be validated; declare it or remove it."
+        )
+    for name in sorted(declared & on_disk):
+        v = schema["variants"][name]
+        # POLICY, separate from drift: a variant whose core columns are not a
+        # prefix in core order breaks core-position indexing for every reader
+        # that knows only the core.
+        if v.get("core_prefix_safe") is False:
+            problems.append(
+                f"{name}: NOT CORE-PREFIX SAFE -- its core columns are not a prefix "
+                f"in core order (omits {v.get('omits_core') or 'none'}; extras "
+                f"{v.get('extra_columns') or 'none'} not all appended). A reader that "
+                f"knows only the core cannot index core columns in this variant."
+            )
+        want = expected_header(schema, name)
+        got = (root / name).read_text(errors="replace").split("\n", 1)[0].split(",")
+        if want != got:
+            problems.append(
+                f"{name}: HEADER DIFFERS FROM THE DEFINITION -- definition derives "
+                f"{len(want)} column(s), file has {len(got)}. "
+                f"definition-only: {sorted(set(want) - set(got)) or 'none'}; "
+                f"file-only: {sorted(set(got) - set(want)) or 'none'}. "
+                f"Update {SCHEMA} and the emitter together; they derive from one source."
+            )
     return problems
 
 
@@ -155,6 +230,7 @@ def main() -> int:
 
     for sc in sorted(root.glob("*scorecard*.csv")):
         problems.extend(check_widths(sc))
+    problems.extend(check_against_definition(root))
 
     print(f"\npopulation: {len(emitters)} emitter(s) discovered "
           f"[{checked} checked against an existing target, {absent} target-absent, "
@@ -164,8 +240,9 @@ def main() -> int:
         for p in problems:
             print(f"  {p}", file=sys.stderr)
         return 1
-    print("OK: every emitter's declared header matches its default target, and "
-          "every scorecard row is header-width.")
+    print("OK: every emitter's declared header matches its default target, every "
+          "scorecard row is header-width, and every scorecard matches the single "
+          f"definition in {SCHEMA}.")
     return 0
 
 
