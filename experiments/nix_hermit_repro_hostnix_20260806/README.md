@@ -751,6 +751,28 @@ mechanism".
 
 ---
 
+## Landing status of the three product fixes (as of hand-off)
+
+| fix | PR / patch | exact head | hosted portable CI | blocker |
+|---|---|---|---|---|
+| R3a chown/uid | [#1851](https://github.com/rrnewton/hermit/pull/1851) | `58c737b847d2493e351a9090dba4a2abda6c815c` | **FAIL** — `lint.rustfmt` | **mine**: I did not run `cargo fmt`. Fix is cosmetic (import order + one loop collapse), prepared and posted on the PR, but **cannot be committed** — see below |
+| R3b-1 `epoll_pwait` | [#1864](https://github.com/rrnewton/hermit/pull/1864) | `b0bfb1c635e81e4210f63ecdc2749edb633d9072` | **FAIL** — `test: strict-compat` only | not this change: `Reverie dependency pin equals latest main`. Everything exercising the change passed |
+| R3b-2 `openat` fd type | patch only, on [#1850](https://github.com/rrnewton/hermit/issues/1850) | — | not run | same pin lint blocks the commit |
+
+**The common blocker.** `ci/run-reverie-pin-check.sh` runs as a pre-commit hook
+and fails every commit in the repository: `main` pins reverie `6144323c` while
+reverie main has moved to `038e9939`. Two workarounds were available and both
+were declined deliberately — bumping the pin inside a product change buries an
+unrelated pin advance, and `--no-verify` waives a versioned gate that is not this
+task's to waive. Both patches are preserved as text
+(`worktrees/nix-repro176/{chown-rustfmt,openat-fd-type-from-fstat}.patch`) and
+posted in full on the PR/issue.
+
+Worth noting for whoever owns the gate: the same CI run reports
+`Reverie pin is latest main` as **success** in the preflight job and **failure**
+inside `test.strict_compat`. They evaluate at different times, so a landing gate
+keying on either can disagree with itself.
+
 ## Limitations — read before quoting any number
 
 - **`/nix` is ephemeral on this host.** Chef reverts it. See the banner.
