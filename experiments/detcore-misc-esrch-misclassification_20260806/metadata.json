@@ -1,0 +1,53 @@
+{
+  "experiment": "detcore-misc-esrch-misclassification",
+  "date": "2026-08-06",
+  "task": "detcore-misc-residual-passive-block-1-in-2760",
+  "kind": "measurement-only; no product code changed, no oracle weakened",
+  "question": "Does ptrace ESRCH carry any information about tracee liveness, as safeptrace map_err assumes?",
+  "subject": {
+    "repo": "rrnewton/reverie",
+    "origin_main": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df",
+    "site": "safeptrace/src/lib.rs::map_err",
+    "site_line_at_this_sha": 547,
+    "site_line_as_filed": 548,
+    "note": "line numbers rot; bind to the symbol. #355 (7951770) is landed on this main.",
+    "related_sites": {
+      "Zombie": 1119,
+      "Zombie::reap": 1133,
+      "from_raw_with_token": 401
+    }
+  },
+  "method": "freestanding C ptrace probes; no Hermit, no Reverie, no Detcore in the loop",
+  "commands": [
+    "cc -O1 -std=gnu11 -Wall -Wextra -Werror -o esrch_matrix esrch_matrix.c && ./esrch_matrix 40",
+    "cc -O1 -std=gnu11 -Wall -Wextra -Werror -o zombie_probe zombie_probe.c && ./zombie_probe 40"
+  ],
+  "denominators": {
+    "trials_total": 120,
+    "running_alive": 40,
+    "dead_reaped": 40,
+    "unreaped_zombie": 40
+  },
+  "results": {
+    "esrch_when_alive": "40/40",
+    "esrch_when_dead": "40/40",
+    "esrch_liveness_information": "none; identical rates in both directions",
+    "kill_pid_0_misclassifies_unreaped_zombie_as_alive": "40/40",
+    "proc_stat_state_correct": "120/120"
+  },
+  "host": {
+    "kernel": "Linux 6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "arch": "x86_64",
+    "logical_cpus": 316,
+    "toolchain": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "seed": "not applicable; no randomness in the probes",
+  "inputs": ["esrch_matrix.c", "zombie_probe.c"],
+  "outputs": ["results.csv", "README.md"],
+  "limits": [
+    "measures the kernel interface, not safeptrace itself",
+    "one host, one kernel; ESRCH-on-running is specified behaviour but the rates are from this host",
+    "exercises doc-comment cause (3) only; cause (2) not-traced-by-caller was not constructed",
+    "no fix implemented and no fix validated"
+  ]
+}
