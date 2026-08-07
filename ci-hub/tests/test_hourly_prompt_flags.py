@@ -81,6 +81,54 @@ class HourlyPromptFlagTests(unittest.TestCase):
         self.assertIn("--repos", block, "the counts' denominator must stay in the template")
         self.assertIn("--open-prs", block)
 
+    def test_the_total_is_adopted_by_auto_not_counted_by_the_caller(self) -> None:
+        """The canonical block must not document the racy path.
+
+        Counting in the caller and re-checking in the writer is a TOCTOU: a real
+        status was refused at 104 against an observed 105, and the population
+        moved 104 -> 105 -> 106 over the following minutes. `auto` dereferences
+        once and adopts, so there is no second reading to disagree with. If this
+        block ever regresses to a placeholder count, the prompt is teaching the
+        race again.
+        """
+        block = block_invoking(self.blocks, "status-log.rs")
+        self.assertIn("--open-prs auto", block, "the canonical block must adopt, not assert")
+        self.assertNotIn(
+            "--open-prs <N>",
+            block,
+            "a placeholder count reinstates the caller-measures/writer-remeasures race",
+        )
+        # The counts that genuinely ARE the caller's to supply must survive.
+        for flag in ("--genuine-reds", "--fleet-count"):
+            self.assertIn(flag, block, f"{flag} has no authority to dereference and must stay")
+
+    def test_the_monitored_rollup_is_kept_distinct_from_the_total(self) -> None:
+        """Both denominators must stay named and separate in the prose.
+
+        `ci-hub pr-status` reports a monitored ready/non-draft ROLLUP of a
+        handful, not the hundred-odd total. An entry once recorded 7 under the
+        total-open basis while the true total was 102, so the prompt has to keep
+        saying which is which.
+        """
+        # The prompt is hard-wrapped markdown, so a multi-word phrase can be
+        # split across a line break. Collapse whitespace before asserting on
+        # prose -- my first version of this test failed on the live file for
+        # exactly that reason, with "TOTAL open INCLUDING\nDRAFTS".
+        flat = re.sub(r"\s+", " ", self.text.lower())
+        self.assertIn("--ready-prs", self.text, "the subset needs its own named field")
+        self.assertTrue(
+            "ready/non-draft" in flat or "ready-non-draft" in flat,
+            "the subset's basis must stay named",
+        )
+        self.assertTrue(
+            "rollup" in flat,
+            "the prompt must name pr-status's monitored rollup so it is not read as the total",
+        )
+        self.assertTrue(
+            "total open including drafts" in flat,
+            "the total's basis must stay spelled out",
+        )
+
     def test_ack_template_is_documented_and_complete(self) -> None:
         block = block_invoking(self.blocks, "hourly-status-relay.rs", must_contain="--ack-hour")
         for flag in (
