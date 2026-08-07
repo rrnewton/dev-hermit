@@ -50,7 +50,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // Shared comparison/provenance contract plus the e9patch reach tail. Keep the
 // common prefix in sync with the other collectors and the renderer.
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier,candidate_sites,mapped_sites,reach_state";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier,candidate_sites,mapped_sites,reach_state,exit_code_parity,detlog_parity,oracle_verdict";
 const RUN_MODE: &str = "e9patch";
 const BUCKET: &str = "e9patch-corpus";
 // Single mode token: "run the freestanding raw-syscall guest under strict verify".
@@ -814,6 +814,15 @@ fn row(
             None => "unknown-no-banner",
         }
         .to_string(),
+        // exit_code_parity / detlog_parity / oracle_verdict, added to the core
+        // schema 2026-08-07. This emitter builds a FIXED POSITIONAL row, so the
+        // placeholders are mandatory: without them every row is three fields
+        // narrower than its header and each trailing value is read from the
+        // wrong column. Blank is also the correct VALUE -- no producer computes
+        // any of the three, and scorecard-schema.json refuses a non-blank one.
+        String::new(), // exit_code_parity
+        String::new(), // detlog_parity
+        String::new(), // oracle_verdict
     ]
     .join(",")
 }
