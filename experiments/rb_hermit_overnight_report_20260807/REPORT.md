@@ -1,7 +1,9 @@
 # Hermit for reproducible builds — overnight findings, 2026-08-06/07
 
-**Status: LIVING DOCUMENT.** Every claim cites the directory and commit that produced it.
-**`HOLE`** = not yet published; deliberately empty rather than estimated.
+**Status: FINAL for the overnight sprint**, frozen 2026-08-07 06:00 PDT. Every claim cites the
+directory and commit that produced it. The headline Debian counts were re-derived from raw
+`results.csv` at freeze (see §3/Debian) rather than carried from the lane's summary.
+Any remaining **`HOLE`** is a deliberate blank — not yet published, and not estimated.
 
 Tags: **[M]** measured here · **[C]** carried, measured by another agent, not re-derived ·
 **[I]** inferred · **[NR]** designed, not run. Do not promote **[C]**/**[I]** to a headline
@@ -51,6 +53,21 @@ and blocked on a fleet-wide CI outage, not on our work.
 - **The GHC `-C0` flagship result does not replicate.** Recorded as a non-replication with
   attribution unknown. It stopped being true and nothing noticed for nine days, because no
   re-runnable harness existed. That is the argument for capture, made by example.
+
+**The infrastructure result, found at the freeze.** The P0 demo gate — the merge gate for the
+entire fleet — went red on every head including `main` at 06:31Z and stayed red for five hours,
+reporting `no ASAN UAF found in seeds 0-63 for the generated fixture`. **That statement was false
+in two independent ways, and the gate's green had never been earned.** `calibrate_crash_seed()`
+returns early whenever a cached `.crash-seed` exists, and that file lives *inside the cached
+directory* — so every green run restored an answer instead of computing one, and the live
+calibration path was unexercised until a cache eviction made every runner take it at the same
+instant. Measured here: the cached seed **47 does not crash a freshly built fixture** (converts
+cleanly, 8s). Separately, `rc` was captured and never read, so **"no ASAN string in the output" was
+reported as "this seed did not crash" when it equally meant "this seed never executed"** — and CI's
+own timing refutes its message, 64 seeds inside 37.4s against a 30s per-seed timeout. Fixed and
+landed (`6c7c0997`), bracketed with three planted negatives and two positives; measurements in
+`demo08-crash-seed-calibration_20260807`. **A P0 merge gate whose green depends on a 7-day-LRU
+cache entry is the defect behind the defect.**
 
 **The methodological through-line.** Nearly every significant finding tonight came from refusing to
 let a status word stand in for the thing it claimed: `UNIONED` that preserved nothing, a scorecard
@@ -223,11 +240,35 @@ per-package control, `hermit A vs B` as the arm. Each package is its own control
 meaningful at small M.
 
 > **52 of 52 packages: native two-root DIVERGES, hermit two-root IDENTICAL** — out of **58
-> attempted**, with all 58 native controls firing. **[C]**
-> *Snapshot; seven slower packages were still building at the stop. Regenerate from `results.csv`
-> via `regen_readme.py` rather than quoting these as final.*
+> attempted**, with all 58 native controls firing. **[M]**
 > Wrap: `hermit run --strict --no-rcb-time`. Every "hermit identical" cell has a native control
 > that diverged, so none is vacuous.
+
+**Re-derived at freeze from the raw 324-row `results.csv`, not carried from the lane's summary.**
+Final counts, keyed on `artifact_sha256` by `root`:
+
+| arm | identical | divergent |
+|---|---|---|
+| native control (`native-n1` vs `native-n2`) | 0 | **58 — every control fires** |
+| `hermit --strict` (rcb-time on) | 46 | **6** (`figlet`, `grep`, `indent`, `nano`, `time`, `wdiff`) |
+| `hermit --strict --no-rcb-time` | **52** | **0** |
+
+Vacuity check: **0** packages are "hermit identical" without a diverging native control. Six of the
+58 have no Hermit rows at all and are excluded from the 52 denominator, not counted as passes:
+`ack-grep`, `bsdmainutils`, `flex`, `groff`, `lftp`, `splint`.
+
+**The `--no-rcb-time` dose is load-bearing for 6 of 52 packages (11.5%), and that is a measured
+number rather than an inferred one.** It is the difference between the two Hermit rows above, on
+the same packages in the same corpus.
+
+> **A near-miss worth recording, because it is this report's own thesis turned on the author.**
+> `results.csv` also carries a `hermit_sha256` column. Computing the headline from it yields a
+> tidy **58/58** — and it is meaningless: that column holds one single value across all 324 rows,
+> because it identifies the *Hermit binary*, not a per-package artifact. Comparing it across two
+> roots compares a constant to itself and is true by construction. The coordinator computed 58/58
+> first and caught it only on a distinctness check (`distinct hermit hashes: 1`). **A column whose
+> name contains `sha256` is not thereby a measurement of the thing you are measuring.** Run the
+> distinctness check before quoting any ratio derived from a hash column.
 
 **Failure shape across everything attempted: exactly ONE unexplained Hermit-side failure.**
 `ack-grep` builds natively but fails under Hermit with `make[1]: /work/build/0: Command not found`
@@ -502,6 +543,33 @@ longer exists.
 **Open, not delivered:** #1843 (`--image` `/dev`), #1833 (per-backend guest-args channel),
 #1828 (SaBRe fail-closed), #1813 (exec-clock continuity), #1811 (clippy), SaBRe #16.
 
+**Parent-repo changes landed tonight:**
+
+| change | commit | why |
+|---|---|---|
+| `scripts/prepare-demo08-assets.sh` — bind the crash seed to its fixture; stop reporting "no UAF" for runs that never ran | `6c7c0997` | the fleet-wide P0 above (#1877) |
+| `experiments/demo08-crash-seed-calibration_20260807` — per-seed measurements behind that fix | `4eb80d7c` | durable evidence |
+| `scripts/prepare-demo08-assets.sh` — probe cgroup boxing; degrade loudly to an unboxed calibration where it is unavailable | `be0d7ab9` | what the first fix then revealed |
+
+**The first fix paid for itself within one CI run, which is the point of the whole exercise.** With
+the diagnostic in place the gate stopped blaming the fixture and reported
+`never executed the guest: 0 of 64 seeds ... last rc=3` — and `rc=3` is `hermit-box-run`'s
+documented fail-closed status for "cgroup-v2 / systemd `--user` scope unavailable", which is the
+normal condition on a GitHub-managed runner. All 64 seeds had completed in **0.8 seconds**. The
+search was never entering the space it was searching. Five hours of a fleet-wide P0 reduced to one
+legible line the moment the check was made to carry its own evidence. That run also confirmed the
+fixture-identity binding was not hypothetical: CI's fixture hashes to `752202aee2d6` where this box
+builds `c81d933d90c4`, so a crash seed genuinely does not transfer between the two.
+
+Both verified as ancestors of freshly fetched `rrnewton/dev-hermit:main`, not asserted from a push
+result.
+
+**Landing status at freeze:** #1843, #1678, #1851 and #1864 are green on their own merits and were
+blocked solely by the demo-gate outage above; #1851 and #1864 additionally await
+`adversarial-review-codex1..4`. The gate was re-run on #1843 and #1678 against the fix. **No PR
+caused the outage** — `main` itself was red, and the five green demo-gate runs that followed
+`4be8edcd` (06:04–06:29Z) exonerate the only `main` commit in the window.
+
 ## 5. Limitations — what a reader must not conclude
 
 1. **Single host**, `devbig176`, 176-core **AMD**. Run-to-run stability on one machine is *not*
@@ -526,7 +594,7 @@ longer exists.
    the real consumers are the five Rust `target/` trees at ~71 GiB exclusive. `worktree-gc.sh`'s
    own header documents this ~3.9x overstatement and was not consulted. **The authority is
    `btrfs filesystem du -s` and its Exclusive column.**
-9. **Timing numbers printed *by a wrapped build* are virtual, not wall.** nixpkgs' stdenv times
+10. **Timing numbers printed *by a wrapped build* are virtual, not wall.** nixpkgs' stdenv times
    phases with bash's `$SECONDS`, which under the wrap reads Hermit's **virtual** clock. Measured:
    `sleep 1` under Hermit prints `SECONDS=3`. So every *"completed in N minutes"* line in a wrapped
    nix build log is virtual time and must not be compared against a native wall-clock figure — a
@@ -538,10 +606,10 @@ longer exists.
 
 1. **Fix the two nixpkgs compatibility bugs** — the cmake configure hang and fake-uid-0 breaking
    `tar` in `unpackPhase`. These, not determinization, are why real nixpkgs is N=0.
-2. **Extend Debian beyond 13.** The design, controls and harness are done and the set is now
-   13/13, so this is pure throughput on a convenience-biased selection — a larger, less biased
+2. **Extend Debian beyond 58.** The design, controls and harness are done and the set is now
+   52/52 measured of 58 attempted, so this is pure throughput on a convenience-biased selection — a larger, less biased
    sample is the obvious next increment. Also re-run the default (`--strict`, no `--no-rcb-time`)
-   arm on a **working-PMU host** to confirm directly that the 7/13 was a PMU confounder rather
+   arm on a **working-PMU host** to confirm directly that the 6 default-arm divergences are a PMU confounder rather
    than inferring it from the flip pattern.
 3. **Bisect the GHC `-C0` non-replication.** The harness now exists, so it is cheap.
 4. **Vary ONE environment axis at a time** in the buck2 A/B — different absolute path, different
@@ -567,6 +635,7 @@ scorecard should be regenerated given its known-stale KVM column.
 `debian_reproducible_builds_2026` ·
 `buck2-action-bitwise-determinism_20260806` ·
 `rb_ghc_captured_reproduction_20260807` ·
+`demo08-crash-seed-calibration_20260807` ·
 `rb_ghc_rts_ticker_determinized_20260730` ·
 `rb_ghc_j1_determinism_20260730` ·
 `rb_drb_haskell_ghc_concurrency_20260729` ·
