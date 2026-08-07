@@ -152,6 +152,63 @@ _PASSED_REVIEW_LABELS = {
     "codex": "passed-review-codex",
     "claude": "passed-review-claude",
 }
+#: A `passed-review-*` label is a CACHE, not the evidence. The evidence is the
+#: reviewer's verdict comment, which names the exact SHA the PASS was earned on.
+#: Measured on rrnewton/reverie#394: PASS earned at
+#: 92e1e0d0af65e50cd2991d4deaa25f726832fbf4, head rebased to
+#: 0fc9f61edc01d6425def2efb0ed82f01410c7fcc, and the `passed-review-claude`
+#: label stayed applied -- while the label's own GitHub description reads
+#: "Claude adversarial review PASSED at current PR head". The label therefore
+#: asserted a binding that had silently become false, and every consumer that
+#: tested `label in labels` inherited the false assertion.
+#: Anchored on PASS, then the first BACKTICKED 40-hex on the same line. The
+#: intervening wording varies in real verdicts -- "PASS at `sha`",
+#: "**PASS** at `sha`", "PASS - independent re-review at head `sha`" -- so
+#: requiring a fixed preposition misses real approvals (it missed the third
+#: shape until a test caught it). Requiring the backticks keeps it tight and
+#: fails closed on prose that merely mentions a bare hex string.
+_PASS_VERDICT_SHA = re.compile(
+    r"\bPASS\b[^\n]{0,120}?`(?P<sha>[0-9a-f]{40})`", re.IGNORECASE
+)
+
+#: Approval binding states. `stale` is deliberately NOT `absent`: an approval
+#: earned on a superseded head is a different fact from never having been
+#: reviewed, and collapsing them loses the reviewer's work as well as the
+#: warning.
+APPROVAL_BOUND = "bound"
+APPROVAL_STALE = "stale"
+APPROVAL_UNBOUND = "unbound"
+
+
+def extract_pass_sha(body: str) -> str | None:
+    """The SHA a PASS verdict was earned on, from the reviewer's own comment.
+
+    Returns None when the comment carries no PASS verdict, or carries one with
+    no SHA -- an unanchored PASS cannot bind to anything and must never be
+    treated as approval of a head it does not name.
+    """
+    if not body:
+        return None
+    match = _PASS_VERDICT_SHA.search(body)
+    return match.group("sha").lower() if match else None
+
+
+def approval_binding(pass_sha: str | None, head_sha: str | None) -> str:
+    """Does a recorded PASS authorize THIS head?
+
+    Fails closed in every ambiguous direction: an unknown head, an unanchored
+    PASS, or a short/malformed SHA yields `unbound` rather than `bound`. Only a
+    full 40-hex match on both sides authorizes.
+    """
+    if not pass_sha or not head_sha:
+        return APPROVAL_UNBOUND
+    pass_sha = pass_sha.strip().lower()
+    head_sha = head_sha.strip().lower()
+    if len(pass_sha) != 40 or len(head_sha) != 40:
+        return APPROVAL_UNBOUND
+    return APPROVAL_BOUND if pass_sha == head_sha else APPROVAL_STALE
+
+
 _MECHANISM_TAG_PREFIX = "mechanism:"
 HEALTH_VERDICT_RULE = (
     "ready non-draft PR GitHub check rollups only: UNHEALTHY iff any available "

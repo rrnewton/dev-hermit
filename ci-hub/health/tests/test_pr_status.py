@@ -1206,5 +1206,79 @@ class ExecutedTestsCarveOutTests(unittest.TestCase):
         self.assertEqual(status.real_reds, 0)
 
 
+
+class ReviewEvidenceBindingTests(unittest.TestCase):
+    """A `passed-review-*` label must not authorize a head it was not earned on.
+
+    Live instance, rrnewton/reverie#394: PASS earned at
+    92e1e0d0af65e50cd2991d4deaa25f726832fbf4, head rebased to
+    0fc9f61edc01d6425def2efb0ed82f01410c7fcc, `passed-review-claude` still
+    applied. The label's GitHub description says "PASSED at current PR head",
+    so the label asserted a binding that had become false.
+    """
+
+    EARNED = "92e1e0d0af65e50cd2991d4deaa25f726832fbf4"
+    HEAD_AFTER_REBASE = "0fc9f61edc01d6425def2efb0ed82f01410c7fcc"
+
+    # ---- NEGATIVE: the live stale case must not read as approval ----
+
+    def test_the_live_pr394_rebase_reads_as_stale_not_approved(self):
+        state = pr_status.approval_binding(self.EARNED, self.HEAD_AFTER_REBASE)
+        self.assertEqual(state, pr_status.APPROVAL_STALE)
+        self.assertNotEqual(state, pr_status.APPROVAL_BOUND)
+
+    def test_stale_is_distinct_from_never_reviewed(self):
+        # Collapsing these loses both the warning and the reviewer's work.
+        self.assertNotEqual(
+            pr_status.approval_binding(self.EARNED, self.HEAD_AFTER_REBASE),
+            pr_status.approval_binding(None, self.HEAD_AFTER_REBASE),
+        )
+
+    def test_every_ambiguous_input_fails_closed(self):
+        for pass_sha, head in (
+            (None, self.HEAD_AFTER_REBASE),      # no PASS recorded
+            (self.EARNED, None),                 # head unknown
+            ("92e1e0d0", self.HEAD_AFTER_REBASE),  # abbreviated PASS sha
+            (self.EARNED, "0fc9f61e"),           # abbreviated head
+            ("", ""),
+        ):
+            self.assertEqual(
+                pr_status.approval_binding(pass_sha, head),
+                pr_status.APPROVAL_UNBOUND,
+                f"{pass_sha!r} vs {head!r} must not authorize",
+            )
+
+    # ---- POSITIVE: a PASS on the current head still authorizes ----
+
+    def test_a_pass_on_the_current_head_binds(self):
+        self.assertEqual(
+            pr_status.approval_binding(self.EARNED, self.EARNED),
+            pr_status.APPROVAL_BOUND,
+        )
+        # Case-insensitive and whitespace-tolerant, so a copied SHA still binds.
+        self.assertEqual(
+            pr_status.approval_binding(self.EARNED.upper(), f" {self.EARNED} "),
+            pr_status.APPROVAL_BOUND,
+        )
+
+    # ---- the SHA is read from the reviewer's own words ----
+
+    def test_the_pass_sha_is_extracted_from_real_verdict_shapes(self):
+        for body in (
+            f"**VERDICT: PASS at `{self.EARNED}`.**",
+            f"[orc-coord-014] **VERDICT: PASS** at `{self.EARNED}`.",
+            f"## `[orc-coord-014]` PASS - independent re-review at head `{self.EARNED}`",
+        ):
+            self.assertEqual(pr_status.extract_pass_sha(body), self.EARNED, body[:60])
+
+    def test_a_block_verdict_and_an_unanchored_pass_yield_no_sha(self):
+        # A BLOCK must never be mined for a SHA, and a PASS naming no commit
+        # cannot bind to anything.
+        self.assertIsNone(
+            pr_status.extract_pass_sha(f"**VERDICT: BLOCK at `{self.EARNED}`.**")
+        )
+        self.assertIsNone(pr_status.extract_pass_sha("VERDICT: PASS. Looks good."))
+        self.assertIsNone(pr_status.extract_pass_sha(""))
+
 if __name__ == "__main__":
     unittest.main()
