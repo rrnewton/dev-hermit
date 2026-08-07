@@ -2716,6 +2716,8 @@ class ProtocolTest(unittest.TestCase):
         self.assertIn("watch_timed_out=false", printed)
         self.assertIn("watch_planned=0", printed)
         self.assertIn("watch_checked=0", printed)
+        self.assertIn("watch_verdict=CLEAR", printed)
+        self.assertNotIn("NO-RESULT", printed)
 
     # ---------------------------------------------------------------- budget
     #
@@ -2773,16 +2775,50 @@ class ProtocolTest(unittest.TestCase):
             )
         printed = output.getvalue()
         # 0s, 10s, 20s are all under 25s; the fourth check at 30s is not.
-        self.assertIn("watch_status=partial", printed)
+        self.assertIn("watch_status=no-result", printed)
+        self.assertIn("watch_verdict=NO-RESULT", printed)
+        self.assertIn("state=no-result", printed)
         self.assertIn("watch_timed_out=true", printed)
         self.assertIn("watch_planned=5", printed)
         self.assertIn("watch_checked=3", printed)
+        self.assertIn("elapsed_ms=30000", printed)
+        self.assertIn("bound_ms=25000", printed)
         # THE POINT: the three already-polled obligations survive. Under the
         # old SIGKILL path every one of them was lost.
         for i in range(3):
             self.assertIn(f"ob-{i}", printed)
-        # And an unfinished sweep must NOT report clean.
-        self.assertEqual(rc, 1)
+        # And an unfinished sweep is a distinct unavailable answer: neither
+        # success (0) nor an ordinary completed-open tick (1).
+        self.assertEqual(rc, protocol.WATCH_EXIT_NO_RESULT)
+
+    def test_only_blocking_poll_crossing_bound_is_no_result(self) -> None:
+        """Plant one remote-call timeout; no next iteration may be required."""
+        clock, records, fake_poll = self._budget_fixture(1, seconds_per_poll=30.0)
+        output = io.StringIO()
+        with mock.patch.object(protocol.time, "monotonic", lambda: clock["t"]), \
+             mock.patch.object(
+                 protocol.obligations,
+                 "latest_records",
+                 return_value={record["obligation_id"]: record for record in records},
+             ), \
+             mock.patch.object(protocol, "poll_obligation", fake_poll), \
+             redirect_stdout(output):
+            rc = protocol.watch(
+                store_path=self.store,
+                obligation_id=None,
+                once=True,
+                poll_seconds=1,
+                budget_secs=25.0,
+            )
+        printed = output.getvalue()
+        self.assertEqual(rc, protocol.WATCH_EXIT_NO_RESULT)
+        self.assertIn("WATCH OBLIGATIONS: NO-RESULT", printed)
+        self.assertIn("watch_checked=1", printed)
+        self.assertIn("watch_planned=1", printed)
+        self.assertIn("elapsed_ms=30000", printed)
+        self.assertIn("bound_ms=25000", printed)
+        self.assertNotIn("watch_status=complete", printed)
+        self.assertNotIn("watch_verdict=CLEAR", printed)
 
     def test_one_shot_watch_that_fits_the_budget_reports_complete(self) -> None:
         """Positive control: the budget must not fire when the sweep fits."""
@@ -2807,7 +2843,31 @@ class ProtocolTest(unittest.TestCase):
         self.assertIn("watch_status=complete", printed)
         self.assertIn("watch_timed_out=false", printed)
         self.assertIn("watch_checked=3", printed)
-        self.assertNotIn("watch_status=partial", printed)
+        self.assertIn("watch_verdict=OPEN", printed)
+        self.assertNotIn("NO-RESULT", printed)
+
+    def test_gate_does_not_launder_watch_no_result_through_status(self) -> None:
+        """The --gate adapter must preserve the watcher's typed refusal."""
+        with mock.patch.object(
+            protocol, "watch", return_value=protocol.WATCH_EXIT_NO_RESULT
+        ), mock.patch.object(protocol, "print_status") as print_status:
+            rc = protocol.main(
+                ["watch", "--once", "--gate", "--store", str(self.store)]
+            )
+        self.assertEqual(rc, protocol.WATCH_EXIT_NO_RESULT)
+        print_status.assert_not_called()
+
+    def test_gate_normal_completion_still_reports_clear(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            rc = protocol.main(
+                ["watch", "--once", "--gate", "--store", str(self.store)]
+            )
+        printed = output.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("watch_verdict=CLEAR", printed)
+        self.assertIn("state=clear", printed)
+        self.assertNotIn("NO-RESULT", printed)
 
     def test_per_poll_wall_and_cpu_are_reported_as_comment_lines(self) -> None:
         """The timing basis must ride along without polluting the gate fields.

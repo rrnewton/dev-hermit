@@ -113,6 +113,10 @@ DEFAULT_NETWORK_TIMEOUT = float(
 DEFAULT_WATCH_GATE_BUDGET_SECS = float(
     os.environ.get("CI_HUB_WATCH_GATE_BUDGET", "20")
 )
+# The operational-health taxonomy reserves 3 for an unavailable answer.  A
+# watcher that exhausted its bound did not complete the census, so it is a
+# NO-RESULT -- neither CLEAR nor a product/remediation failure.
+WATCH_EXIT_NO_RESULT = 3
 TERMINAL_VERIFICATION_STATES = frozenset(("green", "red", "error"))
 # Only a genuine failing ANSWER remediates. A no_result (a cancelled hosted run,
 # an OOM-killed local validate, a lost runner, a network error reaching GitHub)
@@ -3577,9 +3581,9 @@ def _poll_within_budget(
     """Poll obligations one at a time, stopping when the wall budget is spent.
 
     Returns ``(updated, planned, timed_out)``. Polling one at a time -- rather
-    than the list comprehension this replaces -- is what makes a partial result
-    possible at all: the old form had to finish every obligation before anything
-    could be reported, so an outer kill discarded the ones already done.
+    than the list comprehension this replaces -- is what lets a typed NO-RESULT
+    retain its partial rows: the old form had to finish every obligation before
+    anything could be reported, so an outer kill discarded the ones already done.
 
     Per-op wall and CPU go to stdout as ``#`` comment lines. That is deliberate:
     tick-hub's ``parse_kv_lines`` ignores ``#``, so the timing basis rides along
@@ -3599,6 +3603,11 @@ def _poll_within_budget(
             f"wall={time.monotonic() - op_wall:.2f}s "
             f"cpu={time.process_time() - op_cpu:.2f}s"
         )
+        # A single blocking remote call can cross the deadline.  Checking only
+        # before the next item made an over-budget final (or only) poll look
+        # complete because there was no next iteration at which to notice.
+        if deadline is not None and time.monotonic() >= deadline:
+            return updated, len(records), True
     return updated, len(records), False
 
 
@@ -3634,30 +3643,33 @@ def watch(
             records, store_path, deadline
         )
         if timed_out:
-            # TYPED, NON-CRASHING. We stop under our own power and report what
-            # we actually checked, so the consumer can tell PARTIAL from CLEAN.
-            # Exit 1 (not 0) because an unfinished sweep has NOT established
-            # that there is nothing to act on -- treating it as clean is the
-            # exact failure this task exists to remove.
+            # TYPED, NON-CRASHING NO-RESULT. We stop under our own power and
+            # report what we actually checked, so the consumer can distinguish
+            # an unavailable answer from CLEAR and from a completed OPEN tick.
+            elapsed_ms = round((time.monotonic() - started) * 1000)
+            bound_ms = round((budget_secs or 0) * 1000)
             print(
-                f"WATCH OBLIGATIONS: checked={len(updated)} of planned={planned} "
-                f"PARTIAL (wall budget {budget_secs:.0f}s exhausted)"
+                f"WATCH OBLIGATIONS: NO-RESULT checked={len(updated)} of "
+                f"planned={planned} elapsed_ms={elapsed_ms} bound_ms={bound_ms}"
             )
-            print("watch_status=partial")
+            print("state=no-result")
+            print("verdict=NO-RESULT")
+            print("watch_status=no-result")
+            print("watch_verdict=NO-RESULT")
             print(f"watch_planned={planned}")
             print(f"watch_checked={len(updated)}")
             print("watch_timed_out=true")
-            print(f"watch_budget_secs={budget_secs:.0f}")
-            print(f"watch_elapsed_secs={time.monotonic() - started:.1f}")
+            print(f"elapsed_ms={elapsed_ms}")
+            print(f"bound_ms={bound_ms}")
+            print(
+                "summary="
+                f"NO-RESULT: watch-obligations timed out after {elapsed_ms}ms "
+                f"against {bound_ms}ms; checked {len(updated)} of {planned}"
+            )
             for record in updated:
                 print(f"  {_summary_line(record)}")
-            return 1
+            return WATCH_EXIT_NO_RESULT
         if once or all(_watch_complete(record) for record in updated):
-            print("watch_status=complete")
-            print(f"watch_planned={planned}")
-            print(f"watch_checked={len(updated)}")
-            print("watch_timed_out=false")
-            print(f"watch_elapsed_secs={time.monotonic() - started:.1f}")
             remediation = sum(
                 record["overall_state"] == "remediation_required" for record in updated
             )
@@ -3665,6 +3677,19 @@ def watch(
                 record["overall_state"] not in obligations.CLOSED_STATES
                 for record in updated
             )
+            watch_verdict = (
+                "REMEDIATION-REQUIRED"
+                if remediation
+                else "OPEN"
+                if unresolved
+                else "CLEAR"
+            )
+            print("watch_status=complete")
+            print(f"watch_verdict={watch_verdict}")
+            print(f"watch_planned={planned}")
+            print(f"watch_checked={len(updated)}")
+            print("watch_timed_out=false")
+            print(f"elapsed_ms={round((time.monotonic() - started) * 1000)}")
             print(
                 f"WATCH OBLIGATIONS: checked={len(updated)} "
                 f"unresolved={unresolved} remediation_required={remediation}"
@@ -4134,7 +4159,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_WATCH_GATE_BUDGET_SECS,
         help=(
             "wall budget for a --once sweep; on expiry the gate returns a typed "
-            "PARTIAL result under its own power instead of being killed by the "
+            "NO-RESULT under its own power instead of being killed by the "
             "outer tick guillotine (which discards all output)"
         ),
     )
@@ -4240,6 +4265,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.launch_token is not None:
                     _complete_watcher(args.id, args.launch_token, args.store)
             if args.gate:
+                # A timed-out census has no domain answer. Do not replace its
+                # typed NO-RESULT with print_status() over an unchanged store;
+                # that was the laundering path that could emit CLEAR/exit 0.
+                if result == WATCH_EXIT_NO_RESULT:
+                    return result
                 return print_status(
                     args.store, include_closed=False, json_output=False, gate=True
                 )
