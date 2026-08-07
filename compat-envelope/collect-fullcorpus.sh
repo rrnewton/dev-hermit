@@ -37,7 +37,12 @@
 #     [--backends b1,b2,...]   restrict to these (default: auto-detect)
 #     [--par N]                parallelism (default: 16)
 #     [--no-assert]            measure only; do not fail on ratchet regression
+#     [--assert-only PATH]     re-check the ratchet against an EXISTING scorecard
+#                              CSV and exit; runs no guests. Lets a stale-floor or
+#                              regression verdict be re-derived in a second instead
+#                              of re-sweeping for hours.
 #     [--out PATH]             output CSV (default: fullcorpus-scorecard.csv)
+#     [--self-check-env-pin]    bracket the generated Hermit argv; run no guests
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,19 +62,119 @@ TMO_RUN="${TMO_RUN:-90}"
 TMO_VERIFY="${TMO_VERIFY:-120}"
 backends_arg=""
 do_assert=1
+assert_only=""
+self_check_env_pin=0
+
+# Build every measured Hermit command in one place. `--base-env host` is the
+# default, but that makes the caller's ambient environment part of the guest's
+# initial stack and invalidates output comparisons across invocations. Keep the
+# exact pin in step with collect-envelope.rs and the DBI/e9patch collectors.
+build_hermit_argv() { # $1=array name $2=backend $3=verify(0|1) $4=lane
+  local output_name="$1" backend="$2" verify="$3" lane="$4"
+  local -n output_ref="$output_name"
+  output_ref=("$BIN")
+  [ "$backend" = ptrace ] || output_ref+=(--backend "$backend")
+  output_ref+=(run --strict)
+  [ "$verify" = 0 ] || output_ref+=(--verify)
+  [ "$lane" = portable ] && output_ref+=(--no-virtualize-cpuid --max-timeslice=disabled)
+  output_ref+=(--base-env minimal -e LC_ALL=C -e TZ=UTC --)
+}
+
+# Project just the environment-bearing options before the guest separator and
+# require the precise, ordered profile. Used only by the fail-closed self-check.
+guest_env_pin_is_exact() { # $1=array name
+  local argv_name="$1"
+  local -n argv_ref="$argv_name"
+  local -a projected=() expected=(--base-env minimal -e LC_ALL=C -e TZ=UTC)
+  local separator=-1 index=0
+  for ((index=0; index<${#argv_ref[@]}; index++)); do
+    if [ "${argv_ref[$index]}" = -- ]; then separator=$index; break; fi
+  done
+  [ "$separator" -ge 0 ] || return 1
+  index=0
+  while [ "$index" -lt "$separator" ]; do
+    case "${argv_ref[$index]}" in
+      --base-env|-e|--env)
+        [ $((index + 1)) -lt "$separator" ] || return 1
+        projected+=("${argv_ref[$index]}" "${argv_ref[$((index + 1))]}")
+        index=$((index + 2))
+        ;;
+      --base-env=*|--env=*|-e?*)
+        projected+=("${argv_ref[$index]}")
+        index=$((index + 1))
+        ;;
+      *) index=$((index + 1)) ;;
+    esac
+  done
+  [ "${#projected[@]}" -eq "${#expected[@]}" ] || return 1
+  for ((index=0; index<${#expected[@]}; index++)); do
+    [ "${projected[$index]}" = "${expected[$index]}" ] || return 1
+  done
+}
+
+self_check_guest_env_pin() {
+  local -a argv mutation omission reordered
+  local backend verify lane index lc_index=-1 tz_index=-1 positives=0
+  for backend in ptrace kvm dbi sabre e9patch liteinst; do
+    for verify in 0 1; do
+      for lane in portable privileged; do
+        build_hermit_argv argv "$backend" "$verify" "$lane"
+        guest_env_pin_is_exact argv || {
+          echo "self-check: generated argv lacks exact pin: ${argv[*]}" >&2
+          return 1
+        }
+        positives=$((positives + 1))
+      done
+    done
+  done
+
+  mutation=("${argv[@]}")
+  for ((index=0; index<${#mutation[@]}; index++)); do
+    [ "${mutation[$index]}" = TZ=UTC ] && mutation[$index]=TZ=localtime
+  done
+  ! guest_env_pin_is_exact mutation || { echo "self-check: mutation accepted" >&2; return 1; }
+
+  omission=("${argv[@]}")
+  for ((index=0; index<${#omission[@]}; index++)); do
+    [ "${omission[$index]}" = LC_ALL=C ] && lc_index=$index
+  done
+  [ "$lc_index" -gt 0 ] || return 1
+  unset "omission[$lc_index]" "omission[$((lc_index - 1))]"
+  omission=("${omission[@]}")
+  ! guest_env_pin_is_exact omission || { echo "self-check: omission accepted" >&2; return 1; }
+
+  reordered=("${argv[@]}")
+  for ((index=0; index<${#reordered[@]}; index++)); do
+    [ "${reordered[$index]}" = LC_ALL=C ] && lc_index=$index
+    [ "${reordered[$index]}" = TZ=UTC ] && tz_index=$index
+  done
+  [ "$lc_index" -ge 0 ] && [ "$tz_index" -ge 0 ] || return 1
+  reordered[$lc_index]=TZ=UTC
+  reordered[$tz_index]=LC_ALL=C
+  ! guest_env_pin_is_exact reordered || { echo "self-check: reordering accepted" >&2; return 1; }
+
+  echo "self-check: $positives generated argv variants accepted; mutation, omission, and reordering refused"
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --backends) backends_arg="$2"; shift 2 ;;
     --par) PAR="$2"; shift 2 ;;
     --no-assert) do_assert=0; shift ;;
+    --assert-only) assert_only="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
+    --self-check-env-pin) self_check_env_pin=1; shift ;;
     -h|--help) grep '^#' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "collect-fullcorpus: unknown arg $1" >&2; exit 2 ;;
   esac
 done
 
-[ -x "$BIN" ] || { echo "collect-fullcorpus: HERMIT_BIN not executable: $BIN" >&2; exit 2; }
+if [ "$self_check_env_pin" = 1 ]; then
+  self_check_guest_env_pin
+  exit $?
+fi
+
+[ -n "$assert_only" ] || [ -x "$BIN" ] || { echo "collect-fullcorpus: HERMIT_BIN not executable: $BIN" >&2; exit 2; }
 [ -f "$CORPUS_C" ] || { echo "collect-fullcorpus: missing $CORPUS_C" >&2; exit 2; }
 
 HSHA="$(git -C "$HROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -96,15 +201,6 @@ have_backend() { # $1 = backend name; probes the binary's --backend enum + host
 }
 
 ALL_BACKENDS="ptrace kvm dbi sabre e9patch liteinst"
-[ -n "$backends_arg" ] && ALL_BACKENDS="${backends_arg//,/ }"
-DETECTED=""
-for b in $ALL_BACKENDS; do
-  if have_backend "$b"; then DETECTED="$DETECTED $b"; else echo "  backend $b: NOT available here (recorded n/a)"; fi
-done
-DETECTED="${DETECTED# }"
-echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
-echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
-
 # --- per-backend ratchet baselines (green-stays-green floor) ------------------
 # Existing 205-cell floors were measured at hermit 82a8e853; the thirty performance
 # cells were measured with the same binary and uniform lane flags.
@@ -124,11 +220,62 @@ baseline() {
   esac
 }
 
+# The floors above were measured over a 235-cell corpus. Carry that denominator
+# WITH them: a floor is meaningless against a different population, and four of
+# the six are numerically unreachable once the corpus shrinks (e9patch's 214
+# cannot be met by 205 cells no matter how green the run is). Comparing anyway
+# reported four "REGRESSION" lines that were denominator errors, not findings --
+# the failure mode this gate exists to prevent, committed by the gate itself.
+FLOOR_CORPUS=235
+
+# assert_ratchet <csv> <backend>... -> 0 green | 1 real regression | 4 not comparable
+assert_ratchet() {
+  local csv="$1"; shift
+  local fail=0 incomparable=0 backend det tot floor
+  echo "== green-stays-green ratchet (per-backend det floor; floors measured over ${FLOOR_CORPUS} cells) =="
+  for backend in "$@"; do
+    det=$(awk -F, -v b="$backend" 'NR>1 && $11==b && $14=="1"{n++} END{print n+0}' "$csv")
+    tot=$(awk -F, -v b="$backend" 'NR>1 && $11==b{n++} END{print n+0}' "$csv")
+    floor=$(baseline "$backend")
+    [ "$tot" -eq 0 ] && { echo "  n/a: $backend contributed no rows (not measurable here)"; continue; }
+    if [ "$tot" -lt "$FLOOR_CORPUS" ]; then
+      incomparable=1
+      printf '  NOT-COMPARABLE: %s det %s/%s vs floor %s — floor was measured over %s cells, %s are missing here%s\n' \
+        "$backend" "$det" "$tot" "$floor" "$FLOOR_CORPUS" "$((FLOOR_CORPUS - tot))" \
+        "$([ "$floor" -gt "$tot" ] && echo " (and $floor > $tot, so it is unreachable by construction)")" >&2
+    elif [ "$det" -lt "$floor" ]; then
+      echo "  REGRESSION: $backend det $det/$tot < floor $floor" >&2; fail=1
+    else
+      echo "  OK: $backend det $det/$tot (floor $floor)"
+    fi
+  done
+  [ "$fail" -ne 0 ] && return 1
+  [ "$incomparable" -ne 0 ] && return 4
+  return 0
+}
+
+if [ -n "$assert_only" ]; then
+  [ -r "$assert_only" ] || { echo "collect-fullcorpus: cannot read $assert_only" >&2; exit 2; }
+  ao_backends=$(awk -F, 'NR>1{print $11}' "$assert_only" | sort -u | tr '\n' ' ')
+  [ -n "${ao_backends// /}" ] || { echo "collect-fullcorpus: $assert_only has no rows — a no-result, not a pass" >&2; exit 3; }
+  assert_ratchet "$assert_only" $ao_backends; exit $?
+fi
+
+[ -n "$backends_arg" ] && ALL_BACKENDS="${backends_arg//,/ }"
+DETECTED=""
+for b in $ALL_BACKENDS; do
+  if have_backend "$b"; then DETECTED="$DETECTED $b"; else echo "  backend $b: NOT available here (recorded n/a)"; fi
+done
+DETECTED="${DETECTED# }"
+echo "== full-corpus gate: hermit=$HSHA backends=[$DETECTED] par=$PAR =="
+echo "   corpus = $(wc -l <"$CORPUS_C") C + $(grep -vc '^#' "$CORPUS_NONC") non-C cells"
+
+
 ROWS="$(mktemp -d)"
 # RFC4180-quote a field, but only when it needs it, so today's comma-free
 # reasons stay byte-identical and a future free-text reason cannot silently
-# widen the row. `reason` is the last column, so an unquoted comma there adds a
-# field and misaligns nothing visibly -- it just makes the file ragged.
+# shift every column after it (`reason` is mid-row here, ahead of
+# verify_compare/det_tier, so an unquoted comma misattributes those too).
 csv_field() {
   case $1 in
     *'"'*|*,*|*$'\n'*|*$'\r'*) printf '"%s"' "${1//\"/\"\"}" ;;
@@ -137,16 +284,47 @@ csv_field() {
 }
 export -f csv_field
 
-HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,parity,output_hash,duration_ms,max_rss_kb,reason"
+HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,ref_output_hash,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier"
 RUN_UTC="@$(date +%s)"
 
 # --- one (backend,cell) measurement ------------------------------------------
+# Classify a non-zero --verify exit into an OUTCOME that says what actually
+# happened, instead of collapsing every non-zero exit to "diverge".
+#
+# "diverge" is a determinism verdict and must be reserved for one. Two other
+# things produce a non-zero exit and are NOT determinism failures:
+#
+#   usage        the guest printed its usage banner, i.e. THIS HARNESS invoked
+#                it wrong. This is a positive control and must stay at zero:
+#                a non-zero count means the guest-argument channel below is
+#                broken again (rrnewton/hermit#1815), not that a backend
+#                regressed.
+#   unsupported  the backend refused the operation (ENOTSUPP). A fail-closed
+#                refusal is honest behaviour; labelling it "diverge" hides that
+#                the backend declined rather than computed a wrong answer.
+#
+# $1=backend $2=exit-code $3=run stdout file $4=run stderr file $5=verify stderr file
+# Echoes "<outcome> <reason>".
+classify_verify_failure() {
+  local backend="$1" ve="$2" run_out="$3" run_err="$4" verify_err="$5"
+  if grep -qiE '^[[:space:]]*usage:' "$run_out" "$run_err" 2>/dev/null; then
+    echo "usage $backend-verify-usage-exit$ve"
+    return
+  fi
+  if grep -qE 'ENOTSUPP|Operation is not supported' "$verify_err" "$run_err" 2>/dev/null; then
+    echo "unsupported $backend-verify-unsupported-exit$ve"
+    return
+  fi
+  echo "diverge $backend-verify-fail-exit$ve"
+}
+
 measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=guest argv
   local backend="$1" cell="$2" lane="$3" id="$4"; shift 4
   local -a gcmd=("$@")
   local bucket="${id%%/*}"
-  local flags=""
-  [ "$lane" = portable ] && flags="--no-virtualize-cpuid --max-timeslice=disabled"
+  local -a run_cmd verify_cmd
+  build_hermit_argv run_cmd "$backend" 0 "$lane"
+  build_hermit_argv verify_cmd "$backend" 1 "$lane"
   export LC_ALL=C TZ=UTC
   local re=0
   # ptrace: TWO runs.
@@ -158,14 +336,17 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   #  (2) --strict --verify -> det signal (L2 self-verify exit code).
   if [ "$backend" = ptrace ]; then
     local t0 t1 dur re ve ohash det outcome reason
-    timeout "$TMO_RUN" "$BIN" run --strict $flags -- "${gcmd[@]}" >"$cell/ptv.out" 2>"$cell/ptv.err"; re=$?
+    timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" >"$cell/ptv.out" 2>"$cell/ptv.err"; re=$?
     ohash=$(sha256sum "$cell/ptv.out" | cut -c1-64)
     t0=$(date +%s%3N)
-    timeout "$TMO_VERIFY" "$BIN" run --strict --verify $flags -- "${gcmd[@]}" >/dev/null 2>"$cell/ptvv.err"; ve=$?
+    timeout "$TMO_VERIFY" "${verify_cmd[@]}" "${gcmd[@]}" >/dev/null 2>"$cell/ptvv.err"; ve=$?
     t1=$(date +%s%3N); dur=$((t1-t0))
     if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";
     elif [ "$ve" = 124 ]; then det=0; outcome=timeout; reason="ptrace-verify-timeout-${TMO_VERIFY}s";
-    else det=0; outcome=diverge; reason="ptrace-verify-fail-exit$ve"; fi
+    else det=0
+      read -r outcome reason <<<"$(classify_verify_failure ptrace "$ve" "$cell/ptv.out" "$cell/ptv.err" "$cell/ptvv.err")"
+    fi
+    [ "$outcome" = usage ] && echo "  HARNESS-ERROR usage banner from $id (ptrace): guest argument channel is wrong" >&2
     # a failed plain --strict reference is unusable for parity: mark it so
     # downstream backends record parity="" (unmeasured), never a false match
     # (an empty-but-valid reference must still be comparable, hence a marker
@@ -176,28 +357,37 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
     else
       rm -f "$cell/ptv.fail"
     fi
-    echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,ptrace,expansion,$outcome,$det,,$ohash,$dur,,$(csv_field "$reason")" > "$ROWS/ptrace_${id//\//_}.row"
+    local verify_compare="" det_tier=""
+    if [ "$det" = 1 ]; then verify_compare=stripped; det_tier=stripped-uncounted; fi
+    echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,ptrace,expansion,$outcome,$det,,$ohash,$dur,,$(csv_field "$reason"),$verify_compare,,,$det_tier,,$ohash,,,,,,,,unqualified-stdout-only" > "$ROWS/ptrace_${id//\//_}.row"
     return
   fi
   # non-ptrace backend: strict (for parity) + strict --verify (for det)
-  timeout "$TMO_RUN" "$BIN" --backend "$backend" run --strict $flags -- "${gcmd[@]}" >"$cell/$backend.out" 2>"$cell/$backend.err"; re=$?
+  timeout "$TMO_RUN" "${run_cmd[@]}" "${gcmd[@]}" >"$cell/$backend.out" 2>"$cell/$backend.err"; re=$?
   local t0 t1 dur ve bhash phash det outcome reason parity ohash
   t0=$(date +%s%3N)
-  timeout "$TMO_VERIFY" "$BIN" --backend "$backend" run --strict --verify $flags -- "${gcmd[@]}" >"$cell/${backend}v.out" 2>"$cell/${backend}v.err"; ve=$?
+  timeout "$TMO_VERIFY" "${verify_cmd[@]}" "${gcmd[@]}" >"$cell/${backend}v.out" 2>"$cell/${backend}v.err"; ve=$?
   t1=$(date +%s%3N); dur=$((t1-t0))
   bhash=$(sha256sum "$cell/$backend.out" | cut -c1-64); ohash="$bhash"
   if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";
   elif [ "$ve" = 124 ]; then det=0; outcome=timeout; reason="$backend-verify-timeout-${TMO_VERIFY}s";
-  else det=0; outcome=diverge; reason="$backend-verify-fail-exit$ve"; fi
+  else det=0
+    read -r outcome reason <<<"$(classify_verify_failure "$backend" "$ve" "$cell/$backend.out" "$cell/$backend.err" "$cell/${backend}v.err")"
+  fi
+  [ "$outcome" = usage ] && echo "  HARNESS-ERROR usage banner from $id ($backend): guest argument channel is wrong" >&2
   if [ ! -f "$cell/ptv.out" ] || [ -f "$cell/ptv.fail" ]; then parity="";  # ref missing/failed -> unmeasured
   elif [ "$re" != 0 ]; then parity=0; [ -z "$reason" ] && reason="$backend-run-fail-exit$re";
   else
     phash=$(sha256sum "$cell/ptv.out" | cut -c1-64)
     [ "$bhash" = "$phash" ] && parity=1 || parity=0
   fi
-  echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,$backend,expansion,$outcome,$det,$parity,$ohash,$dur,,$(csv_field "$reason")" > "$ROWS/${backend}_${id//\//_}.row"
+  local verify_compare="" det_tier="" legacy_parity="" ref_hash=""
+  if [ "$det" = 1 ]; then verify_compare=stripped; det_tier=stripped-uncounted; fi
+  if [ -n "$parity" ]; then legacy_parity="stdout_parity:$parity"; fi
+  if [ -f "$cell/ptv.out" ] && [ ! -f "$cell/ptv.fail" ]; then ref_hash=$(sha256sum "$cell/ptv.out" | cut -c1-64); fi
+  echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,$backend,expansion,$outcome,$det,,$ohash,$dur,,$(csv_field "$reason"),$verify_compare,,,$det_tier,$legacy_parity,$ref_hash,,,,,,,,unqualified-stdout-only" > "$ROWS/${backend}_${id//\//_}.row"
 }
-export -f measure
+export -f build_hermit_argv measure classify_verify_failure
 export BIN ROWS RUN_UTC HSHA RSHA TMO_RUN TMO_VERIFY
 
 # --- compile C guests once (shared build tree) -------------------------------
@@ -214,6 +404,68 @@ while IFS='|' read -r id prog cflags extra lane cstate; do
   cc -std=c11 -O2 -g -Wall -Wextra -Werror $cflags "$HROOT/$prog" $extra_abs -o "$guest" 2>"$cell/cc.err" \
     || echo "  build-fail: $id" >&2
 done < "$CORPUS_C"
+
+# --- guest arguments, sourced from the e2e manifests -------------------------
+# Some corpus guests REQUIRE an argument (a scenario name, a fixture path). Run
+# bare they print a usage banner and exit non-zero, which this collector used to
+# record as `<backend>-verify-fail-exit1` -- indistinguishable from a real
+# determinism divergence. That was rrnewton/hermit#1815: nine cells were false
+# reds in EVERY backend column, and ptrace's true non-green count was 12, not 21.
+#
+# The arguments are read from the e2e manifests' per-backend `guest_args`, via
+# the product's own manifest reader, rather than from a column in corpus-c.tsv.
+# A second hand-maintained list is exactly how the manifests and this corpus
+# would drift back apart.
+#
+# Fail closed: a harness that cannot establish how to invoke its guests must not
+# quietly record a corpus-wide red.
+GARGS_DIR="$BUILD/guest-args"
+rm -rf "$GARGS_DIR"; mkdir -p "$GARGS_DIR"
+gargs_tsv="$GARGS_DIR/declared.tsv"
+# TRANSITION: `--guest-args` arrives with rrnewton/hermit#1833. Against a hermit
+# checkout that predates it, degrade LOUDLY instead of exiting -- this collector
+# is shared, and hard-failing it would block every other lane on a flag that has
+# not landed yet. Degrading is safe because the fail-closed property lives at the
+# cell level: any guest invoked without a required argument prints a usage banner
+# and is classified `usage`, never `pass` and never `diverge`. The measurement can
+# be incomplete, but it can no longer be silently wrong.
+gargs_available=1
+if ! ( cd "$HROOT" && ./scripts/manifest-to-commands.rs --guest-args ) >"$gargs_tsv" 2>"$GARGS_DIR/err"; then
+  gargs_available=0
+  : >"$gargs_tsv"
+  echo "WARNING: cannot read declared guest arguments from" >&2
+  echo "         $HROOT/scripts/manifest-to-commands.rs --guest-args" >&2
+  sed 's/^/         /' "$GARGS_DIR/err" >&2
+  echo "         Continuing WITHOUT guest arguments. Every argument-taking guest" >&2
+  echo "         will be invoked bare and recorded as outcome=usage, NOT as a" >&2
+  echo "         determinism failure (rrnewton/hermit#1815). Those cells are" >&2
+  echo "         UNMEASURED, not red. Land hermit#1833 to measure them." >&2
+fi
+gargs_n=0
+while IFS=$'\t' read -r ga_id ga_mode ga_backend ga_rest; do
+  [ -n "$ga_id" ] || continue
+  [ "$ga_mode" = verify ] || continue   # this collector measures the verify mode only
+  printf '%s\n' "$ga_rest" | tr '\t' '\n' > "$GARGS_DIR/${ga_id//\//_}.$ga_backend"
+  gargs_n=$((gargs_n+1))
+  # The manifest may only declare `guest_args` for a backend it ENABLES, but this
+  # collector deliberately measures every backend in expansion -- i.e. it asks
+  # "can backend X do what ptrace does on this cell?". The reference invocation
+  # for that question is ptrace's, so ptrace's vector (and only ptrace's) is
+  # reused when the measured backend declares none of its own.
+  #
+  # Deliberately NOT a fall back to "any declared vector": c-programs/madvise-
+  # determinism declares `--kvm` for kvm alone and nothing for ptrace, so a
+  # promiscuous fallback would hand `--kvm` to every other backend. Absence of a
+  # ptrace declaration stays absence.
+  [ "$ga_backend" = ptrace ] && cp "$GARGS_DIR/${ga_id//\//_}.$ga_backend" "$GARGS_DIR/${ga_id//\//_}.__reference"
+done < "$gargs_tsv"
+if [ "$gargs_available" = 1 ]; then
+  echo "== guest arguments: $gargs_n declared (verify mode) from $HROOT manifests =="
+else
+  echo "== guest arguments: UNAVAILABLE -- argument-taking cells will report outcome=usage ==" >&2
+fi
+export GARGS_DIR
+
 
 # --- run every detected backend, ptrace FIRST (writes the parity reference) ---
 order="ptrace"
@@ -236,7 +488,10 @@ sweep_backend() {
       row="$ROWS/'"$backend"'_${id//\//_}.row"
       case "$(cut -d, -f13 "$row" 2>/dev/null)" in timeout) ;; *) exit 0;; esac
     fi
-    measure "'"$backend"'" "$cell" "$lane" "$id" "$cell/guest"
+    gargs=(); ga_file="$GARGS_DIR/$key.'"$backend"'"
+    [ -f "$ga_file" ] || ga_file="$GARGS_DIR/$key.__reference"
+    [ -f "$ga_file" ] && mapfile -t gargs < "$ga_file"
+    measure "'"$backend"'" "$cell" "$lane" "$id" "$cell/guest" ${gargs[@]+"${gargs[@]}"}
   ' _ {}
   xargs -a "$CORPUS_NONC" -d '\n' -P "$par" -I{} bash -c '
     line="$1"; case "$line" in \#*) exit 0;; esac
@@ -267,24 +522,22 @@ rm -rf "$ROWS"
 echo "== full-corpus scorecard written: $OUT =="
 
 # --- ratchet assert + render -------------------------------------------------
-fail=0
-echo "== green-stays-green ratchet (per-backend det floor over full corpus) =="
-for backend in $order; do
-  det=$(awk -F, -v b="$backend" 'NR>1 && $11==b && $14=="1"{n++} END{print n+0}' "$OUT")
-  tot=$(awk -F, -v b="$backend" 'NR>1 && $11==b{n++} END{print n+0}' "$OUT")
-  floor=$(baseline "$backend")
-  if [ "$det" -lt "$floor" ]; then
-    echo "  REGRESSION: $backend det $det/$tot < floor $floor" >&2; fail=1
-  else
-    echo "  OK: $backend det $det/$tot (floor $floor)"
-  fi
-done
+assert_ratchet "$OUT" $order; ratchet_rc=$?
 
 echo "== rendered scorecard =="
 "$here/render-scorecard.rs" --csv "$OUT" --all --backends kvm,dbi,sabre,liteinst,e9patch || true
 
-if [ "$do_assert" -eq 1 ] && [ "$fail" -ne 0 ]; then
+if [ "$do_assert" -eq 1 ] && [ "$ratchet_rc" -eq 1 ]; then
   echo "collect-fullcorpus: FAILED — backend regressed below ratchet floor" >&2
   exit 1
 fi
-echo "== full-corpus gate GREEN =="
+if [ "$do_assert" -eq 1 ] && [ "$ratchet_rc" -eq 4 ]; then
+  # Fail CLOSED, but with the right cause. A gate that cannot evaluate its own
+  # floor is a NO-RESULT, never a green -- and never a "regression" either.
+  echo "collect-fullcorpus: REFUSED — the ratchet cannot be evaluated: this corpus is smaller than the ${FLOOR_CORPUS} cells its floors were measured over." >&2
+  echo "  Re-derive the floors against the corpus that actually builds, or restore the missing cells. This is NOT a regression report." >&2
+  exit 4
+fi
+[ "$ratchet_rc" -eq 4 ] && echo "== full-corpus gate: NOT COMPARABLE (floors stale vs corpus; --no-assert so not enforced) =="
+scorecard_row_count=$(( $(wc -l < "$OUT") - 1 ))
+[ "$ratchet_rc" -eq 0 ] && echo "== full-corpus raw floor PASS; comparison_tier=unqualified-stdout-only; strict greens emitted: 0/$scorecard_row_count =="
