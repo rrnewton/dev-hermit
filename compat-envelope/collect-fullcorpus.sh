@@ -228,6 +228,36 @@ HDR="run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,te
 RUN_UTC="@$(date +%s)"
 
 # --- one (backend,cell) measurement ------------------------------------------
+# Classify a non-zero --verify exit into an OUTCOME that says what actually
+# happened, instead of collapsing every non-zero exit to "diverge".
+#
+# "diverge" is a determinism verdict and must be reserved for one. Two other
+# things produce a non-zero exit and are NOT determinism failures:
+#
+#   usage        the guest printed its usage banner, i.e. THIS HARNESS invoked
+#                it wrong. This is a positive control and must stay at zero:
+#                a non-zero count means the guest-argument channel below is
+#                broken again (rrnewton/hermit#1815), not that a backend
+#                regressed.
+#   unsupported  the backend refused the operation (ENOTSUPP). A fail-closed
+#                refusal is honest behaviour; labelling it "diverge" hides that
+#                the backend declined rather than computed a wrong answer.
+#
+# $1=backend $2=exit-code $3=run stdout file $4=run stderr file $5=verify stderr file
+# Echoes "<outcome> <reason>".
+classify_verify_failure() {
+  local backend="$1" ve="$2" run_out="$3" run_err="$4" verify_err="$5"
+  if grep -qiE '^[[:space:]]*usage:' "$run_out" "$run_err" 2>/dev/null; then
+    echo "usage $backend-verify-usage-exit$ve"
+    return
+  fi
+  if grep -qE 'ENOTSUPP|Operation is not supported' "$verify_err" "$run_err" 2>/dev/null; then
+    echo "unsupported $backend-verify-unsupported-exit$ve"
+    return
+  fi
+  echo "diverge $backend-verify-fail-exit$ve"
+}
+
 measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=guest argv
   local backend="$1" cell="$2" lane="$3" id="$4"; shift 4
   local -a gcmd=("$@")
@@ -253,7 +283,10 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
     t1=$(date +%s%3N); dur=$((t1-t0))
     if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";
     elif [ "$ve" = 124 ]; then det=0; outcome=timeout; reason="ptrace-verify-timeout-${TMO_VERIFY}s";
-    else det=0; outcome=diverge; reason="ptrace-verify-fail-exit$ve"; fi
+    else det=0
+      read -r outcome reason <<<"$(classify_verify_failure ptrace "$ve" "$cell/ptv.out" "$cell/ptv.err" "$cell/ptvv.err")"
+    fi
+    [ "$outcome" = usage ] && echo "  HARNESS-ERROR usage banner from $id (ptrace): guest argument channel is wrong" >&2
     # a failed plain --strict reference is unusable for parity: mark it so
     # downstream backends record parity="" (unmeasured), never a false match
     # (an empty-but-valid reference must still be comparable, hence a marker
@@ -276,7 +309,10 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   bhash=$(sha256sum "$cell/$backend.out" | cut -c1-64); ohash="$bhash"
   if [ "$ve" = 0 ]; then det=1; outcome=pass; reason="";
   elif [ "$ve" = 124 ]; then det=0; outcome=timeout; reason="$backend-verify-timeout-${TMO_VERIFY}s";
-  else det=0; outcome=diverge; reason="$backend-verify-fail-exit$ve"; fi
+  else det=0
+    read -r outcome reason <<<"$(classify_verify_failure "$backend" "$ve" "$cell/$backend.out" "$cell/$backend.err" "$cell/${backend}v.err")"
+  fi
+  [ "$outcome" = usage ] && echo "  HARNESS-ERROR usage banner from $id ($backend): guest argument channel is wrong" >&2
   if [ ! -f "$cell/ptv.out" ] || [ -f "$cell/ptv.fail" ]; then parity="";  # ref missing/failed -> unmeasured
   elif [ "$re" != 0 ]; then parity=0; [ -z "$reason" ] && reason="$backend-run-fail-exit$re";
   else
@@ -285,7 +321,7 @@ measure() { # $1=backend $2=cell-dir(holds ptv.out ref) $3=lane $4=id ; rest=gue
   fi
   echo "fullcorpus,$RUN_UTC,$HSHA,$RSHA,false,expansion,$lane,$bucket,$id,verify,$backend,expansion,$outcome,$det,$parity,$ohash,$dur,,$reason" > "$ROWS/${backend}_${id//\//_}.row"
 }
-export -f build_hermit_argv measure
+export -f build_hermit_argv measure classify_verify_failure
 export BIN ROWS RUN_UTC HSHA RSHA TMO_RUN TMO_VERIFY
 
 # --- compile C guests once (shared build tree) -------------------------------
@@ -302,6 +338,67 @@ while IFS='|' read -r id prog cflags extra lane cstate; do
   cc -std=c11 -O2 -g -Wall -Wextra -Werror $cflags "$HROOT/$prog" $extra_abs -o "$guest" 2>"$cell/cc.err" \
     || echo "  build-fail: $id" >&2
 done < "$CORPUS_C"
+
+# --- guest arguments, sourced from the e2e manifests -------------------------
+# Some corpus guests REQUIRE an argument (a scenario name, a fixture path). Run
+# bare they print a usage banner and exit non-zero, which this collector used to
+# record as `<backend>-verify-fail-exit1` -- indistinguishable from a real
+# determinism divergence. That was rrnewton/hermit#1815: nine cells were false
+# reds in EVERY backend column, and ptrace's true non-green count was 12, not 21.
+#
+# The arguments are read from the e2e manifests' per-backend `guest_args`, via
+# the product's own manifest reader, rather than from a column in corpus-c.tsv.
+# A second hand-maintained list is exactly how the manifests and this corpus
+# would drift back apart.
+#
+# Fail closed: a harness that cannot establish how to invoke its guests must not
+# quietly record a corpus-wide red.
+GARGS_DIR="$BUILD/guest-args"
+rm -rf "$GARGS_DIR"; mkdir -p "$GARGS_DIR"
+gargs_tsv="$GARGS_DIR/declared.tsv"
+# TRANSITION: `--guest-args` arrives with rrnewton/hermit#1833. Against a hermit
+# checkout that predates it, degrade LOUDLY instead of exiting -- this collector
+# is shared, and hard-failing it would block every other lane on a flag that has
+# not landed yet. Degrading is safe because the fail-closed property lives at the
+# cell level: any guest invoked without a required argument prints a usage banner
+# and is classified `usage`, never `pass` and never `diverge`. The measurement can
+# be incomplete, but it can no longer be silently wrong.
+gargs_available=1
+if ! ( cd "$HROOT" && ./scripts/manifest-to-commands.rs --guest-args ) >"$gargs_tsv" 2>"$GARGS_DIR/err"; then
+  gargs_available=0
+  : >"$gargs_tsv"
+  echo "WARNING: cannot read declared guest arguments from" >&2
+  echo "         $HROOT/scripts/manifest-to-commands.rs --guest-args" >&2
+  sed 's/^/         /' "$GARGS_DIR/err" >&2
+  echo "         Continuing WITHOUT guest arguments. Every argument-taking guest" >&2
+  echo "         will be invoked bare and recorded as outcome=usage, NOT as a" >&2
+  echo "         determinism failure (rrnewton/hermit#1815). Those cells are" >&2
+  echo "         UNMEASURED, not red. Land hermit#1833 to measure them." >&2
+fi
+gargs_n=0
+while IFS=$'\t' read -r ga_id ga_mode ga_backend ga_rest; do
+  [ -n "$ga_id" ] || continue
+  [ "$ga_mode" = verify ] || continue   # this collector measures the verify mode only
+  printf '%s\n' "$ga_rest" | tr '\t' '\n' > "$GARGS_DIR/${ga_id//\//_}.$ga_backend"
+  gargs_n=$((gargs_n+1))
+  # The manifest may only declare `guest_args` for a backend it ENABLES, but this
+  # collector deliberately measures every backend in expansion -- i.e. it asks
+  # "can backend X do what ptrace does on this cell?". The reference invocation
+  # for that question is ptrace's, so ptrace's vector (and only ptrace's) is
+  # reused when the measured backend declares none of its own.
+  #
+  # Deliberately NOT a fall back to "any declared vector": c-programs/madvise-
+  # determinism declares `--kvm` for kvm alone and nothing for ptrace, so a
+  # promiscuous fallback would hand `--kvm` to every other backend. Absence of a
+  # ptrace declaration stays absence.
+  [ "$ga_backend" = ptrace ] && cp "$GARGS_DIR/${ga_id//\//_}.$ga_backend" "$GARGS_DIR/${ga_id//\//_}.__reference"
+done < "$gargs_tsv"
+if [ "$gargs_available" = 1 ]; then
+  echo "== guest arguments: $gargs_n declared (verify mode) from $HROOT manifests =="
+else
+  echo "== guest arguments: UNAVAILABLE -- argument-taking cells will report outcome=usage ==" >&2
+fi
+export GARGS_DIR
 
 # --- run every detected backend, ptrace FIRST (writes the parity reference) ---
 order="ptrace"
@@ -324,7 +421,10 @@ sweep_backend() {
       row="$ROWS/'"$backend"'_${id//\//_}.row"
       case "$(cut -d, -f13 "$row" 2>/dev/null)" in timeout) ;; *) exit 0;; esac
     fi
-    measure "'"$backend"'" "$cell" "$lane" "$id" "$cell/guest"
+    gargs=(); ga_file="$GARGS_DIR/$key.'"$backend"'"
+    [ -f "$ga_file" ] || ga_file="$GARGS_DIR/$key.__reference"
+    [ -f "$ga_file" ] && mapfile -t gargs < "$ga_file"
+    measure "'"$backend"'" "$cell" "$lane" "$id" "$cell/guest" ${gargs[@]+"${gargs[@]}"}
   ' _ {}
   xargs -a "$CORPUS_NONC" -d '\n' -P "$par" -I{} bash -c '
     line="$1"; case "$line" in \#*) exit 0;; esac
