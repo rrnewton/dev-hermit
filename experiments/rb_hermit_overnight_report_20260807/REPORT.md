@@ -21,11 +21,27 @@ Five randomness probes + two write probes, four modes, N=10, `native` as positiv
 |---|---|---|---|---|
 | `at_random` | 10/10 | 1 | **1** | 1 |
 | `gettimeofday` | 10/10 | 1 | **1** | 1 |
-| `procfs_uuid` | 10/10 | 1 | **1** | 1 |
+| `procfs_uuid` | 10/10 | 1 | **1** | 1 † |
 | `getpid` | 10/10 | 1 | **1** | **10 — LEAK** |
 | `bash_random` | 10/10 | 1 | **1** | **3–5 — LEAK** |
 | `write_visible_tmp` | visible | **DISCARDED** | **visible** | visible |
 | `write_visible_out` | visible | visible | **visible** | visible |
+
+> **† CONTESTED — two agents measured this cell differently and it is unresolved.**
+> `rb_no_namespace_random_leaks_20260806` measured `/proc/sys/kernel/random/uuid` as **determinized
+> under `--no-namespace`** (1 distinct value, N=10), probing the source directly under
+> `hermit run`. `nix_hermit_repro_hostnix_20260806` measured it as **not virtualized at all**
+> (6 distinct values in 6 canonical rebuilds), probing it from inside a real nix builder process
+> tree. Both are careful measurements with controls; they differ in *context*, not obviously in
+> rigour, and the plausible reconciliation is that the read reaches procfs by a different path
+> from inside a builder. **Nobody has run the discriminating experiment**, so neither number is
+> promoted here. Note this does not affect the recommended wrap — `--tmp=/tmp --no-rcb-time`
+> determinizes the UUID in both agents' measurements — but it does mean the `--no-namespace`
+> column of this table is not fully settled.
+>
+> Consequence for the aggregate: the nix lane's *"`--no-namespace` scores 10 distinct in 10"* is an
+> **aggregate over a four-source probe**, and means "at least one source leaks", not "determinizes
+> nothing".
 
 1. *"`--no-namespace` is required; the private mount ns discards `$out`."* **Refuted.** A mount
    namespace isolates the mount *table*, not file contents. Only `/tmp` is discarded — Hermit's
@@ -247,6 +263,13 @@ longer exists.
 7. **Small N**: 10 / 3 / 2 / 1 depending on arm. `bash_random` at 3/10 then 5/10 shows N=10 can
    miss a sub-10%-per-run regime.
 8. **`/nix` is chef-ephemeral** on this host.
+9. **Timing numbers printed *by a wrapped build* are virtual, not wall.** nixpkgs' stdenv times
+   phases with bash's `$SECONDS`, which under the wrap reads Hermit's **virtual** clock. Measured:
+   `sleep 1` under Hermit prints `SECONDS=3`. So every *"completed in N minutes"* line in a wrapped
+   nix build log is virtual time and must not be compared against a native wall-clock figure — a
+   "170x slowdown" reported earlier tonight was exactly this units error, and was retracted. Only
+   host-measured timings (harness `wall_s`, the 8.4x spawn-cost figure, zero-CPU hang evidence)
+   are wall-clock.
 
 ## 6. What the next engineer should do first
 
