@@ -212,6 +212,15 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	@# evidence. Gating on day one would be red for weeks and get muted, the
 	@# same reasoning label_taxonomy.py records for its `--gate p01` default.
 	@# Move to --strict once the 47 directories are triaged.
+	@# `pin-invariant` is report-only for the same ratchet reason as
+	@# ignored-artifacts: the invariant is violated on 3 of 4 legs TODAY
+	@# (measured 2026-08-07 -- manifest 79517704 vs reverie gitlink dd3c178e,
+	@# and both product gitlinks behind their origin/main), so --strict would
+	@# be red from the first run. It reads RECORDED GITLINKS, not checkouts:
+	@# a colleague who clones and runs `git submodule update --init` receives
+	@# the gitlinks, so an invariant read off this box's working tree would
+	@# pass or fail on state nobody else can see. Move to --strict once the
+	@# pins are reconciled.
 	@set -u; failures=''; \
 	gate() { \
 	  name="$$1"; shift; \
@@ -252,6 +261,7 @@ lint: ## Lint parent-repository scripts, tests, paths, and submodule policy
 	gate portability     '$(MAKE) --no-print-directory check-portability'; \
 	gate harness-help    '$(MAKE) --no-print-directory check-harness-help'; \
 	gate ignored-artifacts 'scripts/check-ignored-experiment-artifacts.sh'; \
+	gate pin-invariant   'scripts/check_reverie_pin_invariant.py'; \
 	gate compat-envelope '$(MAKE) --no-print-directory check-compat-envelope-tests'; \
 	echo; \
 	if [ -n "$$failures" ]; then \
