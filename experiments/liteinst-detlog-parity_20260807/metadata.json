@@ -1,0 +1,67 @@
+{
+  "experiment": "liteinst-detlog-parity",
+  "date_utc": "2026-08-07",
+  "task": "liteinst-detlog-was-already-clean-score-its-parity-now",
+  "agent": "hermit-w7",
+  "question": "Score LiteInst cross-backend DETLOG parity against the ptrace golden, per cell, with denominators, and record per-cell self-determinism rather than inheriting the single 0/1245 datum.",
+  "repos": {
+    "hermit_base_sha": "0041130ccb0daa54ffe7dce2792c1f1495c57e58",
+    "hermit_fix_sha": "077833ad65955b30309d40ac3105a135779c0dce",
+    "hermit_fix_pr": "https://github.com/rrnewton/hermit/pull/1847",
+    "reverie_pin_both_arms": "0ae0c01b5e4c9fbf85c97adc66c2740f280727df"
+  },
+  "binaries": {
+    "base": {
+      "path": "ignored/w7-1847/base/hermit",
+      "self_reported_version": "hermit 0.2.0 (2026-08-07, g0041130ccb0d)",
+      "dirty": false,
+      "sha256": "cc6236843764cb0beb49f1b70c48fc6965f38f4059b686088e30705ca9048257",
+      "note": "0041130c is an ancestor of main, so this arm describes LANDED behaviour."
+    },
+    "fix": {
+      "path": "ignored/w7-1847/fix/hermit",
+      "self_reported_version": "hermit 0.2.0 (2026-08-07, g077833ad6595)",
+      "dirty": false,
+      "sha256": "90b45a1584a2ba8c4a8cfd963d6d96289a4ed7a487120f49d2be402e8022577e",
+      "note": "Head of open PR #1847. NOT landed."
+    }
+  },
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316,
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "gcc": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "method": {
+    "collection": "harness/detlog_collect.sh <hermit> <outdir> <runs>; hermit --log=info [--backend=liteinst] run --strict --base-env=minimal -- <guest>, stderr filtered with grep -o 'DETLOG .*'",
+    "no_memory_hash_flags": "DETLOG is measured as its OWN emission stream. --detlog-stack/--detlog-heap are deliberately NOT passed, so a stack result can neither be inferred from this nor contaminate it.",
+    "scoring": "harness/detlog_parity.py",
+    "policies": {
+      "raw": "byte-exact DETLOG lines",
+      "hex": "0x<hex> -> HEX, verbatim the normalisation ci-hub/parity/prefix_depth.sh already applies in commits(); not invented here"
+    },
+    "metrics": {
+      "Z": "ptrace golden DETLOG record count (the denominator for every row of that cell)",
+      "E": "LiteInst candidate DETLOG record count",
+      "prefix_depth": "length of the identical leading run, the house ratchet's monotonic measure",
+      "covered": "order-preserving longest-common-subsequence of the golden inside the candidate",
+      "golden_unmatched": "Z - covered",
+      "candidate_inserted": "E - covered; reported separately and NEVER subtracted from the score"
+    },
+    "NANOS_PER_RCB": 10.0,
+    "NANOS_PER_RCB_source": "hermit/detcore-model/src/time.rs:39"
+  },
+  "cells": [
+    "notsc (scratch/w27-tsc/notsc.c, gcc -O0)",
+    "detlog_syscalls, heap_fragment_reuse, stack_deep_recursion, stdout_bytes (ci-hub/parity/guests/*.c, the pinned per-dimension reference guests)",
+    "/bin/true",
+    "/bin/echo"
+  ],
+  "runs": {
+    "per_cell_matrix": 3,
+    "deep_dive_detlog_syscalls": 30
+  },
+  "relaxations": "none",
+  "known_confound_controlled": "LiteInst stack/DETLOG content depends on the hermit binary's install PATH (LD_PRELOAD absolute path is in the guest environment block). Every arm here was driven from a fixed path per binary. See experiments/liteinst-maps-inode-self-determinism_20260807 section 5."
+}

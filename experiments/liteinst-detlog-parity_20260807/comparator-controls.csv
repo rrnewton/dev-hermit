@@ -1,0 +1,17 @@
+control,policy,backend,Z,prefix_depth,covered,golden_unmatched,candidate_inserted,expected,verdict
+identity-golden-vs-itself,raw,ptrace,96,96,96,0,0,perfect,PASS
+planted-substitution-at-ordinal-1,raw,ptrace,96,0,95,1,1,Y=0,PASS
+planted-substitution-at-ordinal-25,raw,ptrace,96,24,95,1,1,Y=24,PASS
+planted-substitution-at-ordinal-50,raw,ptrace,96,49,95,1,1,Y=49,PASS
+planted-substitution-at-ordinal-96,raw,ptrace,96,95,95,1,1,Y=95,PASS
+planted-deletion-of-ordinal-50,raw,ptrace,96,49,95,1,0,one golden record uncovered,PASS
+planted-insertion-before-ordinal-50,raw,ptrace,96,49,96,0,1,coverage full and insertion reported separately,PASS
+hex-policy-still-catches-non-address-change,hex,ptrace,96,49,95,1,1,not swallowed by hex normalisation,PASS
+e2e-control-unmutated-rerun,raw,ptrace,96,96,96,0,0,no false positive,PASS
+e2e-planted-extra-getpid,raw,ptrace,96,6,70,26,28,mutation detected,PASS
+e2e-control-unmutated-rerun,hex,ptrace,96,96,96,0,0,no false positive,PASS
+e2e-planted-extra-getpid,hex,ptrace,96,83,90,6,8,mutation detected,PASS
+e2e-control-unmutated-rerun,raw,liteinst,832,832,832,0,0,no false positive,PASS
+e2e-planted-extra-getpid,raw,liteinst,832,6,581,251,253,mutation detected,PASS
+e2e-control-unmutated-rerun,hex,liteinst,832,832,832,0,0,no false positive,PASS
+e2e-planted-extra-getpid,hex,liteinst,832,138,757,75,77,mutation detected,PASS
