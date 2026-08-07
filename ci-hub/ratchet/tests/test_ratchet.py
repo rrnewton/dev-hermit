@@ -19,9 +19,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ratchet  # noqa: E402
 
 
-def m(value, *, denom="cells", defn="v1", reason=None, unmeasured_reason=None):
+def m(value, *, denom="cells", defn="v1", reason=None, unmeasured_reason=None,
+      coverage=...):
     out = {"value": value, "denominator": denom, "definition_version": defn,
            "definition": "test metric"}
+    if coverage is ...:
+        coverage = {"measured": 5, "total": 5, "unit": "cells"} if value is not None else None
+    if coverage is not None:
+        out["coverage"] = coverage
     if reason:
         out["rebaseline_reason"] = reason
     if unmeasured_reason:
@@ -159,3 +164,71 @@ def test_exit_code_is_nonzero_only_for_a_real_regression(tmp_path, capsys):
 
     cur.write_text(json.dumps(rec(x=m(3))))
     assert ratchet.main(["--record", str(cur), "--against", str(base)]) == 1
+
+
+# ---- coverage: how much was measured, not just what is counted --------------
+# `denominator` is prose about WHAT is counted; it reads identically whether one
+# guest produced the figure or twenty did. These pin the separate question.
+
+def test_a_published_value_without_coverage_is_refused():
+    """The core rule. A figure with no measured count can hold a stale number
+    indefinitely while rendering as current."""
+    with pytest.raises(ratchet.RatchetError, match="no `coverage` object"):
+        ratchet.validate_record(rec(depth=m(3, coverage=None)))
+
+
+def test_zero_measured_cannot_publish_a_value():
+    """A regeneration that measured NOTHING must not keep the old number. This
+    is the case that otherwise classifies FLAT/'unchanged'."""
+    with pytest.raises(ratchet.RatchetError, match="STALE NUMBER"):
+        ratchet.validate_record(
+            rec(depth=m(3, coverage={"measured": 0, "total": 5, "unit": "pairs"})))
+
+
+def test_zero_measured_is_expressible_as_unmeasured():
+    """The positive half: measuring nothing IS recordable -- as null plus a
+    reason -- so the refusal above is a redirection, not a dead end."""
+    ratchet.validate_record(rec(depth=m(None, unmeasured_reason="nothing ran")))
+    moves = ratchet.compare(rec(depth=m(3)), rec(depth=m(None, unmeasured_reason="nothing ran")))
+    assert moves[0].verdict == ratchet.UNMEASURED
+
+
+def test_an_unknown_population_must_say_so_rather_than_be_blank():
+    with pytest.raises(ratchet.RatchetError, match="total_unknown_reason"):
+        ratchet.validate_record(
+            rec(depth=m(3, coverage={"measured": 1, "total": None, "unit": "pairs"})))
+    # ...and is accepted once stated, because an undefined population is a real
+    # state that must be reportable.
+    ratchet.validate_record(rec(depth=m(3, coverage={
+        "measured": 1, "total": None, "unit": "pairs",
+        "total_unknown_reason": "guest set never enumerated"})))
+
+
+def test_coverage_must_name_its_unit():
+    with pytest.raises(ratchet.RatchetError, match="coverage.unit"):
+        ratchet.validate_record(
+            rec(depth=m(3, coverage={"measured": 1, "total": 5, "unit": ""})))
+
+
+def test_total_below_measured_is_refused():
+    with pytest.raises(ratchet.RatchetError, match="coverage.total"):
+        ratchet.validate_record(
+            rec(depth=m(3, coverage={"measured": 9, "total": 5, "unit": "pairs"})))
+
+
+def test_two_readings_on_different_samples_are_distinguishable_in_the_report():
+    """The reporting half: same value, different sample, must not render as one
+    indistinguishable line -- that is what makes two guests look contradictory."""
+    one = m(3, coverage={"measured": 1, "total": 5, "unit": "guest x backend pairs"})
+    five = m(3, coverage={"measured": 5, "total": 5, "unit": "guest x backend pairs"})
+    line = ratchet.compare(rec(depth=one), rec(depth=five))[0].line()
+    assert "[1/5 guest x backend pairs]" in line
+    assert "[5/5 guest x backend pairs]" in line
+
+
+def test_shipped_record_states_coverage_for_every_published_value():
+    """The rule applies to the artifact, not just the schema."""
+    data = ratchet.load()
+    missing = [n for n, v in data["metrics"].items()
+               if v.get("value") is not None and not isinstance(v.get("coverage"), dict)]
+    assert missing == [], f"published figures with no measured count: {missing}"

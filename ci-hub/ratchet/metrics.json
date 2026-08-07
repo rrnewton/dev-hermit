@@ -10,7 +10,13 @@
       "definition": "Number of detcore commits, from the start of the log, for which the DBI backend's log is identical to the ptrace golden.",
       "trend": "baseline",
       "source": "prefix-parity-depth remeasurement 2026-08-06; identical at every rung (Z 145..400940), i.e. prologue-pinned rather than workload-dependent",
-      "caveat": "e9patch scores a FALSE depth here: mapped_sites=0 means it never engaged, so its number measures absence of instrumentation, not parity."
+      "caveat": "e9patch scores a FALSE depth here: mapped_sites=0 means it never engaged, so its number measures absence of instrumentation, not parity.",
+      "coverage": {
+        "measured": 1,
+        "total": null,
+        "unit": "guest x backend pairs",
+        "total_unknown_reason": "The prefix-parity ratchet never declared its guest population. This figure is demo5 only; a second reading exists on the heapwalk guest and a separate 2-of-5 reading is recorded elsewhere, so the guest set is plural but unenumerated. Enumerate it before treating any of these as comparable."
+      }
     },
     "demo5-prefix-parity-depth-sabre": {
       "value": 1,
@@ -18,7 +24,13 @@
       "definition_version": "stdout+detlog-prefix/v1",
       "definition": "As above, SaBRe backend.",
       "trend": "baseline",
-      "source": "prefix-parity-depth remeasurement 2026-08-06"
+      "source": "prefix-parity-depth remeasurement 2026-08-06",
+      "coverage": {
+        "measured": 1,
+        "total": null,
+        "unit": "guest x backend pairs",
+        "total_unknown_reason": "The prefix-parity ratchet never declared its guest population. This figure is demo5 only; a second reading exists on the heapwalk guest and a separate 2-of-5 reading is recorded elsewhere, so the guest set is plural but unenumerated. Enumerate it before treating any of these as comparable."
+      }
     },
     "demo5-prefix-parity-depth-liteinst": {
       "value": 8,
@@ -26,7 +38,13 @@
       "definition_version": "stdout+detlog-prefix/v1",
       "definition": "As above, LiteInst backend.",
       "trend": "baseline",
-      "source": "prefix-parity-depth remeasurement 2026-08-06"
+      "source": "prefix-parity-depth remeasurement 2026-08-06",
+      "coverage": {
+        "measured": 1,
+        "total": null,
+        "unit": "guest x backend pairs",
+        "total_unknown_reason": "The prefix-parity ratchet never declared its guest population. This figure is demo5 only; a second reading exists on the heapwalk guest and a separate 2-of-5 reading is recorded elsewhere, so the guest set is plural but unenumerated. Enumerate it before treating any of these as comparable."
+      }
     },
     "strict-compat-envelope": {
       "value": null,
@@ -53,7 +71,12 @@
       "definition": "Fixtures satisfying ALL THREE of: landed on main, actually running in CI, and proven able to fail. Any one conjunct alone overstates -- a landed fixture that does not run protects nothing, and a running fixture that cannot fail is inert.",
       "trend": "baseline",
       "source": "Measured 2026-08-07 from tests/e2e/manifests/backend-parity-c.toml at hermit main 0041130c: 85 cells, exactly 1 mode block with ci = true (backend-parity-c/personality-domain, verify mode).",
-      "caveat": "The RUNNING conjunct is the binding one: 84 of 85 cells are ci=false. The landed and failable conjuncts are satisfied far more widely, which is exactly why counting any one of them alone would overstate the number by ~85x."
+      "caveat": "The RUNNING conjunct is the binding one: 84 of 85 cells are ci=false. The landed and failable conjuncts are satisfied far more widely, which is exactly why counting any one of them alone would overstate the number by ~85x.",
+      "coverage": {
+        "measured": 85,
+        "total": 85,
+        "unit": "backend-parity-c cells"
+      }
     },
     "backends-with-zero-ptracer-in-syscall-path": {
       "value": null,

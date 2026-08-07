@@ -37,6 +37,28 @@ EVERY VALUE CARRIES ITS DENOMINATOR
 against a differently-scoped count, which is the denominator confusion that put
 `open_prs=105` next to `open_prs=10` in the status log. A denominator change is
 therefore treated exactly like a definition change: it forces a re-baseline.
+
+AND EVERY VALUE CARRIES HOW MUCH WAS MEASURED
+---------------------------------------------
+`denominator` says WHAT is counted; `coverage` says HOW MUCH was measured to
+produce the figure. They are not interchangeable, and the difference is what
+lets a stale number pass as current:
+
+* a depth of 3 "detcore commits identical to the ptrace golden" reads the same
+  whether ONE guest produced it or twenty did;
+* a regenerated record that measured NOTHING keeps the old value and classifies
+  FLAT/"unchanged" -- a run that measured nothing rendering exactly like one
+  that measured everything;
+* two readings taken on DIFFERENT guests look like a contradiction rather than
+  two different samples, so the natural response is to argue about which is
+  right instead of reporting both with their scopes.
+
+So a published (non-null) value must carry `coverage: {measured, total, unit}`,
+and `measured: 0` with a published value is REFUSED outright -- if nothing was
+measured, the honest record is `value: null` plus an `unmeasured_reason`, which
+already classifies as UNMEASURED and can never read as unchanged. `total: null`
+is permitted, because an undefined population is a real state, but it must say
+so in `total_unknown_reason` rather than being left blank.
 """
 
 from __future__ import annotations
@@ -75,19 +97,92 @@ class Movement:
     denominator_after: str | None
     definition_before: str | None
     definition_after: str | None
+    coverage_before: Any
+    coverage_after: Any
     detail: str
 
     def line(self) -> str:
-        def show(v, d):
+        def show(v, d, cov):
             if v is None:
                 return "unmeasured"
-            return f"{v} of {d}" if d else str(v)
+            base = f"{v} of {d}" if d else str(v)
+            return base + format_coverage(cov)
         return (f"{self.metric:38} {self.verdict:11} "
-                f"{show(self.before, self.denominator_before)} -> "
-                f"{show(self.after, self.denominator_after)}   {self.detail}")
+                f"{show(self.before, self.denominator_before, self.coverage_before)} -> "
+                f"{show(self.after, self.denominator_after, self.coverage_after)}"
+                f"   {self.detail}")
 
 
 REQUIRED_FIELDS = ("value", "denominator", "definition_version", "definition")
+
+#: `denominator` says WHAT the number counts. `coverage` says HOW MUCH was
+#: actually measured to produce it, and the two are not interchangeable: a depth
+#: of 3 "detcore commits identical to the ptrace golden" is the same prose
+#: whether one guest produced it or twenty did. Without a measured count a
+#: regenerated record that measured NOTHING leaves the old value in place and
+#: classifies FLAT/"unchanged" -- a run that measured nothing rendering exactly
+#: like one that measured everything. Two readings taken on different guests
+#: also look like a contradiction rather than two different samples.
+COVERAGE_UNKNOWN_TOTAL_REASON = "total_unknown_reason"
+
+
+def validate_coverage(name: str, metric: dict) -> None:
+    """A published value must say how much was measured to produce it.
+
+    Only enforced when `value` is non-null: an explicitly unmeasured metric
+    already carries `unmeasured_reason` and has no sample to describe.
+    """
+    coverage = metric.get("coverage")
+    if not isinstance(coverage, dict):
+        raise RatchetError(
+            f"{name}: value is published but no `coverage` object. State "
+            f"{{measured, total, unit}} -- how many units were ACTUALLY "
+            f"measured for this figure, out of how many exist. Without it a "
+            f"regeneration that measured nothing reads as `unchanged`."
+        )
+    measured = coverage.get("measured")
+    if type(measured) is not int or measured < 0:
+        raise RatchetError(f"{name}: coverage.measured must be an integer >= 0")
+    if not str(coverage.get("unit") or "").strip():
+        raise RatchetError(
+            f"{name}: coverage.unit must name what is being counted (for "
+            f"example 'guest x backend pairs'); 3/5 of an unnamed thing is not "
+            f"a denominator."
+        )
+    if measured == 0:
+        raise RatchetError(
+            f"{name}: coverage.measured is 0 but a value is published. A "
+            f"figure produced by zero measurements is a STALE NUMBER, not a "
+            f"measurement -- set value to null with an `unmeasured_reason` so "
+            f"it classifies as unmeasured instead of rendering unchanged."
+        )
+    total = coverage.get("total")
+    if total is None:
+        if not str(coverage.get(COVERAGE_UNKNOWN_TOTAL_REASON) or "").strip():
+            raise RatchetError(
+                f"{name}: coverage.total is null but no "
+                f"`{COVERAGE_UNKNOWN_TOTAL_REASON}`. An undefined population is "
+                f"a real and reportable state, but it must be stated, not left "
+                f"blank -- a reader cannot otherwise tell a partial sample from "
+                f"a complete one."
+            )
+        return
+    if type(total) is not int or total < measured:
+        raise RatchetError(
+            f"{name}: coverage.total must be an integer >= coverage.measured "
+            f"({measured}); got {total!r}"
+        )
+
+
+def format_coverage(coverage: Any) -> str:
+    """Render a coverage object for a report line, or '' when absent."""
+    if not isinstance(coverage, dict):
+        return ""
+    measured = coverage.get("measured")
+    total = coverage.get("total")
+    unit = str(coverage.get("unit") or "units")
+    shown_total = "?" if total is None else total
+    return f" [{measured}/{shown_total} {unit}]"
 
 
 def load(path: Any = RECORD) -> dict:
@@ -113,6 +208,8 @@ def validate_record(data: dict) -> None:
                 )
         if m["value"] is not None and not isinstance(m["value"], (int, float)):
             raise RatchetError(f"{name}: value must be a number or null (unmeasured)")
+        if m["value"] is not None:
+            validate_coverage(name, m)
         if m["value"] is None and not m.get("unmeasured_reason"):
             raise RatchetError(
                 f"{name}: value is null but no `unmeasured_reason` given. An "
@@ -131,6 +228,8 @@ def compare_metric(name: str, before: dict | None, after: dict) -> Movement:
             denominator_after=after.get("denominator"),
             definition_before=(before or {}).get("definition_version"),
             definition_after=after.get("definition_version"),
+            coverage_before=(before or {}).get("coverage"),
+            coverage_after=after.get("coverage"),
             detail=detail,
         )
 
