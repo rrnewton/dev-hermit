@@ -85,9 +85,30 @@ const MENU_CARET = /^\s*❯\s*(?:\d[.)]|\[\d\])\s+\S/m;
 const MENU_OPTION_1 = /^\s*(?:❯\s*)?(?:1[.)]|\[1\])\s+\S/m;
 const MENU_OPTION_2 = /^\s*(?:❯\s*)?(?:2[.)]|\[2\])\s+\S/m;
 
+/// A numbered list in ordinary agent prose has "1." and "2." at line start too.
+/// This was not hypothetical: within an hour of landing the first version, the
+/// still-live sweep sent "1" to hermit-w17 because its report ended with a
+/// seven-item numbered list, and the coordinator's own ad-hoc detector used the
+/// same two-option rule. So two options at line start is NOT sufficient.
+///
+/// A real approval menu has one of two things prose does not:
+///   (a) the selection caret, or
+///   (b) options on ADJACENT lines directly under a QUESTION. Claude Code
+///       renders "Do you want to proceed?" immediately above "1. Yes".
+/// A prose list is introduced by a statement, not a question, and its items are
+/// usually separated by blank lines or prose.
 function looksLikeNumberedMenu(text) {
   if (MENU_CARET.test(text)) return true;
-  return MENU_OPTION_1.test(text) && MENU_OPTION_2.test(text);
+  const lines = String(text).split("\n");
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (!MENU_OPTION_1.test(lines[i])) continue;
+    // Option 2 must be the very next line: a menu is a contiguous block.
+    if (!MENU_OPTION_2.test(lines[i + 1])) continue;
+    // ...and a question must introduce it, within the three lines above.
+    const preamble = lines.slice(Math.max(0, i - 3), i).join("\n");
+    if (QUESTION_FORMS.some((p) => p.test(preamble))) return true;
+  }
+  return false;
 }
 
 /// An explicit question form. Each of these is a QUESTION being posed, not a

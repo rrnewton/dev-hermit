@@ -90,6 +90,25 @@ Allow this command to run? (y/n)
   ⏵⏵ bypass permissions on (shift+tab to cycle)
 `;
 
+
+// --- CAPTURED, and the reason this rule got tighter -------------------------
+// hermit-w17's own report at 07:41Z. The still-live sweep sent it "1" because
+// the report ends with a numbered list. Verified in the coordinator session:
+//   acted=["hermit-w5:1","hermit-w17:1"]
+// The first version of THIS file would have done the same. A numbered list in
+// prose is not a menu.
+const CAPTURED_PROSE_NUMBERED_LIST = `
+Open items across my claimed tasks:
+
+1. **emitters_can_still_write** [P2] — the two skewed emitters.
+2. **harness_must_not_count** [P1] — the /tmp launch-refusal trap.
+3. **Install the permission-sweep fix** — the detector landed at 8e8f807.
+
+Say which and I'll start.
+
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+`;
+
 // ---- NEGATIVE DIRECTION: none of these may ever receive a keystroke --------
 
 check(
@@ -113,6 +132,13 @@ check(
 check(
   "agent merely DISCUSSING approvals -> no send",
   decide({ pane: AGENT_DISCUSSING_PERMISSIONS, status: "idle" }),
+  { send: false, reason: "no-prompt-evidence" },
+);
+
+
+check(
+  "a NUMBERED LIST in ordinary prose is not a menu (real: w17 was sent '1' for this)",
+  decide({ pane: CAPTURED_PROSE_NUMBERED_LIST, status: "idle" }),
   { send: false, reason: "no-prompt-evidence" },
 );
 
@@ -195,7 +221,7 @@ check(
 
 // ---------------------------------------------------------------------------
 
-const negatives = 6;
+const negatives = 7;
 const positives = 3;
 console.log(
   `permission-prompt-detect: ${pass} passed, ${fail} failed ` +
