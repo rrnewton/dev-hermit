@@ -120,6 +120,77 @@ class GhEngineClassificationTests(unittest.TestCase):
         self.assertEqual(status.gate_reds, 0)
         self.assertEqual(status.prs[0]["real_red_kind"], "product")
 
+    def test_pin_freshness_red_with_merge_gate_is_gate_not_product(self) -> None:
+        """THE #1711 FIXTURE, measured 2026-08-07.
+
+        Head 2d4866a0 failed exactly `reverie-pin-is-latest-main` +
+        `merge-gate-v4` and was reported as real_reds=1 (product=1). It was a
+        shared pin drift: the PR pinned reverie dd3c178e, IDENTICAL to hermit
+        main, while reverie main had moved to 0ae0c01b. One unrecognised check
+        name defeated the all-gate test and manufactured a phantom product break
+        that would have sent an agent to debug the PR's code.
+        """
+        raw = [
+            _pr(
+                1711,
+                [
+                    {"name": "reverie-pin-is-latest-main", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                    {"name": "merge-gate-v4", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                ],
+            ),
+        ]
+        status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+        self.assertEqual(status.real_reds, 1, "still a real red -- it blocks landing")
+        self.assertEqual(status.gate_reds, 1)
+        self.assertEqual(status.product_reds, 0, "pin drift is not a product break")
+        self.assertEqual(status.prs[0]["real_red_kind"], "gate")
+
+    def test_pin_freshness_red_alone_is_gate(self) -> None:
+        for name in (
+            "reverie-pin-is-latest-main",
+            "liteinst2-pin-is-latest-main",
+            "Pin Is Latest Main",
+        ):
+            with self.subTest(check=name):
+                raw = [_pr(1712, [{"name": name, "status": "COMPLETED",
+                                   "conclusion": "FAILURE"}])]
+                status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+                self.assertEqual(status.gate_reds, 1)
+                self.assertEqual(status.product_reds, 0)
+
+    def test_pin_gate_does_not_swallow_a_real_product_failure(self) -> None:
+        """The fix must not become a way to hide breakage: a pin red ALONGSIDE a
+        genuine product test failure is still product."""
+        raw = [
+            _pr(
+                1713,
+                [
+                    {"name": "reverie-pin-is-latest-main", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                    {"name": "Regular tests (GitHub-hosted)", "status": "COMPLETED",
+                     "conclusion": "FAILURE"},
+                ],
+            ),
+        ]
+        status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+        self.assertEqual(status.product_reds, 1)
+        self.assertEqual(status.gate_reds, 0)
+        self.assertEqual(status.prs[0]["real_red_kind"], "product")
+
+    def test_absence_of_evidence_is_never_product(self) -> None:
+        """A red whose rollup names NO failing check, with no exact-head ledger
+        failure, cannot be product: nothing identifies a break, so calling it
+        product would send an agent to debug code on no evidence. It stays a
+        real red so the split never hides it."""
+        raw = [_pr(1714, [{"name": "", "status": "COMPLETED",
+                           "conclusion": "FAILURE"}])]
+        status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+        self.assertEqual(status.real_reds, 1, "must not be hidden")
+        self.assertEqual(status.product_reds, 0, "no evidence => never product")
+        self.assertEqual(status.gate_reds, 1)
+
     def test_core_review_protocol_only_red_is_gate(self) -> None:
         raw = [
             _pr(
