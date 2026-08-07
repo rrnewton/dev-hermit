@@ -668,7 +668,7 @@ class ProtocolTest(unittest.TestCase):
             protocol._parse_github_runs(json.dumps(payload), SHA, policy)
 
     def test_repo_policy_routes_exact_workflow_queries(self) -> None:
-        for repo in ("rrnewton/hermit", "rrnewton/reverie"):
+        for repo in ("rrnewton/hermit", "rrnewton/reverie", protocol.PARENT_REPO):
             evidence = hosted_evidence(repo)
             raw_runs = {
                 "total_count": len(evidence),
@@ -824,7 +824,11 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(runs[0]["databaseId"], 11)
 
     def test_hosted_authority_requires_registered_nonvacuous_positive_set(self) -> None:
-        for repo, expected_count in (("rrnewton/hermit", 1), ("rrnewton/reverie", 2)):
+        for repo, expected_count in (
+            ("rrnewton/hermit", 1),
+            ("rrnewton/reverie", 2),
+            (protocol.PARENT_REPO, 4),
+        ):
             with self.subTest(repo=repo):
                 policy = protocol.verification_policy_for_repo(repo)
                 self.assertEqual(
@@ -836,6 +840,30 @@ class ProtocolTest(unittest.TestCase):
                 patch = protocol._github_patch(hosted_evidence(repo), SHA, policy)
                 self.assertEqual(patch["github"]["state"], "green")
                 self.assertEqual(patch["github"]["positive_count"], expected_count)
+
+    def test_parent_hosted_authority_accepts_complete_and_refuses_unbacked(self) -> None:
+        """Parent evidence is a counted exact-head set, never a repo bypass."""
+        policy = protocol.verification_policy_for_repo(protocol.PARENT_REPO)
+        complete = hosted_evidence(protocol.PARENT_REPO)
+
+        accepted = protocol._github_patch(complete, SHA, policy)["github"]
+        self.assertEqual(accepted["state"], "green")
+        self.assertEqual(accepted["positive_count"], 4)
+        self.assertEqual(accepted["required_positive_count"], 4)
+
+        unbacked = json.loads(json.dumps(complete))
+        missing_job = policy["github"]["required_jobs"][-1]["job_name"]
+        unbacked[-1]["jobs"] = [
+            job for job in unbacked[-1]["jobs"] if job["name"] != missing_job
+        ]
+        refused = protocol._github_patch(unbacked, SHA, policy)["github"]
+        self.assertEqual(refused["state"], "no_result")
+        self.assertEqual(refused["positive_count"], 3)
+        self.assertIn("required job missing", refused["last_poll_error"])
+
+        stale = hosted_evidence(protocol.PARENT_REPO, sha=NEXT_SHA)
+        with self.assertRaisesRegex(protocol.ProtocolError, "expected exact SHA"):
+            protocol._github_patch(stale, SHA, policy)
 
     def test_hosted_status_brackets_green_no_result_partial_red_and_stale(self) -> None:
         def observe(repo: str, runs: list[dict]) -> tuple[int, dict]:
@@ -1064,9 +1092,11 @@ class ProtocolTest(unittest.TestCase):
             ):
                 protocol.resolve_repo_source("example/unsupported", hermit)
 
-        # Parent ancestry support must not create a zero-job hosted policy.
-        with self.assertRaisesRegex(protocol.ProtocolError, "unsupported post-land"):
-            protocol.verification_policy_for_repo(protocol.PARENT_REPO)
+        # Parent ancestry support is paired with a non-vacuous hosted policy;
+        # it never falls through to an empty or skipped evidence set.
+        parent_policy = protocol.verification_policy_for_repo(protocol.PARENT_REPO)
+        self.assertEqual(parent_policy["github"]["required_positive_count"], 4)
+        self.assertEqual(len(parent_policy["github"]["required_jobs"]), 4)
 
     def test_repo_source_accepts_intended_https_and_ssh_remote_forms(self) -> None:
         source = self.repo_source("rrnewton/hermit", "remote-forms")
@@ -1596,14 +1626,52 @@ class ProtocolTest(unittest.TestCase):
         record["local"]["pid"] = protocol.os.getpid()
         self.assertTrue(protocol._local_launch_durable(record))
 
-        policy_record = {
-            "repo": "rrnewton/reverie",
-            "landed_sha": REVERIE_LANDED_SHA,
-            "local": protocol._local_policy_skip_patch("rrnewton/reverie"),
-        }
-        self.assertTrue(protocol._local_launch_durable(policy_record))
-        policy_record["local"]["policy_skip"]["repo"] = "rrnewton/hermit"
-        self.assertFalse(protocol._local_launch_durable(policy_record))
+        for repo, sha in (
+            ("rrnewton/reverie", REVERIE_LANDED_SHA),
+            (protocol.PARENT_REPO, SHA),
+        ):
+            with self.subTest(repo=repo):
+                policy_record = {
+                    "repo": repo,
+                    "landed_sha": sha,
+                    "local": protocol._local_policy_skip_patch(repo),
+                }
+                self.assertTrue(protocol._local_launch_durable(policy_record))
+                policy_record["local"]["policy_skip"]["repo"] = "rrnewton/hermit"
+                self.assertFalse(protocol._local_launch_durable(policy_record))
+
+    def test_parent_local_not_applicable_cannot_authorize_without_hosted_green(
+        self,
+    ) -> None:
+        obligation_id = "parent-hosted-only-authority"
+        policy = protocol.verification_policy_for_repo(protocol.PARENT_REPO)
+        obligations.create_obligation(
+            repo=protocol.PARENT_REPO,
+            landed_sha=SHA,
+            land_mode="speculative",
+            verification_policy=policy,
+            actor="test",
+            obligation_id=obligation_id,
+            path=self.store,
+        )
+
+        record = protocol.bind_local_receipt_authority(obligation_id, self.store)
+        self.assertEqual(record["local"]["state"], "no_result")
+        self.assertEqual(record["local"]["policy_skip"]["outcome"], "not_applicable")
+        record = protocol.evaluate_obligation(obligation_id, store_path=self.store)
+        self.assertEqual(record["overall_state"], "open")
+
+        obligations.transition(
+            obligation_id,
+            "parent-hosted-observed",
+            protocol._github_patch(
+                hosted_evidence(protocol.PARENT_REPO), SHA, policy
+            ),
+            self.store,
+        )
+        record = protocol.evaluate_obligation(obligation_id, store_path=self.store)
+        self.assertEqual(record["overall_state"], "satisfied")
+        self.assertEqual(record["github"]["positive_count"], 4)
 
     def test_legacy_reverie_registered_terminal_is_rebound_to_policy_skip(
         self,

@@ -167,6 +167,26 @@ The land sequence itself lives here too, not only in `scratch/`:
 | `ci-hub/landing/land-pr.sh <PR> <BRANCH> [--union\|--no-rebase]` | detached-by-default full single-PR lander: self-wraps in `land-lock run --child-deadline`, requires Hermit's complementary named local-full (portable+privileged) and hosted-portable exact-head coverage before and after rebase, derives `locally-validated` only for a qualifying local receipt, polls merge-gate, rechecks the same coverage at the final mutation boundary, performs a head-matched rebase merge, then verifies ancestry |
 | `ci-hub/landing/union-rebase.sh <hermit-wt> <BRANCH> [--push]` | authoritative additive union-rebase of the shared manifest registries (`*.toml` by `[[test]]` id, `test-files.json` by path, `matrix.tsv` by row); the derived `ci/expected-e2e-plan.json` is regenerated, never hand-unioned |
 
+### Parent changes: hosted exact-head evidence, not a synthetic validate receipt
+
+The local validation ledger is deliberately bound to `rrnewton/hermit` because
+the parent repository has no `validate.sh` producer. Parent tooling therefore
+uses a distinct registered authority rather than widening that ledger with rows
+whose profile and coverage fields would be fictitious:
+
+```bash
+ci-hub/ci-hub hosted-status --repo rrnewton/dev-hermit --sha <parent-head>
+```
+
+A parent green is the complete 4/4 exact-head set: `Parent tooling shard`,
+`ci-hub bounded operations shard`, `Reject owner-specific build paths`, and
+`Demo-touching commits require a green-demo attestation`. The verifier
+dereferences workflow, run, job, repository, and SHA identities. A missing or
+cancelled member is `NO_RESULT`, not permission to publish; a red member is red.
+Focused task tests and both sides of a mutation bracket belong in the named
+shards for the mechanism they protect. Text in a PR body or a hand-applied label
+cannot replace this authority.
+
 `land-pr.sh` bakes in the three race-tolerance fixes so a transient CI state
 never wedges a land:
 

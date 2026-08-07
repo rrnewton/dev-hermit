@@ -32,6 +32,12 @@ from nonzero_result import is_zero_test_green
 
 DEFAULT_REPO = "rrnewton/hermit"
 PARENT_REPO = "rrnewton/dev-hermit"
+PARENT_TOOLING_WORKFLOW = "Dev-hermit operational tooling"
+PARENT_TOOLING_WORKFLOW_FILE = ".github/workflows/dev-hermit-ci.yml"
+PARENT_PORTABILITY_WORKFLOW = "Portability"
+PARENT_PORTABILITY_WORKFLOW_FILE = ".github/workflows/portability.yml"
+PARENT_DEMO_REVIEW_WORKFLOW = "Demo review gate"
+PARENT_DEMO_REVIEW_WORKFLOW_FILE = ".github/workflows/demo-review-gate.yml"
 DEFAULT_WORKFLOW = "CI (GitHub-managed portable)"
 DEFAULT_WORKFLOW_FILE = ".github/workflows/ci-portable.yml"
 PRIVILEGED_WORKFLOW = "CI (privileged)"
@@ -45,6 +51,10 @@ _CURRENT_VERIFICATION_POLICY_VERSION = {
     # retain v2 below so already-open obligations keep their frozen 2-job policy.
     DEFAULT_REPO: 3,
     REVERIE_REPO: VERIFICATION_POLICY_SCHEMA_VERSION,
+    # The parent has no validate.sh producer. Its distinct authority is the
+    # exact-head set of deterministic parent-tooling, path-policy, and demo
+    # review jobs below; absence of any member is a no-result, never a skip.
+    PARENT_REPO: 1,
 }
 # Each tuple is (exact workflow path, exact workflow name, exact job name).
 # The positive count is persisted beside this complete set and must equal its
@@ -80,6 +90,28 @@ _VERSIONED_REPO_GITHUB_JOBS = {
             REVERIE_WORKFLOW_FILE,
             REVERIE_WORKFLOW,
             "Host-dependent tests (self-hosted)",
+        ),
+    ),
+    (PARENT_REPO, 1): (
+        (
+            PARENT_TOOLING_WORKFLOW_FILE,
+            PARENT_TOOLING_WORKFLOW,
+            "Parent tooling shard",
+        ),
+        (
+            PARENT_TOOLING_WORKFLOW_FILE,
+            PARENT_TOOLING_WORKFLOW,
+            "ci-hub bounded operations shard",
+        ),
+        (
+            PARENT_PORTABILITY_WORKFLOW_FILE,
+            PARENT_PORTABILITY_WORKFLOW,
+            "Reject owner-specific build paths",
+        ),
+        (
+            PARENT_DEMO_REVIEW_WORKFLOW_FILE,
+            PARENT_DEMO_REVIEW_WORKFLOW,
+            "Demo-touching commits require a green-demo attestation",
         ),
     ),
 }
@@ -846,9 +878,16 @@ def verify_local_receipt(
 
 
 def _local_policy_skip_patch(repo: str) -> dict[str, Any]:
-    """Persist the explicit no-local-authority policy for non-Hermit repos."""
-    if repo != REVERIE_REPO:
+    """Persist that a registered hosted-only repo has no local producer.
+
+    This is not an authorization skip: the local leg remains ``no_result`` and
+    only the repository's non-vacuous exact-head hosted policy can turn the
+    obligation green.  Keeping the fact explicit prevents a missing local
+    receipt from being mistaken for either a pass or an unclassified hole.
+    """
+    if repo not in {REVERIE_REPO, PARENT_REPO}:
         raise ProtocolError(f"no local receipt skip policy exists for {repo}")
+    parent = repo == PARENT_REPO
     recorded_at = obligations.utc_now()
     return {
         "state": "no_result",
@@ -858,14 +897,23 @@ def _local_policy_skip_patch(repo: str) -> dict[str, Any]:
         "launch_token": None,
         "registered_at": None,
         "receipt_verification": None,
-        "classification_reason": "local-receipt-policy-skipped",
+        "classification_reason": (
+            "local-receipt-not-applicable-hosted-authority-required"
+            if parent
+            else "local-receipt-policy-skipped"
+        ),
         "policy_skip": {
             "schema_version": 1,
             "authority": LOCAL_POLICY_SKIP_AUTHORITY,
             "repo": repo,
             "canonical_repo": DEFAULT_REPO,
-            "outcome": "skipped",
-            "reason": "canonical-local-receipt-authority-unsupported-repository",
+            "outcome": "not_applicable" if parent else "skipped",
+            "reason": (
+                "parent-has-no-local-validate-producer;"
+                "registered-exact-head-hosted-authority-required"
+                if parent
+                else "canonical-local-receipt-authority-unsupported-repository"
+            ),
             "recorded_at": recorded_at,
         },
     }
@@ -873,11 +921,24 @@ def _local_policy_skip_patch(repo: str) -> dict[str, Any]:
 
 def _local_policy_skip_valid(record: Mapping[str, Any]) -> bool:
     local = record.get("local")
+    repo = record.get("repo")
+    if repo == PARENT_REPO:
+        classification_reason = "local-receipt-not-applicable-hosted-authority-required"
+        outcome = "not_applicable"
+        reason = (
+            "parent-has-no-local-validate-producer;"
+            "registered-exact-head-hosted-authority-required"
+        )
+    elif repo == REVERIE_REPO:
+        classification_reason = "local-receipt-policy-skipped"
+        outcome = "skipped"
+        reason = "canonical-local-receipt-authority-unsupported-repository"
+    else:
+        return False
     if (
-        record.get("repo") != REVERIE_REPO
-        or not isinstance(local, Mapping)
+        not isinstance(local, Mapping)
         or local.get("state") != "no_result"
-        or local.get("classification_reason") != "local-receipt-policy-skipped"
+        or local.get("classification_reason") != classification_reason
     ):
         return False
     policy_skip = local.get("policy_skip")
@@ -886,11 +947,10 @@ def _local_policy_skip_valid(record: Mapping[str, Any]) -> bool:
         and type(policy_skip.get("schema_version")) is int
         and policy_skip["schema_version"] == 1
         and policy_skip.get("authority") == LOCAL_POLICY_SKIP_AUTHORITY
-        and policy_skip.get("repo") == REVERIE_REPO
+        and policy_skip.get("repo") == repo
         and policy_skip.get("canonical_repo") == DEFAULT_REPO
-        and policy_skip.get("outcome") == "skipped"
-        and policy_skip.get("reason")
-        == "canonical-local-receipt-authority-unsupported-repository"
+        and policy_skip.get("outcome") == outcome
+        and policy_skip.get("reason") == reason
         and isinstance(policy_skip.get("recorded_at"), str)
         and bool(policy_skip["recorded_at"].strip())
         and local.get("pid") is None
