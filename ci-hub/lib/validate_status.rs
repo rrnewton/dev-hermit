@@ -1,10 +1,11 @@
-//! The SHA-queryable landing / cache predicate over the validate-run ledger.
+//! The SHA-queryable local-receipt/cache authority over the validate-run ledger.
 //!
-//! This is the ONE shared artifact behind two owner P0s (2026-08-03):
+//! This is the ONE shared local artifact behind two owner P0s (2026-08-03):
 //!   * `validate-result-cache-by-sha` CHECKS it (skip a validate whose clean
 //!     HEAD already has a pass record), and
-//!   * `lander-lands-on-local-validate-only` READS it (land iff a clean-validate
-//!     record exists for the exact PR head, GitHub-free).
+//!   * the landing authority combiner READS it as the counted-local positive.
+//!     The independently dereferenced hosted job set is the peer positive; this
+//!     module makes no GitHub calls and does not define the total landing rule.
 //!
 //! One store, one predicate: hermit/reverie `validate.sh` WRITE the JSONL ledger
 //! (`append_validation_ledger`), this module READS it. There is deliberately no
@@ -115,7 +116,10 @@ impl Verdict {
         match self {
             Verdict::Validated => 0,
             Verdict::FailedOnRecord => 3,
-            Verdict::Truncated | Verdict::NeedsRerun | Verdict::NoResult | Verdict::NotValidated => 4,
+            Verdict::Truncated
+            | Verdict::NeedsRerun
+            | Verdict::NoResult
+            | Verdict::NotValidated => 4,
         }
     }
 
@@ -274,8 +278,7 @@ fn is_env_fault_red(row: &HistoryRow, failed_gates: &[&crate::records::GateHisto
     // (A) A gate that genuinely exercised the product and failed disqualifies the
     // env-fault reading: it ran for real time at a non-command-not-found exit.
     let any_genuine_red = failed_gates.iter().any(|gate| {
-        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND)
-            && gate.real_seconds.is_some_and(|s| s > 0.0)
+        gate.exit_code != Some(EXIT_COMMAND_NOT_FOUND) && gate.real_seconds.is_some_and(|s| s > 0.0)
     });
     let any_command_not_found = failed_gates
         .iter()
@@ -348,8 +351,7 @@ pub fn failure_disposition(row: &HistoryRow, sha: &str) -> FailureDisposition {
         .zip(gates_run)
         .is_some_and(|(expected, ran)| expected > 0 && ran < expected)
         || (!has_real_failure
-            && (row.exit_code == Some(130)
-                || (row.failures == Some(0) && failed_gates.is_empty())))
+            && (row.exit_code == Some(130) || (row.failures == Some(0) && failed_gates.is_empty())))
     {
         return FailureDisposition::Truncated;
     }
@@ -599,7 +601,7 @@ mod tests {
     /// prove that field alone is disqualifying.
     fn clean_full_pass(sha: &str) -> HistoryRow {
         row(&format!(
-            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"devbig014",
+            r#"{{"schema_version":3,"finished_at":"2026-08-03T19:08:57Z","host":"test-runner.example",
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
@@ -695,8 +697,14 @@ mod tests {
         ));
         let assessment = assess(&[contended, clean_full_pass(PASS_SHA)], PASS_SHA);
         assert_eq!(assessment.verdict, Verdict::Validated);
-        assert_eq!(assessment.failed_records, 0, "a contended red is not a product failure");
-        assert_eq!(assessment.withheld_nonpass_records, 1, "but it must not be silent");
+        assert_eq!(
+            assessment.failed_records, 0,
+            "a contended red is not a product failure"
+        );
+        assert_eq!(
+            assessment.withheld_nonpass_records, 1,
+            "but it must not be silent"
+        );
     }
 
     #[test]
@@ -710,7 +718,10 @@ mod tests {
     #[test]
     fn a_genuine_failure_is_counted_as_a_failure_not_withheld() {
         // The two counters must not double-count the same record.
-        let assessment = assess(&[complete_failure(PASS_SHA), clean_full_pass(PASS_SHA)], PASS_SHA);
+        let assessment = assess(
+            &[complete_failure(PASS_SHA), clean_full_pass(PASS_SHA)],
+            PASS_SHA,
+        );
         assert_eq!(assessment.failed_records, 1);
         assert_eq!(assessment.withheld_nonpass_records, 0);
     }
@@ -1106,7 +1117,7 @@ mod tests {
     fn killed_run_is_no_result_not_failed_on_record() {
         // The real observed record: a full/full run that was killed (Ctrl-C).
         let r = row(
-            r#"{"schema_version":3,"host":"devbig014","profile":"full","selection_mode":"full",
+            r#"{"schema_version":3,"host":"test-runner.example","profile":"full","selection_mode":"full",
                 "commit":"cde3c1195eee4e2691bac64a4aec10a45aba853e","commit_anchored":true,
                 "tree_dirty":false,"result":"killed","exit_code":130,"checks":0,"failures":0}"#,
         );

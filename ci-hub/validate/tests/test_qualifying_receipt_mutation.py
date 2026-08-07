@@ -27,7 +27,7 @@ Consumers driven (five certifier sites, three languages):
     `is_clean_full_pass` -> `row_qualifies` as the leg above; one predicate path,
     so the Rust leg covers both (its own unit tests exercise history_queries).
   - Python `query.py`           via its `_row_full_pass`.
-  - Python `publish_receipt.py` via its `qualifying_row`.
+  - Python `publish_receipt.py` via `selected_record` shared-policy consistency.
   - bash/jq `verify_receipt.sh` via its receipt gate (`--fixture-receipts`).
 """
 
@@ -66,14 +66,26 @@ def _green_row(sha: str) -> dict:
         "selection_mode": "full",
         "profile": "full",
         "result": "pass",
+        "raw_result": "pass",
+        "exit_code": 0,
         "failures": 0,
         "executed_tests": 740,
         "filtered_tests": 3,
         "schema_version": 5,
+        "repo": "hermit",
+        "tree": "b" * 40,
         "started_at": "2026-08-05T00:00:00Z",
         "finished_at": "2026-08-05T00:10:00Z",
         "host": "test-host",
+        "slot": "fixture-slot",
         "log_file": "/tmp/qrp-fixture.log",
+        "checks": 2,
+        "gates_run": 2,
+        "gates_expected": 2,
+        "gates": [
+            {"name": "fmt", "result": "pass", "exit_code": 0},
+            {"name": "test", "result": "pass", "exit_code": 0},
+        ],
         "coverage": {
             "planned_test_nodes": 4,
             "executed_test_nodes": 4,
@@ -104,12 +116,48 @@ def _zero_exec_row(sha: str) -> dict:
     return row
 
 
+def _soft_rebase_only_row(sha: str) -> dict:
+    """A fully shaped inherited receipt that the hard-only policy refuses."""
+    row = _green_row(sha)
+    row.update(
+        validated_head_sha="c" * 40,
+        inherited_from={
+            "delta_kind": "rebase-only",
+            "upstream_commits": 0,
+            "branch_commits": 0,
+            "patch_identical": True,
+            "force_full_paths": [],
+        },
+        green_class="soft-rebase-only",
+    )
+    return row
+
+
 def _tightened_predicate(dst: Path) -> Path:
     """A copy of the live predicate with executed_tests_min raised so far that
     the genuine green (executed=740) can no longer clear it. NEVER touches the
     live file -- mirrors the sweep's copy-override method."""
     live = json.loads(LIVE_PREDICATE.read_text())
     live["require"]["executed_tests_min"] = 999999
+    dst.write_text(json.dumps(live))
+    return dst
+
+
+def _soft_enabled_predicate(dst: Path) -> Path:
+    """A test-only policy that makes provenance typing load-bearing.
+
+    The live hard-only policy rejects every soft row regardless of provenance,
+    which would make malformed soft fixtures vacuous.  Widening a COPY lets the
+    panel prove that all consumers accept well-typed soft evidence and refuse
+    the same bool/non-string mutations.
+    """
+    live = json.loads(LIVE_PREDICATE.read_text())
+    live["accepts_green_class"] = [
+        "hard",
+        "soft-rebase-only",
+        "soft-upstream-delta",
+        "soft-force-full-touched",
+    ]
     dst.write_text(json.dumps(live))
     return dst
 
@@ -170,12 +218,14 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
 
     def _publish_accepts(self, row: dict, predicate: Path | None) -> bool:
         driver = (
-            "import json,sys;"
+            "import hashlib,json,sys;"
             f"sys.path[:0]=[{str(CI_HUB)!r},{str(CI_HUB / 'validation')!r}];"
             "import publish_receipt;"
-            "row=json.load(sys.stdin);"
+            "raw=sys.stdin.buffer.read();"
+            "row=json.loads(raw);"
+            "digest=hashlib.sha256(raw).hexdigest();"
             "\ntry:\n"
-            f"    publish_receipt.qualifying_row([row], {SHA!r}); print('ACCEPT')\n"
+            f"    publish_receipt.selected_record(raw, sha={SHA!r}, expected_digest=digest, canonicalization=publish_receipt.RECEIPT_CANONICALIZATION); print('ACCEPT')\n"
             "except SystemExit:\n"
             "    print('REJECT')\n"
         )
@@ -284,6 +334,112 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
         panel = self._panel(_zero_exec_row(SHA), predicate=None)
         self.assertFalse(any(panel.values()),
                          f"a zero-execution run must be rejected by every consumer: {panel}")
+
+    def test_live_accepts_hard_and_rejects_soft_rebase_only_unanimously(self) -> None:
+        """The class policy moves every consumer, including the Rust authority."""
+        hard = self._panel(_green_row(SHA), predicate=None)
+        soft = self._panel(_soft_rebase_only_row(SHA), predicate=None)
+        self.assertTrue(all(hard.values()), f"hard exact-head row must pass: {hard}")
+        self.assertFalse(
+            any(soft.values()),
+            f"hard-only policy must refuse soft-rebase-only everywhere: {soft}",
+        )
+
+    def test_typed_soft_provenance_agrees_across_every_consumer(self) -> None:
+        """Rust and Python must derive the same class from the same JSON types.
+
+        ``bool`` is an ``int`` subclass only in Python.  Likewise, a non-string
+        item made Python's diagnostic join throw while Rust treated any
+        nonempty array as force-full evidence.  With soft classes enabled in a
+        predicate COPY, these mutations directly control acceptance rather than
+        being hidden behind the production hard-only policy.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            predicate = _soft_enabled_predicate(Path(tmp) / "soft.json")
+
+            valid_rebase = _soft_rebase_only_row(SHA)
+            valid_force_full = _soft_rebase_only_row(SHA)
+            valid_force_full["inherited_from"] = {
+                "delta_kind": "rebase-plus-upstream",
+                "upstream_commits": 2,
+                "branch_commits": 0,
+                "patch_identical": True,
+                "force_full_paths": ["ci/run-node.sh"],
+            }
+            valid_force_full["green_class"] = "soft-force-full-touched"
+            for name, row in (
+                ("rebase-only", valid_rebase),
+                ("force-full", valid_force_full),
+            ):
+                with self.subTest(positive=name):
+                    panel = self._panel(row, predicate)
+                    self.assertTrue(
+                        all(panel.values()),
+                        f"well-typed {name} provenance must agree as accepted: {panel}",
+                    )
+
+            malformed: list[tuple[str, dict]] = []
+            row = _soft_rebase_only_row(SHA)
+            row["validated_head_sha"] = 7
+            malformed.append(("validated_head_sha=7", row))
+
+            for value in (False, True):
+                row = _soft_rebase_only_row(SHA)
+                row["inherited_from"]["branch_commits"] = value
+                malformed.append((f"branch_commits={value!r}", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"]["upstream_commits"] = False
+            malformed.append(("rebase upstream_commits=False", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"].update(
+                delta_kind="rebase-plus-upstream",
+                upstream_commits=1 << 64,
+            )
+            row["green_class"] = "soft-upstream-delta"
+            malformed.append(("upstream_commits exceeds u64", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"].update(
+                delta_kind="rebase-plus-upstream",
+                upstream_commits=True,
+            )
+            row["green_class"] = "soft-upstream-delta"
+            malformed.append(("upstream_commits=True", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"]["force_full_paths"] = None
+            malformed.append(("force_full_paths=null", row))
+
+            row = _soft_rebase_only_row(SHA)
+            row["inherited_from"].update(
+                delta_kind="rebase-plus-upstream",
+                upstream_commits=1,
+                force_full_paths=["ci/run-node.sh", 7],
+            )
+            row["green_class"] = "soft-force-full-touched"
+            malformed.append(("force_full_paths has non-string", row))
+
+            for name, row in malformed:
+                with self.subTest(negative=name):
+                    panel = self._panel(row, predicate)
+                    self.assertFalse(
+                        any(panel.values()),
+                        f"malformed {name} must fail closed identically: {panel}",
+                    )
+
+    def test_explicit_null_provenance_is_refused_unanimously(self) -> None:
+        """Absent legacy fields default hard; present null carries no fact."""
+        for field in ("validated_head_sha", "inherited_from", "green_class"):
+            with self.subTest(field=field):
+                row = _green_row(SHA)
+                row[field] = None
+                panel = self._panel(row, predicate=None)
+                self.assertFalse(
+                    any(panel.values()),
+                    f"explicit-null {field} must be refused everywhere: {panel}",
+                )
 
 
 if __name__ == "__main__":

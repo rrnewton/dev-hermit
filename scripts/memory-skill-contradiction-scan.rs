@@ -1,9 +1,9 @@
 #!/usr/bin/env rust-script
-//! REPORT-ONLY scanner for memory<->skill CONTRADICTIONS + bidirectional drift.
+//! REPORT-ONLY scanner for repository-skill contradictions and optional local-memory drift.
 //!
-//! WHY: the sync tooling ([[core-memory-skill-sync-tooling]]) keeps mapped skills
-//! BYTE-EQUAL to their source memory, and lint-memory-skill-sync.rs enforces that
-//! mapping is complete. Neither catches the harder failure: a skill and a memory
+//! Versioned repository skills are authoritative; local memories are optional
+//! mirrors and never import into the repository. This scanner catches the harder
+//! failure: a skill and a memory
 //! that are each internally well-formed but assert CONTRADICTORY facts (e.g. an
 //! old skill says "main is unprotected" while a newer memory records that main
 //! was locked down). This scanner surfaces those, plus which side of the mapping
@@ -19,8 +19,8 @@
 //!      coordinator to judge against `orc.sessionMemories()`.
 //!   2. DRIFT (bidirectional) —
 //!        MEMORY_WITHOUT_SKILL: a `core_memory: true` memory whose mapped
-//!          `.claude/skills/<slug>.md` is missing.
-//!        SKILL_WITHOUT_MEMORY: an active `.claude/skills/*.md` no core memory
+//!          `.claude/skills/<slug>/SKILL.md` is missing.
+//!        SKILL_WITHOUT_MEMORY: an active package has no optional core memory
 //!          maps to. (lint-memory-skill-sync.rs is the authoritative gate for
 //!          this; here it is a one-line summary alongside contradictions.)
 //!
@@ -35,9 +35,9 @@
 //!
 //! Usage:
 //!   scripts/memory-skill-contradiction-scan.rs           # human report
-//!   scripts/memory-skill-contradiction-scan.rs --gate    # tick-hub gate:
-//!                                                         #   prints state=/summary=/...
-//!                                                         #   exits non-zero on any finding
+//!   scripts/memory-skill-contradiction-scan.rs --gate    # gate active repository
+//!                                                         # skill contradictions only;
+//!                                                         # absent memory = empty advisory input
 use std::path::{Path, PathBuf};
 
 const SKILL_DIR: &str = ".claude/skills";
@@ -57,6 +57,7 @@ struct DenyEntry {
     raw_needles: String,
 }
 
+#[derive(Clone)]
 struct Finding {
     kind: &'static str, // "CONTRADICTION" | "MEMORY_WITHOUT_SKILL" | "SKILL_WITHOUT_MEMORY"
     subject: String,    // file or slug the finding is about
@@ -68,7 +69,8 @@ memory-skill-contradiction-scan.rs — report memory<->skill contradictions and 
 
 USAGE:
   scripts/memory-skill-contradiction-scan.rs           human report
-  scripts/memory-skill-contradiction-scan.rs --gate    tick-hub gate: state=/summary=, nonzero on any finding
+  scripts/memory-skill-contradiction-scan.rs --gate    gate active repository-skill contradictions only;
+                                                        absent memory is empty advisory input
   scripts/memory-skill-contradiction-scan.rs --list    one line per memory (name<TAB>slug<TAB>core)
   scripts/memory-skill-contradiction-scan.rs -h|--help show this help and exit (no side effects)
   scripts/memory-skill-contradiction-scan.rs --version print version and exit (no side effects)
@@ -89,17 +91,18 @@ fn main() {
     let list = args.iter().any(|a| a == "--list");
     let root = find_root();
     let memory_dir = memory_dir(&root);
+    let memory_store_present = memory_dir.as_deref().is_some_and(Path::is_dir);
     let skill_dir = root.join(SKILL_DIR);
 
     // --list: emit one line per FILE-STORE memory as `name<TAB>slug<TAB>core`,
     // for a caller (e.g. the ORC memory-skill-sync workflow) to set-diff against
     // `orc.sessionMemories()`. Names come from frontmatter (fallback: slug).
     if list {
-        if !memory_dir.is_dir() {
-            eprintln!("memory dir not found: {}", memory_dir.display());
+        if !memory_store_present {
+            report_missing_memory_dir(memory_dir.as_deref());
             std::process::exit(2);
         }
-        for entry in read_md_files(&memory_dir) {
+        for entry in read_md_files(memory_dir.as_deref().expect("present memory dir")) {
             let slug = stem(&entry);
             if slug == "MEMORY" {
                 continue;
@@ -119,29 +122,23 @@ fn main() {
         return;
     }
 
-    if !memory_dir.is_dir() {
-        // In gate mode a broken scanner must itself alert (drift detection is down).
-        if gate {
-            emit("error", "memory-dir-missing (set HERMIT_MEMORY_DIR)", 0, 0);
-        } else {
-            eprintln!(
-                "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
-                memory_dir.display()
-            );
-        }
+    if !memory_store_present && !gate {
+        report_missing_memory_dir(memory_dir.as_deref());
         std::process::exit(2);
     }
 
     // ---- load memories ----
     let mut memories: Vec<(String, String, Meta)> = Vec::new(); // (slug, body_content, meta)
-    for entry in read_md_files(&memory_dir) {
-        let slug = stem(&entry);
-        if slug == "MEMORY" {
-            continue;
+    if let Some(dir) = memory_dir.as_deref().filter(|dir| dir.is_dir()) {
+        for entry in read_md_files(dir) {
+            let slug = stem(&entry);
+            if slug == "MEMORY" {
+                continue;
+            }
+            let content = std::fs::read_to_string(&entry).unwrap_or_default();
+            let meta = parse_meta(&content);
+            memories.push((slug, content, meta));
         }
-        let content = std::fs::read_to_string(&entry).unwrap_or_default();
-        let meta = parse_meta(&content);
-        memories.push((slug, content, meta));
     }
     memories.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -171,7 +168,7 @@ fn main() {
                     if all_needles_present(content, &entry.needles) {
                         findings.push(Finding {
                             kind: "CONTRADICTION",
-                            subject: format!("{SKILL_DIR}/{slug}.md"),
+                            subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
                             detail: format!(
                                 "matches [{}] -> {}\n        {}",
                                 entry.raw_needles,
@@ -204,7 +201,7 @@ fn main() {
                     if slug.to_ascii_lowercase() == target {
                         findings.push(Finding {
                             kind: "CONTRADICTION",
-                            subject: format!("{SKILL_DIR}/{slug}.md"),
+                            subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
                             detail: format!("slug is denylisted -> {}", entry.reason),
                         });
                     }
@@ -223,43 +220,47 @@ fn main() {
     }
 
     // ---- detector 2: bidirectional drift ----
-    // core memories and the flat skill each maps to.
-    let mut mapped_skill_slugs: Vec<String> = Vec::new();
-    for (slug, _content, meta) in &memories {
-        if !meta.core_memory {
-            continue;
+    // An absent optional store contributes NO facts in gate mode. In human mode
+    // absence was diagnosed above. Only a present store can establish drift.
+    if memory_store_present {
+        // Core memories and the package skill each maps to.
+        let mut mapped_skill_slugs: Vec<String> = Vec::new();
+        for (slug, _content, meta) in &memories {
+            if !meta.core_memory {
+                continue;
+            }
+            let expected_rel = package_skill_rel(slug);
+            // Trust the optional memory mapping only if it names the package skill.
+            let declared_ok = meta.core_skill.as_deref() == Some(expected_rel.as_str());
+            let skill_exists = root.join(&expected_rel).is_file();
+            if declared_ok && skill_exists {
+                mapped_skill_slugs.push(slug.clone());
+            } else {
+                findings.push(Finding {
+                    kind: "MEMORY_WITHOUT_SKILL",
+                    subject: format!("memory/{slug}.md"),
+                    detail: if !declared_ok {
+                        format!(
+                            "optional local mapping differs from authoritative repository path '{expected_rel}' (got {:?})",
+                            meta.core_skill
+                        )
+                    } else {
+                        format!("optional local memory names an absent repository skill {expected_rel}")
+                    },
+                });
+            }
         }
-        let expected_rel = flat_skill_rel(slug);
-        // trust the memory's declared mapping only if it matches the flat convention.
-        let declared_ok = meta.core_skill.as_deref() == Some(expected_rel.as_str());
-        let skill_exists = root.join(&expected_rel).is_file();
-        if declared_ok && skill_exists {
-            mapped_skill_slugs.push(slug.clone());
-        } else {
-            findings.push(Finding {
-                kind: "MEMORY_WITHOUT_SKILL",
-                subject: format!("memory/{slug}.md"),
-                detail: if !declared_ok {
-                    format!(
-                        "core_memory:true but core_skill != '{expected_rel}' (got {:?}); run sync-memory-skill.rs",
-                        meta.core_skill
-                    )
-                } else {
-                    format!("mapped skill {expected_rel} is missing; run sync-memory-skill.rs")
-                },
-            });
-        }
-    }
-    for (slug, _content) in &skills {
-        if external_skill_slugs.iter().any(|external| external == slug) {
-            continue;
-        }
-        if !mapped_skill_slugs.iter().any(|s| s == slug) {
-            findings.push(Finding {
-                kind: "SKILL_WITHOUT_MEMORY",
-                subject: format!("{SKILL_DIR}/{slug}.md"),
-                detail: "active skill has no core_memory source; adopt via sync-memory-skill.rs --adopt-skill or delete".to_string(),
-            });
+        for (slug, _content) in &skills {
+            if external_skill_slugs.iter().any(|external| external == slug) {
+                continue;
+            }
+            if !mapped_skill_slugs.iter().any(|s| s == slug) {
+                findings.push(Finding {
+                    kind: "SKILL_WITHOUT_MEMORY",
+                    subject: format!("{SKILL_DIR}/{slug}/SKILL.md"),
+                    detail: "repository skill has no optional local-memory mirror".to_string(),
+                });
+            }
         }
     }
 
@@ -271,37 +272,41 @@ fn main() {
     let drift = findings.len() - contradictions;
 
     if gate {
-        let state = match (contradictions, drift) {
-            (0, 0) => "ok",
-            (_, 0) => "contradiction",
-            (0, _) => "drift",
-            _ => "both",
+        let gate_findings: Vec<Finding> = findings
+            .iter()
+            .filter(|finding| {
+                finding.kind == "CONTRADICTION" && finding.subject.starts_with(SKILL_DIR)
+            })
+            .cloned()
+            .collect();
+        let gate_contradictions = gate_findings.len();
+        let state = if gate_findings.is_empty() {
+            "ok"
+        } else {
+            "contradiction"
         };
-        let summary = if findings.is_empty() {
+        let summary = if gate_findings.is_empty() {
             format!(
-                "in-sync: {} skills / {} memories, denylist {} entries clean",
+                "{} authoritative repository skills clean; {} optional local finding(s)",
                 skills.len(),
-                memories.len(),
-                denylist.len()
+                findings.len()
             )
         } else {
-            let mut parts: Vec<String> = Vec::new();
-            if contradictions > 0 {
-                parts.push(format!("{contradictions} contradiction(s)"));
-            }
-            if drift > 0 {
-                parts.push(format!("{drift} drift"));
-            }
-            // name the first few subjects so the wakeup title is actionable.
-            let named: Vec<String> = findings.iter().take(3).map(|f| f.subject.clone()).collect();
-            format!("{} — {}", parts.join(" + "), named.join(", "))
+            let named: Vec<String> = gate_findings
+                .iter()
+                .take(3)
+                .map(|finding| finding.subject.clone())
+                .collect();
+            format!(
+                "{gate_contradictions} repository-skill contradiction(s) — {}",
+                named.join(", ")
+            )
         };
-        emit(state, &summary, contradictions, drift);
-        // Full detail on stdout too, so the plugin's wakeup body carries it.
-        if !findings.is_empty() {
-            print_report(&findings, &denylist_note, true);
+        emit(state, &summary, gate_contradictions, 0);
+        if !gate_findings.is_empty() {
+            print_report(&gate_findings, &denylist_note, true);
         }
-        std::process::exit(if findings.is_empty() { 0 } else { 1 });
+        std::process::exit(if gate_findings.is_empty() { 0 } else { 1 });
     }
 
     // human report
@@ -508,30 +513,38 @@ fn unquote(s: &str) -> String {
 
 // ---- filesystem helpers (mirror lint-memory-skill-sync.rs) ----
 
-fn flat_skill_rel(slug: &str) -> String {
-    format!("{SKILL_DIR}/{slug}.md")
+fn package_skill_rel(slug: &str) -> String {
+    format!("{SKILL_DIR}/{slug}/SKILL.md")
 }
 
-fn memory_dir(root: &Path) -> PathBuf {
+fn memory_dir(root: &Path) -> Option<PathBuf> {
     match std::env::var("HERMIT_MEMORY_DIR") {
-        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
         _ => {
             let home = std::env::var_os("HOME")
                 .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    eprintln!("HOME is not set (set HERMIT_MEMORY_DIR)");
-                    std::process::exit(2);
-                });
+                .map(PathBuf::from)?;
             let project_key: String = root
                 .to_string_lossy()
                 .chars()
                 .map(|ch| if ch == '/' || ch == '\\' { '-' } else { ch })
                 .collect();
-            home.join(".claude/projects")
-                .join(project_key)
-                .join("memory")
+            Some(
+                home.join(".claude/projects")
+                    .join(project_key)
+                    .join("memory"),
+            )
         }
+    }
+}
+
+fn report_missing_memory_dir(memory_dir: Option<&Path>) {
+    match memory_dir {
+        Some(path) => eprintln!(
+            "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
+            path.display()
+        ),
+        None => eprintln!("HOME is not set (set HERMIT_MEMORY_DIR)"),
     }
 }
 

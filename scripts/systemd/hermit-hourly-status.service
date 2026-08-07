@@ -1,0 +1,34 @@
+[Unit]
+Description=Hourly owner-status wake (external driver; survives ORC restarts)
+Documentation=https://github.com/rrnewton/dev-hermit/blob/main/scripts/hourly-status-relay.rs
+
+# Deliberately NO After=/Requires= on anything ORC-related. The defect this
+# replaces was an ORC-hosted wf.sleep loop whose clock was reset by every ORC
+# restore; binding the replacement's schedule back to ORC would recreate the
+# shared-fate failure it exists to break. A missing tmux socket is handled
+# INSIDE the driver as a skip, not as a dependency.
+
+[Service]
+Type=oneshot
+# %h is systemd's specifier for the invoking user's home. Spelling an owner's
+# home literally would pin this unit to one account on one box, which the
+# portability gate rejects and which would silently break for anyone else. HOME
+# is not set explicitly at all: systemd --user already exports it, and repeating
+# it is one more copy to drift.
+Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/work/dev-hermit
+ExecStart=%h/work/dev-hermit/scripts/hourly-status-relay.rs
+
+# The driver returns 0 for EVERY recorded tick outcome -- delivered,
+# duplicate-hour, in-flight, skipped, wake-failed -- because all of those are
+# successful runs of the driver and the outcome belongs in the durable log, not
+# in the exit status. Only 3 (usage/internal error) is a genuine unit failure,
+# and that one SHOULD surface: it means the driver is misconfigured and no
+# amount of retrying will deliver anything.
+SuccessExitStatus=0
+
+# First run after an edit compiles the rust-script from a cold cache.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

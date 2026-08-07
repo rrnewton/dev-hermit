@@ -1,0 +1,4 @@
+# The deepest root-plus-product AGENTS.md chain is currently about 71 KiB.
+# Stock Codex defaults to 32 KiB and would silently omit the coordinator safety
+# tail, so keep deliberate headroom for the complete instruction chain.
+project_doc_max_bytes = 98304

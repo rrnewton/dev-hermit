@@ -1750,6 +1750,20 @@ fn linked_worktree_admin(target: &CleanTarget) -> Result<PathBuf, String> {
         .map_err(|error| format!("could not canonicalize worktree git-dir: {error}"))?;
     let common_dir = fs::canonicalize(&common_dir)
         .map_err(|error| format!("could not canonicalize common git-dir: {error}"))?;
+    let primary_common_dir = git_inspect(
+        &target.primary,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let primary_common_dir = fs::canonicalize(&primary_common_dir)
+        .map_err(|error| format!("could not canonicalize primary common git-dir: {error}"))?;
+    if common_dir != primary_common_dir {
+        return Err(format!(
+            "{} child common-dir {} does not match primary {}",
+            target.path.display(),
+            common_dir.display(),
+            primary_common_dir.display()
+        ));
+    }
     let worktrees_dir = fs::canonicalize(common_dir.join("worktrees"))
         .map_err(|error| format!("could not canonicalize worktree registry: {error}"))?;
     if git_dir.parent() != Some(worktrees_dir.as_path()) {

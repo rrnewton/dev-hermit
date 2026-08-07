@@ -1,15 +1,15 @@
 #!/usr/bin/env rust-script
-//! Lint that every active coordinator skill has exactly one in-sync memory.
+//! Lint repository-owned coordinator skill structure.
 //!
 //! WHY: coordinator memories and the `.claude/skills/` files drift apart when a
 //! policy/protocol/architecture decision is updated in one place but not the
 //! other. This check makes the drift mechanical and loud instead of silent.
 //!
-//! MODEL (single-writer, mirrors ai_docs/transient/2026-07-27-worktree-management-map.md):
-//!   * The MEMORY file is the source of truth.
-//!   * Every active flat file under `.claude/skills/` has one memory whose
-//!     frontmatter declares `core_memory: true` and `core_skill: <path>`.
-//!   * Every mapping is a flat `.claude/skills/<memory-slug>.md` file.
+//! MODEL:
+//!   * Versioned `.claude/skills/` files are the source of truth.
+//!   * A local memory may mirror a skill, but absence or drift is advisory and
+//!     can never make local state overwrite repository policy.
+//!   * Every mapping is `.claude/skills/<memory-slug>/SKILL.md`.
 //!   * A directory symlink may bridge directly to a versioned canonical skill
 //!     under `agent-utils/skills/<same-name>/`; the external skill is its own
 //!     source of truth and deliberately has no duplicate memory body.
@@ -18,8 +18,8 @@
 //! project's memory store is FILE-BASED markdown; this linter reads that store.
 //! Override its location with HERMIT_MEMORY_DIR.
 //!
-//! Exit code: 0 when every core memory has an in-sync mirror; 1 on any
-//! MISSING / STALE / ORPHAN / metadata problem.
+//! Exit code: 0 when repository skill structure is valid; 1 only on a
+//! repository-owned structural problem. Local-memory warnings do not gate.
 //!
 //! Usage:
 //!   scripts/lint-memory-skill-sync.rs            # lint, human report
@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 const SKILL_DIR: &str = ".claude/skills";
 
 const USAGE: &str = "\
-lint-memory-skill-sync.rs — verify every active coordinator skill has one in-sync source memory
+lint-memory-skill-sync.rs — verify repository-owned coordinator skill structure
 
 USAGE:
   scripts/lint-memory-skill-sync.rs            lint and print a human report
@@ -37,8 +37,9 @@ USAGE:
   scripts/lint-memory-skill-sync.rs -h|--help  show this help and exit (no side effects)
   scripts/lint-memory-skill-sync.rs --version  print version and exit (no side effects)
 
-Read-only: never edits memories or skills. Exit 0 when in sync, 1 on any drift.
-Memory store is file-based Markdown; override its location with HERMIT_MEMORY_DIR.";
+Read-only: never edits memories or skills. Repository skills are authoritative;
+local-memory absence/drift is advisory. Override the optional file-based memory
+location with HERMIT_MEMORY_DIR.";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,15 +56,15 @@ fn main() {
     let memory_dir = memory_dir(&root);
     let skill_dir = root.join(SKILL_DIR);
 
+    let mut warnings: Vec<String> = Vec::new();
     if !memory_dir.is_dir() {
-        eprintln!(
-            "memory dir not found: {} (set HERMIT_MEMORY_DIR)",
+        warnings.push(format!(
+            "LOCAL memory dir not found: {} (optional; set HERMIT_MEMORY_DIR)",
             memory_dir.display()
-        );
-        std::process::exit(2);
+        ));
     }
 
-    // Collect CORE memories from the file-based store.
+    // Collect optional CORE-memory mirrors from the file-based store.
     let mut core: Vec<(String, PathBuf, Meta)> = Vec::new();
     for entry in read_md_files(&memory_dir) {
         let slug = stem(&entry);
@@ -86,15 +87,15 @@ fn main() {
     for (slug, path, meta) in &core {
         // 1. metadata self-consistency.
         let Some(want_skill_rel) = &meta.core_skill else {
-            problems.push(format!(
+            warnings.push(format!(
                 "META  {slug}: core_memory:true but no core_skill declared"
             ));
             continue;
         };
-        let expected = flat_skill_rel(slug);
+        let expected = package_skill_rel(slug);
         if want_skill_rel != &expected {
-            problems.push(format!(
-                "FLAT  {slug}: core_skill must be '{expected}', got '{want_skill_rel}'"
+            warnings.push(format!(
+                "PATH  {slug}: core_skill must be '{expected}', got '{want_skill_rel}'"
             ));
             continue;
         }
@@ -102,20 +103,22 @@ fn main() {
         // 2. body must carry the visible CORE-MEMORY tag.
         let content = std::fs::read_to_string(path).unwrap_or_default();
         if !content.contains("**CORE-MEMORY**") {
-            problems.push(format!(
+            warnings.push(format!(
                 "TAG   {slug}: memory body missing '**CORE-MEMORY**' marker"
             ));
         }
         // 3. mapped skill presence + content equality.
         let skill_path = root.join(want_skill_rel);
         if !skill_path.is_file() {
-            problems.push(format!("MISS  {slug}: no mapped skill at {want_skill_rel}"));
+            warnings.push(format!(
+                "LOCAL {slug}: mapped repository skill is absent at {want_skill_rel}"
+            ));
             continue;
         }
         let skill = std::fs::read_to_string(&skill_path).unwrap_or_default();
         let skill_meta = parse_meta(&skill);
         if skill_meta.name != meta.name || skill_meta.description != meta.description {
-            problems.push(format!(
+            warnings.push(format!(
                 "META  {slug}: mapped skill frontmatter differs from memory"
             ));
             continue;
@@ -128,31 +131,51 @@ fn main() {
                 println!("OK    {slug} -> {want_skill_rel}");
             }
         } else {
-            problems.push(format!(
-                "STALE {slug}: mapped skill body differs from memory (run sync-memory-skill.rs)"
+            warnings.push(format!(
+                "LOCAL {slug}: memory mirror differs from authoritative repository skill"
             ));
         }
     }
 
-    // 4. The active skill directory is flat except for explicit symlinks to
-    // versioned canonical agent-utils skills (Claude's native discovery shape).
+    // 4. Canonical skills are real package directories. The sole exception is
+    // an explicit bridge to a versioned canonical agent-utils package.
     if let Ok(entries) = std::fs::read_dir(&skill_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && !is_external_skill_bridge_dir(&root, &path) {
-                let rel = path
-                    .strip_prefix(&root)
-                    .unwrap_or(&path)
-                    .display()
-                    .to_string();
+            if path.is_file() {
+                if path.file_name().and_then(|name| name.to_str()) != Some("README.md") {
+                    let rel = path.strip_prefix(&root).unwrap_or(&path).display();
+                    problems.push(format!(
+                        "PACKAGE {rel}: flat canonical skills are unsupported; use <slug>/SKILL.md"
+                    ));
+                }
+                continue;
+            }
+            if is_external_skill_bridge_dir(&root, &path) {
+                continue;
+            }
+            if !path.is_dir() {
+                let rel = path.strip_prefix(&root).unwrap_or(&path).display();
+                problems.push(format!("PACKAGE {rel}: unsupported canonical skill entry"));
+                continue;
+            }
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            let is_symlink = std::fs::symlink_metadata(&path)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false);
+            if is_symlink || !path.join("SKILL.md").is_file() {
                 problems.push(format!(
-                    "NEST  {rel}: nested skill directories must be an agent-utils canonical bridge"
+                    "PACKAGE {rel}: canonical package must be a real directory containing SKILL.md"
                 ));
             }
         }
     }
 
-    // 5. Every discoverable active skill must have exactly one source memory.
+    // 5. Every discoverable repository skill must have valid matching metadata.
     for skill_path in &active_skills {
         let rel = skill_path
             .strip_prefix(&root)
@@ -165,31 +188,42 @@ fn main() {
             }
             continue;
         }
+        let content = std::fs::read_to_string(skill_path).unwrap_or_default();
+        let meta = parse_meta(&content);
+        let slug = skill_slug(skill_path);
+        if meta.name != slug || meta.description.is_empty() {
+            problems.push(format!(
+                "META  {rel}: frontmatter name must be '{slug}' and description must be nonempty"
+            ));
+        }
         let count = mapped_skills
             .iter()
             .filter(|mapped| *mapped == &rel)
             .count();
         match count {
-            0 => problems.push(format!(
-                "UNMAP {rel}: active coordinator skill has no memory"
-            )),
-            1 => {}
-            n => problems.push(format!(
-                "MULTI {rel}: active coordinator skill has {n} memories"
+            0 | 1 => {}
+            n => warnings.push(format!(
+                "LOCAL {rel}: {n} local memories claim this repository skill"
             )),
         }
     }
 
     println!();
     println!(
-        "active skills: {}  mapped memories: {}  in-sync: {}  problems: {}",
+        "active skills: {}  mapped memories: {}  in-sync: {}  problems: {}  warnings: {}",
         active_skills.len(),
         core.len(),
         ok,
-        problems.len()
+        problems.len(),
+        warnings.len()
     );
+    if !quiet {
+        for warning in &warnings {
+            println!("WARN  {warning}");
+        }
+    }
     if problems.is_empty() {
-        println!("RESULT: PASS — every active coordinator skill has one in-sync memory.");
+        println!("RESULT: PASS — repository skills are authoritative and structurally valid.");
         std::process::exit(0);
     }
     println!("RESULT: FAIL");
@@ -304,8 +338,8 @@ fn normalize_lines(lines: Vec<String>) -> String {
 
 // ---- filesystem helpers ----
 
-fn flat_skill_rel(slug: &str) -> String {
-    format!("{SKILL_DIR}/{slug}.md")
+fn package_skill_rel(slug: &str) -> String {
+    format!("{SKILL_DIR}/{slug}/SKILL.md")
 }
 
 fn memory_dir(root: &Path) -> PathBuf {
@@ -353,13 +387,6 @@ fn read_skill_files(dir: &Path) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if name != "README.md" && path.extension().and_then(|ext| ext.to_str()) == Some("md") {
-                out.push(path);
-            }
             continue;
         }
         if !path.is_dir() {
@@ -411,6 +438,18 @@ fn stem(p: &Path) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_string()
+}
+
+fn skill_slug(path: &Path) -> String {
+    if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+    }
+    stem(path)
 }
 
 fn find_root() -> PathBuf {

@@ -100,7 +100,7 @@ class TaskLifecyclePolicyTest(unittest.TestCase):
         )
 
         coordinator_skill = " ".join(
-            (ROOT / ".claude" / "skills" / "hermit-coord.md")
+            (ROOT / ".claude" / "skills" / "hermit-coord" / "SKILL.md")
             .read_text(encoding="utf-8")
             .split()
         )
