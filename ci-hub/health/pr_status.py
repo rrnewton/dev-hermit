@@ -476,8 +476,24 @@ def _rollup_ci_state(rollup: object, *, head_sha: str = "") -> str:
 # Hermit's `merge-gate-v2` / `core-review-protocol` and Reverie's `merge-gate`
 # check names. Matched tolerantly so a version bump (`merge-gate-v3`) or the
 # planner's spaced form ("Merge Gate") still classifies as a gate check.
+#
+# PIN FRESHNESS IS A GATE, AND MISCLASSIFYING IT IS EXPENSIVE BECAUSE IT IS
+# FLEET-WIDE. Measured 2026-08-07: hermit #1711 failed `reverie-pin-is-latest-main`
+# + `merge-gate-v4` at unchanged head 2d4866a0 and was reported as
+# `real_reds=1 (product=1)` -- "a genuine break at a ready PR head". It was not.
+# #1711 pinned reverie dd3c178e, IDENTICAL to hermit main; the check asserts the
+# pin equals REVERIE's latest main, which had advanced to 0ae0c01b. So every
+# hermit PR at that pin fails it at once, main included, and ONE shared bump
+# (PR #1840) clears them all. A single unrecognised check name defeated the
+# `all(...)` test below and turned shared pin drift into a phantom product break.
 _GATE_META_CHECK_NAMES = frozenset(
-    {"merge-gate", "merge-gate-v2", "merge gate", "core-review-protocol"}
+    {
+        "merge-gate",
+        "merge-gate-v2",
+        "merge gate",
+        "core-review-protocol",
+        "reverie-pin-is-latest-main",
+    }
 )
 
 
@@ -485,9 +501,13 @@ def _is_gate_meta_check(name: str) -> bool:
     normalized = name.strip().lower()
     if normalized in _GATE_META_CHECK_NAMES:
         return True
-    return normalized.startswith(("merge-gate", "merge gate")) or (
-        "review-protocol" in normalized
-    )
+    if normalized.startswith(("merge-gate", "merge gate")):
+        return True
+    if "review-protocol" in normalized:
+        return True
+    # Pin-freshness gates: `<dep>-pin-is-latest-main` and the spaced planner
+    # form. These assert a DEPENDENCY PIN is current, never that the product works.
+    return "pin-is-latest" in normalized or "pin is latest" in normalized
 
 
 def _label_names(entry: dict[str, object]) -> set[str]:
@@ -805,11 +825,15 @@ def _classify_gh_prs(
                 red_class = "undetermined"
                 undetermined_reds += 1
             else:
-                # Refine the real-red: gate-only (lacks receipt/review) vs a
-                # genuine product break. An unnamed/empty failing set falls to
-                # "product" so a red is never hidden by the split.
+                # Refine the real-red: gate-only (lacks receipt/review/current
+                # pin) vs a genuine product break.
                 fails = rollup.failing_check_names
-                if fails and all(_is_gate_meta_check(name) for name in fails):
+                # A failing check with no NAME identifies nothing, so it is not
+                # evidence of anything -- least of all of a product break.
+                named_fails = [name for name in fails if name.strip()]
+                if named_fails and all(
+                    _is_gate_meta_check(name) for name in named_fails
+                ):
                     # A landing-gate/review meta-check red is a genuine blocker
                     # regardless of failure evidence (review is missing, receipt is
                     # missing) — a DIFFERENT authority than the validate ledger, so
@@ -830,9 +854,24 @@ def _classify_gh_prs(
                     # evidence of a break; re-run before condemning. Demoted out of real_reds.
                     red_class = "ledger-needs-rerun"
                     ledger_needs_rerun += 1
+                elif not named_fails and failure_tier != "ok":
+                    # ABSENCE OF EVIDENCE IS NEVER PRODUCT. The rollup named no
+                    # failing check at this head AND the exact head has no
+                    # corroborating named-gate ledger failure, so nothing
+                    # identifies a product break. Still a real red -- the PR is
+                    # red and must not be hidden by the split -- but attributed
+                    # to the non-product bucket, because "product" is an
+                    # instruction to go debug the PR's code and there is no
+                    # evidence that would reward it.
+                    red_class = "real-red"
+                    real_reds += 1
+                    real_red_kind = "gate"
+                    gate_reds += 1
                 else:
-                    # No local row, or a full-suite local run that genuinely failed
-                    # (tier "ok") — a real product break.
+                    # A product break with EXACT-HEAD evidence: either a named
+                    # failing check at head that is not gate/review/pin meta, or
+                    # a full-suite local run at this exact SHA that genuinely
+                    # failed a named gate (tier "ok").
                     red_class = "real-red"
                     real_reds += 1
                     real_red_kind = "product"
@@ -1366,10 +1405,13 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         if total_product == 0:
             lines.append(
                 "  Actionability: 0 product-test reds on any ready PR head — "
-                "UNHEALTHY is driven entirely by landing-gate/review reds "
-                "(PRs lacking a valid receipt or completed review at head), not "
-                "product breakage. Fix by producing receipts / completing review, "
-                "not by debugging tests."
+                "UNHEALTHY is driven entirely by landing-gate reds (PRs "
+                "lacking a valid receipt, a completed review, or a current "
+                "dependency pin at head), not product breakage. Fix by "
+                "producing receipts, completing review, or landing the shared "
+                "pin bump — not by debugging tests. A pin-freshness red is "
+                "FLEET-WIDE: every PR at the stale pin fails it at once and one "
+                "bump clears them all."
             )
         else:
             hot = ", ".join(
