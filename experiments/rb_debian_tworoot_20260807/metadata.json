@@ -4,7 +4,7 @@
   "agent": "claude-coord-176 (impl, claude-opus-5)",
   "question": "For a Debian source package whose build demonstrably depends on the root path it is built in, does Hermit make the build independent of that path?",
   "design": "Prepare once, then build four times from the same prepared source in four DIFFERENT root paths: native in N1 and N2, hermit in A and B. Compare N1-vs-N2 and A-vs-B. The native pair is a per-package internal control establishing that the package really is root-sensitive, so a matching hermit pair is evidence about Hermit rather than about an already-reproducible package.",
-  "answer": "35 of 35 packages diverge natively across two build roots (the control fired on every one). 28 of 28 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.",
+  "answer": "36 of 36 packages diverge natively across two build roots (the control fired on every one). 34 of 34 measured in the corrected arm are byte-identical under `hermit run --strict --no-rcb-time`.",
   "scope_warning": "13 packages with all four builds complete, selected as small fast-building members of the 8,688-name ASPLOS'20 target set. This is NOT a random sample and must not be reported as a percentage of that set. Selection is convenience-biased toward small packages.",
   "hermit": {
     "repo": "rrnewton/hermit",
@@ -60,13 +60,13 @@
     "Parallelise prepare beyond a single proxy bridge; it is the sole throughput limit."
   ],
   "results_summary": {
-    "native_control_measured": 35,
-    "native_two_root_diverges": "35/35",
-    "default_hermit_arm_measured": 29,
-    "default_hermit_identical": "23/29 (CONFOUNDED -- see confounder)",
-    "corrected_arm_measured": 28,
-    "corrected_arm_identical": "28/28",
-    "controlled_win": "28/28",
+    "native_control_measured": 36,
+    "native_two_root_diverges": "36/36",
+    "default_hermit_arm_measured": 34,
+    "default_hermit_identical": "28/34 (CONFOUNDED)",
+    "corrected_arm_measured": 34,
+    "corrected_arm_identical": "34/34",
+    "controlled_win": "34/34",
     "pending_at_stop": [
       "groff",
       "mtools",
@@ -110,5 +110,22 @@
     "bsdmainutils": "native OK, Hermit build failed: chown root:tty -> EINVAL because Hermit's container maps exactly one GID while the native podman container maps 65537. Correct user-namespace behavior, not a Hermit defect.",
     "less, bc": "prepare refused because a partially prepared root from an earlier aborted run exists; rebuild.sh resume-prepare is the intended path. Harness resumability gap."
   },
-  "executor_privilege_asymmetry": "Guest gid_map: hermit '0 100 1' (one GID) vs native podman '0 100 1' + '1 1879113728 65536'. A package can therefore be buildable in one arm and not the other. Every comparison in this experiment is WITHIN one executor (native n1-vs-n2, hermit a-vs-b), never across, so no verdict is affected; but no cross-executor claim is supported by this data."
+  "executor_privilege_asymmetry": "Guest gid_map: hermit '0 100 1' (one GID) vs native podman '0 100 1' + '1 1879113728 65536'. A package can therefore be buildable in one arm and not the other. Every comparison in this experiment is WITHIN one executor (native n1-vs-n2, hermit a-vs-b), never across, so no verdict is affected; but no cross-executor claim is supported by this data.",
+  "disk": {
+    "measurement_trap": "Run roots are cp --reflink=auto copies on btrfs; `du` reports LOGICAL size and counts each reflinked copy in full. At peak `du` showed 94 GB for this experiment's ignored/ while physical usage was a small fraction.",
+    "correct_tool": "btrfs filesystem du -s --gbytes <dir>; read the Exclusive column.",
+    "measured_after_reclamation": {
+      "path": "rb_debian_tworoot_20260807/ignored",
+      "total_gib": 4.09,
+      "exclusive_gib": 0.23,
+      "set_shared_gib": 0.73
+    },
+    "durable_cost": {
+      "path": "debian_reproducible_builds_2026/ignored (prepared-root cache)",
+      "total_gib": 20.4,
+      "exclusive_gib": 10.04,
+      "note": "35 unpacked Wheezy roots with build-deps; worth keeping, it makes re-runs cheap"
+    },
+    "policy": "tworoot.sh reclaims each package's six run roots inside the per-package loop once its hashes are in results.csv, bounding peak footprint by packages in flight. KEEP_ROOTS=1 retains them for check_path_embedding.sh."
+  }
 }

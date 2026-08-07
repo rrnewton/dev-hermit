@@ -126,6 +126,23 @@ for package in "$@"; do
   done
   if [ "$ok" != 1 ]; then overall=1; continue; fi
 
+  # Eager reclamation: every artifact hash for this package is now in the
+  # manifest, so its six run roots have no remaining value. Reclaim inside the
+  # per-package loop rather than in a sweep afterwards, so peak footprint is
+  # bounded by (packages in flight x per-package cost) instead of by the whole
+  # queue. Set KEEP_ROOTS=1 to retain them (needed by check_path_embedding.sh,
+  # which reads the native payloads).
+  #
+  # NOTE on measuring that cost: these roots are `cp --reflink=auto` copies on
+  # btrfs, so `du` reports LOGICAL size and wildly overstates physical usage --
+  # a 640 MB prepared root reflinked six ways shows as ~3.8 GB in `du` while
+  # costing almost nothing until the build writes. Use
+  # `btrfs filesystem du -s <dir>` and read the Exclusive column for the real
+  # number.
+  if [ "${KEEP_ROOTS:-0}" != 1 ]; then
+    rm -rf "$RUNS/$package"
+  fi
+
   nat=DIVERGES; [ "${H[native-n1]}" = "${H[native-n2]}" ] && nat=IDENTICAL
   her=DIVERGES; [ "${H[hermit-a]}" = "${H[hermit-b]}" ] && her=IDENTICAL
   nor=DIVERGES; [ "${H[hermit-norcb-a]}" = "${H[hermit-norcb-b]}" ] && nor=IDENTICAL
