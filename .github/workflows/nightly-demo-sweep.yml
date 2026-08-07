@@ -166,6 +166,9 @@ jobs:
           test -r /proc/sys/kernel/perf_event_paranoid
           unshare --user --map-root-user --pid --fork true
 
+      - name: Verify Demo 8 calibration evidence brackets
+        run: scripts/test-prepare-demo08-calibration.sh
+
       - name: Restore pinned heavy-demo assets
         uses: actions/cache@v4
         with:
@@ -209,6 +212,7 @@ jobs:
             ignored/demo07-drgn/
             ignored/demo08-run/*.txt
             ignored/demo08-run/*.out
+            ignored/demo08-run/*.tsv
             hermit/target/validate-results.txt
           if-no-files-found: warn
           retention-days: 14
