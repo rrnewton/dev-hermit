@@ -24,8 +24,10 @@
 //!     executes a second run, so only a passing `verify` cell earns a value;
 //!     `strict`/`chaos`/`custom`/`replay` are single runs and are recorded BLANK
 //!     (unmeasured), never 1. `verify_compare` records what the two runs were
-//!     compared BY -- `stripped` normalises addresses/tmp paths and does not
-//!     compare the detlog, so it is weaker than bitwise and must stay legible;
+//!     compared BY. The current harness requests the canonical comparator and
+//!     carries its typed `--verify-json` report in each result; old or backend-
+//!     limited results with no report retain the explicit `stripped-uncounted`
+//!     fallback rather than being promoted by inference;
 //!   * parity = the backend's guest output is bitwise-identical to the ptrace
 //!     reference. We compute it by capturing guest stdout under ptrace and under
 //!     the backend and comparing SHA-256 (only for reconstructable guest commands
@@ -77,7 +79,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier";
+const HEADER: &str = "run_id,run_utc,hermit_sha,reverie_sha,dirty,run_mode,lane,bucket,test_id,test_mode,backend,cell_state,outcome,deterministic,stdout_parity,parity_exercised,backend_engaged,native_output_hash,output_hash,ref_output_hash,duration_ms,max_rss_kb,reason,verify_compare,bitwise_parity,compared_log_messages,tier,legacy_parity_unqualified,parity_comparator,parity_tier,profile_flags,population_id,selected_count,executed_count,evidence_count,comparison_tier,stack_hash,heap_hash";
 
 /// Quote a CSV field if it contains a comma, quote, or newline.
 fn csv_field(s: &str) -> String {
@@ -146,8 +148,18 @@ fn population_id(cells: &[PlanCell], mode: &str, lane: &str) -> String {
     format!("sha256:{:x}", hash.finalize())
 }
 
-fn profile_flags(lane: &str, bucket: &str, backend: &str, mode: &str) -> String {
-    let harness_mode = if mode == "regression" { "--ci-only" } else { "--include-manual" };
+fn profile_flags(
+    lane: &str,
+    bucket: &str,
+    backend: &str,
+    collection_mode: &str,
+    test_mode: &str,
+) -> String {
+    let harness_mode = if collection_mode == "regression" {
+        "--ci-only"
+    } else {
+        "--include-manual"
+    };
     let mut comparison = vec![
         "run".to_string(),
         "--backend".to_string(),
@@ -165,6 +177,13 @@ fn profile_flags(lane: &str, bucket: &str, backend: &str, mode: &str) -> String 
         comparison.extend([
             "--no-virtualize-cpuid".to_string(),
             "--max-timeslice=disabled".to_string(),
+        ]);
+    }
+    if test_mode == "verify" {
+        comparison.extend([
+            "--verify".to_string(),
+            "--verify-strict".to_string(),
+            "--verify-json=<per-cell-verdict.json>".to_string(),
         ]);
     }
     comparison.push("--".to_string());
@@ -351,6 +370,16 @@ fn main() {
         }
         for c in group {
             let hr = outcomes.get(&(c.test.clone(), c.mode.clone()));
+            let verification = hr
+                .and_then(|result| result.verification.as_ref())
+                .map(|report| {
+                    parse_verification_evidence(report).unwrap_or_else(|why| {
+                        die(&format!(
+                            "malformed verification evidence for {bucket}/{}::{} [{backend}]: {why}",
+                            c.test, c.mode
+                        ))
+                    })
+                });
             let executed = hr.is_some();
             let (outcome, duration_ms, reason) = if !available {
                 (
@@ -399,40 +428,50 @@ fn main() {
                 // its expected behaviour under its own backend.
                 Some(false)
             } else if ran_two_run_comparison {
-                Some(true)
+                // A typed report is authoritative when present.  Exit status is
+                // only the compatibility result; it cannot override a report
+                // that says the two executions did not verify.
+                verification.as_ref().map_or(Some(true), |v| Some(v.verified))
             } else {
                 None
             };
-            // WHAT the two runs were compared BY. hermit's `--verify` defaults to
-            // the STRIPPED comparison (this harness passes no compare-mode flag),
-            // which normalises addresses and tmp paths and does NOT compare the
-            // detlog. So `stripped` is a weaker claim than bitwise determinism and
-            // must be legible as such in the row rather than hidden behind a `1`.
-            let verify_compare = if deterministic == Some(true) && ran_two_run_comparison {
-                "stripped"
-            } else {
-                ""
-            };
-            // The tier this row EARNED, carried beside the comparator so a bare
-            // `deterministic=1` can never again stand in for "which comparison".
-            // `stripped` is the ceiling this harness can reach: it passes no
-            // compare-mode flag, so hermit runs the Stripped policy, whose own
-            // --verify-json reports bitwise_parity:false. `bitwise` is therefore
-            // NOT emittable here and is not merely unset -- it is unreachable.
-            // `stripped-uncounted`, NOT `stripped`. This harness does not read
-            // --verify-json, so it has no compared-message count to report -- and the
-            // wired verifier requires a count from anything claiming `stripped`,
-            // because a log comparison that cannot say how much it compared could have
-            // compared nothing. Emitting `stripped` here produced rows this very
-            // producer's own verifier refused. The uncounted tier states the comparator
-            // that ran and admits the missing count in its name, which is exactly what
-            // the historical rows carry, so fresh and migrated rows agree.
-            let tier = if verify_compare.is_empty() { "" } else { "stripped-uncounted" };
-            // Blank, not "0": this harness does not read --verify-json, so it has
-            // no parity boolean and no message counts to report. Blank means "not
-            // recorded"; a 0 would assert a measurement that was never taken.
-            let bitwise_parity = "";
-            let compared_log_messages = "";
+            // Carry the product's typed verdict, not an exit-status proxy.  A
+            // genuine bitwise row requires all four conditions together:
+            // verified, canonical strictness, bitwise_parity=true, and nonzero
+            // left/right counts.  Any inconsistency in a positive claim is
+            // refused by parse_verification_evidence before a row is written.
+            let (verify_compare, bitwise_parity, compared_log_messages, tier) =
+                if let Some(v) = &verification {
+                    let compared = v
+                        .counts
+                        .map(|(left, right)| format!("{left}|{right}"))
+                        .unwrap_or_default();
+                    let tier = if v.bitwise_qualified {
+                        "bitwise"
+                    } else if v.verified && !v.compare_logs {
+                        "guest"
+                    } else {
+                        "gap"
+                    };
+                    (
+                        v.strictness.clone(),
+                        if v.bitwise_parity { "1" } else { "0" }.to_string(),
+                        compared,
+                        tier.to_string(),
+                    )
+                } else if deterministic == Some(true) && ran_two_run_comparison {
+                    // Backward-compatible path for a result produced without
+                    // the optional verification object.  It is explicit about
+                    // the missing count and can never become bitwise by default.
+                    (
+                        "stripped".to_string(),
+                        String::new(),
+                        String::new(),
+                        "stripped-uncounted".to_string(),
+                    )
+                } else {
+                    (String::new(), String::new(), String::new(), String::new())
+                };
             let (
                 parity,
                 parity_exercised,
@@ -483,7 +522,7 @@ fn main() {
                 ""
             };
             let parity_tier = if has_parity_evidence { "stdout-exact" } else { "" };
-            let profile_flags = profile_flags(&lane, bucket, backend, &mode);
+            let profile_flags = profile_flags(&lane, bucket, backend, &mode, &c.mode);
             let row = vec![
                 meta.run_id.clone(),
                 meta.run_utc.clone(),
@@ -511,10 +550,10 @@ fn main() {
                 duration_ms.to_string(),
                 String::new(), // max_rss_kb: filled by expansion-dag.rs cgroup path
                 reason,
-                verify_compare.to_string(),
-                bitwise_parity.to_string(),
-                compared_log_messages.to_string(),
-                tier.to_string(),
+                verify_compare,
+                bitwise_parity,
+                compared_log_messages,
+                tier,
                 String::new(), // legacy_parity_unqualified: producers never write legacy claims
                 parity_comparator.to_string(),
                 parity_tier.to_string(),
@@ -527,6 +566,11 @@ fn main() {
                 // limitation on every row and can never mint either strict
                 // green tier merely because the execution itself passed.
                 "unqualified-stdout-only".to_string(),
+                // collect-envelope does not run the detlog stack/heap collectors.
+                // Leave these required scorecard fields blank rather than minting
+                // full-parity evidence from the Hermit verification report.
+                String::new(),
+                String::new(),
             ];
             pending_rows.push((row, executed, has_parity_evidence));
         }
@@ -609,6 +653,75 @@ struct HarnessResult {
     outcome: String,
     duration_ms: i64,
     reason: String,
+    verification: Option<Value>,
+}
+
+struct VerificationEvidence {
+    verified: bool,
+    strictness: String,
+    compare_logs: bool,
+    bitwise_parity: bool,
+    counts: Option<(u64, u64)>,
+    bitwise_qualified: bool,
+}
+
+/// Dereference the harness's copy of the product verdict and re-check the
+/// conjunction that licenses the strongest tier.  In particular, a planted
+/// `bitwise_parity=true` with missing/zero counts is an invalid producer record,
+/// not a weak result that may be silently downgraded.
+fn parse_verification_evidence(report: &Value) -> Result<VerificationEvidence, String> {
+    if let Some(error) = report.get("report_error").and_then(Value::as_str) {
+        return Err(error.to_string());
+    }
+    let verified = report
+        .get("verified")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "missing boolean verified".to_string())?;
+    let bitwise_parity = report
+        .get("bitwise_parity")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "missing boolean bitwise_parity".to_string())?;
+    let comparison = report.get("comparison").filter(|value| value.is_object());
+    let strictness = comparison
+        .and_then(|value| value.get("strictness"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let compare_logs = comparison
+        .and_then(|value| value.get("compare_logs"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let counts = match report.get("compared_log_messages") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some((
+            value
+                .get("left")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "missing integer compared_log_messages.left".to_string())?,
+            value
+                .get("right")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "missing integer compared_log_messages.right".to_string())?,
+        )),
+    };
+    let bitwise_qualified = verified
+        && bitwise_parity
+        && strictness == "canonical"
+        && matches!(counts, Some((left, right)) if left > 0 && right > 0);
+    if bitwise_parity && !bitwise_qualified {
+        return Err(format!(
+            "bitwise_parity=true without verified canonical nonzero evidence: \
+             verified={verified} strictness={strictness:?} counts={counts:?}"
+        ));
+    }
+    Ok(VerificationEvidence {
+        verified,
+        strictness,
+        compare_logs,
+        bitwise_parity,
+        counts,
+        bitwise_qualified,
+    })
 }
 
 /// Enumerate the authoritative plan. Regression = enabled ci cells
@@ -703,6 +816,7 @@ fn run_group(repo: &Path, lane: &str, bucket: &str, backend: &str, mode: &str) -
                 outcome: v.get("outcome").and_then(Value::as_str).unwrap_or("").to_lowercase(),
                 duration_ms: v.get("duration_ms").and_then(Value::as_i64).unwrap_or(0),
                 reason: v.get("reason").and_then(Value::as_str).unwrap_or("").to_string(),
+                verification: v.get("verification").filter(|value| !value.is_null()).cloned(),
             });
         }
     }

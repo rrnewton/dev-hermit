@@ -99,7 +99,7 @@ echo "case PRODUCER-WIDTH — every canonical column must be producible, and row
 # file's header, so appending into the canonical 23-column scorecard wrote 28-field
 # rows -- five values past the last column, which surface only as csv.DictReader's
 # None key. Latent until the collector next runs, then silently corrupting.
-CANON_COLS="$(printf '%s' "$CANONICAL" | tr ',' '\n')"
+CANON_COLS="$(printf '%s' "$CANONICAL" | tr -d '\r' | tr ',' '\n')"
 PROD_HEADER="$(grep -o 'run_id,run_utc[^"]*' "$envelope/collect-envelope.rs" | head -1)"
 missing=0
 for c in $CANON_COLS; do
