@@ -366,3 +366,88 @@ class VerifiedCloseTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContentLostRefusesClosure(unittest.TestCase):
+    """THE CONSUMER TEST. Detectable-in-principle is not the same as refused-in-practice.
+
+    A detector nothing calls has zero coverage. These assert that verify_code -- the
+    engine behind `ci-hub/bin/close-task` -- actually REFUSES a landing whose content
+    did not survive, and still ACCEPTS one whose content did.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "r"
+        self.repo.mkdir()
+
+        def g(*a: str) -> str:
+            import subprocess as sp
+            p = sp.run(["git", "-C", str(self.repo), *a], capture_output=True, text=True)
+            if p.returncode:
+                raise AssertionError(f"git {a}: {p.stderr}")
+            return p.stdout.strip()
+
+        self.g = g
+        g("init", "-q", "-b", "main")
+        g("config", "user.email", "t@t")
+        g("config", "user.name", "t")
+        body = ["top"] + [f"pad{i}" for i in range(20)] + ["bottom"]
+        (self.repo / "f.py").write_text("\n".join(body) + "\n")
+        g("add", "f.py")
+        g("commit", "-qm", "base")
+        self.base = g("rev-parse", "HEAD")
+        b = (self.repo / "f.py").read_text().splitlines()
+        b[0] = "top CHANGED-A"
+        b[-1] = "bottom CHANGED-B"
+        (self.repo / "f.py").write_text("\n".join(b) + "\n")
+        g("add", "f.py")
+        g("commit", "-qm", "feature")
+        self.feature = g("rev-parse", "HEAD")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _landed_verifier(self):
+        """Stub the upstream verifier so it reports LANDED, as ancestry would."""
+        import json as _json
+        import subprocess as _sp
+
+        def run(command, cwd=None, **kw):
+            payload = _json.dumps(
+                {"state": "landed", "resolved_sha": self.feature, "reason": "landed"}
+            )
+            return _sp.CompletedProcess(list(command), 0, payload, "")
+
+        return run
+
+    def test_lossy_reconcile_is_REFUSED_by_the_closure_gateway(self) -> None:
+        self.g("checkout", "-q", "-b", "lossy", self.base)
+        self.g("merge", "-q", "--no-commit", "--no-ff", self.feature)
+        b = (self.repo / "f.py").read_text().splitlines()
+        b[-1] = "bottom"                      # drop one hunk, keep the SHA an ancestor
+        (self.repo / "f.py").write_text("\n".join(b) + "\n")
+        self.g("add", "f.py")
+        self.g("commit", "-qm", "lossy reconcile")
+        target = self.g("rev-parse", "HEAD")
+
+        ev = verified_close.verify_code(
+            "PR-1", repo="rrnewton/dev-hermit", source=self.repo,
+            target=target, run=self._landed_verifier(),
+        )
+        self.assertEqual(ev.state, "refused", ev.reason)
+        self.assertIn("CONTENT-LOST", ev.reason)
+        self.assertIn("1 of 2 hunk", ev.reason)
+
+    def test_intact_landing_still_CLOSES(self) -> None:
+        """A gate that refuses everything is useless; the honest case must still pass."""
+        self.g("checkout", "-q", "-b", "clean", self.base)
+        self.g("merge", "-q", "--no-ff", "--no-edit", self.feature)
+        target = self.g("rev-parse", "HEAD")
+        ev = verified_close.verify_code(
+            "PR-2", repo="rrnewton/dev-hermit", source=self.repo,
+            target=target, run=self._landed_verifier(),
+        )
+        self.assertEqual(ev.state, "verified", ev.reason)
+        self.assertEqual(ev.landing, "landed")

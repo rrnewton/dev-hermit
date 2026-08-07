@@ -31,8 +31,9 @@ always reported as ``k of N``.
 
 Exit codes:
   0  every enumerated file satisfies the invariant
-  1  at least one violation (a verdict with no reference, or a schema that
-     cannot express one)
+  1  at least one violation (a verdict with no reference, a schema that cannot
+     express a required comparison, or zero verdicts over a non-empty row
+     population)
   2  REFUSED — the population could not be established
 """
 from __future__ import annotations
@@ -53,6 +54,15 @@ SCORECARD_PATTERN = "*scorecard*.csv"
 VERDICT_COLUMNS = ("stdout_parity", "tool_count_parity")
 #: The column that records WHAT the verdict was measured against.
 REFERENCE_COLUMN = "ref_output_hash"
+#: Comparison dimensions the published certification standard names.  Merely
+#: having a generic outcome/reason column cannot represent these facts: each
+#: needs its own typed verdict field before this guard may claim the schema can
+#: express it.
+REQUIRED_SCHEMA_CAPABILITIES = {
+    "exit_code": "exit_code_parity",
+    "detlog": "detlog_parity",
+    "oracle": "oracle_verdict",
+}
 
 
 class PopulationError(RuntimeError):
@@ -66,6 +76,7 @@ class FileResult:
     verdicts: int = 0
     unreferenced: int = 0
     schema_cannot_express: bool = False
+    missing_schema_capabilities: list[str] = field(default_factory=list)
     examples: list[str] = field(default_factory=list)
 
     @property
@@ -83,25 +94,47 @@ class Report:
     def violations(self) -> list[FileResult]:
         return [f for f in self.files if not f.ok]
 
+    @property
+    def total_rows(self) -> int:
+        return sum(f.rows for f in self.files)
+
+    @property
+    def total_verdicts(self) -> int:
+        return sum(f.verdicts for f in self.files)
+
+    @property
+    def zero_verdict_population(self) -> bool:
+        """A non-empty population with nothing compared is a refusal, not green."""
+        return self.total_rows > 0 and self.total_verdicts == 0
+
+    @property
+    def ok(self) -> bool:
+        return not self.violations and not self.zero_verdict_population
+
     def render(self) -> str:
         out = ["cell comparison-evidence check",
                f"  resolved root : {self.root}",
                f"  pattern       : {self.pattern}",
-               f"  population    : {len(self.files)} file(s) enumerated"]
+               f"  population    : {self.total_rows} row(s) across "
+               f"{len(self.files)} file(s); {self.total_verdicts} verdict(s)"]
         for f in self.files:
-            note = ""
+            notes = []
             if f.schema_cannot_express:
-                note = f"  SCHEMA CANNOT EXPRESS A REFERENCE (no {REFERENCE_COLUMN} column)"
-            elif f.unreferenced:
-                note = f"  {f.unreferenced} of {f.verdicts} verdict(s) carry NO reference"
+                missing = ", ".join(f.missing_schema_capabilities)
+                notes.append(f"SCHEMA CANNOT EXPRESS: {missing}")
+            if f.unreferenced:
+                notes.append(f"{f.unreferenced} of {f.verdicts} verdict(s) carry NO reference")
+            note = f"  {'; '.join(notes)}" if notes else ""
             out.append(f"      {f.path}  ({f.rows} rows, {f.verdicts} verdicts){note}")
             for ex in f.examples[:3]:
                 out.append(f"          e.g. {ex}")
-        total_v = sum(f.verdicts for f in self.files)
         total_u = sum(f.unreferenced for f in self.files)
         out.append("")
-        out.append(f"  result        : {total_u} of {total_v} verdict(s) lack a reference; "
-                   f"{len(self.violations)} of {len(self.files)} file(s) violate")
+        verdict_state = "REFUSED (non-empty population)" if self.zero_verdict_population else "satisfied"
+        out.append(f"  result        : {total_u} of {self.total_verdicts} verdict(s) lack a "
+                   f"reference; {len(self.violations)} of {len(self.files)} file(s) "
+                   f"violate; zero-verdict predicate {verdict_state} over "
+                   f"{self.total_rows} row(s)")
         return "\n".join(out)
 
     def to_json(self) -> str:
@@ -109,6 +142,8 @@ class Report:
             "root": self.root, "pattern": self.pattern,
             "files": [f.__dict__ for f in self.files],
             "violating_files": len(self.violations), "population": len(self.files),
+            "rows": self.total_rows, "verdicts": self.total_verdicts,
+            "zero_verdict_population": self.zero_verdict_population,
         }, indent=2, default=list)
 
 
@@ -140,12 +175,17 @@ def check_file(path: Path, root: Path) -> FileResult:
         header = reader.fieldnames or []
         verdict_cols = [c for c in VERDICT_COLUMNS if c in header]
         has_reference = REFERENCE_COLUMN in header
+        result.missing_schema_capabilities = [
+            name for name, column in REQUIRED_SCHEMA_CAPABILITIES.items()
+            if column not in header
+        ]
         # A schema carrying a verdict column but no reference column cannot
         # express a qualified cell AT ALL: every verdict it records is
         # unreferenceable by construction. That is a violation of the invariant
         # at the schema level, not merely in the data.
         if verdict_cols and not has_reference:
-            result.schema_cannot_express = True
+            result.missing_schema_capabilities.insert(0, f"reference(no {REFERENCE_COLUMN})")
+        result.schema_cannot_express = bool(result.missing_schema_capabilities)
         for row in reader:
             result.rows += 1
             for col in verdict_cols:
@@ -182,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"check-cell-comparison: REFUSED: {error}", file=sys.stderr)
         return 2
     print(report.to_json() if args.json else report.render())
-    return 1 if report.violations else 0
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":

@@ -114,20 +114,19 @@ class ParentMainWriteTests(unittest.TestCase):
     def test_second_writer_is_refused_by_host_mutex(self) -> None:
         with self.lock.open("w") as held:
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            result = run(
-                str(self.repo / "scripts/parent-main-write"), "sync", cwd=self.repo,
-                env=dict(self.env, HERMIT_PARENT_MAIN_LOCK_TIMEOUT="0"),
-            )
+            result = self.writer("sync")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("another parent-main writer owns", result.stderr)
 
-    def test_sensitive_commit_requires_and_retains_audit_receipt(self) -> None:
+    def test_sensitive_commit_requires_audit_receipt(self) -> None:
         self.change(".githooks/probe", "#!/bin/sh\n")
         refused = self.writer("commit", "-m", "hook repair", "--", ".githooks/probe")
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("retained --audit-reason path", refused.stderr)
         self.assertEqual(git(self.repo, "rev-parse", "HEAD").stdout.strip(), self.seed)
 
+    def test_sensitive_commit_retains_audit_receipt(self) -> None:
+        self.change(".githooks/probe", "#!/bin/sh\n")
         reason = "repair hook enforcement"
         allowed = self.writer(
             "commit", "-m", "hook repair", "--audit-reason", reason, "--", ".githooks/probe"

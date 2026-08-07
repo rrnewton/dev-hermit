@@ -26,7 +26,10 @@ lock_path() {
 acquire_lock() {
   local path timeout
   path=$(lock_path)
-  timeout=${HERMIT_PARENT_MAIN_LOCK_TIMEOUT:-30}
+  # Contention is an observable defect, not hidden queueing. A second writer
+  # must fail immediately so the owner sees that parent-main authority was not
+  # acquired. A caller may opt into a bounded wait explicitly for maintenance.
+  timeout=${HERMIT_PARENT_MAIN_LOCK_TIMEOUT:-0}
   exec 9>"$path"
   if ! flock -w "$timeout" 9; then
     local holder
