@@ -3,9 +3,11 @@
 **Bottom line.** `reverie#402` has **not landed**, so "confirm the depth holds at the
 landed SHA" has no landed SHA to confirm at. What *is* answerable — and was the
 half the dispatch emphasised — is whether a depth measured on one guest
-generalises. Measured across nine guests: **KVM `Y=2` on 8 of 8 cleanly
-measurable ones**, while `Z` ranges 5..27. The numerator is guest-invariant; only
-the denominator moves.
+generalises. The scheduled population was **9 guest × KVM-backend pairs**:
+**8/9 were qualifying measurements**, and all eight had KVM `Y=2`, while `Z`
+ranges 5..19. The ninth pair (pipeline) exited `rc=1`; it is a setup failure and
+therefore zero qualifying trials, not a negative depth. Within the measured
+sample the result is 8/8; coverage against the declared population is 8/9.
 
 And a warning that follows directly from that: **`#402`'s "record 20 → >139" is
 not in this metric.** In the COMMIT-turn metric no guest gets past record 2, so
@@ -70,6 +72,11 @@ hanging at `rc=124` and produced a false refutation.
 
 `Z` = golden ptrace COMMIT count. `Y` = identical leading run. Backend pair
 ptrace→KVM, `--base-env minimal`, no relaxations.
+
+**Coverage: 8/9 named guest × KVM-backend pairs measured.** A depth figure is
+published only for the eight qualifying pairs. If regeneration yields zero
+qualifying pairs, the result is `0/N measured — UNMEASURED`, never the previous
+depth carried forward as unchanged.
 
 | guest | Z | KVM Y | KVM emitted | rc | |
 |---|---:|---:|---:|---:|---|

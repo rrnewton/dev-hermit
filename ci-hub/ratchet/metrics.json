@@ -46,6 +46,34 @@
         "total_unknown_reason": "The prefix-parity ratchet never declared its guest population. This figure is demo5 only; a second reading exists on the heapwalk guest and a separate 2-of-5 reading is recorded elsewhere, so the guest set is plural but unenumerated. Enumerate it before treating any of these as comparable."
       }
     },
+    "kvm-commit-turn-prefix-depth": {
+      "value": 2,
+      "denominator": "identical leading COMMIT-turn records against the ptrace golden; each guest's full golden length Z is reported separately",
+      "definition_version": "commit-turn-prefix/v1",
+      "definition": "Minimum KVM-versus-ptrace COMMIT-turn prefix depth across the named nine-guest population, considering only qualifying guest x backend pairs.",
+      "trend": "baseline",
+      "source": "experiments/prefix-parity-depth-multiguest_20260807 at Hermit 590fcc9eeb0339c5cf23f72b84394a63333e88ff / Reverie 038e993926e45514264d30367b70df9b6ac3b9b8: eight qualifying KVM pairs all had Y=2; Z ranged 5..19. The ninth, pipeline, exited rc=1 and is a setup failure, not a depth.",
+      "caveat": "This is the COMMIT-turn metric. It is not Reverie PR #402's completed-syscall metric, so its 2/5 true reading does not contradict the heapwalk record-20-to->139 reading.",
+      "coverage": {
+        "measured": 8,
+        "total": 9,
+        "unit": "named guest x KVM-backend pairs"
+      }
+    },
+    "heapwalk-kvm-completed-syscall-prefix-lower-bound": {
+      "value": 140,
+      "denominator": "consecutive completed-syscall sequence records matching ptrace, indexed from record 0",
+      "definition_version": "completed-syscall-prefix/v1",
+      "definition": "Observed lower bound on the KVM-versus-ptrace completed-syscall matching prefix for heapwalk. A value of 140 means records 0 through 139 matched; it does not claim the sequences match forever.",
+      "trend": "baseline",
+      "source": "Reverie PR #402 head 867fce5b6cd6fb936cb6aa72daba837ec5e807c6 with Hermit 4be8edcd2f947746b5d9d30c81a35202f36a46d4: 3/3 repeated ptrace/KVM run pairs matched 140/140 observed records through syscall #142, moving the prior first-divergence reading from record 20 to >139.",
+      "caveat": "PR #402 was not landed when measured. This is one heapwalk guest x KVM-backend pair repeated three times, not a multi-guest claim.",
+      "coverage": {
+        "measured": 1,
+        "total": 1,
+        "unit": "named guest x KVM-backend pairs"
+      }
+    },
     "strict-compat-envelope": {
       "value": null,
       "denominator": "cells passing under `--strict --verify`, per backend",
@@ -79,13 +107,18 @@
       }
     },
     "backends-with-zero-ptracer-in-syscall-path": {
-      "value": null,
+      "value": 2,
       "denominator": "backends under the strace-attach litmus (ptrace, DBI, SaBRe, LiteInst, KVM, e9patch-preprocessed)",
       "definition_version": "strace-attach-litmus/v1",
       "definition": "Backends for which the strace-attach litmus shows NO ptracer in the syscall path.",
-      "trend": "unmeasured",
-      "unmeasured_reason": "The in-guest litmus is known to be one-sided: in-guest counters > 0 stayed green while ptrace was ALSO servicing, so a positive reading does not establish absence of a ptracer. Recording a count from a test that cannot observe the negative would be exactly the fake-green this set exists to prevent.",
-      "source": "liteinst in-guest litmus"
+      "trend": "baseline",
+      "source": "Task republish-ptracer-ratchet-kvm-now-attached, 2026-08-07: strace-attach-litmus/v1 measured ptrace=PRESENT, DBI=FREE, SaBRe=PRESENT, LiteInst=PRESENT, e9patch-preprocessed=PRESENT, KVM=FREE. KVM qualifying evidence at Hermit 590fcc9eeb0339c5cf23f72b84394a63333e88ff / Reverie 6144323c5dab8b521278fce206f8774360c2b05f: HERMIT_RC=0, 546 strace lines, zero establishing ptrace calls, VERDICT=ATTACHED.",
+      "caveat": "The six rows retain their original evidence SHAs rather than pretending all backends were rerun together. KVM had 1 qualifying retained-output trial; three console-capture setup attempts produced no verdict and count as zero qualifying trials, not negatives.",
+      "coverage": {
+        "measured": 6,
+        "total": 6,
+        "unit": "backend strace-attach litmus cells"
+      }
     }
   }
 }

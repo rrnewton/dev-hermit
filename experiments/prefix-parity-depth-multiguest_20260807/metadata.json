@@ -11,6 +11,12 @@
   "metric_caveat": "NOT the same metric as reverie#402's evidence, which counts COMPLETED SYSCALLS. Record 20 and record 2 are records of different kinds.",
   "command": "hermit --log=info --log-file=L run --backend <be> --base-env minimal -- GUEST",
   "backends": "ptrace (golden) vs kvm",
+  "coverage": {
+    "measured": 8,
+    "total": 9,
+    "unit": "named guest x KVM-backend pairs",
+    "excluded": "pipeline exited rc=1; zero qualifying trials, not a depth"
+  },
   "relaxations": "none",
   "host": "shared devbig, 316 cores",
   "controls": {

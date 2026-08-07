@@ -232,3 +232,19 @@ def test_shipped_record_states_coverage_for_every_published_value():
     missing = [n for n, v in data["metrics"].items()
                if v.get("value") is not None and not isinstance(v.get("coverage"), dict)]
     assert missing == [], f"published figures with no measured count: {missing}"
+
+
+def test_task_named_live_ratchets_are_published_with_exact_populations():
+    """Do not let the generic guard hide an obsolete or differently-scoped
+    figure: the three readings that motivated the rule have known populations.
+    """
+    metrics = ratchet.load()["metrics"]
+    expected = {
+        "kvm-commit-turn-prefix-depth": (2, 8, 9),
+        "heapwalk-kvm-completed-syscall-prefix-lower-bound": (140, 1, 1),
+        "backends-with-zero-ptracer-in-syscall-path": (2, 6, 6),
+    }
+    for name, (value, measured, total) in expected.items():
+        assert metrics[name]["value"] == value
+        assert metrics[name]["coverage"]["measured"] == measured
+        assert metrics[name]["coverage"]["total"] == total
