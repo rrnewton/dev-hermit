@@ -34,14 +34,31 @@ reminders:
   # GH_TOKEN=github.token, so the runs carry triggering_actor=github-actions[bot], and
   # GitHub suppresses workflow_run events for GITHUB_TOKEN-triggered runs. Measured on
   # hermit#1750 (both legs completed SUCCESS, no refire ever came) and again at its
-  # rebased head. Census 2026-08-07: 41 of 121 open PRs sit in this state.
-  # PAGES, DOES NOT AUTO-FIRE: re-running 41 gates at once is a mass dispatch that would
-  # starve the very runners the legs need. `gate_refire.py --refire` performs the action
-  # under a human decision; this reminder only makes the state impossible to miss.
+  # rebased head. This is genuinely external state ORC cannot see, so the reminder
+  # EARNS its place -- a PR sits BLOCKED with 30/30 green and every count-based view
+  # renders it identically to a PR that is merely waiting.
+  #
+  # STILL DOES NOT AUTO-FIRE: re-running dozens of gates at once is a mass dispatch
+  # that would starve the very runners the legs need. `gate_refire.py --refire`
+  # performs the action under a human decision.
+  #
+  # RE-SCOPED 2026-08-08 under the satisfiability test above. It was
+  # `--fail-on-due`, i.e. `return 1 if due else 0`: pure standing state, paging every
+  # 30 min for a backlog no tick may drain, which is shape (b) and trains the
+  # recipient to ignore the channel. Worse, `render()` emitted prose with no
+  # key=value lines, so `capture: true` found nothing and the action went out with a
+  # LITERAL `{summary}` naming ZERO PRs -- firing constantly AND naming nothing.
+  # `--gate` pages on the DELTA (a PR NEWLY refire-due), names each PR with its gate
+  # run id and the exact remedy command, and carries the standing set plus
+  # heads_covered/heads_total in the fields. That denominator is load-bearing: the
+  # bounded scan covered 70 of 139 heads when measured, so "10 due" is a floor, not
+  # a census (the tool's own docstring records the bounded scan finding 2 where the
+  # exhaustive --per-pr scan found 41). A PR merely outside the sampling window is
+  # never retired from the delta baseline, so window drift cannot forge new pages.
   - name: merge_gate_refire_due
     cadence_secs: 1800
     gate:
-      cmd: python3 ci-hub/health/gate_refire.py --repo rrnewton/hermit --fail-on-due
+      cmd: python3 ci-hub/health/gate_refire.py --repo rrnewton/hermit --gate
       when: failure
       capture: true
     emit:
@@ -49,7 +66,7 @@ reminders:
       skill: hard-warn-coordinator
       fields:
         component: merge-gate-refire
-      title: "merge gates parked with all legs finished; refire is due: {summary}"
+      title: "a merge gate newly parked with all legs finished; refire is due: {summary}"
 
   # DISK RECLAMATION. Huge slots sit under worktrees/ long after anything was
   # working in them; that is the real, durable problem and it stays monitored.
