@@ -304,3 +304,76 @@ class TickHubScopeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class OccupancyAgreesWithTheReleaseAuthorityTest(unittest.TestCase):
+    """The DIVERGING cases only. Agreeing cases prove nothing.
+
+    `release-worktree.rs::live_process_users` refuses a release on any of cwd,
+    exe, root, fd, maps or map_files. This gate used to read cwd alone, so a slot
+    held only by an open descriptor read EMPTY here and OCCUPIED there -- and the
+    natural next move for a reader told a slot is free that the tooling then
+    refuses is `--force`, which is the one property this repo has repeatedly
+    declined to spend.
+
+    Measured 2026-08-08 across 77 live slots: exactly ONE changed classification
+    (`scorecard`, 52 processes via exe/fd/maps/map_files, no cwd), and ZERO were
+    cwd-occupied but otherwise free -- so the wider predicate is a strict
+    superset and can only ever shorten the reclaim list.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "worktrees" / "held").mkdir(parents=True)
+
+    def test_open_fd_with_cwd_elsewhere_reads_OCCUPIED(self) -> None:
+        """THE case that diverged. cwd is outside the slot; only an fd is inside."""
+        target = self.root / "worktrees" / "held" / "artifact.bin"
+        target.write_bytes(b"x")
+        # cwd deliberately OUTSIDE the slot, so a cwd-only predicate sees nothing.
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys; f=open(sys.argv[1]); sys.stdout.write('r'); "
+             "sys.stdout.flush(); sys.stdin.read()", str(target)],
+            cwd=self.tmp.name, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        try:
+            child.stdout.read(1)  # the fd is open once this arrives
+            occ = sdr.occupancy(self.root)
+            self.assertGreaterEqual(
+                occ.counts.get("held", 0), 1,
+                "a slot held by an open fd read as EMPTY -- the divergence is back")
+        finally:
+            child.stdin.close()
+            child.wait(timeout=30)
+
+    def test_a_slot_nothing_touches_reads_FREE(self) -> None:
+        """The predicate must not have become vacuously strict."""
+        (self.root / "worktrees" / "untouched").mkdir()
+        occ = sdr.occupancy(self.root)
+        self.assertEqual(occ.counts.get("untouched", 0), 0)
+
+    def test_one_process_two_signals_counts_once(self) -> None:
+        """cwd AND an fd in the same slot is one occupant, not two."""
+        target = self.root / "worktrees" / "held" / "artifact.bin"
+        target.write_bytes(b"x")
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys; f=open(sys.argv[1]); sys.stdout.write('r'); "
+             "sys.stdout.flush(); sys.stdin.read()", str(target)],
+            cwd=str(self.root / "worktrees" / "held"),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        try:
+            child.stdout.read(1)
+            self.assertEqual(sdr.occupancy(self.root).counts.get("held", 0), 1)
+        finally:
+            child.stdin.close()
+            child.wait(timeout=30)
+
+    def test_the_signal_set_mirrors_the_release_authority(self) -> None:
+        """If release-worktree gains a signal, this must too -- pinned explicitly."""
+        self.assertEqual(
+            set(sdr.SINGLE_LINK_SIGNALS) | set(sdr.DIRECTORY_LINK_SIGNALS) | {"maps"},
+            {"cwd", "exe", "root", "fd", "map_files", "maps"},
+            "signal set drifted from release-worktree.rs::live_process_users")

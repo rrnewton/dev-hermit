@@ -20,8 +20,8 @@ costs a directory being listed for a human to look at. A wrong answer to "is thi
 agent alive?" costs an agent. So this tool asks only the first, and its finding
 authorizes nothing:
 
-    a slot is RECLAIMABLE iff it exists on disk, consumes real space, and no live
-    process has had its cwd inside it for a sustained period.
+    a slot is a RECLAIM CANDIDATE iff it exists on disk, consumes real space, and
+    no live process has been using it for a sustained period.
 
 No agent names. No ORC fleet census. No TaskGraph owner. No registry `status`
 field. Those are all somebody else's authority, and none of them is the question.
@@ -33,12 +33,16 @@ tool deliberately gives the coordinator no mechanism to skip that step.
 
 THREE MEASUREMENT HONESTIES, because a number without them is not evidence:
 
-1. OCCUPANCY IS /proc cwd. It cannot be forged by editing a file and nobody can
-   forget to update it. Its blind spot is a live process whose `cwd` we cannot
-   read: measured on this box, 5 of 792 same-uid processes (0.6%) -- the other 96
-   unreadable ones are zombies, which have no cwd and cannot be working anywhere.
-   `blind_pids` is reported on every run so the occupancy count always travels
-   with its own uncertainty.
+1. OCCUPANCY IS SIX /proc SIGNALS -- cwd, exe, root, fd, maps, map_files -- the
+   exact set `release-worktree.rs::live_process_users` refuses on. None can be
+   forged by editing a file and nobody can forget to update them. This gate is
+   NOT the authority on release; it mirrors the authority's predicate so the two
+   cannot disagree, and it is allowed to be stricter-or-equal, never looser.
+   Cwd alone was the original definition and it was too narrow: measured
+   2026-08-08 across 77 slots, one slot (`scorecard`) was held by 52 processes
+   through exe/fd/maps/map_files with no cwd inside it, and cwd-only called it
+   empty. The blind spot is a same-uid process whose links are all unreadable;
+   `blind_pids` is reported every run so the count travels with its uncertainty.
 
 2. IDLENESS IS SUSTAINED, NOT INSTANTANEOUS. A slot must read idle continuously
    for `--idle-hours` before it can qualify. This is what makes the 0.6% blind
@@ -130,12 +134,41 @@ def _proc_state(pid: str) -> str:
         return "?"
 
 
+# The occupancy signals, in the order `release-worktree.rs::live_process_users`
+# checks them. THIS LIST IS A MIRROR, NOT A SECOND OPINION -- see `occupancy`.
+#   cwd/exe/root : single symlinks under /proc/<pid>/
+#   fd/map_files : directories of symlinks
+#   maps         : mapped-file paths, matched textually
+SINGLE_LINK_SIGNALS = ("cwd", "exe", "root")
+DIRECTORY_LINK_SIGNALS = ("fd", "map_files")
+
+
 def occupancy(root: Path, proc_root: Path = Path("/proc")) -> Occupancy:
-    """Slots containing at least one live process, by /proc/<pid>/cwd.
+    """Slots containing at least one live process, by SIX signals, not one.
+
+    THIS GATE IS NOT THE AUTHORITY AND MUST NOT BEHAVE LIKE ONE.
+    `release-worktree.rs::live_process_users` decides whether a slot may be
+    released; it refuses on any of cwd, exe, root, fd, maps or map_files. This
+    function mirrors that set so the two agree, and the report says "candidate"
+    rather than "reclaimable" so a reader is never told a slot is free that the
+    release path will then refuse.
+
+    WHY THE MIRROR EXISTS AT ALL, since two implementations of one predicate is
+    the thing to avoid: the authority is Rust and refuses as a side effect of
+    attempting a removal, so it cannot be consulted cheaply from a read-only
+    health tick. The reconciliation is that this side is deliberately allowed to
+    be STRICTER-or-equal and never looser, and a test pins the diverging case.
+
+    WHAT CWD-ONLY MISSED, measured 2026-08-08 across 77 slots: exactly one slot
+    changed classification -- `scorecard`, held by 52 processes via exe, fd, maps
+    and map_files with NO cwd inside it. They were executing binaries out of the
+    slot. Cwd-only called it empty. Nothing was cwd-occupied-but-otherwise-free,
+    so the wider predicate is a strict superset: it can only ever remove slots
+    from the reclaim list, never add them.
 
     Deliberately NOT a match on process names. Name matching is how sibling
-    agents get misidentified and, on this shared box, killed; a cwd is an
-    unforgeable statement of where a process actually is.
+    agents get misidentified and, on this shared box, killed; these links are
+    unforgeable statements of what a process is actually using.
 
     A cwd rendered by the kernel as `<path> (deleted)` COUNTS AS OCCUPANCY. The
     suffix is appended to the whole path and marks the unlinked *leaf*, which is
@@ -154,31 +187,77 @@ def occupancy(root: Path, proc_root: Path = Path("/proc")) -> Occupancy:
     except OSError as exc:
         raise ResidueUnavailable(f"cannot enumerate {proc_root}: {exc}") from exc
 
+    def slot_for(target: str) -> str | None:
+        """The slot a /proc link points into, or None. Handles the deleted suffix."""
+        if target.endswith(" (deleted)"):
+            target = target[: -len(" (deleted)")]
+        if not target.startswith(prefix):
+            return None
+        return target[len(prefix):].split(os.sep)[0] or None
+
     for pid in entries:
+        proc = proc_root / pid
         try:
-            cwd = os.readlink(proc_root / pid / "cwd")
+            same_uid = proc.stat().st_uid == uid
         except OSError:
-            # Unreadable. Distinguish the harmless majority (zombies have no cwd
-            # and cannot be working in a slot) from the genuine blind spot.
+            continue
+        if not same_uid:
+            continue
+
+        hits: set[str] = set()
+        readable = False
+        for kind in SINGLE_LINK_SIGNALS:
             try:
-                same_uid = (proc_root / pid).stat().st_uid == uid
+                target = os.readlink(proc / kind)
             except OSError:
                 continue
-            if not same_uid:
+            readable = True
+            if kind == "cwd" and target.endswith(" (deleted)") \
+                    and target[: -len(" (deleted)")].startswith(prefix):
+                occ.deleted_cwd_pids += 1
+            slot = slot_for(target)
+            if slot:
+                hits.add(slot)
+        for kind in DIRECTORY_LINK_SIGNALS:
+            try:
+                names = os.listdir(proc / kind)
+            except OSError:
                 continue
+            readable = True
+            for name in names:
+                try:
+                    target = os.readlink(proc / kind / name)
+                except OSError:
+                    continue
+                slot = slot_for(target)
+                if slot:
+                    hits.add(slot)
+        # `maps` is text, not links: the path is the last field of each line.
+        try:
+            with open(proc / "maps", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    if prefix in line:
+                        slot = slot_for(line.rstrip("\n").split(" ")[-1].strip())
+                        if slot:
+                            hits.add(slot)
+        except OSError:
+            pass
+
+        # NOTE: `maps` deliberately does NOT set `readable`. It opens successfully
+        # and empty for a zombie, which would mask every zombie as a live legible
+        # process -- observed as zombie_pids dropping 754 -> 0. Legibility is
+        # judged on the LINK signals, which a zombie genuinely lacks.
+        if not readable:
+            # Nothing about this process was legible. A zombie has no links and
+            # cannot be using a slot; anything else is the genuine blind spot.
             if _proc_state(pid) == "Z":
                 occ.zombie_pids += 1
             else:
                 occ.blind_pids += 1
             continue
-        if cwd.endswith(" (deleted)"):
-            cwd = cwd[: -len(" (deleted)")]
-            if cwd.startswith(prefix):
-                occ.deleted_cwd_pids += 1
-        if not cwd.startswith(prefix):
-            continue
-        slot = cwd[len(prefix):].split(os.sep)[0]
-        if slot:
+        # One process counts ONCE per slot however many signals matched -- the
+        # count is "processes using this slot", not "references to it".
+        for slot in hits:
             occ.counts[slot] = occ.counts.get(slot, 0) + 1
     return occ
 
@@ -312,7 +391,9 @@ def evaluate(
         age_h = (now - since).total_seconds() / 3600.0 if since else None
 
         if procs > 0:
-            reclaimable, reason = False, f"{procs} live process(es) with cwd in slot"
+            reclaimable, reason = False, (
+                f"{procs} live process(es) using the slot "
+                "(cwd/exe/root/fd/maps/map_files)")
         elif age_h is None or age_h < idle_hours:
             shown = 0.0 if age_h is None else age_h
             reclaimable = False
@@ -362,11 +443,12 @@ def summarize(
             f"{len(fresh)} slot(s) newly idle >= threshold and >= {min_gib} GiB: {named}; "
             f"{len(flagged)} reclaimable in total holding up to {total / GIB:.1f} GiB "
             f"(upper bound: reflink-shared extents are counted per-slot). "
-            f"DETECT ONLY -- no slot was touched; reclaim needs a recovery SHA."
+            f"DETECT ONLY -- release-worktree.rs is the authority and may still "
+            f"refuse; reclaim needs a recovery SHA."
         )
     else:
         summary = (
-            f"no newly reclaimable slot; {len(flagged)} standing reclaimable slot(s) "
+            f"no newly reclaimable slot; {len(flagged)} standing reclaim CANDIDATE(s) "
             f"holding up to {total / GIB:.1f} GiB of {fields['slots_on_disk']} on disk "
             f"({fields['slots_occupied']} occupied). Standing backlog, not paged."
         )
