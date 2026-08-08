@@ -114,6 +114,37 @@ ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 WT="$ROOT/worktrees/lander/hermit"
 R=rrnewton/hermit
 say(){ echo "[land#$PR] $*"; }
+
+# BIND THE PR TO ITS REPOSITORY BEFORE DEREFERENCING ANY AUTHORITY.
+# `R` is hard-coded to rrnewton/hermit and there is no --repo option, so invoking
+# this with a PR number from another repository silently resolves the SAME NUMBER
+# in hermit and validates against a completely unrelated commit. Observed
+# 2026-08-08: `land-pr.sh 409 policy/commit-message-role-team-tag` for
+# rrnewton/reverie#409 reported "exact-head authority green for 18758e9a" -- the
+# head of hermit#1911 -- and dereferenced a hermit merge-gate run for it. It
+# abandoned only because head resolution happened to fail further down; nothing
+# had checked that PR 409 was a hermit PR at all.
+#
+# A PR number is not an identity. Refuse unless the number resolves in THIS
+# repository to a PR whose head branch is the branch the caller named.
+verify_pr_belongs_to_repo(){
+  local actual
+  actual=$(with-proxy gh pr view "$PR" -R "$R" --json headRefName -q .headRefName 2>/dev/null) || {
+    echo "land-pr: REFUSE: PR #$PR does not resolve in $R" >&2
+    exit 2
+  }
+  if [ -z "$actual" ]; then
+    echo "land-pr: REFUSE: PR #$PR has no head branch in $R" >&2
+    exit 2
+  fi
+  if [ "$actual" != "$BR" ]; then
+    echo "land-pr: REFUSE: $R#$PR has head branch '$actual', but '$BR' was named." >&2
+    echo "land-pr:   This lander only lands $R. If #$PR belongs to another" >&2
+    echo "land-pr:   repository, it CANNOT be landed here -- the same number in $R" >&2
+    echo "land-pr:   is a different pull request and its green is not your evidence." >&2
+    exit 2
+  fi
+}
 comment_abandon(){
   local reason="$1"
   with-proxy gh pr comment "$PR" -R "$R" --body \
@@ -196,11 +227,11 @@ abandon(){
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
-# 1b. Owner-authorized exact-head authority gate. Hermit's counted local full
-# receipt and its versioned registered hosted-portable job are interchangeable
-# positives. A genuine red from either blocks; missing/partial/stale evidence is
-# NO_RESULT, never green. The same predicate is checked after a SHA-changing
-# rebase.
+# 1b. Owner-authorized exact-head OR gate. A counted local receipt and the
+# registered hosted job set are interchangeable positive authorities; a
+# genuine red from either blocks. Missing/partial/stale evidence is NO_RESULT,
+# never a green. The same predicate is checked again after a SHA-changing rebase.
+verify_pr_belongs_to_repo
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
 VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$ORIG" 2>&1); VRC=$?
 say "exact-head validation(head=$ORIG) rc=$VRC: $VS"
@@ -231,11 +262,9 @@ esac
 # re-derives the exact-head authority at the NEW sha, and every exact-head green
 # earned at the old sha is orphaned -- a rebase can only ever downgrade an
 # already-authorized head to NO_RESULT. Measured 2026-08-07 on #1705/#1711/#1678:
-# all three held what the former OR rule called a qualifying
-# `AUTHORITY=hosted` green (~30 min of hosted CI each) that an unconditional
-# rebase would have voided the moment another team advanced main. Hosted-only is
-# no longer sufficient under the named coverage rule. See also
-# rrnewton/hermit#1812, where an unconditional
+# all three held a qualifying `AUTHORITY=hosted` green (~30 min of hosted CI
+# each) that an unconditional rebase would have voided the moment another team
+# advanced main. See also rrnewton/hermit#1812, where an unconditional
 # rebase-and-force-push in the union driver amended main's tip onto two PR
 # branches and landed #1188/#1209 as semantic no-ops.
 #
@@ -278,8 +307,8 @@ else
   say "pushed head=$HEAD"
 fi
 
-# 4. The pushed exact head needs counted local or versioned hosted authority.
-# A rebase that changed the SHA cannot inherit the old authorization.
+# 4. The pushed exact head needs a fresh positive from either registered
+# authority. A rebase that changed the SHA cannot inherit the old authorization.
 # Only the ledger-guarded applier may materialize the optional local cache label.
 #
 # 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
@@ -376,10 +405,9 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. The
+# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. A
 # local positive now additionally dereferences its immutable receipt comment;
-# versioned hosted portable remains independently sufficient. Any genuine red
-# blocks.
+# a hosted positive remains independently sufficient. Any genuine red blocks.
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \
