@@ -273,7 +273,7 @@ def build_systemd_command(
         # Measured 2026-08-07 on PR #1635 at 291a2fd684f5: a full-profile run
         # passed (862 executed, 0 failed, 58/58 gates) and validate-status still
         # reported NOT-VALIDATED with "0 non-qualifying record(s)", because the
-        # record went to <checkout>/ci/validate-ledger/local.devbig014.jsonl.
+        # record went to <checkout>/ci/validate-ledger/local.<host>.jsonl.
         # The run even said so: "counted validation recorded, but the ci-hub
         # receipt publisher is unavailable (no CI_HUB_APPLY_LOCAL_LABEL and no
         # DEV_HERMIT_PARENT)". A green nobody can dereference is a no-result.
