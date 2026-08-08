@@ -789,6 +789,86 @@ fn valid_slot(name: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// Tmux pane ids that exist on this box right now, best effort. `None` means
+/// "could not cross-check" and must never be read as "no live panes" — it is
+/// used only to CLASSIFY a refusal that has already been decided.
+fn live_tmux_pane_ids() -> Option<Vec<String>> {
+    let output = Command::new("tmux")
+        .args(["list-panes", "-a", "-F", "#{pane_id}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+    )
+}
+
+/// Decide whether an owner snapshot describes a real fleet AT ALL, so a refusal
+/// can name the snapshot instead of blaming the agent.
+///
+/// A snapshot that is FRESH is not thereby TRUE: `captured_at` is stamped on
+/// every write regardless of payload, so a stub launders itself as maximally
+/// fresh. On 2026-08-08 a 52-second-old snapshot holding exactly one entry,
+/// `{name:"worker", tmux_pane_id:null}`, made every real agent resolve zero
+/// times — and the resulting "resolves agent X 0 times" was read fleet-wide as
+/// "X is not a real agent". Four slots were recorded as permanently lease-less,
+/// adoption was re-run repeatedly against a remedy that could not work, and a
+/// release-then-reallocate left the `validate-rust` slot in a collision state.
+///
+/// The predicate is the identity requirement `observe_owner_lease` already
+/// enforces per-agent — a `%NN` pane present in `tmux list-panes -a` — applied
+/// to the payload as a whole. Returns `Some(reason)` when no entry could name a
+/// real agent, which is the `implausible` member of the {missing, stale,
+/// implausible} refusal set that `operational_health.load_agent_snapshot` is
+/// adopting for the same file. Classification only: it decides WHAT TO SAY
+/// about a refusal, never WHETHER to refuse.
+fn owner_snapshot_implausibility(agents: &[Value]) -> Option<String> {
+    if agents.is_empty() {
+        return Some("it lists no agents at all".to_string());
+    }
+    let panes: Vec<&str> = agents
+        .iter()
+        .filter_map(|entry| entry["tmux_pane_id"].as_str())
+        .filter(|pane| pane.starts_with('%') && !pane.chars().any(char::is_whitespace))
+        .collect();
+    if panes.is_empty() {
+        let mut names: Vec<&str> = agents
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap_or("<unnamed>"))
+            .collect();
+        names.truncate(5);
+        return Some(format!(
+            "not one of its {} entries carries a usable tmux pane id (names: {}{})",
+            agents.len(),
+            names.join(", "),
+            if agents.len() > names.len() {
+                ", ..."
+            } else {
+                ""
+            },
+        ));
+    }
+    let live = live_tmux_pane_ids()?;
+    if !panes
+        .iter()
+        .any(|pane| live.iter().any(|candidate| candidate == pane))
+    {
+        return Some(format!(
+            "none of its {} pane id(s) exists in `tmux list-panes -a` ({} live pane(s) on this box), \
+             so it describes a fleet that is not running here",
+            panes.len(),
+            live.len(),
+        ));
+    }
+    None
+}
+
 /// Capture the exact live pane and unified cgroup that own an agent name.  A
 /// newly provisioned slot may precede agent startup; in that case allocation
 /// succeeds but release remains fail-closed until the coordinator re-runs this
@@ -820,11 +900,43 @@ fn observe_owner_lease(root: &Path, agent: &str) -> Result<(String, String), Str
         .iter()
         .filter(|entry| entry["name"].as_str() == Some(agent))
         .collect();
-    if matches.len() != 1 {
+    // Same refusal as ever, in every case. Only the WORDING is split, because
+    // one message for two causes sent the fleet after the wrong remedy: an
+    // implausible snapshot has to be fixed at the producer, whereas a genuinely
+    // absent agent is fixed by re-running adoption from that agent's live pane.
+    if matches.len() > 1 {
         return Err(format!(
-            "owner snapshot resolves agent '{agent}' {} times",
-            matches.len()
+            "agent '{agent}' is listed {} times in the owner snapshot at {} — \
+             ownership is ambiguous, so no lease can bind. Fix the duplicate entry; \
+             the snapshot itself is otherwise usable.",
+            matches.len(),
+            snapshot_path.display(),
         ));
+    }
+    if matches.is_empty() {
+        return Err(match owner_snapshot_implausibility(agents) {
+            // Cause 1: the snapshot is the problem. Say so, and say plainly
+            // that this is NOT evidence about the agent.
+            Some(reason) => format!(
+                "the owner snapshot at {} IS NOT USABLE: {reason}. This says nothing about whether \
+                 '{agent}' exists — the lookup could not be performed at all, so do NOT conclude \
+                 '{agent}' is absent, and do NOT release or reallocate the slot on the strength of \
+                 this message. Re-running adoption cannot help until the snapshot's producer (a live \
+                 ORC session) emits the real fleet. Note a fresh snapshot can still be false: \
+                 captured_at is stamped on every write regardless of payload.",
+                snapshot_path.display(),
+            ),
+            // Cause 2: the snapshot is fine and the agent really is not in it.
+            None => format!(
+                "agent '{agent}' is absent from the owner snapshot at {}, which does carry a real \
+                 fleet ({} entr{} with live pane identities) — so this is a fact about '{agent}', \
+                 not about the snapshot. Re-run this exact allocation/adoption from the live pane \
+                 of '{agent}'.",
+                snapshot_path.display(),
+                agents.len(),
+                if agents.len() == 1 { "y" } else { "ies" },
+            ),
+        });
     }
     let entry = matches[0];
     let status = entry["status"]
@@ -1603,8 +1715,12 @@ fn main() {
     let observed_owner_lease =
         (!codex_systemd_sentinel).then(|| observe_owner_lease(&root, &agent));
     if let Some(Err(error)) = &observed_owner_lease {
+        // The remedy is carried by {error}, which now names the actual cause.
+        // A blanket "re-run adoption after the owner is live" used to be
+        // appended here unconditionally, and it is wrong advice whenever the
+        // snapshot is the broken party — that is the sentence agents chased.
         eprintln!(
-            "⚠  owner lease for '{agent}' was not refreshed: {error}. Re-run this exact allocation/adoption after the owner is live; release will refuse legacy/unbound ownership."
+            "⚠  owner lease for '{agent}' was not refreshed: {error}\n   The slot is allocated but the lease is UNBOUND; release will refuse legacy/unbound ownership until it binds."
         );
     }
 
