@@ -1,0 +1,4 @@
+arm,hermit_flags,outcome,writer_turns,reader_turns,note
+native,none,PASS in <1s,,,control: FIFO_OK exit=0
+hermit-baseline,--strict,DEADLOCK (rc=143),,,scheduler stalls after an openat inject
+hermit-writeside-retry,--strict,DEADLOCK (rc=143),309428,3,retry works but starves the peer
