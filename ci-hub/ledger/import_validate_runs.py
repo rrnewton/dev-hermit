@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--shard", type=Path, required=True,
-                    help="git-tracked shard, e.g. ledger/<team>/<short-host>/2026-08.jsonl")
+                    help="git-tracked shard, e.g. ledger/hermit/hosta/2026-08.jsonl")
     ap.add_argument("--live", type=Path, default=DEFAULT_LIVE,
                     help="machine-local validate-run ledger (gitignored)")
     ap.add_argument("--team", default=DEFAULT_TEAM)
