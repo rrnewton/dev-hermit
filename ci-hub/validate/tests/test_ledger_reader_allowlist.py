@@ -40,6 +40,7 @@ wrote down.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 import subprocess
@@ -86,7 +87,6 @@ DECLARED_READERS: dict[str, str] = {
     # --- the canonical accessors themselves -------------------------------
     "validate/qualified_rows.py": "the canonical green accessor; defines both invariants",
     "lib/validate_status.rs": "authoritative Rust row parser + is_clean_full_pass",
-    "ci-hub.rs": "CLI front door; dispatches to the accessors, does not parse rows",
     # --- hardened tools that qualify before aggregating -------------------
     "validate/aggregate.py": "types zero-executed as no-result; uses effective_result",
     "validate/wall_cpu_ratchet.py": "_baseline() drops result != pass before medianing",
@@ -96,7 +96,6 @@ DECLARED_READERS: dict[str, str] = {
     "validate/totality.py": "scope census needs ALL rows (a fail can also be partial), so it cannot use the pass-only accessor; orders by finished_at for chain depth and counts only result==pass runs in it, reporting the composition alongside",
     # --- producers / plumbing (write or pass the path, never bucket) ------
     "validate/scan-finalize.sh": "finalizer PRODUCER; appends rows, does not derive a view",
-    "landing/rebase_wrapper.py": "prose reference in a docstring only",
     "health/pr_status.py": "shells out to `ci-hub ledger qualified-rows`",
     # --- tests -------------------------------------------------------------
     "validate/test_finalize_receipt.py": "test fixture",
@@ -152,16 +151,63 @@ KNOWN_BYPASSES: dict[str, str] = {
 }
 
 
+def code_only(text: str, suffix: str) -> str:
+    """`text` with comments and docstrings blanked, so only EXECUTABLE code remains.
+
+    THE FACT vs THE OBSERVABLE. This lint's fact is "does this file handle the
+    ledger"; its observable used to be "does the basename appear anywhere in the
+    bytes". A COMMENT satisfies the observable without the fact, so the lint
+    flagged NON-READERS -- and the tempting remedy, adding the flagged file to
+    ``DECLARED_READERS``, launders a false declaration into the registry. The
+    registry then records what SILENCED the lint rather than what is true, and no
+    successor can tell which entries are real. Narrowing the observable toward the
+    fact is the fix that keeps the registry honest.
+
+    A genuine handler names the path in CODE -- ``Path(...) / "…" /
+    "validate-run-ledger.jsonl"``, ``os.path.join(...)``, ``const LEDGER_REL:
+    &str = "…"``. A non-handler names it in prose. That distinction is what this
+    strips on, and it is deliberately NOT a read-verb search: the path is
+    routinely constructed in one place and opened in another, so requiring
+    ``open(`` near the literal produced FALSE NEGATIVES on the canonical accessor
+    itself (measured: 21 matches collapsed to 4, losing ``qualified_rows.py``).
+    A lint that misses the real readers is worse than one that over-matches.
+
+    Python docstrings are located with ``ast`` rather than a triple-quote regex,
+    which would also blank ordinary multi-line string literals and silently drop
+    a real path constant.
+    """
+    if suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return re.sub(r"^\s*#.*$", "", text, flags=re.M)
+        lines = text.splitlines()
+        drop: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(
+                node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                if ast.get_docstring(node, clean=False) is not None and node.body:
+                    first = node.body[0]
+                    for ln in range(first.lineno, (first.end_lineno or first.lineno) + 1):
+                        drop.add(ln)
+        kept = ["" if i + 1 in drop else line for i, line in enumerate(lines)]
+        return re.sub(r"^\s*#.*$", "", "\n".join(kept), flags=re.M)
+    if suffix == ".rs":
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        return re.sub(r"^\s*//.*$", "", text, flags=re.M)
+    return re.sub(r"^\s*#.*$", "", text, flags=re.M)
+
+
 def _relative_reader_paths() -> set[str]:
-    """Every ci-hub file naming the ledger, as ci-hub-relative POSIX paths."""
-    pattern = re.compile(re.escape(LEDGER_BASENAME))
+    """Every ci-hub file naming the ledger IN CODE, as ci-hub-relative POSIX paths."""
     found: set[str] = set()
     for path in _scannable_paths():
         try:
             text = path.read_text(errors="replace")
         except OSError:
             continue
-        if pattern.search(text):
+        if LEDGER_BASENAME in code_only(text, path.suffix):
             found.add(path.relative_to(CI_HUB).as_posix())
     return found
 
@@ -266,6 +312,60 @@ def test_declaration_is_stale_only_when_the_file_still_exists() -> None:
     # absent entirely -> NOT stale
     _, stale_absent = classify(set(), present=set())
     assert stale_absent == set()
+
+
+def test_comment_only_mention_is_not_a_reader() -> None:
+    """DIRECTION (a): a file that MENTIONS the ledger but never names it in code.
+
+    This is the misfire that motivated the change: the old matcher searched raw
+    bytes, so prose tripped it, and the tempting fix was to declare the file --
+    laundering a non-reader into the registry. One planted case per language,
+    because each has its own comment syntax and a per-language strip.
+    """
+    py = '"""Docstring mentioning validate-run-ledger.jsonl in prose."""\n'
+    py += "# comment naming validate-run-ledger.jsonl too\n"
+    py += "VALUE = 1\n"
+    assert LEDGER_BASENAME not in code_only(py, ".py")
+
+    rs = "/// doc comment about validate-run-ledger.jsonl\n"
+    rs += "// plain comment about validate-run-ledger.jsonl\n"
+    rs += "/* block about validate-run-ledger.jsonl */\n"
+    rs += "pub const X: i64 = 1;\n"
+    assert LEDGER_BASENAME not in code_only(rs, ".rs")
+
+    sh = "# shell comment about validate-run-ledger.jsonl\necho hi\n"
+    assert LEDGER_BASENAME not in code_only(sh, ".sh")
+
+
+def test_genuine_code_reference_is_still_a_reader() -> None:
+    """DIRECTION (b): a file that NAMES THE PATH IN CODE is still caught.
+
+    Without this the change would pass direction (a) by matching nothing at all,
+    which is the failure mode the narrowing could most easily introduce. Each
+    case is the real shape taken from a live declared reader.
+    """
+    # qualified_rows.py:31 shape
+    py = '"""Prose."""\nP = Path(__file__) / "ignored" / "validate-run-ledger.jsonl"\n'
+    assert LEDGER_BASENAME in code_only(py, ".py")
+    # aggregate.py:164 shape
+    py2 = 'paths.add(os.path.join(parent, "ignored", "validate-run-ledger.jsonl"))\n'
+    assert LEDGER_BASENAME in code_only(py2, ".py")
+    # validate_status.rs:88 shape
+    rs = '/// prose\npub const LEDGER_REL: &str = "ignored/validate-run-ledger.jsonl";\n'
+    assert LEDGER_BASENAME in code_only(rs, ".rs")
+    # shell producer shape
+    sh = '# prose\nLEDGER="$PARENT/ignored/validate-run-ledger.jsonl"\n'
+    assert LEDGER_BASENAME in code_only(sh, ".sh")
+
+
+def test_docstring_strip_does_not_eat_a_real_path_literal() -> None:
+    """A multi-line STRING LITERAL that is not a docstring must survive.
+
+    This is why docstrings are found with `ast` rather than a triple-quote regex:
+    the regex would blank this and silently lose a real reader.
+    """
+    py = 'SQL = """\n  path: ignored/validate-run-ledger.jsonl\n"""\n'
+    assert LEDGER_BASENAME in code_only(py, ".py")
 
 
 def test_live_tree_actually_has_readers_to_check() -> None:
