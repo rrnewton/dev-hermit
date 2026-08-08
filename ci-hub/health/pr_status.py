@@ -3,11 +3,35 @@
 
 Two engines:
 
-* ``gh`` (DEFAULT) — one proxied ``gh pr list --json`` call per repo, followed
-  by a bounded exact-job lookup only for a selected failing Actions check.
+* ``gh`` (DEFAULT) — one proxied ``gh pr list --json`` call per repo, plus one
+  dereference of the registered exact-head hosted authority per ready head, plus
+  a bounded exact-job lookup only for a selected failing Actions check.
   ``gh`` returns ``mergeable`` and ``statusCheckRollup`` inline, so there is NO
   per-PR local ``git fetch``. The job lookup is the narrow authority that can
   distinguish a setup-only runner failure from a product failure.
+
+  ``statusCheckRollup`` IS NOT A COMPLETE BOARD, AND ON ITS OWN IT LIES ABOUT
+  THIS FLEET. Measured 2026-08-08 over rrnewton/hermit's 12 ready non-draft
+  heads, matching every check run by job id: of 694 check runs attached to those
+  commits, all 239 produced by ``pull_request``-event workflow runs appeared in
+  the rollup (239/239) and NONE of the 455 produced by ``workflow_dispatch``
+  runs did (0/455). ``merge-gate-v4`` dispatches ``ci-portable.yml`` and
+  ``ci-privileged.yml`` via ``workflow_dispatch``, so on every PR the gate has
+  driven, the whole product-CI surface — including the registered authority job
+  ``Regular tests (GitHub-managed portable)`` — is structurally invisible here.
+  That produced a reported ``green=0 of 12`` that was a blind spot rather than
+  an observation, and, in the dangerous direction, three heads whose authority
+  job had genuinely FAILED (#1873 #1874 #1890) were reported ``pending``.
+
+  So the rollup is kept ONLY for the checks it does faithfully carry (the
+  ``pull_request``-triggered landing-gate/review meta-checks), and the hosted
+  product verdict comes from the ONE registered verifier every other consumer
+  uses, ``ci-hub hosted-status`` (``ci-hub/remediation/protocol.py``:
+  ``verification_policy_for_repo`` → ``github_runs`` → exact-SHA jobs). This
+  file holds NO second implementation of authority reading; it dereferences the
+  shipped command exactly as ``ci-hub/landing/exact-head-validation-authority.sh``
+  does. A head is ``red`` if EITHER source is red, ``green`` if neither is red
+  and at least one reports green, and ``pending`` otherwise.
 
 * ``planner`` (opt-in, ``--engine planner``) — adapts the pinned
   agent-utils/pr-landing-planner and runs REAL ``git merge-tree`` conflict
@@ -233,14 +257,22 @@ def approval_binding(pass_sha: str | None, head_sha: str | None) -> str:
 
 _MECHANISM_TAG_PREFIX = "mechanism:"
 HEALTH_VERDICT_RULE = (
-    "ready non-draft PR GitHub check rollups plus bounded exact-job evidence: "
-    "UNHEALTHY iff any available repo has real_reds>0 or outage_suspected=yes"
+    "ready non-draft PR GitHub check rollups (pull_request-triggered checks "
+    "only) COMBINED WITH the registered exact-head hosted job authority from "
+    "`ci-hub hosted-status`, plus bounded exact-job evidence: a head is red if "
+    "EITHER source is red; UNHEALTHY iff any available repo has real_reds>0 or "
+    "outage_suspected=yes"
 )
 HEALTH_VERDICT_EXCLUDES = (
     "local validation receipts",
     "draft PRs",
     "main-branch health",
     "queue depth",
+    # Named because it is the defect this tool shipped with: `statusCheckRollup`
+    # carries 0 of 455 workflow_dispatch-produced check runs (measured
+    # 2026-08-08), and merge-gate-v4 dispatches all product CI. The rollup ALONE
+    # is therefore never the CI verdict here; `hosted_authority` carries it.
+    "statusCheckRollup alone (it omits every workflow_dispatch check run)",
 )
 
 
@@ -348,6 +380,15 @@ class RepoStatus:
     # failed only because a same-run prerequisite above was setup-only. These
     # are independently visible and, like their source, remain pending.
     prerequisite_no_result_checks: int = 0
+    # Ready heads by what the ONE registered exact-head hosted verifier
+    # (`ci-hub hosted-status`) said, reported separately from `green`/`red` so
+    # the two sources never silently stand in for each other. `hosted_unknown`
+    # counts heads whose authority we did NOT manage to dereference — coverage,
+    # not a verdict. These three plus the pending/no_result authority states sum
+    # to `open`.
+    hosted_green: int = 0
+    hosted_red: int = 0
+    hosted_unknown: int = 0
     available: bool = True
     reason: str = ""
 
@@ -850,6 +891,221 @@ def banked_failure_tier_commits(
     return tiers
 
 
+#: The exact-head hosted authority states ``ci-hub hosted-status`` can report.
+#: ``unknown`` is OURS, not the verifier's: it marks a head whose authority we
+#: did not manage to dereference (no binary, timeout, malformed answer). It is
+#: deliberately NOT folded into ``no_result`` — "we did not look" and "we looked
+#: and GitHub has no producer" are different facts, and only the second is an
+#: observation. Neither ever contributes a green.
+HOSTED_GREEN = "green"
+HOSTED_RED = "red"
+HOSTED_UNKNOWN = "unknown"
+_HOSTED_VERIFIER_STATES = frozenset(
+    {HOSTED_GREEN, HOSTED_RED, "pending", "running", "no_result"}
+)
+#: Concurrency for the per-head authority dereference. Each head costs ~2.4s
+#: wall (measured 2026-08-08 on this host: two `actions/runs?head_sha=` +
+#: `runs/<id>/jobs` round trips through the proxy, ~0.5s CPU), so 12 hermit
+#: heads serially would add ~29s to a ~13s command. Four in flight keeps the
+#: added wall under ~10s without fanning out hard enough to matter to GitHub.
+DEFAULT_HOSTED_AUTHORITY_WORKERS = int(
+    os.environ.get("CI_HUB_PR_STATUS_AUTHORITY_WORKERS", "4")
+)
+#: Per-head budget for one authority dereference. Generous against the measured
+#: 2.4s so a slow proxy degrades ONE head to `unknown` instead of the report.
+DEFAULT_HOSTED_AUTHORITY_TIMEOUT = float(
+    os.environ.get("CI_HUB_PR_STATUS_AUTHORITY_TIMEOUT", "60")
+)
+#: THE VERIFIER, addressed at its Python entry point rather than through the
+#: `ci-hub` front door. `ci-hub` is a `rust-script --force` shim whose ONLY job
+#: for this subcommand is `run_python(root, "ci-hub/remediation/protocol.py",
+#: ["hosted-status", ...])` -- it adds no semantics, but `--force` makes Cargo
+#: re-check the crate on every invocation. Measured 2026-08-08 over hermit's 12
+#: ready heads: front door 43.5s wall / 38.9s CPU for the whole command, direct
+#: entry point 0.32s user per head. Same verifier, same public `hosted-status`
+#: CLI, same JSON contract; ~30s of CPU per tick that bought nothing.
+HOSTED_STATUS_VERIFIER = Path(
+    os.environ.get("CI_HUB_HOSTED_STATUS_VERIFIER", ROOT / "ci-hub/remediation/protocol.py")
+)
+
+
+@dataclass(frozen=True)
+class HostedAuthority:
+    """One head's registered exact-head hosted job authority, as reported."""
+
+    state: str
+    positive_count: int
+    required_positive_count: int
+    failing_job_names: tuple[str, ...]
+    reason: str = ""
+
+    @property
+    def observed(self) -> bool:
+        return self.state != HOSTED_UNKNOWN
+
+
+HOSTED_AUTHORITY_UNOBSERVED = HostedAuthority(HOSTED_UNKNOWN, 0, 0, (), "")
+
+
+def hosted_authority_for_head(
+    repo: str,
+    sha: str,
+    *,
+    verifier: Path = HOSTED_STATUS_VERIFIER,
+    timeout: float = DEFAULT_HOSTED_AUTHORITY_TIMEOUT,
+) -> HostedAuthority:
+    """Dereference the ``hosted-status`` authority for one exact head.
+
+    THIS IS A CONSUMER, NOT A SECOND VERIFIER. It invokes the same
+    ``hosted-status`` command ``ci-hub/landing/exact-head-validation-authority.sh``
+    consumes and reads the verifier's own ``state``; it never re-derives
+    green/red from conclusions, and this file contains no copy of the policy
+    (which jobs are required, how many positives) that decides it. That is the
+    whole repair: the previous code answered the authority question from
+    ``statusCheckRollup``, an index that does not contain the authority job on
+    any ``workflow_dispatch``-driven head (0 of 455 such check runs, measured
+    2026-08-08).
+
+    Fails to ``unknown`` in every ambiguous direction — missing verifier,
+    timeout, non-JSON, an answer whose ``authority``/``repo``/``sha`` identity
+    does not bind to what we asked, or a state outside the verifier's
+    vocabulary. The exit code is deliberately NOT the signal (``hosted-status``
+    exits 0/3/4 for green/red/other), so a nonzero exit with a well-formed red is
+    still a red.
+    """
+    sha = (sha or "").strip().lower()
+    if len(sha) != 40 or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), "head SHA is not a lowercase 40-hex commit"
+        )
+    if not Path(verifier).exists():
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), f"hosted-status verifier is absent: {verifier}"
+        )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(verifier),
+                "hosted-status",
+                "--repo",
+                repo,
+                "--sha",
+                sha,
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), f"hosted-status exceeded {timeout:.0f}s"
+        )
+    except OSError as error:
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), f"hosted-status could not run: {error}"
+        )
+    text = (result.stdout or "").strip()
+    if not text:
+        detail = (result.stderr or "").strip()[:200]
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), f"hosted-status printed nothing: {detail}"
+        )
+    try:
+        report = json.loads(text)
+    except json.JSONDecodeError:
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), "hosted-status returned non-JSON"
+        )
+    if not isinstance(report, dict):
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), "hosted-status returned a non-object"
+        )
+    # IDENTITY BIND. A report that does not name this authority, this repo and
+    # this exact SHA describes something else; accepting it would let a stale or
+    # misrouted answer authorize a head it never examined.
+    if (
+        report.get("authority") != "github-actions-exact-head-jobs"
+        or report.get("repo") != repo
+        or str(report.get("sha") or "").lower() != sha
+    ):
+        return HostedAuthority(
+            HOSTED_UNKNOWN,
+            0,
+            0,
+            (),
+            "hosted-status answer does not bind to the requested authority/repo/sha",
+        )
+    state = str(report.get("state") or "")
+    if state not in _HOSTED_VERIFIER_STATES:
+        return HostedAuthority(
+            HOSTED_UNKNOWN, 0, 0, (), f"hosted-status reported unknown state {state!r}"
+        )
+    jobs = report.get("jobs")
+    failing = tuple(
+        str(job.get("job_name") or "")
+        for job in (jobs if isinstance(jobs, list) else [])
+        if isinstance(job, dict) and job.get("state") == HOSTED_RED
+    )
+    positive = report.get("positive_count")
+    required = report.get("required_positive_count")
+    return HostedAuthority(
+        state=state,
+        positive_count=positive if isinstance(positive, int) else 0,
+        required_positive_count=required if isinstance(required, int) else 0,
+        failing_job_names=failing,
+        reason=str(report.get("last_poll_error") or ""),
+    )
+
+
+def hosted_authority_states(
+    repo: str,
+    head_shas: Sequence[str],
+    *,
+    verifier: Path = HOSTED_STATUS_VERIFIER,
+    workers: int = DEFAULT_HOSTED_AUTHORITY_WORKERS,
+    deadline: float | None = None,
+) -> dict[str, HostedAuthority]:
+    """Dereference the hosted authority for every ready head, bounded.
+
+    Heads left undone when ``deadline`` (a ``time.monotonic()`` instant) passes
+    are simply absent from the map, which the classifier reads as ``unknown``.
+    Partial coverage is reported, never silently completed: this tool must always
+    produce a report, and a head we did not examine must never read as green.
+    """
+    wanted = [sha for sha in dict.fromkeys(head_shas) if sha]
+    if not wanted:
+        return {}
+
+    def remaining() -> float | None:
+        if deadline is None:
+            return None
+        return deadline - time.monotonic()
+
+    results: dict[str, HostedAuthority] = {}
+
+    def dereference(sha: str) -> tuple[str, HostedAuthority] | None:
+        left = remaining()
+        if left is not None and left <= 0:
+            return None
+        budget = DEFAULT_HOSTED_AUTHORITY_TIMEOUT
+        if left is not None:
+            budget = min(budget, left)
+        return sha, hosted_authority_for_head(
+            repo, sha, verifier=verifier, timeout=budget
+        )
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for outcome in pool.map(dereference, wanted):
+            if outcome is not None:
+                results[outcome[0]] = outcome[1]
+    return results
+
+
 def _classify_gh_prs(
     repo: str,
     raw: list,
@@ -857,9 +1113,12 @@ def _classify_gh_prs(
     banked_failure: dict[str, str] | None = None,
     *,
     setup_only_verifier: SetupOnlyVerifier | None = None,
+    hosted_authority: Mapping[str, HostedAuthority] | None = None,
 ) -> RepoStatus:
     if banked_failure is None:
         banked_failure = {}
+    if hosted_authority is None:
+        hosted_authority = {}
     prs: list[dict[str, object]] = []
     review_protocol: list[ReviewProtocolStatus] = []
     mechanism_overlaps = _mechanism_overlaps(raw)
@@ -869,6 +1128,7 @@ def _classify_gh_prs(
     ledger_no_result = ledger_needs_rerun = 0
     setup_only_no_result_checks = 0
     prerequisite_no_result_checks = 0
+    hosted_green = hosted_red = hosted_unknown = 0
     for entry in raw:
         if not isinstance(entry, dict):
             continue
@@ -885,7 +1145,37 @@ def _classify_gh_prs(
             head_sha=head_sha,
             setup_only_verifier=setup_only_verifier,
         )
-        ci = rollup.state
+        # TWO SOURCES, NAMED, NEITHER STANDING IN FOR THE OTHER.
+        #   rollup    — every `pull_request`-triggered check (landing-gate and
+        #               review meta-checks live here, faithfully).
+        #   authority — the registered exact-head hosted job, from the ONE
+        #               verifier. This is the only source that can see a
+        #               `workflow_dispatch` run, i.e. everything merge-gate-v4
+        #               drives.
+        # Red dominates: a red from either source is a red. Green requires that
+        # NEITHER is red and that at least one actually reported green, so an
+        # unobserved authority can never manufacture one.
+        authority = hosted_authority.get(head_sha, HOSTED_AUTHORITY_UNOBSERVED)
+        if authority.state == HOSTED_GREEN:
+            hosted_green += 1
+        elif authority.state == HOSTED_RED:
+            hosted_red += 1
+        elif not authority.observed:
+            hosted_unknown += 1
+        if rollup.state == "red" or authority.state == HOSTED_RED:
+            ci = "red"
+        elif rollup.state == "green" or authority.state == HOSTED_GREEN:
+            ci = "green"
+        else:
+            ci = "pending"
+        # A red authority job is a PRODUCT test, and it must reach the
+        # gate-vs-product split as one. Naming it here (rather than special-casing
+        # below) keeps a single attribution path: the split reads failing check
+        # names, and `Regular tests (GitHub-managed portable)` is not a gate
+        # meta-check, so it classifies as product without a second rule.
+        failing_checks = tuple(rollup.failing_check_names) + tuple(
+            name for name in authority.failing_job_names if name.strip()
+        )
         setup_only_no_result_checks += len(rollup.setup_only_no_result_checks)
         prerequisite_no_result_checks += len(rollup.prerequisite_no_result_checks)
         mergeable = str(entry.get("mergeable") or "").upper()
@@ -932,7 +1222,7 @@ def _classify_gh_prs(
             else:
                 # Refine the real-red: gate-only (lacks receipt/review/current
                 # pin) vs a genuine product break.
-                fails = rollup.failing_check_names
+                fails = failing_checks
                 # A failing check with no NAME identifies nothing, so it is not
                 # evidence of anything -- least of all of a product break.
                 named_fails = [name for name in fails if name.strip()]
@@ -999,7 +1289,19 @@ def _classify_gh_prs(
                 "real_red_kind": real_red_kind,
                 "ledger_green": ledger_green,
                 "ledger_failure_tier": failure_tier,
-                "failing_checks": rollup.failing_check_names,
+                # The verifier's own word about the registered exact-head job,
+                # reported beside the rollup rather than merged into it, so a
+                # reader can see which source said what.
+                "hosted_authority": authority.state,
+                "hosted_positive": (
+                    f"{authority.positive_count}/{authority.required_positive_count}"
+                    if authority.observed
+                    else ""
+                ),
+                "hosted_reason": authority.reason,
+                "hosted_failing_jobs": authority.failing_job_names,
+                "rollup_ci": rollup.state,
+                "failing_checks": failing_checks,
                 "setup_only_no_result_checks": (rollup.setup_only_no_result_checks),
                 "setup_only_evidence": rollup.setup_only_evidence,
                 "prerequisite_no_result_checks": (rollup.prerequisite_no_result_checks),
@@ -1048,6 +1350,9 @@ def _classify_gh_prs(
         ledger_needs_rerun=ledger_needs_rerun,
         setup_only_no_result_checks=setup_only_no_result_checks,
         prerequisite_no_result_checks=prerequisite_no_result_checks,
+        hosted_green=hosted_green,
+        hosted_red=hosted_red,
+        hosted_unknown=hosted_unknown,
         outage_suspected=outage,
         prs=tuple(prs),
         review_protocol=tuple(review_protocol),
@@ -1107,12 +1412,24 @@ def fetch_repo_status_gh(
         gh_cmd=gh_cmd,
         deadline=authority_deadline,
     )
+    # The registered exact-head hosted authority for every READY head. Drafts are
+    # excluded here as well as in the classifier: they are not landing candidates
+    # and are the bulk of the open set (126 of 138 on hermit, 2026-08-08), so
+    # dereferencing them would multiply the cost by ~11 for no consumer.
+    ready_heads = [
+        str(entry.get("headRefOid") or "")
+        for entry in raw
+        if isinstance(entry, dict) and entry.get("isDraft") is not True
+    ]
     return _classify_gh_prs(
         repo,
         raw,
         banked_green_commits(repo),
         banked_failure_tier_commits(repo),
         setup_only_verifier=setup_only_authority,
+        hosted_authority=hosted_authority_states(
+            repo, ready_heads, deadline=authority_deadline
+        ),
     )
 
 
@@ -1459,6 +1776,9 @@ def health_verdict(statuses: Sequence[RepoStatus]) -> dict[str, object]:
                 "ledger_needs_rerun": status.ledger_needs_rerun,
                 "setup_only_no_result_checks": (status.setup_only_no_result_checks),
                 "prerequisite_no_result_checks": (status.prerequisite_no_result_checks),
+                "hosted_green": status.hosted_green,
+                "hosted_red": status.hosted_red,
+                "hosted_unknown": status.hosted_unknown,
                 "no_result": status.pending,
                 "outage_suspected": status.outage_suspected,
                 "triggers_unhealthy": status.unhealthy,
@@ -1488,8 +1808,12 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         heading = "CI health: HEALTHY"
     source = {
         "gh": (
-            "gh pr list --json plus bounded exact failed-Action-job lookup "
-            "(labels-only fallback after a full-query failure)"
+            "gh pr list --json statusCheckRollup (pull_request-triggered checks "
+            "ONLY -- it carries no workflow_dispatch check run, so it cannot see "
+            "merge-gate-v4-driven product CI) + `ci-hub hosted-status` per ready "
+            "head for the registered exact-head job authority + bounded exact "
+            "failed-Action-job lookup (labels-only fallback after a full-query "
+            "failure)"
         ),
         "planner": "pinned agent-utils/pr-landing-planner status (per-PR git fetch)",
     }.get(engine, engine)
@@ -1511,6 +1835,8 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
             "ledger_needs_rerun={ledger_needs_rerun} "
             "setup_only_no_result_checks={setup_only_no_result_checks} "
             "prerequisite_no_result_checks={prerequisite_no_result_checks} "
+            "hosted_authority=green:{hosted_green}/red:{hosted_red}/"
+            "unobserved:{hosted_unknown} "
             "undetermined_reds={undetermined_reds} no_result={no_result} "
             "outage={outage_suspected} triggers_unhealthy={triggers_unhealthy}".format(
                 **item
@@ -1576,6 +1902,22 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
             f"red={status.red} pending={status.pending} real_reds={status.real_reds}"
             f"{split}{demoted}{undet} outage={'yes' if status.outage_suspected else 'no'}"
         )
+        if status.open:
+            lines.append(
+                f"    hosted authority (ci-hub hosted-status, the same verifier "
+                f"landing uses): green={status.hosted_green} "
+                f"red={status.hosted_red} unobserved={status.hosted_unknown} of "
+                f"{status.open} ready head(s)"
+            )
+        if status.hosted_unknown:
+            lines.append(
+                f"    CAUTION: {status.hosted_unknown} ready head(s) had NO hosted "
+                "authority answer this run (binary absent, budget exhausted, or a "
+                "malformed/unbound reply). Those heads are reported from the "
+                "rollup alone, which cannot see workflow_dispatch check runs — "
+                "treat them as UNKNOWN, not green (see hosted_authority and "
+                "hosted_reason per PR)."
+            )
         if status.ledger_no_result or status.ledger_needs_rerun:
             lines.append(
                 f"    ledger: {status.ledger_no_result} red PR head(s) had no named "
@@ -1602,9 +1944,9 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
         if status.green_local:
             lines.append(
                 f"    ledger: {status.green_local} open head(s) carry an "
-                "authoritative LOCAL full-green receipt (landable via merge gate) "
-                "though GitHub shows red/pending — GitHub green=0 is a check-state "
-                "artifact, not absence of validated work (see ledger_green flag)"
+                "authoritative LOCAL full-green receipt (landable via merge gate). "
+                "A hosted red/pending at those heads is a different authority's "
+                "answer, not absence of validated work (see ledger_green flag)"
             )
         if status.undetermined_reds:
             lines.append(
@@ -1617,10 +1959,18 @@ def render_report(statuses: Sequence[RepoStatus], warn_threshold: int, engine: s
             kind = pr.get("real_red_kind")
             if kind:
                 klass = f"{klass}:{kind}"
+            hosted = str(pr.get("hosted_authority") or HOSTED_UNKNOWN)
+            positive = str(pr.get("hosted_positive") or "")
+            hosted_cell = f"{hosted}({positive})" if positive else hosted
             lines.append(
                 f"    #{pr.get('pr', '?'):<5} ci={pr.get('ci', 'unknown'):<7} "
+                f"rollup={str(pr.get('rollup_ci') or '-'):<7} "
+                f"hosted={hosted_cell:<16} "
                 f"class={klass:<23} {pr.get('title', '')}"
             )
+            hosted_reason = pr.get("hosted_reason")
+            if hosted == HOSTED_UNKNOWN and hosted_reason:
+                lines.append(f"      hosted authority unobserved: {hosted_reason}")
             setup_only = pr.get("setup_only_no_result_checks")
             if setup_only:
                 lines.append(
