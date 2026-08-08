@@ -120,6 +120,25 @@ if ! python3 "${here}/stdout_operands.py" --root "${here}"; then
   fail=1
 fi
 
+# The tier gate REPORTS an unevidenced claim; this refuses to let one keep a
+# qualifying tier at all. The six `full-stdout-info-stack-heap` rows that were the
+# entire measured full-tier envelope had NO PRODUCER IN THE TREE -- their commit
+# ddfd448 changed only scorecard.csv, zero code -- so they could not be re-derived
+# and no producer fix could re-emit them. They were demoted to legacy-unqualified
+# by the tool below rather than by hand, because a hand-edited row is exactly what
+# created the problem and hand-repairing it would reproduce the defect while
+# appearing to cure it.
+#
+# EXPECT 0 HERE. This is --check: it reports and refuses, it never rewrites during
+# validation. Its criterion is computed, not a list -- a row is caught iff its tier
+# is qualifying and tier_evidence cannot evidence it -- so it catches the NEXT one
+# too. Remedy is `retire_unevidenced_tier_claims.py --apply`, which is idempotent.
+echo "== compat-envelope: no qualifying tier may outlive the evidence for it =="
+if ! python3 "${here}/retire_unevidenced_tier_claims.py" --root "${here}"; then
+  echo "validate-envelope: a qualifying tier claim its own row cannot evidence" >&2
+  fail=1
+fi
+
 # A parity boolean is accepted only when the row carries both hashed operands,
 # exact code state, comparison/profile identity, and counted run coverage.  This
 # is the same semantic verifier the renderer calls; labels and cached booleans
