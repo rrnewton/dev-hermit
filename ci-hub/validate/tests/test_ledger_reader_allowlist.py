@@ -42,12 +42,43 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import subprocess
 
 import pytest
 
 
 CI_HUB = Path(__file__).resolve().parents[2]
 LEDGER_BASENAME = "validate-run-ledger"
+SCANNED_SUFFIXES = {".py", ".rs", ".sh"}
+
+
+def _scannable_paths() -> list[Path]:
+    """Every ci-hub source file this lint looks at, enumerated through GIT.
+
+    NOT a filesystem walk. `CI_HUB.rglob("*")` reported every file ON DISK and
+    hand-rolled its exclusions (`__pycache__`, `.git`), which is the wrong shape
+    twice over: the hand list can never keep up with .gitignore, and it made a
+    GATE depend on checkout state instead of repository content. Demonstrated:
+    planting `ci-hub/ignored/leaky_reader.py` -- machine-local scratch, matched
+    by the repo-wide `ignored/` rule, invisible to `git status` -- flipped
+    test_no_undeclared_ledger_readers from pass to fail at an unchanged commit.
+    A gate must not consult `ignored/`; that subtree is disposable by definition.
+
+    `--cached --others --exclude-standard` is tracked files PLUS genuinely new
+    untracked ones, MINUS ignored output, so a NEW undeclared reader is still
+    caught -- which is the entire purpose of this lint and must not be relaxed.
+    """
+    listing = subprocess.run(
+        ["git", "-C", str(CI_HUB), "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    return [
+        CI_HUB / rel
+        for rel in listing
+        if Path(rel).suffix in SCANNED_SUFFIXES and (CI_HUB / rel).is_file()
+    ]
 
 # Files that legitimately name the ledger, each with the reason it is allowed.
 # Adding an entry here is the declaration; the reason is the review record.
@@ -125,13 +156,7 @@ def _relative_reader_paths() -> set[str]:
     """Every ci-hub file naming the ledger, as ci-hub-relative POSIX paths."""
     pattern = re.compile(re.escape(LEDGER_BASENAME))
     found: set[str] = set()
-    for path in CI_HUB.rglob("*"):
-        if not path.is_file():
-            continue
-        if path.suffix not in {".py", ".rs", ".sh"}:
-            continue
-        if "__pycache__" in path.parts or ".git" in path.parts:
-            continue
+    for path in _scannable_paths():
         try:
             text = path.read_text(errors="replace")
         except OSError:
@@ -168,11 +193,7 @@ def classify(
 def _existing_scanned_paths() -> set[str]:
     """Every ci-hub source file the scanner looks at, referencing or not."""
     found: set[str] = set()
-    for path in CI_HUB.rglob("*"):
-        if not path.is_file() or path.suffix not in {".py", ".rs", ".sh"}:
-            continue
-        if "__pycache__" in path.parts or ".git" in path.parts:
-            continue
+    for path in _scannable_paths():
         found.add(path.relative_to(CI_HUB).as_posix())
     return found
 
