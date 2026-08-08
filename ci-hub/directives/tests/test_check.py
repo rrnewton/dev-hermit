@@ -25,14 +25,22 @@ def completed(command, rc=0, stdout="", stderr=""):
 
 
 class FakeRunner:
-    def __init__(self, known_tasks: set[str]):
+    def __init__(self, known_tasks: set[str], task_status: dict[str, str] | None = None):
         self.known_tasks = known_tasks
+        self.task_status = task_status or {}
         self.verifier_calls: list[str] = []
 
     def __call__(self, command, **_kwargs):
         command = tuple(str(item) for item in command)
         if command[:2] == ("tg", "sql"):
-            return completed(command, stdout="\n".join(sorted(self.known_tasks)) + "\n")
+            # The production query selects `local_id || '\t' || status`. Emitting a bare id
+            # (no tab) is still valid and reads as an unknown/blank status, which is what the
+            # pre-existing tests rely on.
+            rows = [
+                f"{task}\t{self.task_status.get(task, 'IN_PROGRESS')}"
+                for task in sorted(self.known_tasks)
+            ]
+            return completed(command, stdout="\n".join(rows) + "\n")
         if "protocol.py" in " ".join(command):
             identity = command[command.index("verify-landing") + 1]
             self.verifier_calls.append(identity)
@@ -233,3 +241,59 @@ class DirectiveCheckTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClosedTaskAccountabilityTest(unittest.TestCase):
+    """A directive that is not satisfied must not have a CLOSED accountable task.
+
+    Task lookup used to test EXISTENCE only, and a closed task exists -- so a row could sit
+    unlanded while the one record a human reads said the work was done. Measured 2026-08-08 on
+    the live ledger: 3 of 21 rows were in exactly that state, including `green-time-automatic-log`,
+    which had neither an implementation nor a gate.
+
+    Bracketed three ways on purpose. The two POSITIVE legs are not decoration: the first draft of
+    this predicate made `closed_task` trip the invalid-metadata catch-all, which silently
+    demoted a correctly LANDED row to unaccountable. Only the landed+closed leg caught it.
+    """
+
+    def evaluate(self, directives, task_status):
+        tasks = {item["task"] for item in directives if item.get("task")}
+        runner = FakeRunner(tasks, task_status=task_status)
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Path(temporary) / "ledger.json"
+            ledger.write_text(json.dumps({"schema_version": 1, "directives": directives}))
+            return directive_check.evaluate(
+                ledger_path=ledger,
+                run=runner,
+                checked_at="2026-08-08T00:00:00+00:00",
+            )
+
+    def test_negative_unlanded_row_with_closed_task_is_unaccountable(self):
+        row = directive("orphaned", identity=None, task="t-closed")
+        report = self.evaluate([row], {"t-closed": "CLOSED"})
+
+        item = report.directives[0]
+        self.assertEqual("unaccountable", item.state)
+        self.assertIn("closed_task", item.issues)
+        self.assertIn("CLOSED", item.reason)
+        # It is drift: nobody is advancing it, because the record that would surface it is closed.
+        self.assertIn(item.state, directive_check.DRIFT_STATES)
+        self.assertEqual(1, report.exit_code)
+
+    def test_positive_unlanded_row_with_live_task_stays_open(self):
+        row = directive("owned", identity=None, task="t-live")
+        report = self.evaluate([row], {"t-live": "IN_PROGRESS"})
+
+        item = report.directives[0]
+        self.assertEqual("open", item.state)
+        self.assertNotIn("closed_task", item.issues)
+
+    def test_positive_landed_row_with_closed_task_stays_satisfied(self):
+        # A closed task is the CORRECT end state once the directive has landed; the predicate
+        # keys on the PAIRING, not on closure alone.
+        row = directive("done", identity="a" * 40, task="t-closed")
+        report = self.evaluate([row], {"t-closed": "CLOSED"})
+
+        item = report.directives[0]
+        self.assertEqual("satisfied", item.state)
+        self.assertIn("closed_task", item.issues)

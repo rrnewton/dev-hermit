@@ -29,6 +29,10 @@ REPO_RE = re.compile(r"[^/\s]+/[^/\s]+")
 DRIFT_STATES = (
     "needs_owner",
     "missing_task",
+    # A row that is not satisfied while its accountable task is CLOSED. This IS drift by the
+    # definition above -- nobody is demonstrably advancing it, because the record that would
+    # have surfaced it says the work is finished.
+    "unaccountable",
     "not_landed",
     "invalid",
     "unverifiable",
@@ -240,25 +244,39 @@ def _assert_acyclic(directives: Sequence[Directive]) -> None:
 
 def _query_known_tasks(
     directives: Sequence[Directive], run: Run, timeout: float
-) -> tuple[set[str], str | None]:
+) -> tuple[dict[str, str], str | None]:
+    """Accountable task id -> its TaskGraph status.
+
+    Selecting `status` as well as `local_id` is load-bearing, not cosmetic. Existence alone
+    answers "is there a task", which a CLOSED task satisfies exactly as well as a live one --
+    so a directive could sit unlanded while the only record a human would look at said the work
+    was done. Measured 2026-08-08 on the live ledger: 3 of 21 rows were non-satisfied with a
+    CLOSED accountable task, including the `green-time-automatic-log` row that has neither an
+    implementation nor a gate. See `closed_task` in `_metadata_issues`.
+    """
     tasks = sorted({item.task for item in directives if item.task})
     if not tasks:
-        return set(), None
+        return {}, None
     if any(not TASK_RE.fullmatch(task) for task in tasks):
-        return set(), "task ids may contain only letters, digits, dot, underscore, hyphen"
+        return {}, "task ids may contain only letters, digits, dot, underscore, hyphen"
     quoted = ",".join("'" + task.replace("'", "''") + "'" for task in tasks)
     result = run(
-        ("tg", "sql", f"SELECT local_id FROM tasks WHERE local_id IN ({quoted});"),
+        (
+            "tg",
+            "sql",
+            f"SELECT local_id || '\t' || status FROM tasks WHERE local_id IN ({quoted});",
+        ),
         cwd=ROOT,
         timeout=timeout,
     )
     if result.returncode != 0:
-        return set(), (result.stderr or result.stdout or "TaskGraph lookup failed").strip()
-    known = {
-        line.strip()
-        for line in result.stdout.splitlines()
-        if TASK_RE.fullmatch(line.strip()) and line.strip() != "local_id"
-    }
+        return {}, (result.stderr or result.stdout or "TaskGraph lookup failed").strip()
+    known: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        local_id, _, status = line.strip().partition("\t")
+        local_id = local_id.strip()
+        if TASK_RE.fullmatch(local_id) and local_id != "local_id":
+            known[local_id] = status.strip()
     return known, None
 
 
@@ -285,6 +303,11 @@ def _metadata_issues(
         issues.append("task_lookup_unavailable")
     elif directive.task not in known_tasks:
         issues.append("task_not_found")
+    elif known_tasks[directive.task].strip().upper().startswith("CLOSED"):
+        # Recorded unconditionally, including on satisfied rows, where a closed task is the
+        # CORRECT end state. Only `evaluate` decides it is a contradiction, and only for a row
+        # that is not satisfied -- the point is the pairing, not the closure.
+        issues.append("closed_task")
     if not directive.owner:
         issues.append("missing_owner")
     if directive.implementation is None:
@@ -413,7 +436,16 @@ def evaluate(
             reason = "directive has no accountable owner"
         elif any(
             issue
-            not in {"no_implementation", "missing_task", "task_not_found", "missing_owner"}
+            not in {
+                "no_implementation",
+                "missing_task",
+                "task_not_found",
+                "missing_owner",
+                # A closed task is not INVALID metadata -- on a satisfied row it is the correct
+                # end state. Whether it is a contradiction is decided below, against the row's
+                # settled state, not here.
+                "closed_task",
+            }
             for issue in issues
         ):
             state = "invalid"
@@ -423,6 +455,20 @@ def evaluate(
             reason = f"gated on: {directive.gate}"
         elif implementation is None:
             state = "open"
+        # UNACCOUNTABLE: the row is not satisfied, yet its accountable task is CLOSED. Nothing
+        # else in this checker catches that, because task lookup used to test EXISTENCE only --
+        # and a closed task exists. This is the pairing that let `green-time-automatic-log` sit
+        # with no implementation and no gate while its task read CLOSED + implemented: the
+        # obligation was real, the checker said `open`, and the only place a human looks said
+        # done. Reported as its own state so it is triageable rather than hidden inside `open`
+        # or `gated`; every state it can replace is already non-satisfied, so the overall
+        # verdict and exit code are unchanged by this branch -- it renames, it does not excuse.
+        if state != "satisfied" and "closed_task" in issues:
+            reason = (
+                f"{reason}; accountable task {directive.task!r} is CLOSED, so nothing will "
+                f"surface this unmet obligation"
+            )
+            state = "unaccountable"
         base[directive.id] = DirectiveResult(
             id=directive.id,
             summary=directive.summary,
@@ -503,6 +549,7 @@ def _field(value: object) -> str:
 def _print_fields(report: Report) -> None:
     drift = [item.id for item in report.directives if item.state in DRIFT_STATES]
     gated = [item.id for item in report.directives if item.state == "gated"]
+    unaccountable = [item.id for item in report.directives if item.state == "unaccountable"]
     in_progress = report.counts.get("open", 0)
     if not drift:
         summary = (
@@ -520,6 +567,7 @@ def _print_fields(report: Report) -> None:
         "open": in_progress,
         "gated": len(gated),
         "needs_owner": report.counts.get("needs_owner", 0),
+        "unaccountable": len(unaccountable),
         "missing_task": report.counts.get("missing_task", 0),
         "not_landed": report.counts.get("not_landed", 0),
         "unverifiable": report.counts.get("unverifiable", 0),
