@@ -62,6 +62,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
+# One resolver for the TaskGraph, shared with every other ci-hub consumer.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
 
 SHA40 = re.compile(r"\b[0-9a-f]{40}\b")
 
@@ -224,8 +227,13 @@ WHERE EXISTS (
 )
 ORDER BY t.local_id
 """.strip()
+    try:
+        env = taskgraph_db.child_env(taskgraph_db.resolve())
+    except taskgraph_db.TaskGraphUnavailable as error:
+        raise RuntimeError(f"taskgraph query unavailable: {error}") from error
     proc = subprocess.run(
-        ["tg", "sql", sql], cwd=root, capture_output=True, text=True, check=False
+        ["tg", "sql", sql], cwd=root, capture_output=True, text=True, check=False,
+        env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"taskgraph query failed: {proc.stderr.strip()[:200]}")

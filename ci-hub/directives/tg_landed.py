@@ -49,6 +49,11 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path as _Path
+
+# One resolver for the TaskGraph, shared with every other ci-hub consumer.
+sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "lib"))
+import taskgraph_db  # noqa: E402
 from typing import Callable, Optional
 
 LANDED = "landed"
@@ -309,14 +314,26 @@ def derive(refs: TaskRefs, *, is_ancestor: Callable[[str], Optional[bool]],
 # ------------------------------------------------------------------ collectors
 
 
+class TaskGraphQueryFailed(RuntimeError):
+    """A `tg` query could not be run or bound. Never an empty result set."""
+
+
 def _run(args: list[str], cwd: Optional[str] = None) -> tuple[int, str]:
     try:
         environment = dict(os.environ)
         environment["GIT_NO_LAZY_FETCH"] = "1"
+        if args and args[0] == "tg":
+            environment = taskgraph_db.child_env(
+                taskgraph_db.resolve(), env=environment
+            )
         p = subprocess.run(
             args, cwd=cwd, capture_output=True, text=True, timeout=180,
             env=environment)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except taskgraph_db.TaskGraphUnavailable:
+        # Must escape the blanket handler below: collapsing this into (127, "")
+        # would discard the one diagnostic that says WHICH database was missing.
+        raise
     except Exception:
         return 127, ""
 
@@ -558,9 +575,17 @@ def load_tasks(tag: str = "implemented", limit: Optional[int] = None) -> list[Ta
          f"WHERE t.tags LIKE '%\"{tag}\"%' GROUP BY t.local_id")
     if limit:
         q += f" LIMIT {int(limit)}"
-    rc, out = _run(["tg", "sql", q])
+    try:
+        rc, out = _run(["tg", "sql", q])
+    except taskgraph_db.TaskGraphUnavailable as error:
+        raise TaskGraphQueryFailed(str(error)) from error
     if rc != 0:
-        return []
+        # Previously `return []`. An empty list is indistinguishable from "no
+        # tagged tasks exist", so a failed or unbound query read as a clean,
+        # empty population -- the fail-open this sweep exists to remove.
+        raise TaskGraphQueryFailed(
+            f"tg sql exited {rc} while listing tasks tagged for landing: {out.strip()[:200]}"
+        )
     tasks: list[TaskRefs] = []
     for line in out.splitlines():
         parts = line.split("|")
