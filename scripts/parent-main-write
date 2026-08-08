@@ -248,6 +248,79 @@ refuse_unauthored_reverts() {
   fi
 }
 
+# Adopt working-tree residue that is ALREADY byte-identical to the fetched target.
+#
+# THE FREEZE THIS EXISTS FOR (2026-08-08): the shared parent sat pinned while
+# origin/main advanced six commits, so `commit` refused for every agent -- the
+# fleet's only serialized landing path was shut, and the blockage belonged to
+# nobody. The cause was ~14 tracked paths and 2 untracked files left by agents
+# whose tasks had already CLOSED. Their bytes already matched origin/main.
+#
+# Git refuses the fast-forward anyway, because it compares the working tree
+# against the INDEX, not against the target: "local changes would be overwritten
+# by merge" and "untracked working tree files would be overwritten". Both are
+# true statements about the index and false statements about the content -- the
+# merge would not have changed a single byte on disk.
+#
+# So the distinction this turns on, the same one the reversion guard turns on:
+# a stale index entry for content that is ALREADY PUBLISHED is not somebody's
+# uncommitted work. Adopting it destroys nothing, because the bytes on both
+# sides are equal -- that equality is checked per path, and it is the ONLY thing
+# that authorizes the adoption.
+#
+# FAIL-CLOSED, ABSOLUTELY: a path whose bytes differ from the target is never
+# touched, never staged, and still blocks. This mirrors how `main-green` cleared
+# the freeze by hand -- it stopped on a genuinely different ai_docs file and
+# waited for its owner rather than reasoning past it.
+adopt_published_residue() {
+  local root=$1 target=$2
+  local path mode blob adopted=0 blockers="" plan=""
+  # TWO PASSES, DELIBERATELY. A single pass that stages as it goes leaves the
+  # index half-adopted when it later hits a blocker -- which is the very class of
+  # residue this function exists to remove, created by the thing removing it, on
+  # the failure path where nobody is looking. It also made the refusal message
+  # ("Nothing was staged or modified") a lie. Classify everything first; mutate
+  # only once the whole set is known to be safe.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    # Not present on disk: the merge simply creates or removes it.
+    if [ ! -e "$root/$path" ]; then continue; fi
+    # Absent from the target tree (a deletion): never adopt, let git decide.
+    if ! git -C "$root" cat-file -e "$target:$path" 2>/dev/null; then continue; fi
+    # Already matching the index: ordinary clean path, nothing to reconcile.
+    if git -C "$root" diff --quiet HEAD -- "$path" 2>/dev/null &&
+       git -C "$root" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      continue
+    fi
+    blob=$(git -C "$root" rev-parse "$target:$path" 2>/dev/null) || continue
+    # THE ONLY AUTHORIZATION: the bytes on disk are the published bytes.
+    if git -C "$root" hash-object -- "$root/$path" 2>/dev/null | grep -Fqx "$blob"; then
+      mode=$(git -C "$root" ls-tree "$target" -- "$path" | awk '{print $1}')
+      [ -n "$mode" ] || mode=100644
+      plan+="$mode,$blob,$path"$'\n'
+    else
+      blockers+="  $path"$'\n'
+    fi
+  done < <(git -C "$root" diff --name-only HEAD "$target" -- 2>/dev/null)
+
+  if [ -n "$blockers" ]; then
+    printf '%s' "$blockers" >&2
+    die "the paths above differ from BOTH your HEAD and $target, so they are real
+  uncommitted work, not published residue. Nothing was staged or modified.
+  Land them, or move them aside, then re-run sync."
+  fi
+
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    git -C "$root" update-index --add --cacheinfo "$entry" ||
+      die "cannot adopt published residue at ${entry##*,}"
+    adopted=$((adopted + 1))
+    echo "parent-main-write: adopted published residue (bytes identical to $target): ${entry##*,}" >&2
+  done <<<"$plan"
+  # Never a silent action: say how many entries moved, including none.
+  printf 'PARENT_MAIN_WRITE residue adopted=%s target=%s\n' "$adopted" "$target"
+}
+
 publish_sha() {
   local root=$1 source=$2 expected published
   expected=$HERMIT_PARENT_MAIN_EXPECT
@@ -301,6 +374,7 @@ case "$command" in
     fi
     git -C "$root" merge-base --is-ancestor "$head" "$HERMIT_PARENT_MAIN_EXPECT" ||
       die "local main diverges from fetched origin; reconcile without reset"
+    adopt_published_residue "$root" "$HERMIT_PARENT_MAIN_EXPECT"
     git -C "$root" merge --ff-only refs/remotes/origin/main
     printf 'PARENT_MAIN_WRITE sync old=%s new=%s fast-forward=1/1\n' \
       "$head" "$HERMIT_PARENT_MAIN_EXPECT"
