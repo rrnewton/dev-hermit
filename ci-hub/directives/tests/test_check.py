@@ -278,6 +278,8 @@ class ClosedTaskAccountabilityTest(unittest.TestCase):
         self.assertIn("CLOSED", item.reason)
         # It is drift: nobody is advancing it, because the record that would surface it is closed.
         self.assertIn(item.state, directive_check.DRIFT_STATES)
+        self.assertEqual(1, report.counts["unaccountable"])
+        self.assertEqual(0, report.counts.get("gated", 0))
         self.assertEqual(1, report.exit_code)
 
     def test_positive_unlanded_row_with_live_task_stays_open(self):
@@ -287,6 +289,22 @@ class ClosedTaskAccountabilityTest(unittest.TestCase):
         item = report.directives[0]
         self.assertEqual("open", item.state)
         self.assertNotIn("closed_task", item.issues)
+
+    def test_positive_named_gate_stays_gated_after_recording_task_closes(self):
+        row = directive(
+            "deferred",
+            identity=None,
+            task="t-closed",
+            gate="Hermit PR queue has drained",
+        )
+        report = self.evaluate([row], {"t-closed": "CLOSED"})
+
+        item = report.directives[0]
+        self.assertEqual("gated", item.state)
+        self.assertIn("closed_task", item.issues)
+        self.assertNotIn(item.state, directive_check.DRIFT_STATES)
+        self.assertEqual(1, report.counts["gated"])
+        self.assertEqual(0, report.counts.get("unaccountable", 0))
 
     def test_positive_landed_row_with_closed_task_stays_satisfied(self):
         # A closed task is the CORRECT end state once the directive has landed; the predicate

@@ -35,12 +35,14 @@ drift, so the signal does not cry wolf:
 - `open` — no implementation yet, but owned and carried by a resolvable task,
   i.e. actively in progress, not drift;
 - `gated` — no implementation yet and deliberately deferred on the named `gate`
-  condition, not drift;
+  condition, not drift. The gate is the durable obligation, so it remains
+  `gated` after the finite task that recorded the decision closes; the hourly
+  checker continues to surface the named condition until it is satisfied;
 - `unaccountable` — the row is NOT satisfied and its accountable TaskGraph task is
   `CLOSED`, so nothing will surface the unmet obligation (genuine drift). Task lookup
   tests existence, and a closed task exists; measured 2026-08-08, 3 of 21 rows sat in
-  this state. A closed task on a `satisfied` row is the correct end state and is not
-  flagged — the predicate keys on the pairing, not on closure;
+  this state. A closed task on a `satisfied` row or an explicitly `gated` row is
+  expected; the predicate keys on the pairing, not on closure;
 - `needs_owner` — no accountable owner recorded (genuine drift);
 - `missing_task` — no resolvable accountable task (genuine drift);
 - `not_landed` — claimed evidence is not an ancestor of fresh main (genuine

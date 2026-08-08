@@ -179,17 +179,17 @@
     },
     {
       "id": "dbi-to-dbt-rename",
-      "summary": "Rename DBI to DBT and factor the install path after the PR-count gate",
+      "summary": "Rename DBI to DBT and factor the install path after the PR queue drains",
       "requested_at": "2026-07-30",
       "repository": "rrnewton/hermit",
       "checkout": "hermit",
       "target": "main",
-      "task": "dbi-to-dbt-rename-and-install-path-factoring",
+      "task": "defer-dbi-to-dbt-rename-until-pr-queue-drains",
       "owner": "hermit-dbi",
       "source_row": "9",
       "parent_id": null,
       "implementation": null,
-      "gate": "zero open Hermit PRs: a repo-wide dbi->dbt rename conflicts with every in-flight feature branch, so it is deliberately deferred until the PR queue drains"
+      "gate": "Hermit PR queue has drained: a repo-wide dbi->dbt rename conflicts with every in-flight feature branch, so it is deliberately deferred until that condition holds"
     },
     {
       "id": "irq-aware-core-allocator",

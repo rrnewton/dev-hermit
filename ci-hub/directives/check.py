@@ -552,15 +552,15 @@ def evaluate(
             reason = f"gated on: {directive.gate}"
         elif implementation is None:
             state = "open"
-        # UNACCOUNTABLE: the row is not satisfied, yet its accountable task is CLOSED. Nothing
-        # else in this checker catches that, because task lookup used to test EXISTENCE only --
-        # and a closed task exists. This is the pairing that let `green-time-automatic-log` sit
-        # with no implementation and no gate while its task read CLOSED + implemented: the
-        # obligation was real, the checker said `open`, and the only place a human looks said
-        # done. Reported as its own state so it is triageable rather than hidden inside `open`
-        # or `gated`; every state it can replace is already non-satisfied, so the overall
-        # verdict and exit code are unchanged by this branch -- it renames, it does not excuse.
-        if state != "satisfied" and "closed_task" in issues:
+        # UNACCOUNTABLE: an ungated row is not satisfied, yet its accountable task is CLOSED.
+        # Nothing else catches that pairing, because task lookup tests existence and a closed
+        # task exists. A named external gate is different: the versioned gate condition is the
+        # durable obligation, and the hourly checker continues to surface it after the finite
+        # recording task closes. Demoting that explicit deferral to `unaccountable` makes it
+        # impossible to record a completed decision without filing an artificial forever-open
+        # task. Keep only explicitly named gates exempt; a closed task plus no implementation
+        # and no gate remains genuine drift.
+        if state not in {"satisfied", "gated"} and "closed_task" in issues:
             reason = (
                 f"{reason}; accountable task {directive.task!r} is CLOSED, so nothing will "
                 f"surface this unmet obligation"
