@@ -1612,7 +1612,22 @@ fn main() {
     }
 
     // Collision check against existing owner of the target slot.
+    //
+    // A RELEASED slot has no owner, even though its `agents` array is still
+    // populated. release-worktree.rs records the disposition in `status` and
+    // deliberately retains `agents` as the historical record of who held it --
+    // so reading `agents` alone reports an owner for a slot that was given up.
+    // That mismatch is not theoretical: it is why the `validate-rust` slot could
+    // not be rebound to a live agent after a release, and why 14 dead-owner
+    // slots stayed pinned against the 12-active cap with no way to reclaim them
+    // (quartermaster, 2026-08-08 -- "the tooling refused every attempt").
+    //
+    // Only `released` is treated as unowned. `owner-lease-revoked`,
+    // `releasing`, and anything else keep refusing: a revoked or half-finished
+    // release is NOT a clean handover, and guessing otherwise is exactly the
+    // failure this collision check exists to prevent.
     if let Some(existing) = state["slots"].get(&slot) {
+        let released = existing["status"].as_str() == Some("released");
         let owner = existing["agents"]
             .as_array()
             .and_then(|a| {
@@ -1622,12 +1637,18 @@ fn main() {
             .and_then(|x| x["name"].as_str())
             .map(|s| s.to_string());
         if let Some(owner) = owner {
-            if owner != agent && !read_mostly {
+            if owner != agent && !read_mostly && !released {
                 die(&format!(
                     "slot {slot} is owned by '{owner}'. Refusing collision.\n\
                      Use a different --slot, or pass --i-promise-this-agent-is-read-mostly \
                      to share read-only."
                 ));
+            }
+            if owner != agent && released {
+                println!(
+                    "slot {slot} was released by '{owner}'; re-allocating to '{agent}' \
+                     (status=released means the slot was given up, not that it is in use)."
+                );
             }
         }
     }
