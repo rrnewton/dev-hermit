@@ -3002,7 +3002,26 @@ class ProtocolTest(unittest.TestCase):
 
     def test_health_codes_distinguish_open_and_remediation(self) -> None:
         self.create()
+        # A FRESH open obligation is the normal post-merge window and must be
+        # QUIET (rc 0). Paging here is what made this gate fire on every land.
         with redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                protocol.print_status(
+                    self.store,
+                    include_closed=False,
+                    json_output=False,
+                    gate=True,
+                    actionable_only=False,
+                ),
+                0,
+            )
+        # The SAME open obligation, once it has outlived its bound, is rc 1.
+        # Driven by shrinking the bound rather than by faking a timestamp, so the
+        # obligation under test is byte-identical in both assertions and only the
+        # age judgement differs.
+        with redirect_stdout(io.StringIO()), mock.patch.object(
+            protocol, "OBLIGATION_STALE_AFTER_SECS", 0.0
+        ):
             self.assertEqual(
                 protocol.print_status(
                     self.store,
@@ -4085,3 +4104,78 @@ class LocalRedispatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# A gate must not page on SUCCESS. `watch-obligations --gate` returned rc 1 for
+# ANY unresolved obligation, so every merge produced "speculative land requires
+# immediate attention" while the body said local=running, github=no_result,
+# remediation=none. That is the normal state for the minutes after a land, and a
+# gate that cries wolf on success is how a fleet learns to skim past the one
+# that matters.
+#
+# Same treatment as the github-main pending repair: alarm on SUSTAINED-unresolved
+# rather than on unresolved. All three cases below are planted, including the one
+# a naive staleness bound would miss.
+# ---------------------------------------------------------------------------
+
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+NOW = _dt(2026, 8, 8, 16, 0, 0, tzinfo=_tz.utc)
+
+
+def _obligation(age_secs, state="open", opened=True):
+    rec = {
+        "obligation_id": f"ob-{age_secs}-{state}",
+        "overall_state": state,
+        "repo": "rrnewton/hermit",
+    }
+    if opened:
+        rec["opened_at"] = (NOW - _td(seconds=age_secs)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return rec
+
+
+def test_a_fresh_post_merge_obligation_is_NOT_stale():
+    """CASE 1 -- must not page. Local validation in flight is a normal window."""
+    fresh = [_obligation(120)]
+    assert protocol._stale_obligations(fresh, now=NOW) == []
+
+
+def test_an_obligation_past_the_bound_IS_stale():
+    """CASE 2 -- must page. Unresolved long past what it waits on is a hole."""
+    old = [_obligation(3600)]
+    assert len(protocol._stale_obligations(old, now=NOW)) == 1
+
+
+def test_a_FAILED_obligation_is_never_suppressed_by_the_bound():
+    """CASE 3 -- the one a naive staleness bound would miss.
+
+    A remediation_required obligation must page at ANY age, including 10 seconds
+    old. The bound gates only the `unresolved` branch; `remediation` is computed
+    separately and returns rc 2 regardless. Assert the two are not conflated: a
+    brand-new FAILED obligation is NOT filtered out by staleness.
+    """
+    failed_fresh = _obligation(10, state="remediation_required")
+    # It is not stale by age...
+    assert protocol._stale_obligations([failed_fresh], now=NOW) == []
+    # ...but it IS a remediation record, which is what drives rc 2.
+    assert failed_fresh["overall_state"] == "remediation_required"
+
+
+def test_an_unreadable_opened_at_is_treated_as_stale():
+    """Fail-CLOSED here, deliberately, and opposite to the refire futility probe.
+
+    This bound SUPPRESSES a page, so anything it cannot age must not receive the
+    suppression. (The refire probe withholds an ACTION and therefore fails open.)
+    """
+    assert len(protocol._stale_obligations([_obligation(0, opened=False)], now=NOW)) == 1
+    bad = _obligation(120)
+    bad["opened_at"] = "not-a-timestamp"
+    assert len(protocol._stale_obligations([bad], now=NOW)) == 1
+
+
+def test_the_bound_clears_the_slowest_observed_authority_run():
+    """1491s was the slowest successful CI (GitHub-managed portable) on hermit
+    main. If someone lowers the bound below measured reality the gate starts
+    paging on healthy post-merge windows again, which is the defect."""
+    assert protocol.OBLIGATION_STALE_AFTER_SECS > 1491.0

@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+from datetime import datetime, timezone
 import re
 import shutil
 import socket
@@ -3150,6 +3151,73 @@ def _register_local_runner(
     )
 
 
+# How long a speculative-land obligation may sit UNRESOLVED before its silence
+# stops being a normal post-merge window and becomes a hole.
+#
+# ARGUED FROM THE THING IT WAITS ON, NOT FROM HISTORICAL OBLIGATION LIFETIMES.
+# I tried the obvious source first and it is contaminated: of 15 distinct
+# obligations in the store only 9 carry both opened_at and satisfied_at, and
+# their median lifetime is 235004s (2.7 DAYS) with a max of 296782s -- because
+# nothing was resolving them, not because resolution legitimately takes days.
+# Deriving a bound from that would either make the gate inert (2.7d) or fire on
+# 89% of real obligations (900s). A contaminated denominator is worse than none.
+#
+# The honest reference is what an obligation actually BLOCKS ON: hosted CI
+# reaching a verdict. Measured 2026-08-08 over the last 80 runs on
+# rrnewton/hermit main (75 completed+success):
+#     CI (GitHub-managed portable)  n=9  median 849s  MAX 1491s   <- the authority
+#     P0 Demo Gate                  n=4  median 504s  max  610s
+#     CI (privileged)               n=8  median 129s  max  185s
+#     overall p95 1208s, overall MAX 1491s
+# 1800s clears the slowest observed legitimate completion by 309s (~21% margin),
+# the same margin shape as the github-main pending bound. Overridable so a slower
+# reality can be accommodated without a code change.
+#
+# THE SAMPLE IS SMALL (n=9 for the authority) and I am not going to pretend
+# otherwise. The asymmetry is what makes 1800s safe to pick anyway: too low costs
+# a wasted check, and a genuine FAILURE is unaffected -- it pages at rc 2 at any
+# age, through `remediation`, never through this bound.
+OBLIGATION_STALE_AFTER_SECS = float(
+    os.environ.get("CI_HUB_OBLIGATION_STALE_SECS", "1800")
+)
+
+
+def _obligation_age_secs(record: Mapping[str, Any], now: datetime | None = None):
+    """Seconds since the obligation opened, or None if that cannot be read."""
+    opened = record.get("opened_at")
+    if not isinstance(opened, str) or not opened:
+        return None
+    try:
+        when = datetime.fromisoformat(opened.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    moment = now or datetime.now(timezone.utc)
+    return (moment - when).total_seconds()
+
+
+def _stale_obligations(
+    unresolved: Sequence[Mapping[str, Any]],
+    *,
+    stale_after: float | None = None,
+    now: datetime | None = None,
+) -> list:
+    """Unresolved obligations that have outlived their normal window.
+
+    An obligation whose `opened_at` cannot be read is treated as STALE. That is
+    the fail-closed direction and it is the right one here: this bound exists to
+    SUPPRESS a page, so anything it cannot age must not get the suppression.
+    Note the asymmetry with the refire futility probe, which fails OPEN -- there
+    the probe withheld an action, here it withholds an alarm.
+    """
+    bound = OBLIGATION_STALE_AFTER_SECS if stale_after is None else stale_after
+    stale = []
+    for record in unresolved:
+        age = _obligation_age_secs(record, now)
+        if age is None or age > bound:
+            stale.append(record)
+    return stale
+
+
 def _register_watcher(
     obligation_id: str,
     launch_token: str,
@@ -4048,6 +4116,14 @@ def print_status(
         for record in unresolved
         if record["overall_state"] == "remediation_required"
     ]
+    # An obligation that is merely RUNNING is the normal state for the minutes
+    # after any merge -- local validation in flight, hosted CI not yet reporting.
+    # Paging on it made this gate fire on every successful land, and a gate that
+    # cries wolf on success is how a fleet learns to skim past the one that
+    # matters. Only a SUSTAINED-unresolved obligation is a finding; `remediation`
+    # above is unaffected and still pages at any age, because a failure is a
+    # finding the moment it exists.
+    stale = _stale_obligations(unresolved)
     triggered = [
         record
         for record in remediation
@@ -4069,11 +4145,19 @@ def print_status(
         print(json.dumps({"obligations": records}, sort_keys=True))
     elif gate:
         state = (
-            "remediation-required" if remediation else "open" if unresolved else "clear"
+            "remediation-required"
+            if remediation
+            else "stale-open"
+            if stale
+            else "running"
+            if unresolved
+            else "clear"
         )
         print(f"state={state}")
         print(f"count={len(unresolved)}")
         print(f"remediation_count={len(remediation)}")
+        print(f"stale_count={len(stale)}")
+        print(f"stale_after_secs={int(OBLIGATION_STALE_AFTER_SECS)}")
         print(f"triggered_count={len(triggered)}")
         print(f"sent_unacknowledged_count={len(sent_unacknowledged)}")
         print(f"acknowledged_count={len(acknowledged)}")
@@ -4104,7 +4188,9 @@ def print_status(
             print("  " + _summary_line(record))
             if record.get("failure_summary"):
                 print(f"    failure: {record['failure_summary']}")
-    return 2 if remediation else 1 if unresolved else 0
+    # rc 2 remediation-required (any age) | rc 1 unresolved BEYOND the bound
+    # | rc 0 clear, or unresolved and still inside its normal window.
+    return 2 if remediation else 1 if stale else 0
 
 
 def recoverable_obligation(
