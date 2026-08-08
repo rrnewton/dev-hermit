@@ -338,7 +338,56 @@ def pull_request_gate() -> int:
     return 1 if (unhealthy or degraded) else 0
 
 
-def primary_snapshot_gate() -> int:
+# How long the gitlink snapshot may keep losing races before it stops being a race
+# and starts being a stuck snapshot.
+#
+# WHY 60 MINUTES. The gate runs every 300s, so this is twelve consecutive failed
+# attempts. Parent main advanced five times in about twenty minutes on 2026-08-08,
+# so any single attempt frequently loses -- but losing twelve in a row is not luck,
+# it means something is holding the snapshot down. The other side of the choice is
+# the cost of waiting: the gitlink snapshot is a reproducibility record, not a
+# correctness gate, and nothing downstream reads it within the hour, so an hour of
+# staleness costs nothing while an hour of quiet buys the fleet freedom from a
+# permanently-firing alarm that would be muted within a day.
+#
+# The threshold is on TIME, not on a commit distance, because commit distance is
+# exactly the moving quantity that made this gate unsatisfiable. Being 30 commits
+# behind a main that thirteen agents are advancing is normal; being unable to
+# publish for an hour is not.
+SNAPSHOT_DEFERRAL_BUDGET_SECS = 3600
+SNAPSHOT_DEFERRAL_STATE = ROOT / ".tick-hub" / "primary-snapshot-deferral.json"
+
+
+def _read_deferral(path: Path) -> float | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    since = value.get("since") if isinstance(value, dict) else None
+    return float(since) if isinstance(since, (int, float)) else None
+
+
+def _write_deferral(path: Path, since: float | None) -> None:
+    try:
+        if since is None:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"since": since}) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        # Losing the deferral clock degrades this to the old "page on the first
+        # lost race" behaviour at worst; it must never take the tick down.
+        pass
+
+
+def primary_snapshot_gate(
+    *,
+    state_path: Path | None = None,
+    now: float | None = None,
+    budget_secs: int = SNAPSHOT_DEFERRAL_BUDGET_SECS,
+) -> int:
     output, errors = StringIO(), StringIO()
     result = primary_checkout.checkout_fresh(
         primary_checkout.default_root(),
@@ -347,14 +396,46 @@ def primary_snapshot_gate() -> int:
         out=output,
         err=errors,
     )
+    path = state_path or SNAPSHOT_DEFERRAL_STATE
+    moment = time.time() if now is None else now
     report = errors.getvalue().strip() or output.getvalue().strip()
-    _emit(
-        {
-            "state": "ok" if result == 0 else "blocked",
-            "summary": report or "primary-snapshot-produced-no-output",
-        }
-    )
-    return result
+
+    if result == primary_checkout.SNAPSHOT_DEFERRED:
+        since = _read_deferral(path)
+        if since is None:
+            since = moment
+            _write_deferral(path, since)
+        waited = max(0.0, moment - since)
+        if waited >= budget_secs:
+            _emit({
+                "state": "blocked",
+                "deferred_mins": round(waited / 60.0, 1),
+                "summary": (
+                    f"gitlink snapshot has been unpublishable for "
+                    f"{waited / 60.0:.0f} min (budget {budget_secs // 60} min); "
+                    "this is no longer a lost race. " + report
+                ),
+            })
+            return 1
+        _emit({
+            "state": "deferred",
+            "deferred_mins": round(waited / 60.0, 1),
+            "summary": (
+                f"snapshot due but not publishable this tick; deferred "
+                f"{waited / 60.0:.0f} of {budget_secs // 60} min budget. " + report
+            ),
+        })
+        return 0
+
+    # Any non-deferred outcome ends the deferral, including a hard block: a block
+    # is reported on its own terms and must not also inherit an aged clock.
+    _write_deferral(path, None)
+    _emit({
+        "state": "ok" if result == 0 else "blocked",
+        "deferred_mins": 0,
+        "summary": report or "primary-snapshot-produced-no-output",
+    })
+    return 0 if result == 0 else 1
 
 
 def queue_health_gate() -> int:

@@ -709,3 +709,96 @@ class CloseOnImplementedLifecycleTest(unittest.TestCase):
             any("+7 more" in d for d in detail),
             f"residue must be stated explicitly, got: {detail}",
         )
+
+
+class PrimarySnapshotDeferralTest(unittest.TestCase):
+    """Time the deferral instead of paging on the first lost race.
+
+    `primary_checkout` decides whether the snapshot CAN be published right now;
+    this layer is the only one that can tell a race from a stuck snapshot, because
+    only it persists across ticks. The threshold is on TIME, not on commit
+    distance -- commit distance is the moving quantity that made this gate
+    unsatisfiable in the first place.
+    """
+
+    def capture(self, **kwargs: object) -> tuple[int, str]:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = operational_health.primary_snapshot_gate(**kwargs)  # type: ignore[arg-type]
+        return int(result), output.getvalue()
+
+    @contextlib.contextmanager
+    def outcome(self, code: int):
+        with mock.patch.object(
+            operational_health.primary_checkout, "checkout_fresh", return_value=code
+        ):
+            yield
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.state = Path(self.temp.name) / "deferral.json"
+
+    # ---- NEGATIVE: a lost race must not page --------------------------------
+
+    def test_first_deferral_starts_the_clock_and_stays_quiet(self) -> None:
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            result, output = self.capture(state_path=self.state, now=1000.0)
+        self.assertEqual(result, 0)
+        self.assertIn("state=deferred", output)
+        self.assertIn("deferred_mins=0", output)
+        self.assertTrue(self.state.exists(), "the deferral clock was not persisted")
+
+    def test_deferral_inside_the_budget_still_does_not_page(self) -> None:
+        """59 minutes of losing races is still a race on a box this busy."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+            result, output = self.capture(state_path=self.state, now=1000.0 + 59 * 60)
+        self.assertEqual(result, 0)
+        self.assertIn("state=deferred", output)
+        self.assertIn("deferred_mins=59.0", output)
+
+    # ---- POSITIVE: a stuck snapshot must page -------------------------------
+
+    def test_deferral_past_the_budget_pages(self) -> None:
+        """Twelve consecutive lost ticks is not luck; something is holding it down."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+            result, output = self.capture(state_path=self.state, now=1000.0 + 61 * 60)
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+        self.assertIn("no longer a lost race", output)
+
+    def test_a_real_block_pages_immediately_without_waiting_out_the_budget(self) -> None:
+        """A dirty primary is not a moving reference and gets no grace period."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_BLOCKED):
+            result, output = self.capture(state_path=self.state, now=1000.0)
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+
+    # ---- the clock must be honest ------------------------------------------
+
+    def test_a_successful_publish_clears_the_clock(self) -> None:
+        """Otherwise an old deferral ages into a page after the problem is gone."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_PUBLISHED):
+            result, output = self.capture(state_path=self.state, now=1000.0 + 10 * 60)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertFalse(self.state.exists(), "the deferral clock survived a success")
+
+        # And a fresh deferral after that starts from zero, not from the old clock.
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            result, output = self.capture(state_path=self.state, now=1000.0 + 20 * 60)
+        self.assertEqual(result, 0)
+        self.assertIn("deferred_mins=0", output)
+
+    def test_a_hard_block_also_clears_the_clock(self) -> None:
+        """A block is reported on its own terms; it must not inherit an aged clock
+        and then page twice for two different reasons."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_BLOCKED):
+            self.capture(state_path=self.state, now=1000.0 + 5 * 60)
+        self.assertFalse(self.state.exists())
