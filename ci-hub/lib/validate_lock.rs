@@ -13,6 +13,7 @@
 use chrono::{Local, TimeZone};
 use clap::{Args, Subcommand, ValueEnum};
 use fs2::FileExt;
+use serde::Serialize;
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -141,6 +142,8 @@ pub enum ValidateLockCommand {
     Release(ReleaseArgs),
     /// Print holder metadata and the FIFO queue (with 1-based positions).
     Status,
+    /// Emit one guarded, machine-readable canonical lock-authority snapshot.
+    AuthorityStatus(AuthorityStatusArgs),
     /// Reclaim a lease only when its recorded owner process is proven dead.
     ReclaimDead,
     /// Census an UNCENSUSED payload domain post-hoc, after the supervisor died
@@ -149,6 +152,13 @@ pub enum ValidateLockCommand {
     /// Acquire and run with a heartbeat + child-deadline; release after complete
     /// cleanup proof, otherwise retain a quarantine.
     Run(RunArgs),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct AuthorityStatusArgs {
+    /// Emit the stable versioned JSON authority contract.
+    #[arg(long, required = true)]
+    pub json: bool,
 }
 
 /// Restated identity plus the one operator attestation that discharges an
@@ -455,6 +465,137 @@ enum OwnerLiveness {
     Unknown(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum AuthorityState {
+    Held,
+    Free,
+    Lapsed,
+    Orphaned,
+    Quarantined,
+    Indeterminate,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum AuthorityCleanupState {
+    None,
+    ActiveBound,
+    Armed,
+    Recoverable,
+    Uncensused,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum AuthorityOwnerLiveness {
+    Alive,
+    Dead,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct AuthorityHolder {
+    agent: String,
+    kind: String,
+    target: String,
+    host: String,
+    acquired_at: i64,
+    expires_at: i64,
+}
+
+impl From<&ValidateLockState> for AuthorityHolder {
+    fn from(holder: &ValidateLockState) -> Self {
+        Self {
+            agent: holder.agent.clone(),
+            kind: holder.kind.clone(),
+            target: holder.target.clone(),
+            host: holder.host.clone(),
+            acquired_at: holder.acquired_at,
+            expires_at: holder.expires_at,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct AuthorityOwner {
+    host: String,
+    boot_id: String,
+    pid: u32,
+    start_ticks: u64,
+    liveness: AuthorityOwnerLiveness,
+}
+
+impl AuthorityOwner {
+    fn from_process(owner: &ProcessOwner, liveness: AuthorityOwnerLiveness) -> Self {
+        Self {
+            host: owner.host.clone(),
+            boot_id: owner.boot_id.clone(),
+            pid: owner.pid,
+            start_ticks: owner.start_ticks,
+            liveness,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct AuthorityStatus {
+    schema_version: u32,
+    admissible: bool,
+    state: AuthorityState,
+    reason_code: Option<String>,
+    holder: Option<AuthorityHolder>,
+    owner: Option<AuthorityOwner>,
+    canonical_anchor_held: bool,
+    cleanup_state: AuthorityCleanupState,
+}
+
+impl AuthorityStatus {
+    fn refused(
+        state: AuthorityState,
+        reason_code: &str,
+        holder: Option<AuthorityHolder>,
+        owner: Option<AuthorityOwner>,
+        canonical_anchor_held: bool,
+        cleanup_state: AuthorityCleanupState,
+    ) -> Self {
+        Self {
+            schema_version: 1,
+            admissible: false,
+            state,
+            reason_code: Some(reason_code.to_string()),
+            holder,
+            owner,
+            canonical_anchor_held,
+            cleanup_state,
+        }
+    }
+
+    fn admitted(
+        holder: AuthorityHolder,
+        owner: AuthorityOwner,
+        cleanup_state: AuthorityCleanupState,
+    ) -> Self {
+        Self {
+            schema_version: 1,
+            admissible: true,
+            state: AuthorityState::Held,
+            reason_code: None,
+            holder: Some(holder),
+            owner: Some(owner),
+            canonical_anchor_held: true,
+            cleanup_state,
+        }
+    }
+}
+
+enum AuthorityRecord<T> {
+    Missing,
+    Present(T),
+    Malformed,
+}
+
 #[derive(Debug, Error)]
 pub enum ValidateLockError {
     #[error("validate-lock: {action} {path}: {source}")]
@@ -557,6 +698,15 @@ impl LockPaths {
         Self::at(lock)
     }
 
+    /// Resolve the authority query's production lock domain without consulting
+    /// any ambient override, including the test-build-only override retained by
+    /// mutating lock commands. Tests isolate snapshots by constructing
+    /// `ValidateLock { paths: paths_at(...) }` directly; the command surface is
+    /// deliberately incapable of selecting a different authority.
+    fn for_authority_query(root: &Path) -> Self {
+        Self::at(repository_lock_root(root).join(".validate-lock"))
+    }
+
     fn at(lock: PathBuf) -> Self {
         Self {
             guard: suffix(&lock, ".guard"),
@@ -635,6 +785,14 @@ pub fn execute(root: &Path, args: ValidateLockArgs) -> Result<i32, ValidateLockE
         }
         ValidateLockCommand::Status => {
             lock.status()?;
+            Ok(0)
+        }
+        ValidateLockCommand::AuthorityStatus(args) => {
+            debug_assert!(args.json, "clap requires --json");
+            ValidateLock {
+                paths: LockPaths::for_authority_query(root),
+            }
+            .print_authority_status()?;
             Ok(0)
         }
         ValidateLockCommand::ReclaimDead => lock.reclaim_dead(),
@@ -1263,6 +1421,279 @@ impl ValidateLock {
             }
         }
         Ok(())
+    }
+
+    fn print_authority_status(&self) -> Result<(), ValidateLockError> {
+        let status = self.with_guard(|| self.authority_status_guarded())?;
+        let json = serde_json::to_string(&status).map_err(|error| {
+            ValidateLockError::InvalidState(format!(
+                "cannot serialize canonical authority status: {error}"
+            ))
+        })?;
+        println!("{json}");
+        Ok(())
+    }
+
+    /// Return one coherent canonical authority snapshot while the lock-state
+    /// files are protected by `.validate-lock.guard`.
+    ///
+    /// Caller-provided owner PID/file variables are deliberately absent. The
+    /// holder and process identity are read exactly once from the canonical
+    /// main-worktree lock domain, and the uid-derived kernel anchor is sampled
+    /// on both sides so a changing anchor fails closed as indeterminate.
+    fn authority_status_guarded(&self) -> Result<AuthorityStatus, ValidateLockError> {
+        let anchor_before = canonical_anchor_held(&self.paths.anchor)?;
+        let now = epoch_seconds()?;
+        let current_host_name = current_host();
+        let holder_record = self.read_authority_holder()?;
+        let holder_ref = match &holder_record {
+            AuthorityRecord::Present(holder) => Some(holder),
+            AuthorityRecord::Missing | AuthorityRecord::Malformed => None,
+        };
+        let cleanup = self.cleanup_verification(holder_ref);
+        let owner_record = self.read_authority_owner()?;
+
+        let (cleanup_state, cleanup_refusal) = match cleanup {
+            CleanupVerification::None => (AuthorityCleanupState::None, None),
+            CleanupVerification::Active { record, .. } => match record.phase {
+                // Only the published, still-live payload is the normal run
+                // state. CensusPending means the receipt-producing child has
+                // already exited, while a live Residual is an escaped payload;
+                // neither may be laundered as current admission merely because
+                // both classify as `Active` for recovery purposes.
+                CleanupPhase::Published { .. } => (AuthorityCleanupState::ActiveBound, None),
+                CleanupPhase::CensusPending { .. } => (
+                    AuthorityCleanupState::ActiveBound,
+                    Some("canonical-cleanup-census-pending"),
+                ),
+                CleanupPhase::Residual { .. } => (
+                    AuthorityCleanupState::ActiveBound,
+                    Some("canonical-cleanup-residual-active"),
+                ),
+                CleanupPhase::Armed => (
+                    AuthorityCleanupState::Unknown,
+                    Some("canonical-cleanup-phase-inconsistent"),
+                ),
+            },
+            CleanupVerification::Armed { .. } => (
+                AuthorityCleanupState::Armed,
+                Some("canonical-cleanup-armed"),
+            ),
+            CleanupVerification::Recoverable { .. } => (
+                AuthorityCleanupState::Recoverable,
+                Some("canonical-cleanup-recoverable"),
+            ),
+            CleanupVerification::Uncensused { .. } => (
+                AuthorityCleanupState::Uncensused,
+                Some("canonical-cleanup-uncensused"),
+            ),
+            CleanupVerification::Unknown { .. } => (
+                AuthorityCleanupState::Unknown,
+                Some("canonical-cleanup-indeterminate"),
+            ),
+        };
+
+        let (owner, owner_refusal) = match &owner_record {
+            AuthorityRecord::Missing => (None, None),
+            AuthorityRecord::Malformed => (
+                None,
+                Some((AuthorityState::Indeterminate, "canonical-owner-malformed")),
+            ),
+            AuthorityRecord::Present(process_owner) => {
+                let (liveness, refusal) = if current_host_name == "unknown" {
+                    (
+                        AuthorityOwnerLiveness::Unknown,
+                        Some((
+                            AuthorityState::Indeterminate,
+                            "canonical-current-host-unavailable",
+                        )),
+                    )
+                } else if process_owner.host != current_host_name {
+                    (
+                        AuthorityOwnerLiveness::Unknown,
+                        Some((
+                            AuthorityState::Indeterminate,
+                            "canonical-owner-host-mismatch",
+                        )),
+                    )
+                } else {
+                    let boot_id = current_boot_id()?;
+                    if process_owner.boot_id != boot_id {
+                        (
+                            AuthorityOwnerLiveness::Dead,
+                            Some((AuthorityState::Orphaned, "canonical-owner-boot-id-mismatch")),
+                        )
+                    } else {
+                        match process_start_ticks(process_owner.pid) {
+                            Ok(observed) if observed == process_owner.start_ticks => {
+                                (AuthorityOwnerLiveness::Alive, None)
+                            }
+                            Ok(_) => (
+                                AuthorityOwnerLiveness::Dead,
+                                Some((
+                                    AuthorityState::Orphaned,
+                                    "canonical-owner-start-ticks-mismatch",
+                                )),
+                            ),
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => (
+                                AuthorityOwnerLiveness::Dead,
+                                Some((AuthorityState::Orphaned, "canonical-owner-pid-absent")),
+                            ),
+                            Err(_) => (
+                                AuthorityOwnerLiveness::Unknown,
+                                Some((
+                                    AuthorityState::Indeterminate,
+                                    "canonical-owner-liveness-indeterminate",
+                                )),
+                            ),
+                        }
+                    }
+                };
+                (
+                    Some(AuthorityOwner::from_process(process_owner, liveness)),
+                    refusal,
+                )
+            }
+        };
+
+        let anchor_after = canonical_anchor_held(&self.paths.anchor)?;
+        let canonical_anchor_held = anchor_before && anchor_after;
+        let holder = holder_ref.map(AuthorityHolder::from);
+
+        if anchor_before != anchor_after {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Indeterminate,
+                "canonical-anchor-raced",
+                holder,
+                owner,
+                false,
+                cleanup_state,
+            ));
+        }
+        if matches!(holder_record, AuthorityRecord::Malformed) {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Indeterminate,
+                "canonical-holder-malformed",
+                None,
+                owner,
+                canonical_anchor_held,
+                cleanup_state,
+            ));
+        }
+        if let Some(reason) = cleanup_refusal {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Quarantined,
+                reason,
+                holder,
+                owner,
+                canonical_anchor_held,
+                cleanup_state,
+            ));
+        }
+
+        let AuthorityRecord::Present(holder_record) = holder_record else {
+            if !matches!(owner_record, AuthorityRecord::Missing) {
+                return Ok(AuthorityStatus::refused(
+                    AuthorityState::Indeterminate,
+                    "canonical-owner-without-holder",
+                    None,
+                    owner,
+                    canonical_anchor_held,
+                    cleanup_state,
+                ));
+            }
+            let (state, reason) = if canonical_anchor_held {
+                (AuthorityState::Indeterminate, "canonical-holder-missing")
+            } else {
+                (AuthorityState::Free, "canonical-lock-not-held")
+            };
+            return Ok(AuthorityStatus::refused(
+                state,
+                reason,
+                None,
+                None,
+                canonical_anchor_held,
+                cleanup_state,
+            ));
+        };
+        let holder = AuthorityHolder::from(&holder_record);
+
+        if !holder_record.live_at(now) {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Lapsed,
+                "canonical-holder-lapsed",
+                Some(holder),
+                owner,
+                canonical_anchor_held,
+                cleanup_state,
+            ));
+        }
+        if !canonical_anchor_held {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Orphaned,
+                "canonical-anchor-not-held",
+                Some(holder),
+                owner,
+                false,
+                cleanup_state,
+            ));
+        }
+        if holder_record.kind != Kind::Validate.as_str() {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Held,
+                "canonical-holder-kind-not-validate",
+                Some(holder),
+                owner,
+                true,
+                cleanup_state,
+            ));
+        }
+        if current_host_name == "unknown" {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Indeterminate,
+                "canonical-current-host-unavailable",
+                Some(holder),
+                owner,
+                true,
+                cleanup_state,
+            ));
+        }
+        if holder_record.host != current_host_name {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Indeterminate,
+                "canonical-holder-host-mismatch",
+                Some(holder),
+                owner,
+                true,
+                cleanup_state,
+            ));
+        }
+        if matches!(owner_record, AuthorityRecord::Missing) {
+            return Ok(AuthorityStatus::refused(
+                AuthorityState::Indeterminate,
+                "canonical-owner-missing",
+                Some(holder),
+                None,
+                true,
+                cleanup_state,
+            ));
+        }
+        if let Some((state, reason)) = owner_refusal {
+            return Ok(AuthorityStatus::refused(
+                state,
+                reason,
+                Some(holder),
+                owner,
+                true,
+                cleanup_state,
+            ));
+        }
+        let owner = owner.ok_or_else(|| {
+            ValidateLockError::InvalidState(
+                "authority owner disappeared after canonical classification".into(),
+            )
+        })?;
+        Ok(AuthorityStatus::admitted(holder, owner, cleanup_state))
     }
 
     fn status(&self) -> Result<(), ValidateLockError> {
@@ -1941,12 +2372,42 @@ impl ValidateLock {
         Ok(Some(ValidateLockState::parse(&content)?))
     }
 
+    fn read_authority_holder(
+        &self,
+    ) -> Result<AuthorityRecord<ValidateLockState>, ValidateLockError> {
+        match self.read_holder() {
+            Ok(Some(holder)) => Ok(AuthorityRecord::Present(holder)),
+            Ok(None) => Ok(AuthorityRecord::Missing),
+            Err(ValidateLockError::InvalidState(_)) => Ok(AuthorityRecord::Malformed),
+            Err(ValidateLockError::Io { source, .. })
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(AuthorityRecord::Malformed)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn read_process_owner(&self) -> Result<Option<ProcessOwner>, ValidateLockError> {
         if !self.paths.owner.exists() {
             return Ok(None);
         }
         let content = read_to_string(&self.paths.owner)?;
         Ok(Some(ProcessOwner::parse(&content)?))
+    }
+
+    fn read_authority_owner(&self) -> Result<AuthorityRecord<ProcessOwner>, ValidateLockError> {
+        match self.read_process_owner() {
+            Ok(Some(owner)) => Ok(AuthorityRecord::Present(owner)),
+            Ok(None) => Ok(AuthorityRecord::Missing),
+            Err(ValidateLockError::InvalidState(_)) => Ok(AuthorityRecord::Malformed),
+            Err(ValidateLockError::Io { source, .. })
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(AuthorityRecord::Malformed)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn write_current_process_owner(&self) -> Result<(), ValidateLockError> {
@@ -2122,6 +2583,27 @@ fn current_boot_id() -> Result<String, ValidateLockError> {
     fs::read_to_string(path)
         .map(|value| value.trim().to_string())
         .map_err(|source| io_error("read", path, source))
+}
+
+/// Probe the uid-derived kernel anchor without creating it and without turning
+/// an I/O error into a false "free" verdict. Authority consumers need the
+/// fail-closed result; the older human/acquire probe intentionally remains best
+/// effort because it must not wedge the box on a diagnostic filesystem error.
+fn canonical_anchor_held(path: &Path) -> Result<bool, ValidateLockError> {
+    let file = match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => return Err(io_error("open canonical anchor", path, source)),
+    };
+    match file.try_lock_exclusive() {
+        Ok(()) => {
+            FileExt::unlock(&file)
+                .map_err(|source| io_error("unlock canonical anchor", path, source))?;
+            Ok(false)
+        }
+        Err(source) if source.kind() == io::ErrorKind::WouldBlock => Ok(true),
+        Err(source) => Err(io_error("probe canonical anchor", path, source)),
+    }
 }
 
 fn current_process_owner() -> Result<ProcessOwner, ValidateLockError> {
@@ -2465,6 +2947,7 @@ mod tests {
 
     const HARD_DEATH_ROOT_ENV: &str = "CI_HUB_VALIDATE_HARD_DEATH_ROOT";
     const HARD_DEATH_POINT_ENV: &str = "CI_HUB_VALIDATE_HARD_DEATH_POINT";
+    const AUTHORITY_STATUS_ROOT_ENV: &str = "CI_HUB_VALIDATE_AUTHORITY_STATUS_ROOT";
 
     fn paths_at(root: &Path) -> LockPaths {
         let lock = root.join(".validate-lock");
@@ -2489,6 +2972,395 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         paths_at(&root)
+    }
+
+    #[test]
+    fn forged_child_proof_cannot_manufacture_canonical_authority() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let paths = temp_paths("authority-forged-proof");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+
+        // This is the exact old trust boundary: a child could choose both the
+        // claimed supervisor PID and the sidecar path. Make the forgery as
+        // convincing as possible (a genuinely live identity), but keep it away
+        // from the canonical lock domain. The authority query must not read
+        // either environment variable or this caller-selected file.
+        let forged_owner = root.join("caller-selected.owner");
+        let owner = current_process_owner().unwrap();
+        write_truncated(&forged_owner, owner.render().as_bytes()).unwrap();
+        env::set_var(
+            "CI_HUB_VALIDATE_LOCK_OWNER_PID",
+            std::process::id().to_string(),
+        );
+        env::set_var("CI_HUB_VALIDATE_LOCK_OWNER_FILE", &forged_owner);
+
+        let status = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+
+        env::remove_var("CI_HUB_VALIDATE_LOCK_OWNER_PID");
+        env::remove_var("CI_HUB_VALIDATE_LOCK_OWNER_FILE");
+        assert_eq!(status.schema_version, 1);
+        assert!(!status.admissible);
+        assert_eq!(status.state, AuthorityState::Free);
+        assert_eq!(
+            status.reason_code.as_deref(),
+            Some("canonical-lock-not-held")
+        );
+        assert!(status.holder.is_none());
+        assert!(status.owner.is_none());
+        assert!(!status.canonical_anchor_held);
+        assert_eq!(status.cleanup_state, AuthorityCleanupState::None);
+
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["state"], "free");
+        assert_eq!(json["reason_code"], "canonical-lock-not-held");
+        assert_eq!(json["holder"], serde_json::Value::Null);
+        assert_eq!(json["owner"], serde_json::Value::Null);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn planted_live_authority(paths: &LockPaths) -> (ValidateLock, BoxExclusionAnchor) {
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let holder = new_holder("authority-test", Kind::Validate, HEX_SHA, 60, None).unwrap();
+        lock.write_holder(&holder).unwrap();
+        write_truncated(
+            &paths.owner,
+            current_process_owner().unwrap().render().as_bytes(),
+        )
+        .unwrap();
+        let anchor = BoxExclusionAnchor::take(&paths.anchor, 0)
+            .unwrap()
+            .expect("per-test canonical anchor must be available");
+        (lock, anchor)
+    }
+
+    #[test]
+    fn authority_refuses_boot_identity_mismatch() {
+        let paths = temp_paths("authority-boot-mismatch");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        let (lock, _anchor) = planted_live_authority(&paths);
+        let mut owner = current_process_owner().unwrap();
+        owner.boot_id = "forged-boot-id".into();
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+
+        let status = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+        assert!(!status.admissible);
+        assert_eq!(status.state, AuthorityState::Orphaned);
+        assert_eq!(
+            status.reason_code.as_deref(),
+            Some("canonical-owner-boot-id-mismatch")
+        );
+        assert_eq!(
+            status.owner.as_ref().map(|owner| owner.liveness),
+            Some(AuthorityOwnerLiveness::Dead)
+        );
+        assert!(status.canonical_anchor_held);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn authority_refuses_pid_start_identity_mismatch() {
+        let paths = temp_paths("authority-start-mismatch");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        let (lock, _anchor) = planted_live_authority(&paths);
+        let mut owner = current_process_owner().unwrap();
+        owner.start_ticks = owner.start_ticks.saturating_add(1);
+        write_truncated(&paths.owner, owner.render().as_bytes()).unwrap();
+
+        let status = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+        assert!(!status.admissible);
+        assert_eq!(status.state, AuthorityState::Orphaned);
+        assert_eq!(
+            status.reason_code.as_deref(),
+            Some("canonical-owner-start-ticks-mismatch")
+        );
+        assert_eq!(
+            status.owner.as_ref().map(|owner| owner.liveness),
+            Some(AuthorityOwnerLiveness::Dead)
+        );
+        assert!(status.canonical_anchor_held);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn authority_requires_anchor_live_validate_holder_and_owner() {
+        struct Case {
+            name: &'static str,
+            kind: Kind,
+            hold: u64,
+            take_anchor: bool,
+            write_owner: bool,
+            state: AuthorityState,
+            reason: &'static str,
+        }
+        for case in [
+            Case {
+                name: "no-anchor",
+                kind: Kind::Validate,
+                hold: 60,
+                take_anchor: false,
+                write_owner: true,
+                state: AuthorityState::Orphaned,
+                reason: "canonical-anchor-not-held",
+            },
+            Case {
+                name: "expired",
+                kind: Kind::Validate,
+                hold: 0,
+                take_anchor: true,
+                write_owner: true,
+                state: AuthorityState::Lapsed,
+                reason: "canonical-holder-lapsed",
+            },
+            Case {
+                name: "bench",
+                kind: Kind::Bench,
+                hold: 60,
+                take_anchor: true,
+                write_owner: true,
+                state: AuthorityState::Held,
+                reason: "canonical-holder-kind-not-validate",
+            },
+            Case {
+                name: "missing-owner",
+                kind: Kind::Validate,
+                hold: 60,
+                take_anchor: true,
+                write_owner: false,
+                state: AuthorityState::Indeterminate,
+                reason: "canonical-owner-missing",
+            },
+        ] {
+            let paths = temp_paths(&format!("authority-{}", case.name));
+            let root = paths.lock.parent().unwrap().to_path_buf();
+            let lock = ValidateLock {
+                paths: paths.clone(),
+            };
+            lock.write_holder(
+                &new_holder("authority-test", case.kind, HEX_SHA, case.hold, None).unwrap(),
+            )
+            .unwrap();
+            if case.write_owner {
+                write_truncated(
+                    &paths.owner,
+                    current_process_owner().unwrap().render().as_bytes(),
+                )
+                .unwrap();
+            }
+            let _anchor = case
+                .take_anchor
+                .then(|| BoxExclusionAnchor::take(&paths.anchor, 0).unwrap().unwrap());
+
+            let status = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+            assert!(!status.admissible, "case {} admitted", case.name);
+            assert_eq!(status.state, case.state, "case {} state", case.name);
+            assert_eq!(
+                status.reason_code.as_deref(),
+                Some(case.reason),
+                "case {} reason",
+                case.name
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn malformed_canonical_records_are_json_refusals_not_query_errors() {
+        for (name, malformed_holder, reason) in [
+            ("holder", true, "canonical-holder-malformed"),
+            ("owner", false, "canonical-owner-malformed"),
+        ] {
+            let paths = temp_paths(&format!("authority-malformed-{name}"));
+            let root = paths.lock.parent().unwrap().to_path_buf();
+            let lock = ValidateLock {
+                paths: paths.clone(),
+            };
+            if malformed_holder {
+                write_truncated(&paths.lock, b"not-a-holder\n").unwrap();
+            } else {
+                lock.write_holder(
+                    &new_holder("authority-test", Kind::Validate, HEX_SHA, 60, None).unwrap(),
+                )
+                .unwrap();
+                write_truncated(&paths.owner, b"not-an-owner\n").unwrap();
+            }
+            let _anchor = BoxExclusionAnchor::take(&paths.anchor, 0).unwrap().unwrap();
+            let status = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+            assert!(!status.admissible);
+            assert_eq!(status.state, AuthorityState::Indeterminate);
+            assert_eq!(status.reason_code.as_deref(), Some(reason));
+            serde_json::to_string(&status).expect("refusal must remain valid JSON");
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn authority_internal_anchor_io_error_is_not_a_json_refusal() {
+        let paths = temp_paths("authority-anchor-io-error");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        fs::create_dir(&paths.anchor).unwrap();
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        let error = lock
+            .with_guard(|| lock.authority_status_guarded())
+            .expect_err("an unreadable kernel anchor is an internal query error");
+        assert!(matches!(error, ValidateLockError::Io { .. }));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn active_cleanup_is_admissible_only_while_payload_is_published() {
+        for (name, phase, reason) in [
+            (
+                "census-pending",
+                CleanupPhase::CensusPending {
+                    leader: ProcessIdentity {
+                        pid: std::process::id(),
+                        start_ticks: process_start_ticks(std::process::id()).unwrap(),
+                    },
+                    pgid: u32::MAX,
+                },
+                "canonical-cleanup-census-pending",
+            ),
+            (
+                "residual",
+                CleanupPhase::Residual {
+                    pgid: u32::MAX,
+                    domain_complete: true,
+                    residuals: vec![ProcessIdentity {
+                        pid: std::process::id(),
+                        start_ticks: process_start_ticks(std::process::id()).unwrap(),
+                    }],
+                },
+                "canonical-cleanup-residual-active",
+            ),
+        ] {
+            let paths = temp_paths(&format!("authority-active-{name}"));
+            let root = paths.lock.parent().unwrap().to_path_buf();
+            let (lock, _anchor) = planted_live_authority(&paths);
+            let record =
+                CleanupRecord::new("authority-test", format!("validate:{HEX_SHA}"), phase).unwrap();
+            write_cleanup_record(&paths.cleanup, &record).unwrap();
+
+            let status = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+            assert!(!status.admissible, "active {name} admitted");
+            assert_eq!(status.state, AuthorityState::Quarantined);
+            assert_eq!(status.reason_code.as_deref(), Some(reason));
+            assert_eq!(status.cleanup_state, AuthorityCleanupState::ActiveBound);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn authority_command_constructor_ignores_all_ambient_lock_proofs() {
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let root = env::temp_dir().join(format!(
+            "ci-hub-authority-strict-constructor-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let redirected = root.join("attacker-selected-lock");
+        env::set_var(VALIDATE_LOCK_PATH_ENV, &redirected);
+        env::set_var("CI_HUB_VALIDATE_LOCK_OWNER_PID", "1");
+        env::set_var("CI_HUB_VALIDATE_LOCK_OWNER_FILE", &redirected);
+
+        let strict = LockPaths::for_authority_query(&root);
+
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        env::remove_var("CI_HUB_VALIDATE_LOCK_OWNER_PID");
+        env::remove_var("CI_HUB_VALIDATE_LOCK_OWNER_FILE");
+        assert_eq!(strict.lock, root.join(".validate-lock"));
+        assert_ne!(strict.lock, redirected);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn authority_status_child_helper() {
+        let Some(root) = env::var_os(AUTHORITY_STATUS_ROOT_ENV).map(PathBuf::from) else {
+            return;
+        };
+        let lock = ValidateLock {
+            paths: paths_at(&root),
+        };
+        let first = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+        let second = lock.with_guard(|| lock.authority_status_guarded()).unwrap();
+        for status in [&first, &second] {
+            assert!(
+                status.admissible,
+                "real run must be authoritative: {status:?}"
+            );
+            assert_eq!(status.state, AuthorityState::Held);
+            assert_eq!(status.reason_code, None);
+            assert_eq!(status.cleanup_state, AuthorityCleanupState::ActiveBound);
+            assert!(status.canonical_anchor_held);
+            assert_eq!(
+                status.holder.as_ref().map(|holder| holder.target.as_str()),
+                Some(HEX_SHA)
+            );
+            assert_eq!(
+                status.owner.as_ref().map(|owner| owner.liveness),
+                Some(AuthorityOwnerLiveness::Alive)
+            );
+            let json = serde_json::to_value(status).unwrap();
+            assert!(json["holder"]["acquired_at"].is_i64());
+            assert!(json["holder"]["expires_at"].is_i64());
+            assert!(json["owner"]["pid"].is_u64());
+            assert!(json["owner"]["start_ticks"].is_u64());
+        }
+        assert_eq!(first.holder, second.holder);
+        assert_eq!(first.owner, second.owner);
+    }
+
+    #[test]
+    fn real_validate_run_reports_same_live_authority_twice() {
+        let _domain_guard = crate::landing_lock::process_domain_test_guard();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("authority-admit", "#!/bin/sh\necho OK\nexit 0\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+
+        let paths = temp_paths("authority-real-run");
+        let root = paths.lock.parent().unwrap().to_path_buf();
+        let lock = ValidateLock {
+            paths: paths.clone(),
+        };
+        env::set_var(AUTHORITY_STATUS_ROOT_ENV, &root);
+        let code = lock
+            .run(
+                RunArgs {
+                    agent: "authority-real-run".into(),
+                    kind: Kind::Validate,
+                    target: HEX_SHA.into(),
+                    no_wait: false,
+                    wait: 0,
+                    hold: 30,
+                    child_deadline: 30,
+                    max: 1,
+                    skip_base_check: false,
+                    child: vec![
+                        env::current_exe().unwrap().into_os_string(),
+                        OsString::from("--exact"),
+                        OsString::from("validate_lock::tests::authority_status_child_helper"),
+                        OsString::from("--nocapture"),
+                        OsString::from("--test-threads=1"),
+                    ],
+                },
+                &root,
+            )
+            .unwrap();
+
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        env::remove_var(AUTHORITY_STATUS_ROOT_ENV);
+        let _ = fs::remove_file(&stub);
+        assert_eq!(code, 0);
+        assert!(lock.read_holder().unwrap().is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     // 1. Byte round-trip for the holder (kind+target) and a queue entry.
