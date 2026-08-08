@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import Sequence
 
 
-DEFAULT_DB = Path.home() / ".tg" / "hermit.db"
+# Phase 1 (2026-08-08): repointed off the predecessor's ``hermit.db``, which is
+# shut down and frozen, so this census reported a fixed 108 that could never
+# clear.  Named explicitly rather than through any ``hermit.db`` compatibility
+# symlink: a symlink would leave the wrong literal here, working by accident.
+# Phase 2 replaces this literal with the shared ci-hub TaskGraph resolver.
+DEFAULT_DB = Path.home() / ".tg" / "hermit2.db"
 CLASSES = (
     "ACTIONABLE",
     "BLOCKED",
