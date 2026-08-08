@@ -147,6 +147,11 @@ class StartUnitTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
+        self.original_host_tmp_root = start_unit.HOST_TMP_ROOT
+        # Most unit fixtures live below the host's real /tmp. Model a separate
+        # host-temp subtree so ordinary positive-path tests remain meaningful;
+        # the planted real-/tmp negative restores the production constant.
+        start_unit.HOST_TMP_ROOT = self.root / "modeled-host-tmp"
         self.checkout = self.root / "hermit"
         self.checkout.mkdir()
         (self.checkout / "validate.sh").write_text("#!/bin/sh\n")
@@ -155,6 +160,7 @@ class StartUnitTest(unittest.TestCase):
         self.environment = {"HOME": "/home/test", "PATH": "/usr/bin:/bin"}
 
     def tearDown(self) -> None:
+        start_unit.HOST_TMP_ROOT = self.original_host_tmp_root
         self.temporary.cleanup()
 
     def invoke(self, extra: list[str] | None = None) -> tuple[int, str, str]:
@@ -230,6 +236,69 @@ class StartUnitTest(unittest.TestCase):
         self.assertEqual(2, rc)
         self.assertIn("checkout is dirty", error)
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+
+    def test_real_host_tmp_source_is_refused_without_admission_or_ledger_write(self) -> None:
+        """Plant the production hazard: this fixture itself is below real /tmp."""
+        start_unit.HOST_TMP_ROOT = Path("/tmp").resolve()
+        ledger = self.root / "ignored/validate-run-ledger.jsonl"
+        record = self.root / "ignored/validate/runs/validate-test.json"
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("source checkout resolves beneath host /tmp", error)
+        self.assertIn("canonical non-/tmp dev-hermit parent", error)
+        self.assertFalse(any(command[:2] == ["mktemp", "-d"] for command in self.fake.commands))
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+        self.assertFalse(ledger.exists(), "refusal must not mutate the validation ledger")
+        self.assertFalse(record.exists(), "refusal must not create a service record")
+        self.assertFalse((self.root / "run.log").exists())
+
+    def test_canonical_non_tmp_parent_is_accepted_by_placement_guard(self) -> None:
+        canonical = self.root / "canonical-workspace" / "dev-hermit"
+
+        self.assertEqual(
+            canonical.resolve(),
+            start_unit.require_guest_visible_root(canonical, role="source checkout"),
+        )
+
+    def test_tmpfoo_sibling_is_not_mistaken_for_host_tmp(self) -> None:
+        start_unit.HOST_TMP_ROOT = Path("/tmp").resolve()
+        tmpfoo = start_unit.HOST_TMP_ROOT.with_name("tmpfoo") / "dev-hermit"
+
+        self.assertEqual(
+            tmpfoo.resolve(),
+            start_unit.require_guest_visible_root(tmpfoo, role="source checkout"),
+        )
+
+    def test_symlink_to_host_tmp_is_refused_after_canonicalization(self) -> None:
+        hidden = start_unit.HOST_TMP_ROOT / "hidden-hermit"
+        hidden.mkdir(parents=True)
+        (hidden / "validate.sh").write_text("#!/bin/sh\n")
+        checkout_link = self.root / "apparently-safe-checkout"
+        checkout_link.symlink_to(hidden, target_is_directory=True)
+        self.checkout = checkout_link
+        self.fake.checkout = hidden.resolve()
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn(str(hidden.resolve()), error)
+        self.assertFalse(self.fake.commands, "canonicalization refusal must precede git/admission")
+        self.assertFalse((self.root / "ignored/validate-run-ledger.jsonl").exists())
+
+    def test_fresh_parent_symlinked_into_host_tmp_is_refused_before_mktemp(self) -> None:
+        hidden_parent = start_unit.HOST_TMP_ROOT / "fresh-parent"
+        hidden_parent.mkdir(parents=True)
+        (self.root / "ignored").symlink_to(hidden_parent, target_is_directory=True)
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("fresh-checkout parent resolves beneath host /tmp", error)
+        self.assertFalse(any(command[:2] == ["mktemp", "-d"] for command in self.fake.commands))
+        self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
+        self.assertFalse((hidden_parent / "validate-run-ledger.jsonl").exists())
 
     def test_stale_head_is_refused_before_systemd_admission(self) -> None:
         self.fake.admission_rc = 2

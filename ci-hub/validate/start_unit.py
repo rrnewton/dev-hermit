@@ -21,10 +21,31 @@ import run_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
+HOST_TMP_ROOT = Path("/tmp").resolve()
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 UNIT_RE = re.compile(r"^validate-[A-Za-z0-9_.@:-]+$")
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 TERMINAL_STATES = frozenset(("failed", "inactive"))
+
+
+def require_guest_visible_root(path: Path, *, role: str) -> Path:
+    """Refuse a program root hidden by Hermit's isolated guest ``/tmp``.
+
+    Hermit deliberately replaces guest ``/tmp`` with an isolated directory.
+    A fresh validation checkout below host ``/tmp`` therefore builds valid
+    programs that Hermit then refuses to execute.  Resolve first so an
+    apparently safe symlink cannot bypass the placement check.
+    """
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(HOST_TMP_ROOT)
+    except ValueError:
+        return resolved
+    raise ValueError(
+        f"{role} resolves beneath host /tmp ({resolved}); Hermit isolates guest /tmp, "
+        "so programs built there are not guest-visible. Use the canonical non-/tmp "
+        "dev-hermit parent under your workspace root, or another non-/tmp checkout."
+    )
 
 
 def run_command(command: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -90,13 +111,17 @@ def prepare_fresh_checkout(
     tree is usable, and raises otherwise: an unusable temp checkout must abort
     the launch, never quietly become a fast green.
     """
-    fresh = Path(
-        checked_output(
-            ["mktemp", "-d", str(parent / "validate-fresh-XXXXXXXX")],
-            run=run,
-            purpose="cannot create temp checkout directory",
-        )
-    ).resolve()
+    parent = require_guest_visible_root(parent, role="fresh-checkout parent")
+    fresh = require_guest_visible_root(
+        Path(
+            checked_output(
+                ["mktemp", "-d", str(parent / "validate-fresh-XXXXXXXX")],
+                run=run,
+                purpose="cannot create temp checkout directory",
+            )
+        ),
+        role="fresh checkout",
+    )
     # A worktree, not a clone: it shares the source object store, so this costs
     # no object copy. It does register in the source repo, which is why the
     # caller removes it explicitly rather than just unlinking the directory.
@@ -225,7 +250,7 @@ def orphaned_receipt_locations(fresh: Path, *, run: Runner) -> list[str]:
 
 
 def validate_checkout(checkout: Path, target: str, *, run: Runner) -> Path:
-    checkout = checkout.resolve()
+    checkout = require_guest_visible_root(checkout, role="source checkout")
     if not SHA_RE.fullmatch(target):
         raise ValueError("--target must be an exact lowercase 40-hex commit SHA")
     if not (checkout / "validate.sh").is_file():
