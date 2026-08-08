@@ -207,3 +207,162 @@ def screen(candidates, use_annotations: bool = True):
         [v for v in verdicts if v.allowed],
         [v for v in verdicts if not v.allowed],
     )
+
+
+# ---------------------------------------------------------------------------
+# Operator entry point.
+#
+# The guard existed for a day with NO CALLER: correct, tested, never invoked --
+# the same shape as a lint that covers three of six backends. A wave is
+# assembled BY HAND (see `pr-landing-operations`, "Choose a landing shape"), so
+# the only place this can fire is an operator step run before staging. This CLI
+# is that step: give it the constituent list, get a nonzero exit if any of them
+# was closed on the merits.
+# ---------------------------------------------------------------------------
+
+REFUSE_EXIT = 3
+
+
+def _fetch(numbers, repo: str, gh_cmd: str, wrap: str = ""):
+    """Fetch state + last comment for each constituent via ONE GraphQL call.
+
+    One call, not one per PR: a wave is 20+ constituents and the operator is
+    holding the landing lock while this runs.
+
+    The query goes through a FILE (`-F query=@path`) rather than an inline
+    argument, so the composed command contains no quotes and survives being
+    handed to a wrapper as a single string. That matters because the egress
+    path on this box (`herdr-run --agent X "<command>"`) takes exactly one
+    command argument, and inline GraphQL was being torn apart by the shell.
+    """
+    import json
+    import shlex
+    import subprocess
+    import tempfile
+
+    fields = " ".join(
+        f"a{n}: pullRequest(number:{n}) {{ number state merged: mergedAt "
+        f"comments(last:1){{nodes{{body}}}} }}"
+        for n in numbers
+    )
+    owner, _, name = repo.partition("/")
+    query = f'query {{ repository(owner:"{owner}", name:"{name}") {{ {fields} }} }}'
+    with tempfile.NamedTemporaryFile("w", suffix=".graphql", delete=False) as handle:
+        handle.write(query)
+        query_path = handle.name
+    composed = f"{gh_cmd} api graphql -F query=@{query_path}"
+    argv = shlex.split(wrap) + [composed] if wrap else shlex.split(composed)
+    proc = subprocess.run(argv, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(
+            f"coalesce-guard: cannot reach GitHub: {proc.stderr.strip()[:400]}"
+        )
+    body = "\n".join(
+        l for l in proc.stdout.splitlines() if not l.startswith("[herdr-run]")
+    )
+    data = json.loads(body)["data"]["repository"]
+    out = []
+    for n in numbers:
+        rec = data.get(f"a{n}")
+        if rec is None:
+            # A number the operator typed that does not resolve is a REFUSAL,
+            # not a skip: silently dropping it would stage an unscreened change.
+            out.append(Candidate(number=n, state="CLOSED", close_comment=""))
+            continue
+        nodes = rec["comments"]["nodes"]
+        out.append(
+            Candidate(
+                number=rec["number"],
+                state=rec["state"],
+                merged=bool(rec.get("merged")),
+                close_comment=nodes[0]["body"] if nodes else "",
+            )
+        )
+    return out
+
+
+def main(argv=None) -> int:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(
+        prog="coalesce-guard",
+        description="Refuse to stage a coalesce wave containing a change whose PR "
+        "was closed ON THE MERITS. Run BEFORE building the staging branch.",
+    )
+    parser.add_argument(
+        "constituents",
+        nargs="*",
+        type=int,
+        help="PR numbers the wave would fold in",
+    )
+    parser.add_argument("--repo", default="rrnewton/hermit")
+    parser.add_argument(
+        "--gh-cmd",
+        default="gh",
+        help="how to invoke gh, e.g. 'with-proxy gh'",
+    )
+    parser.add_argument(
+        "--wrap",
+        default="",
+        help="wrapper that takes the whole gh command as ONE argument, e.g. "
+        "'herdr-run --agent <you>' for the sandbox egress path",
+    )
+    parser.add_argument(
+        "--from-json",
+        help="read pre-fetched records instead of calling GitHub; the offline "
+        "path used by the tests so the policy is provable without a network",
+    )
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    args = parser.parse_args(argv)
+
+    if args.from_json:
+        raw = json.loads(Path(args.from_json).read_text())
+        candidates = [
+            Candidate(
+                number=int(r["number"]),
+                state=r.get("state", "CLOSED"),
+                merged=bool(r.get("merged")),
+                close_comment=r.get("close_comment", ""),
+            )
+            for r in raw
+        ]
+    elif args.constituents:
+        candidates = _fetch(args.constituents, args.repo, args.gh_cmd, args.wrap)
+    else:
+        parser.error("give constituent PR numbers, or --from-json")
+
+    allowed, refused = screen(candidates)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "allowed": [{"pr": v.number, "why": v.reason} for v in allowed],
+                    "refused": [
+                        {"pr": v.number, "disposition": v.disposition.name,
+                         "why": v.reason}
+                        for v in refused
+                    ],
+                },
+                indent=2,
+            )
+        )
+    else:
+        for v in allowed:
+            print(f"  ALLOW  #{v.number}  {v.reason}")
+        for v in refused:
+            print(f"  REFUSE #{v.number}  [{v.disposition.name}] {v.reason}")
+        print(f"\n{len(allowed)} allowed, {len(refused)} refused")
+    if refused:
+        print(
+            "\ncoalesce-guard: REFUSING this wave. Drop the refused constituents and "
+            "re-run.\nAn UNKNOWN means the close is unannotated, not that it is safe: "
+            "read the\nclose, add a row to closed_pr_dispositions.tsv, and re-run. Do "
+            "not disable the\nguard to get past it.",
+        )
+        return REFUSE_EXIT
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

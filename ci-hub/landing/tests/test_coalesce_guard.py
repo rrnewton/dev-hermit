@@ -173,5 +173,46 @@ class AnnotationTest(unittest.TestCase):
         )
         self.assertIs(v.disposition, Disposition.REFUSE_MERITS)
 
+class OperatorStepTest(unittest.TestCase):
+    """The CLI is the wiring: a guard with no caller never fires.
+
+    Exercised end to end through main() with a whole WAVE, because the unit
+    tests prove the predicate and this proves the STEP -- the thing an operator
+    actually runs before staging.
+    """
+
+    def _wave(self, records):
+        import json, tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(records, fh)
+            return fh.name
+
+    SUPERSEDED_REC = {
+        "number": 1622, "state": "CLOSED",
+        "close_comment": "LANDED via coalesce batch-2 (PR #1633, squash "
+                         "mergeCommit b7f9c7131bc268a604c68edfd8d7cd6c42663ca1).",
+    }
+    OPEN_REC = {"number": 1477, "state": "OPEN"}
+    #: annotated MERITS: clamps PMU overshoot -- sacred-time blunting
+    MERITS_REC = {"number": 1469, "state": "CLOSED", "close_comment": "Closing."}
+
+    def test_a_wave_carrying_a_merits_close_is_REFUSED(self):
+        from coalesce_guard import main, REFUSE_EXIT
+        path = self._wave([self.SUPERSEDED_REC, self.OPEN_REC, self.MERITS_REC])
+        self.assertEqual(main(["--from-json", path]), REFUSE_EXIT)
+
+    def test_the_same_wave_without_it_is_ALLOWED(self):
+        # The direction that keeps the step usable. If dropping the one bad
+        # constituent did not clear it, operators would disable the guard.
+        from coalesce_guard import main
+        path = self._wave([self.SUPERSEDED_REC, self.OPEN_REC])
+        self.assertEqual(main(["--from-json", path]), 0)
+
+    def test_an_unresolvable_pr_number_refuses_rather_than_skips(self):
+        from coalesce_guard import main, REFUSE_EXIT
+        path = self._wave([{"number": 999999, "state": "CLOSED"}])
+        self.assertEqual(main(["--from-json", path]), REFUSE_EXIT)
+
+
 if __name__ == "__main__":
     unittest.main()
