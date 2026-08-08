@@ -1,0 +1,36 @@
+{
+  "question": "Do all six non-ptrace pairs share ONE divergence cause at COMMIT turn 2, fixable at once?",
+  "answer": "No single fix. The two named causes are BOTH real and BOTH correctly diagnosed by the task, but they are not the same kind of thing: KVM is a genuine, deterministic, fixable virtual-time accounting deficit (resources already identical); LiteInst depth 2 is a STRUCTURAL CEILING from injecting its own DSO, not a defect.",
+  "hermit_binary": "scratch/p4/bin/hermit",
+  "hermit_version": "hermit 0.2.0 (2026-08-07, g590fcc9eeb03)  CLEAN, == live main 590fcc9",
+  "hermit_primary_head": "f89c69766371806d3c9b2c3003531df2d59d6118",
+  "hermit_primary_dirty": true,
+  "target_main_for_rebaseline": "590fcc9ee (== landed hermit PR #1832)",
+  "recorded_baseline_measured_at": "7550600 (PR #1832 base)",
+  "metric": "Y = longest identical leading run of COMMIT-turn records; Z = golden ptrace COMMIT count; 0x hex normalised",
+  "env": "--base-env minimal; LD_LIBRARY_PATH=ignored/lu-parity/usr/lib64 (hermit own libunwind)",
+  "host": "shared devbig, 316 cores",
+  "controls": {
+    "golden_vs_self": "5/5",
+    "perturb_record_4": "3/5",
+    "perturb_record_1": "0/5",
+    "truncate_to_3": "3/5"
+  },
+  "rebaselined_at": "590fcc9eeb0339c5cf23f72b84394a63333e88ff",
+  "stale_build_superseded": "f89c69766 (18 commits behind; reverie pin 9470712a vs live 6144323c). KVM HUNG on that build (rc=124, 0 records) and RUNS on 590fcc9 (rc=0). The stale-baseline warning was load-bearing.",
+  "kvm_selfdeterminism": "3 runs of /bin/true byte-identical; ptrace control also identical",
+  "kvm_vtime_delta_ns_true": [
+    0,
+    0,
+    -34170,
+    -37250,
+    -216095
+  ],
+  "kvm_vtime_delta_stable_across_runs": true,
+  "liteinst_instrumentation_share": {
+    "true": "24 of 31",
+    "echo": "24 of 32",
+    "wcsimple": "24 of 33"
+  },
+  "caveat": "Reconstruction of the metric (ci-hub/parity/prefix_depth.sh has no liteinst/kvm arm), but measured on a CLEAN binary at exactly live main 590fcc9."
+}

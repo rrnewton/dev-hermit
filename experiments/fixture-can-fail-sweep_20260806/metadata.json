@@ -1,0 +1,34 @@
+{
+  "experiment": "fixture-can-fail-sweep",
+  "date": "2026-08-06",
+  "question": "For each landed backend-parity C fixture, does a planted violation of its contract change what its consumer observes?",
+  "repos": {
+    "dev-hermit": "branch research/fixture-can-fail-sweep",
+    "hermit": "f89c69766371806d3c9b2c3003531df2d59d6118"
+  },
+  "corpus": "hermit/tests/backend-parity/fixtures/*.c (75)",
+  "command": "python3 experiments/fixture-can-fail-sweep_20260806/can-fail-sweep.py",
+  "oracle": "manifest observation = {status:true, stdout:true, stderr:false}",
+  "run_under": "hermit run --backend ptrace --base-env minimal",
+  "mutation_operator": "negate the first contract check (hard-return, fail() helper, or ok++ shape)",
+  "seed": "n/a (fixture shape is not seed-dependent)",
+  "host": {
+    "hostname": "devbig014",
+    "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
+    "cores": 316
+  },
+  "toolchain": {
+    "cc": "cc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)"
+  },
+  "results": {
+    "CAN-FAIL": 71,
+    "caught_status_and_stdout": 40,
+    "caught_stdout_only": 31,
+    "OBSERVATION-ONLY": 4,
+    "CANNOT-FAIL": 0,
+    "manifest_entries": 78,
+    "entries_with_ci_true": 0,
+    "manifest_entries_naming_missing_fixture": 6,
+    "fixtures_with_no_manifest_entry": 3
+  }
+}

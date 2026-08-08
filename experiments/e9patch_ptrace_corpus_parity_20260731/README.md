@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-31
 **Task:** `e9patch-compat-ratchet-post-demo5`
-**Host:** devbig014.atn7.facebook.com, kernel 6.18.39, GCC 11.5.0, e9tool 1.0.1
+**Host:** devbig014, kernel 6.18.39, GCC 11.5.0, e9tool 1.0.1
 
 ## Question
 

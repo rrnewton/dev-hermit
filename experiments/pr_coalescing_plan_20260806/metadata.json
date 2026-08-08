@@ -2,7 +2,7 @@
   "question": "Group the staged artifacts into a small number of stacked per-topic PRs",
   "correction": "No staged work can become a PR: 106 unpushed commits are ALL in the parent (which uses shared main, not PRs) and there are ZERO unpushed product commits.",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "parent_unpushed_commits": 106,
   "parent_files": 527,
   "product_unpushed_commits": {"hermit": 0, "reverie": 0, "liteinst2": 0, "agent-utils": 0},

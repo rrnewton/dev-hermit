@@ -1,6 +1,6 @@
 # Hermit-wrapped Nix builder: execBuilder-seam prototype
 
-**Date:** 2026-07-29 **Host:** devbig014.atn7.facebook.com **Task:** `rb-nix-execbuilder-prototype`
+**Date:** 2026-07-29 **Host:** devbig014 **Task:** `rb-nix-execbuilder-prototype`
 (child of `epic-nix-reprobuild`). Follows `ai_docs/nix-reprobuild-ca-store-research_20260729.md`.
 
 ## Question

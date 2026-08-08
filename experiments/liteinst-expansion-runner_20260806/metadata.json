@@ -7,7 +7,7 @@
   "verdict": "NO. The expansion runner cannot have produced those rows, and LiteInst does not activate in ANY invocation context on this host.",
   "egress": "none (fully local)",
   "host": {
-    "fqdn": "devbig014.atn7.facebook.com",
+    "fqdn": "devbig014",
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "machine": "x86_64",
     "cpu": "AMD EPYC 9D85 158-Core Processor",

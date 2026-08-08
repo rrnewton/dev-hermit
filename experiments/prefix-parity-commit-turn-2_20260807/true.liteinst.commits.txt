@@ -1,0 +1,31 @@
+COMMIT turn 0, dettid 3 using resources {ParentContinue { parent: DetPid(3), child: DetPid(3) }: W}, on previously committed 1_767_225_600.000_000_000s
+COMMIT turn 1, dettid 3 using resources {MemAddrSpace(DetPid(3)): RW}, on previously committed 1_767_225_600.000_500_000s
+COMMIT turn 2, dettid 3 using resources {Path("/home/newton/work/dev-hermit/scratch/p4/bin/libreverie_liteinst.so"): R}, on previously committed 1_767_225_600.001_333_380s
+COMMIT turn 3, dettid 3 using resources {Path("/etc/ld.so.cache"): R}, on previously committed 1_767_225_600.001_955_500s
+COMMIT turn 4, dettid 3 using resources {Path("/lib64/libc.so.6"): R}, on previously committed 1_767_225_600.002_521_610s
+COMMIT turn 5, dettid 3 using resources {Path("/lib64/libgcc_s.so.1"): R}, on previously committed 1_767_225_600.003_184_720s
+COMMIT turn 6, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.004_314_390s
+COMMIT turn 7, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.004_967_840s
+COMMIT turn 8, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.005_823_270s
+COMMIT turn 9, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.006_611_650s
+COMMIT turn 10, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.007_489_500s
+COMMIT turn 11, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.008_362_770s
+COMMIT turn 12, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.009_154_980s
+COMMIT turn 13, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.010_050_590s
+COMMIT turn 14, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.010_918_710s
+COMMIT turn 15, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.011_717_280s
+COMMIT turn 16, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.012_626_820s
+COMMIT turn 17, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.013_505_780s
+COMMIT turn 18, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.014_310_440s
+COMMIT turn 19, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.015_237_980s
+COMMIT turn 20, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.016_145_560s
+COMMIT turn 21, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.016_966_800s
+COMMIT turn 22, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.017_914_840s
+COMMIT turn 23, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.018_840_150s
+COMMIT turn 24, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.019_667_830s
+COMMIT turn 25, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.020_620_280s
+COMMIT turn 26, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.021_555_530s
+COMMIT turn 27, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.022_388_420s
+COMMIT turn 28, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.023_360_910s
+COMMIT turn 29, dettid 3 using resources {Path("/proc/self/maps"): R}, on previously committed 1_767_225_600.024_307_190s
+COMMIT turn 30, dettid 3 using resources {Exit { group: true, process: DetPid(3), mm: MmId { creator: DetPid(3), generation: 1 } }: RW}, on previously committed 1_767_225_600.028_091_870s

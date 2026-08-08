@@ -1,0 +1,76 @@
+fixture,verdict,caught_by,clean_rc_hermit,clean_rc_native,mut_rc,mutated_contract_check,in_manifest,any_ci_true
+aio_refusal,CAN-FAIL,status+stdout,0,1,1,result == -1 && errno == ENOSYS,yes,no
+append_pwrite,CAN-FAIL,status+stdout,0,0,1,off < 0,yes,no
+bind_getsockname,CAN-FAIL,stdout-only,0,0,0,"bind(fd, (struct sockaddr *)&addr, addrlen) == 0",yes,no
+cachestat_refusal,CAN-FAIL,stdout-only,0,0,0,dir_fd >= 0,yes,no
+child_subreaper_refusal,CAN-FAIL,status+stdout,0,1,1,set_rc == -1 && errno == ENOSYS,yes,no
+close_range_fds,CAN-FAIL,status+stdout,0,0,1,fd < 0,yes,no
+copy_file_range_refusal,CAN-FAIL,status+stdout,0,0,1,"fstat(fd, &st) != 0",yes,no
+cpu_virtualization,CAN-FAIL,status+stdout,0,2,1,rc != 0,yes,no
+cpuid_probe,CAN-FAIL,status+stdout,0,1,1,"eax != UINT32_C(0x0000000d) || strcmp(vendor, ""GenuineIntel"") != 0",yes,no
+dup_shared_offset,CAN-FAIL,status+stdout,0,0,1,r < 0,yes,no
+epoll_pwait2_readiness,CAN-FAIL,status+stdout,0,0,1,efd < 0 || ep < 0,yes,no
+epoll_readiness,CAN-FAIL,stdout-only,0,0,0,ep >= 0 && ev >= 0,yes,no
+eventfd_probe,CAN-FAIL,status+stdout,0,0,1,counter_fd < 0,yes,no
+faccessat2_flags,CAN-FAIL,stdout-only,0,0,0,"faccessat2_call(AT_FDCWD, tmpl, F_OK, 0) == 0",yes,no
+fadvise_hints,CAN-FAIL,stdout-only,0,0,0,"posix_fadvise(fd, 0, 0, POSIX_FADV_NORMAL) == 0",yes,no
+fallocate_extents,CAN-FAIL,stdout-only,0,0,0,"fallocate(fd, 0, 0, 8192) == 0 && fd_size(fd) == 8192",yes,no
+fchmod_bits,CAN-FAIL,status+stdout,0,0,1,fd < 0,yes,no
+fchmodat2_flags,CAN-FAIL,status+stdout,0,0,1,!mkdtemp(dir),yes,no
+fd_duplication,CAN-FAIL,status+stdout,0,0,1,slot < 0,yes,no
+file_backed_mmap,CAN-FAIL,status+stdout,0,0,1,"fstat(fd, &st) != 0",yes,no
+flock_lifecycle,CAN-FAIL,stdout-only,0,0,0,"flock(fd, LOCK_EX) == 0",yes,no
+fsync_durability,CAN-FAIL,stdout-only,0,0,0,"write(fd, ""hello"", 5) == 5",yes,no
+ftruncate_sparse,CAN-FAIL,status+stdout,0,0,1,"fstat(fd, &st) != 0",yes,no
+getrusage_self_accounting,CAN-FAIL,stdout-only,0,0,0,rc == 0,yes,no
+inotify_watch,CAN-FAIL,stdout-only,0,0,0,fd >= 0,yes,no
+ioctl_fionread,CAN-FAIL,stdout-only,0,0,0,"ioctl(fds[0], FIONREAD, &navail) == 0",yes,no
+linkat_flags,CAN-FAIL,status+stdout,0,0,1,!mkdtemp(root),yes,no
+lseek_positioning,CAN-FAIL,status+stdout,0,0,1,r < 0,yes,no
+mce_kill_policy,CAN-FAIL,status+stdout,0,1,1,"prctl(PR_MCE_KILL, PR_MCE_KILL_SET, PR_MCE_KILL_EARLY, 0, 0) == -1 && ",yes,no
+memfd_create,CAN-FAIL,stdout-only,0,0,0,fd_cloexec(fd) == 1,yes,no
+mempolicy_default,CAN-FAIL,stdout-only,0,0,0,"get_mode(&mode, (void *)0, 0UL) == 0 && mode == MPOL_DEFAULT",yes,no
+mincore_residency,CAN-FAIL,status+stdout,0,0,1,m == MAP_FAILED,yes,no
+mkdir_rmdir,CAN-FAIL,status+stdout,0,0,1,mkdtemp(root) == NULL,yes,no
+mknod_special,CAN-FAIL,stdout-only,0,0,0,"mkfifo(fifo, 0640) == 0",yes,no
+msync_writeback,CAN-FAIL,stdout-only,0,0,0,"msync(map, 4096, MS_SYNC) == 0",yes,no
+name_to_handle,CAN-FAIL,status+stdout,0,1,1,result == -1 && errno == EOPNOTSUPP,yes,no
+openat_flags,CAN-FAIL,status+stdout,0,0,1,"fstat(fd, &st) != 0",yes,no
+path_file_ops,CAN-FAIL,status+stdout,0,0,1,"stat(path, &st) != 0",yes,no
+pidfd_open_self,CAN-FAIL,stdout-only,0,0,0,fd1 >= 0,yes,no
+pipe2_flags,CAN-FAIL,stdout-only,0,0,0,"pipe2(fds, 0) == 0 && fd_cloexec(fds[0]) == 0 && fd_cloexec(fds[1]) ==",yes,no
+pipe_ipc,CAN-FAIL,status+stdout,0,0,1,pipe(fds) != 0,yes,no
+poll_readiness,CAN-FAIL,status+stdout,0,0,1,rc < 0,yes,no
+prctl_pdeathsig,CAN-FAIL,status+stdout,0,0,1,"prctl(PR_SET_PDEATHSIG, SIGUSR1, 0, 0, 0) == 0",yes,no
+preadv2_flags,CAN-FAIL,stdout-only,0,0,0,"pwritev2(fd, &w0, 1, 0, 0) == (ssize_t)sizeof(c0)",yes,no
+pthread_lifecycle,CAN-FAIL,status+stdout,0,0,1,"pthread_create(&threads[index], NULL, thread_main, &values[index]) != ",yes,no
+readdir_entries,CAN-FAIL,stdout-only,0,0,0,created == 3 && n == 3,yes,no
+rename_ops,CAN-FAIL,status+stdout,0,0,1,mkdtemp(root) == NULL,yes,no
+renameat2_flags,CAN-FAIL,status+stdout,0,0,1,!mkdtemp(root),yes,no
+robust_list,CAN-FAIL,status+stdout,0,0,1,result == 0,yes,no
+seccomp_refusal,CAN-FAIL,status+stdout,0,1,1,"prctl(PR_GET_SECCOMP, 0, 0, 0, 0) == -1 && errno == ENOSYS",yes,no
+sendfile_copy,CAN-FAIL,status+stdout,0,0,1,fd < 0,yes,no
+set_tid_address,CAN-FAIL,stdout-only,0,0,0,r1 > 0,yes,no
+shutdown_socketpair,CAN-FAIL,stdout-only,0,0,0,"shutdown(sv[0], SHUT_RD) == 0",yes,no
+sigaction_state,CAN-FAIL,stdout-only,0,0,0,"sigaction(SIGUSR1, NULL, &old) == 0 && old.sa_handler == SIG_DFL",NO-ENTRY,no
+sigaltstack_state,CAN-FAIL,stdout-only,0,0,0,"sigaltstack(NULL, &old) == 0 && (old.ss_flags & SS_DISABLE)",NO-ENTRY,no
+signalfd_create,CAN-FAIL,stdout-only,0,0,0,"sigprocmask(SIG_BLOCK, &m1, NULL) == 0",yes,no
+sigprocmask_state,CAN-FAIL,stdout-only,0,0,0,"sigprocmask(SIG_SETMASK, &set, NULL) == 0",NO-ENTRY,no
+socket_options,CAN-FAIL,stdout-only,0,0,0,"roundtrip(sv[0], SO_REUSEADDR, 1)",yes,no
+socketpair_flags,CAN-FAIL,stdout-only,0,0,0,fd0 >= 0 && (fd0 & FD_CLOEXEC),yes,no
+sockname_unnamed,CAN-FAIL,stdout-only,0,0,0,"getsockname(sv[0], (struct sockaddr *)&addr, &len) == 0",yes,no
+statfs_free_determinism,CAN-FAIL,stdout-only,0,0,0,"statfs(""/"", &s) == 0",yes,no
+statx_metadata,CAN-FAIL,status+stdout,0,0,1,fd < 0,yes,no
+symlink_ops,CAN-FAIL,status+stdout,0,0,1,mkdtemp(root) == NULL,yes,no
+sync_file_range,CAN-FAIL,status+stdout,0,0,1,fd < 0,yes,no
+sysv_ipc_refusal,CAN-FAIL,status+stdout,0,1,1,sem == -1 && errno == ENOSYS,yes,no
+thp_disable,CAN-FAIL,status+stdout,0,0,1,"prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0) == 0",yes,no
+umask_mode,CAN-FAIL,stdout-only,0,0,0,fd_a >= 0,yes,no
+uname_identity,CAN-FAIL,stdout-only,0,0,0,uname(&u) == 0,yes,no
+utimensat_determinism,CAN-FAIL,status+stdout,0,0,1,!mkdtemp(dir),yes,no
+vectored_file_io,CAN-FAIL,status+stdout,0,0,1,fd < 0,yes,no
+vectored_io,CAN-FAIL,status+stdout,0,0,1,pipe(fds) != 0,yes,no
+kcmp_refusal,OBSERVATION-ONLY,,0,0,,no failure guard found (no `if (...)` leading to a nonzero return/exit,yes,no
+no_new_privs_refusal,OBSERVATION-ONLY,,0,0,,no failure guard found (no `if (...)` leading to a nonzero return/exit,yes,no
+openat2_refusal,OBSERVATION-ONLY,,0,0,,no failure guard found (no `if (...)` leading to a nonzero return/exit,yes,no
+pid_probe,OBSERVATION-ONLY,,0,0,,no failure guard found (no `if (...)` leading to a nonzero return/exit,yes,no

@@ -3,7 +3,7 @@ getpid	timestamp_utc	2026-07-26T15:12:10Z
 getpid	run_start_utc	2026-07-26T15:10:02Z
 getpid	run_start_load1_load5_load15	51.98 91.27 86.63
 getpid	metadata_load1_load5_load15	44.46 73.16 80.45
-getpid	hostname	devbig030.atn3.facebook.com
+getpid	hostname	devbig030
 getpid	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
 getpid	cpu_model	AMD EPYC 9D85 158-Core Processor
 getpid	logical_cpus	316
@@ -38,7 +38,7 @@ read-devnull	timestamp_utc	2026-07-26T15:14:25Z
 read-devnull	run_start_utc	2026-07-26T15:13:02Z
 read-devnull	run_start_load1_load5_load15	54.96 73.39 80.26
 read-devnull	metadata_load1_load5_load15	52.97 66.81 77.24
-read-devnull	hostname	devbig030.atn3.facebook.com
+read-devnull	hostname	devbig030
 read-devnull	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
 read-devnull	cpu_model	AMD EPYC 9D85 158-Core Processor
 read-devnull	logical_cpus	316
@@ -73,7 +73,7 @@ write-devnull	timestamp_utc	2026-07-26T15:18:56Z
 write-devnull	run_start_utc	2026-07-26T15:17:26Z
 write-devnull	run_start_load1_load5_load15	57.63 64.62 74.75
 write-devnull	metadata_load1_load5_load15	49.37 59.51 71.97
-write-devnull	hostname	devbig030.atn3.facebook.com
+write-devnull	hostname	devbig030
 write-devnull	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
 write-devnull	cpu_model	AMD EPYC 9D85 158-Core Processor
 write-devnull	logical_cpus	316
@@ -108,7 +108,7 @@ clock-gettime	timestamp_utc	2026-07-26T15:22:33Z
 clock-gettime	run_start_utc	2026-07-26T15:21:10Z
 clock-gettime	run_start_load1_load5_load15	31.84 49.02 66.40
 clock-gettime	metadata_load1_load5_load15	48.16 51.04 65.71
-clock-gettime	hostname	devbig030.atn3.facebook.com
+clock-gettime	hostname	devbig030
 clock-gettime	kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
 clock-gettime	cpu_model	AMD EPYC 9D85 158-Core Processor
 clock-gettime	logical_cpus	316

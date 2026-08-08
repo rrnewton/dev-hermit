@@ -12,7 +12,7 @@ from render import render_day
 class TranscriptSanitizationTest(unittest.TestCase):
     def test_internal_fqdns_become_short_names(self) -> None:
         text = (
-            "run on devbig014.atn7.facebook.com or devbig030.facebook.com "
+            "run on devbig014 or devbig030 "
             "and fetch from "
             "git.vip.facebook.com; keep developers.facebook.com and "
             "github.com unchanged"
@@ -28,7 +28,7 @@ class TranscriptSanitizationTest(unittest.TestCase):
             "date": "2026-08-01",
             "weekday": "Sat",
             "meta": {
-                "day_summary": "work moved to devbig030.atn3.facebook.com",
+                "day_summary": "work moved to devbig030",
                 "titles": {"main": "host migration"},
             },
             "turns": [
@@ -36,9 +36,9 @@ class TranscriptSanitizationTest(unittest.TestCase):
                     "thread_key": "main",
                     "first_ms": 1785556800000,
                     "channel": "Web",
-                    "prompt": "inspect devbig014.atn7.facebook.com",
+                    "prompt": "inspect devbig014",
                     "bucket": "paragraph",
-                    "summary": "Measured devbig014.atn7.facebook.com.",
+                    "summary": "Measured devbig014.",
                 }
             ],
         }

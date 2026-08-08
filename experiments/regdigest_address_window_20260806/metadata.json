@@ -1,7 +1,7 @@
 {
   "question": "Does the new register-file hash cover what it claims, and where does it silently not?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "subject": "hermit PR #1618 head f16d173b49654d3beaf0263eca43c04aab62e824 (branch codex/register-file-hashing-verify, NOT on origin/main)",
   "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",
   "dev_hermit_parent_head": "811265d81598fbf5b25ccd9f40c831e623d1fad9",

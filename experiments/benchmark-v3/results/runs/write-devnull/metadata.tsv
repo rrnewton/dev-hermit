@@ -3,7 +3,7 @@ timestamp_utc	2026-07-26T15:18:56Z
 run_start_utc	2026-07-26T15:17:26Z
 run_start_load1_load5_load15	57.63 64.62 74.75
 metadata_load1_load5_load15	49.37 59.51 71.97
-hostname	devbig030.atn3.facebook.com
+hostname	devbig030
 kernel	Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 #1 SMP Thu Dec 18 12:27:13 PST 2025 x86_64
 cpu_model	AMD EPYC 9D85 158-Core Processor
 logical_cpus	316

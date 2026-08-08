@@ -10,7 +10,7 @@
   "vendored_e9patch_revision": "6c2c03c1da74b14daf1788a9f8dccfa354ce04a6",
   "build_command": "make -C <fresh copy of reverie-e9patch/vendor/e9patch> --jobs=N release",
   "jobs_clamp": "NUM_JOBS clamped 1..16 by build.rs",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cores": 316,
   "toolchain": {"make": "GNU make", "compiler": "gcc/g++ 11 (x86-64-v2)", "ar": "present", "xxd": "/usr/bin/xxd"},
   "runs": {

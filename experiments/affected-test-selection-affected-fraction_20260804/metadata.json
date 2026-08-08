@@ -4,7 +4,7 @@
   "question": "Across a real recent window of hermit commits, what fraction of the CI suite does affected-test selection (ci/select-tests.rs, #1500/#1529) genuinely skip, and does it narrow for narrow commits while falling back to FULL for shared-code commits?",
   "hermit_sha": "8f656b4d8f0318a26994bd96b12af8b06bd36ebc",
   "parent_sha": "5cbd50904d97a3a886ad89e0e0945082b5faa2e3",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
   "tool": "ci/select-tests.rs (self-test 57/57 at 8f656b4d)",
   "N": 200,

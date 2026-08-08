@@ -1,7 +1,7 @@
 {
   "question": "Does rustc codegen (opt-level, codegen-units, LTO) affect the IN-GUEST liteinst syscall-handler hot path in a way it did NOT for the ptrace supervisor?",
   "date": "2026-08-04",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cores": 316,
   "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
   "hermit_sha": "02a47ef718b4fdb40378654d0dd75e4f4d773ae6",

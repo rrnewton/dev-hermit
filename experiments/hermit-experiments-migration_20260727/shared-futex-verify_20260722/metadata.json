@@ -7,7 +7,7 @@
   "implementation_sha": "b44d9396418c316abdbc38e9e41e5809da936c49",
   "dependency_sha": "d694cc4e2921bb5b69bfadfbb2c7aec25d07d540",
   "host": {
-    "name": "devbig030.atn3.facebook.com",
+    "name": "devbig030",
     "architecture": "x86_64",
     "kernel": "6.13.2-0_fbk13_hardened_0_g02230262e956"
   },

@@ -9,7 +9,7 @@
   "hermit_binary": "target/release/hermit (built 2026-07-27 09:56)",
   "backend": "ptrace",
   "redis": "redis-server v=6.2.22, jemalloc-5.1.0, build 5d43f02b8d896191",
-  "host": "devbig030.atn3.facebook.com",
+  "host": "devbig030",
   "nproc": 316,
   "question": "Is a real Redis server + client (TCP loopback network inside the container) deterministic under hermit run --strict --verify?",
   "workloads": {

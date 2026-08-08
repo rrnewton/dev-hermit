@@ -7,7 +7,7 @@
   "command": "cc -O2 -pthread -o rpc_ceiling_bench rpc_ceiling_bench.c && ./rpc_ceiling_bench 200000 20000 64",
   "params": { "iters": 200000, "warmup": 20000, "payload_bytes": 64, "K": 1 },
   "timing": "CLOCK_MONOTONIC per round-trip; medians + IQR over 200k samples",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cores": 316,
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "toolchain": "gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-15)",

@@ -48,7 +48,7 @@ doubly contaminated.
 
 ## Identity
 
-- Host: `devbig014.atn7.facebook.com`, AMD EPYC 9D85, 316 logical CPUs
+- Host: `devbig014`, AMD EPYC 9D85, 316 logical CPUs
 - Reverie: `bfea4d5aa7d662cacf21f41ff2df5b60925dff2d` (main; landed shootout
   `a9f25aa7` is an ancestor)
 - Harness: `reverie/benchmarks/counter2-shootout/run.py`, **release**, seed 1,

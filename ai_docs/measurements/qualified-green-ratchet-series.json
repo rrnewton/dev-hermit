@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "series": "qualified-green",
+  "description": "Ratchet series for qualified greens. Monotonic non-decreasing WITHIN a definition block only. A point in a new block starts that block's own floor and makes no claim against earlier blocks.",
+  "prose": "ai_docs/measurements/qualified-green-ratchet-series_20260807.md",
+  "definitions": {
+    "b7e92321308d83fb9c36d78b5d32823ff7ce2e91": {
+      "block": "D1",
+      "name": "qualified green",
+      "rule": "comparison_tier in {full-stdout-info-stack-heap, stdout-info-stack-heap-spot-check}",
+      "gate_blob": "ba8c1733f3bdb8a4e12269148d9c275864b0a91b",
+      "strictness": 1
+    },
+    "3825d05d6e957bad8e9d0d866d217a8204709d8c": {
+      "block": "D0",
+      "name": "raw pass",
+      "rule": "cell raw outcome == pass; stdout-only comparison; verify_compare=stripped",
+      "gate_blob": null,
+      "strictness": 0,
+      "superseded_by": "b7e92321308d83fb9c36d78b5d32823ff7ce2e91"
+    }
+  },
+  "points": [
+    {
+      "id": "D0.a",
+      "date": "2026-08-06",
+      "definition_sha": "3825d05d6e957bad8e9d0d866d217a8204709d8c",
+      "value": 794,
+      "measured": 794,
+      "total": 1025,
+      "population": "205 effective cells x 5 backends",
+      "note": "weaker definition; not comparable to D1"
+    },
+    {
+      "id": "D0.b",
+      "date": "2026-08-07",
+      "definition_sha": "3825d05d6e957bad8e9d0d866d217a8204709d8c",
+      "value": 1837,
+      "measured": 1837,
+      "total": 2284,
+      "population": "200 tests x 6 backends, plus scorecard/e9patch/reverie",
+      "note": "same definition as D0.a but a DIFFERENT population; shares a block, not a trend line"
+    },
+    {
+      "id": "D1.0",
+      "date": "2026-08-07",
+      "definition_sha": "b7e92321308d83fb9c36d78b5d32823ff7ce2e91",
+      "value": 0,
+      "measured": 0,
+      "total": 2284,
+      "executed": 2184,
+      "no_result": 100,
+      "population": "200 tests x 6 backends, plus scorecard/e9patch/reverie",
+      "note": "FLOOR. All 2284 rows are comparison_tier=legacy-unqualified.",
+      "rebaseline": true,
+      "rebaseline_reason": "definition tightened from raw-pass to qualified-green; 1837 -> 0 is a definition change, not a regression"
+    }
+  ]
+}

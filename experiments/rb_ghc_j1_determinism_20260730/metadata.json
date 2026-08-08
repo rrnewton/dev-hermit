@@ -4,7 +4,7 @@
   "agent": "impl, opus-4.8",
   "question": "Is `ghc --make -j1` bitwise-reproducible under hermit --strict (3 runs) and relaxed? Does the -C RTS ticker still cause nondeterminism at -j1, or is -j1 clean by default (no +RTS -C0, no timerfd fix)?",
   "motivation": "hermit sequentializes threads (zero parallelism benefit), so -j8 under hermit only wastes memory + context switches. The realistic actionable target is -j1. Confirm whether -j1 already reproduces before investing in ticker determinization for -j8.",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "container": "ghcbw (haskell:9.8.4)",
   "ghc_version": "9.8.4",

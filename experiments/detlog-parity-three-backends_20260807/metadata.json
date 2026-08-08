@@ -16,5 +16,5 @@
   },
   "cross_backend_whole_stream_parity": "0 of 3 pairs identical",
   "source": "raw/dl-*.d, copied from gitignored scratch/w27-tsc/ to make the evidence durable",
-  "host": "devbig014.atn7.facebook.com"
+  "host": "devbig014"
 }

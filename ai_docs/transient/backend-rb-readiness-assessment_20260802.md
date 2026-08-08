@@ -81,7 +81,7 @@ source. "Perf vs ptrace" is the runtime-overhead posture.
   compute-heavy (parsing/codegen), so the net wall-clock on a real build is
   **not a guaranteed win** — it must be *measured*, not assumed.
 - **RB-relevant leak to close first:** the **uname nodename host-FQDN leak** —
-  DBI reports `devbig014.atn7.facebook.com` vs ptrace `hermetic-container.local`
+  DBI reports `devbig014` vs ptrace `hermetic-container.local`
   (`detcore/src/syscalls/misc.rs:592`, nodename rewrite gated on
   `!has_uts_namespace`; DBI reports `has_uts_namespace=true` but never sets the
   UTS hostname). If a build embeds the hostname (common in `config.h`/build

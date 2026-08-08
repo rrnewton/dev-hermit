@@ -36,7 +36,7 @@ Inputs:
 - GCC 11.5.0, GNU Make 4.3, GNU tar 1.35.
 - zlib 1.3.1 release archive SHA-256
   `9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23`.
-- Host `devbig014.atn7.facebook.com`, AMD EPYC 9D85, Linux
+- Host `devbig014`, AMD EPYC 9D85, Linux
   `6.18.39-0_fbk0_hardened_0_ga43d5727b443`.
 
 | Mode | Independent samples | Wall time (ms) | Result |

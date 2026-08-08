@@ -4,7 +4,7 @@
   "hermit_sha": "967abd99bdc453e9ab9b6f118faaf5f9195bd12b",
   "hermit_branch": "codex/compat-deep-app-postgres",
   "postgres_version": "PostgreSQL 13.23 (/usr/bin)",
-  "host": "devbig030.atn3.facebook.com",
+  "host": "devbig030",
   "hermit_binary": "target/release/hermit",
   "task": "compat-deep-app-postgres"
 }

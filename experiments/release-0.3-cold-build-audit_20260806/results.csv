@@ -1,0 +1,10 @@
+step,command,rc,wall_s,cpu_user_s,cpu_sys_s,maxrss_kb,warnings,notes
+clone,git clone https://github.com/rrnewton/hermit.git,0,1.72,2.02,0.35,22924,,not shallow; pack 18.76 MiB
+submodule_init,git submodule update --init --recursive,0,5.22,4.26,0.97,15216,,agent-utils a6f4232f + third-party/rr 39e5c18e
+build_default,cargo build --locked -p hermit,0,51.08,184.44,40.20,1439024,0,202 crates Downloaded / 217 Compiling; COLD CARGO_HOME
+build_thirdparty,cargo build --locked -p hermit --features third-party-backends,0,34.58,123.48,22.54,1368036,0,incremental on build_default deps; NOT independently cold
+run_strict,hermit run --strict -- /bin/echo,0,,,,,,guest output correct; no env fixups
+run_strict_verify,hermit run --strict --verify -- /bin/echo,0,,,,,,588 | 588 DETLOG compared; deterministic
+backend_dbi_refused,hermit run --backend dbi,1,,,,,,"backend `dbi` is unavailable: DBI support was not included in this build"
+backend_sabre_refused,hermit run --backend sabre,1,,,,,,"backend `sabre` is unavailable"
+backend_e9patch_refused,hermit run --backend e9patch,1,,,,,,"backend `e9patch` is unavailable"

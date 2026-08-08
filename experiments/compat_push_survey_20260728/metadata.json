@@ -13,7 +13,7 @@
   "host": {
     "kernel": "6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79",
     "arch": "x86_64",
-    "hostname": "devbig030.atn3.facebook.com"
+    "hostname": "devbig030"
   },
   "programs_tested": 50,
   "result": "near-all PASS at L2; all failures map to known hard issues",

@@ -194,12 +194,16 @@ Task closure is a separate, fail-closed consumer of that verifier:
 ./ci-hub/bin/close-task TASK --code PR_OR_FULL_SHA --repo OWNER/REPO --source CHECKOUT
 ./ci-hub/bin/close-task TASK --artifact ai_docs/path.md
 ./ci-hub/bin/close-task TASK --run-id GITHUB_RUN_ID --repo OWNER/REPO
+./ci-hub/bin/close-task TASK --observation-command JSON_ARGV --observation-output TEXT
 ```
 
 The gateway records `CLOSURE-VERIFIED` on the task before changing its status.
 It closes only a landed code reference, a URL that resolves, a local artifact
 tracked on freshly fetched parent `main`, or a GitHub Actions run ID that
-resolves. Local artifact evidence is recorded as the typed tuple
+resolves. Machine-local operational evidence is a classified read-only command
+whose freshly reproduced, non-empty output exactly matches the quoted output;
+the closure note carries both as canonical JSON. Local artifact evidence is
+recorded as the typed tuple
 `rrnewton/dev-hermit:path@last-content-commit;target=main@tip`; the gateway
 verifies that content commit is ancestral to the fetched target. This proves
 publication, not that the artifact answers the task's goal, which the

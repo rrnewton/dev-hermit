@@ -1,7 +1,7 @@
 {
   "question": "Do the boxing/enforcement artifacts actually fire -- is a breach killed, not limited on paper?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "runner": "agent-utils/common/bin/safe-ci-dag-runner v0.11.0, engine resolves to PYTHON",
   "agent_utils_pin": "570e78655e4cbfd398748b278252bfbaf4cc5930",
