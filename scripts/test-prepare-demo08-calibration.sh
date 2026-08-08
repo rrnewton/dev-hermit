@@ -1,5 +1,37 @@
 #!/usr/bin/env bash
-# Bracket Demo 8 calibration accounting with no-engagement and real-ASAN-UAF fixtures.
+# Bracket Demo 8 crash-seed calibration against the CURRENT producer.
+#
+# WHAT THIS PROVES, and why each bracket exists:
+#   1. The producer distinguishes "the guest never ran" from "the guest ran and
+#      found no UAF". Those are the two failures the pre-6c7c099 message
+#      conflated, and reporting the second as the first is what kept #1877
+#      undiagnosed for five hours. Each message must EXCLUDE the other's text,
+#      not merely contain its own -- a zero that could be either is the defect.
+#   2. A planted report is actually detected, so a clean sweep is a measurement
+#      rather than an inert pass.
+#   3. A cached crash seed is bound to the fixture identity it was calibrated
+#      against, and one that is not is refused rather than reused (#1877).
+#
+# HISTORY, so the next reader does not repeat it. This file used to drive a
+# `DEMO08_TEST_MODE` / `DEMO08_CALIBRATION_RUNNER` interface and grep for
+# "path engagement N/M", "NO-RESULT", per-seed `calibration.tsv` rows and
+# retained `calibration-cold-seed-*.out` files. Producer commit 3814141
+# introduced that vocabulary at 00:55Z; this test landed against it at 01:29Z;
+# producer commit 6c7c099 REIMPLEMENTED the same guarantee at 05:06Z as the
+# `executed`/`attempted` counters and changed every string. The consumer was
+# never updated, so it asserted a contract with zero implementation -- and the
+# gate that would have caught that (nightly-demo-sweep.yml) had zero terminal
+# outcomes in its last 40 runs, so it sat green-by-absence for ~18 hours.
+# The assertions below are written against strings the producer actually emits.
+#
+# WHAT WAS DROPPED AND NOT REPLACED, stated rather than smuggled: 6c7c099 kept
+# the VERDICT and dropped the PER-SEED EVIDENCE (a `calibration.tsv` classifying
+# every seed reached/did-not-reach, and retained per-seed output). That is a real
+# capability regression -- the 2026-08-07 demo08 investigation wanted exactly
+# that data and rebuilt it by hand in
+# experiments/demo08-crash-seed-calibration_20260807/. Re-adding it is a
+# deliberate decision about the producer, filed separately; it is NOT something
+# to slip back in under a test fix.
 
 set -euo pipefail
 
@@ -8,6 +40,22 @@ PREP="$ROOT/scripts/prepare-demo08-assets.sh"
 TMP="$(mktemp -d -t demo08-calibration-test.XXXXXX)"
 trap 'rm -rf -- "$TMP"' EXIT
 
+# PRECONDITION, LOUD RATHER THAN SKIPPED. The producer's preflight demands this
+# whole set before it reaches any logic below, so a missing one aborts every
+# bracket. Refuse by name: a check that quietly does not run is the exact defect
+# this suite exists to refuse, and "skipped" and "passed" must never look alike.
+missing=()
+for command in autoconf automake file git make mkfs.ext4 patch pkg-config \
+  sha256sum truncate; do
+  command -v "$command" >/dev/null 2>&1 || missing+=("$command")
+done
+if [ "${#missing[@]}" -ne 0 ]; then
+  echo "REFUSED: prepare-demo08-assets.sh requires tools absent here: ${missing[*]}" >&2
+  echo "  Every bracket below would abort in the producer's preflight, so this" >&2
+  echo "  run can prove nothing. Install them or run this on the demo-sweep runner." >&2
+  exit 1
+fi
+
 make_assets() {
   local assets="$1"
   mkdir -p "$assets/buggy" "$assets/fixed"
@@ -15,167 +63,143 @@ make_assets() {
   printf '#!/usr/bin/env bash\nexit 0\n' >"$assets/fixed/btrfs-convert"
   chmod +x "$assets/buggy/btrfs-convert" "$assets/fixed/btrfs-convert"
   : >"$assets/pop-tiny.img"
+  # Matching the stamp is what selects the producer's CACHED branch, so these
+  # brackets exercise calibration without a btrfs-progs clone and build.
   printf '%s\n' \
     'prep=1 btrfs=4ab0e80be9e3bb1db2e6038e6d4316d35fb7ba8b' \
     >"$assets/.nightly-prep-version"
 }
 
-cat >"$TMP/planted-uaf.c" <<'EOF'
-#include <stdint.h>
-#include <stdlib.h>
+fixture_sha() { sha256sum "$1/buggy/btrfs-convert" | cut -d' ' -f1; }
 
-int main(void) {
-  volatile uint8_t *value = malloc(1);
-  if (value == NULL)
-    return 2;
-  *value = 7;
-  free((void *)value);
-  return *value;
+# THE SEAM. The producer invokes `$HERMIT_RELEASE ... -- <fixture> <image>` once
+# per seed and classifies the seed on (exit status, output emptiness), so a stub
+# here drives every calibration outcome with no Hermit build, no ASAN toolchain
+# and no btrfs fixture. This is the producer's real env hook, not a test-only
+# branch compiled into it -- there is no `if TEST_MODE` path to diverge from
+# production behaviour.
+make_hermit() {
+  local path="$1" body="$2"
+  printf '#!/usr/bin/env bash\n%s\n' "$body" >"$path"
+  chmod +x "$path"
 }
-EOF
-# ASAN RUNTIME DISCOVERY. `-fsanitize=address` resolves to a linker script that
-# names a versioned libasan; on this host that soname is absent from the default
-# library path while the runtime itself is installed under another prefix, so a
-# plain link fails with "cannot find /usr/lib64/libasan.so.<ver>" BEFORE the
-# harness is ever exercised. Derive the directory instead of hardcoding one: a
-# literal host path would be wrong on any other machine and is a portability-lint
-# violation. The rpath matters as much as the -L -- without it the fixture LINKS
-# but cannot RUN, which yields a passing build and a silently unexecuted check,
-# i.e. exactly the fake-green this whole test exists to refuse.
-asan_ld=()
-if ! gcc -fsanitize=address -o "$TMP/asan-probe" -xc - >/dev/null 2>&1 <<<'int main(void){return 0;}'; then
-  # `|| true` on both: `set -o pipefail` plus `head -1` closing the pipe makes
-  # find/grep exit non-zero on success, which under `set -e` would abort the
-  # script during the assignment itself -- silently, with no output at all.
-  want=$(grep -oE 'libasan\.so\.[0-9.]+' "$(gcc -print-file-name=libasan.so)" 2>/dev/null | head -1 || true)
-  [ -n "$want" ] || want='libasan.so'
-  asan_dir=$(find /opt /usr/local -name "$want" -printf '%h\n' 2>/dev/null | head -1 || true)
-  if [ -z "$asan_dir" ]; then
-    echo "SKIP-REFUSED: no ASAN runtime ($want) found; the planted-UAF control cannot run," >&2
-    echo "  and a sweep whose failure path is unproven must not be reported as clean." >&2
-    exit 1
-  fi
-  asan_ld=(-L"$asan_dir" "-Wl,-rpath,$asan_dir")
-  echo "note: ASAN runtime resolved to $asan_dir"
-fi
-
-gcc -O0 -g -fsanitize=address -fno-omit-frame-pointer \
-  "$TMP/planted-uaf.c" -o "$TMP/planted-uaf" "${asan_ld[@]}"
-
-# POSITIVE CONTROL ON THE CONTROL. Before using the planted UAF to prove the
-# sweep can fail, prove the fixture itself actually reports one. A fixture that
-# silently stopped detecting would make every downstream "sweep can fail" claim
-# vacuous, and it would look identical to success.
-control_out=$("$TMP/planted-uaf" 2>&1 || true)
-if ! printf '%s' "$control_out" | grep -q 'heap-use-after-free'; then
-  echo "SKIP-REFUSED: the planted-UAF fixture did not report heap-use-after-free;" >&2
-  echo "  the failure control is inert, so nothing below could prove the sweep can fail." >&2
-  # Print what it DID emit. A refusal that does not say what it saw sends the
-  # next reader back to reproduce it by hand, which is how this test's own ASAN
-  # link failure stayed unexplained across several attempts.
-  echo "  fixture emitted ${#control_out} byte(s):" >&2
-  printf '%s\n' "$control_out" | head -5 | sed 's/^/    /' >&2
-  exit 1
-fi
-
-cat >"$TMP/runner.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-seed="${1:?seed required}"
-case "${DEMO08_TEST_MODE:?mode required}" in
-  no-engagement)
-    echo 'fixture exited before progress-thread path'
-    ;;
-  engaged-no-hit)
-    printf 'Copy inodes [o] [         0/         1]\r\n'
-    echo 'Conversion complete'
-    ;;
-  planted-uaf)
-    printf 'Copy inodes [o] [         0/         1]\r\n'
-    if [ "$seed" = "${DEMO08_TEST_UAF_SEED:?UAF seed required}" ]; then
-      ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 \
-        "${DEMO08_TEST_UAF_BIN:?UAF binary required}"
-    else
-      echo 'Conversion complete'
-    fi
-    ;;
-  *)
-    echo "unknown test mode: $DEMO08_TEST_MODE" >&2
-    exit 2
-    ;;
-esac
-EOF
-chmod +x "$TMP/runner.sh"
+# Exits 0 with NO output: a wrapper/toolchain failure around the guest. The
+# producer's seed_executed() requires a non-empty output file, so this is a seed
+# that never ran.
+make_hermit "$TMP/hermit-never-ran" 'exit 0'
+# Runs and completes cleanly: the guest executed, and there is no UAF.
+make_hermit "$TMP/hermit-clean" 'echo "Conversion complete"; exit 0'
+# Runs and reports a use-after-free. The producer detects on the REPORT TEXT,
+# not the exit status, because ASAN can report on a thread whose process exits
+# 0 -- so emitting the text is what exercises the detector.
+make_hermit "$TMP/hermit-uaf" \
+  'echo "==1==ERROR: AddressSanitizer: heap-use-after-free on address 0x1"; exit 134'
+# Records that it was invoked at all. Used to prove the cached path SHORT-CIRCUITS
+# rather than inferring it from an exit code.
+make_hermit "$TMP/hermit-tripwire" "touch '$TMP/tripwire-fired'; exit 0"
 
 run_prepare() {
-  local assets="$1" artifacts="$2" seeds="$3"
+  local assets="$1" artifacts="$2" seeds="$3" hermit="$4"
   env \
     DEMO08_DIR="$assets" \
     DEMO08_BUILD_ROOT="$TMP/build-unused" \
     DEMO08_ARTIFACTS="$artifacts" \
     DEMO08_CALIBRATION_SEEDS="$seeds" \
-    DEMO08_CALIBRATION_TIMEOUT=1 \
-    DEMO08_CALIBRATION_RUNNER="$TMP/runner.sh" \
-    HERMIT_RELEASE="$TMP/not-used-hermit" \
+    DEMO08_CALIBRATION_TIMEOUT=5 \
+    HERMIT_RELEASE="$hermit" \
     "$PREP"
 }
 
-# Negative bracket: two attempted seeds, no path engagement. This must be a
-# refused NO-RESULT, with both per-seed outputs and rows retained.
-assets="$TMP/assets-no-engagement"
-artifacts="$TMP/artifacts-no-engagement"
-make_assets "$assets"
-set +e
-no_engagement_output="$(DEMO08_TEST_MODE=no-engagement \
-  run_prepare "$assets" "$artifacts" 2 2>&1)"
-no_engagement_rc=$?
-set -e
-[ "$no_engagement_rc" -ne 0 ]
-grep -q 'NO-RESULT: path engagement 0/2' <<<"$no_engagement_output"
-[ "$(wc -l <"$artifacts/calibration.tsv")" -eq 3 ]
-[ "$(grep -c $'\tdid-not-reach\t' "$artifacts/calibration.tsv")" -eq 2 ]
-[ "$(find "$artifacts" -maxdepth 1 -name 'calibration-cold-seed-*.out' | wc -l)" -eq 2 ]
+# Capture rc and output without `set -e` aborting mid-assignment.
+capture() {
+  local __out=$1 __rc=$2; shift 2
+  local o r
+  set +e
+  o="$("$@" 2>&1)"; r=$?
+  set -e
+  printf -v "$__out" '%s' "$o"
+  printf -v "$__rc" '%s' "$r"
+}
 
-# Positive engagement without a hit is evidence-bearing but still fails the
-# crash-seed calibration. It must not be mislabeled NO-RESULT.
-assets="$TMP/assets-engaged"
-artifacts="$TMP/artifacts-engaged"
-make_assets "$assets"
-set +e
-engaged_output="$(DEMO08_TEST_MODE=engaged-no-hit \
-  run_prepare "$assets" "$artifacts" 2 2>&1)"
-engaged_rc=$?
-set -e
-[ "$engaged_rc" -ne 0 ]
-grep -q 'path engagement 2/2' <<<"$engaged_output"
-! grep -q 'NO-RESULT' <<<"$engaged_output"
-[ "$(grep -c $'\treached\tnone\t' "$artifacts/calibration.tsv")" -eq 2 ]
+# --- Pure-probe bracket -----------------------------------------------------
+# `--help` must return before the heavy work and leave nothing behind.
+capture help_out help_rc "$PREP" --help
+[ "$help_rc" -eq 0 ]
+grep -q 'prepare-demo08-assets.sh' <<<"$help_out"
 
-# Falsifiability bracket: seed 1 reaches the path and runs an actual ASAN
-# use-after-free. The harness must select it and preserve the signature.
+# --- Argument validation ----------------------------------------------------
+for bad in DEMO08_CALIBRATION_SEEDS=0 DEMO08_CALIBRATION_SEEDS=x \
+  DEMO08_CALIBRATION_TIMEOUT=0 DEMO08_BUILD_JOBS=-1; do
+  capture bad_out bad_rc env "$bad" "$PREP"
+  [ "$bad_rc" -ne 0 ]
+  grep -q "must be a positive integer" <<<"$bad_out"
+done
+
+# --- NOT-MEASURED bracket ---------------------------------------------------
+# No seed produced a guest exit status with output. This is a statement about
+# the MACHINE and must never be reported as an absence of the UAF.
+assets="$TMP/assets-never-ran"
+make_assets "$assets"
+capture never_out never_rc run_prepare "$assets" "$TMP/art-never-ran" 2 "$TMP/hermit-never-ran"
+[ "$never_rc" -ne 0 ]
+grep -q 'never executed the guest: 0 of 2 seeds' <<<"$never_out"
+grep -q 'NOT an absence of the UAF' <<<"$never_out"
+# Mutual exclusion: it must NOT also claim the fixture was searched.
+! grep -q 'no ASAN UAF found' <<<"$never_out"
+[ ! -r "$assets/.crash-seed" ]
+
+# --- NOT-TAKEN bracket ------------------------------------------------------
+# Every seed ran; none crashed. A statement about the FIXTURE, and it must carry
+# its executed count so the reader can see the search was real.
+assets="$TMP/assets-clean"
+make_assets "$assets"
+capture clean_out clean_rc run_prepare "$assets" "$TMP/art-clean" 2 "$TMP/hermit-clean"
+[ "$clean_rc" -ne 0 ]
+grep -q 'no ASAN UAF found in seeds 0-1' <<<"$clean_out"
+grep -q '2 of 2 seeds executed' <<<"$clean_out"
+# Mutual exclusion in the other direction: an executed search is not a no-result.
+! grep -q 'never executed the guest' <<<"$clean_out"
+[ ! -r "$assets/.crash-seed" ]
+
+# --- Falsifiability bracket -------------------------------------------------
+# A planted report must be found, selected, and recorded WITH the fixture
+# identity it was calibrated against.
 assets="$TMP/assets-uaf"
-artifacts="$TMP/artifacts-uaf"
 make_assets "$assets"
-uaf_output="$(DEMO08_TEST_MODE=planted-uaf \
-  DEMO08_TEST_UAF_SEED=1 DEMO08_TEST_UAF_BIN="$TMP/planted-uaf" \
-  run_prepare "$assets" "$artifacts" 3 2>&1)"
-grep -q 'engagement=2/2 uaf_hits=1/2' <<<"$uaf_output"
-[ "$(cat "$assets/.crash-seed")" = 1 ]
-grep -q $'^1\tcold\treached\thit\t' "$artifacts/calibration.tsv"
-grep -q 'AddressSanitizer: heap-use-after-free' \
-  "$artifacts/calibration-cold-seed-1.out"
+capture uaf_out uaf_rc run_prepare "$assets" "$TMP/art-uaf" 3 "$TMP/hermit-uaf"
+[ "$uaf_rc" -eq 0 ]
+grep -q 'Demo 8 crash seed calibrated: 0' <<<"$uaf_out"
+[ "$(cut -d' ' -f1 <"$assets/.crash-seed")" = 0 ]
+[ "$(cut -s -d' ' -f2 <"$assets/.crash-seed")" = "$(fixture_sha "$assets")" ]
 
-# Cached seeds are replayed, not trusted as a proxy. The evidence denominator
-# is therefore 1/1 rather than an unmeasured cache hit.
-assets="$TMP/assets-cached"
-artifacts="$TMP/artifacts-cached"
+# --- Fixture-identity brackets (#1877) --------------------------------------
+# A cached seed recorded against THIS fixture is reused without recalibrating.
+# The tripwire proves the short-circuit directly instead of inferring it from rc.
+assets="$TMP/assets-cached-match"
 make_assets "$assets"
-printf '1\n' >"$assets/.crash-seed"
-cached_output="$(DEMO08_TEST_MODE=planted-uaf \
-  DEMO08_TEST_UAF_SEED=1 DEMO08_TEST_UAF_BIN="$TMP/planted-uaf" \
-  run_prepare "$assets" "$artifacts" 3 2>&1)"
-grep -q 'engagement=1/1 uaf_hits=1/1' <<<"$cached_output"
-grep -q $'^1\tcached\treached\thit\t' "$artifacts/calibration.tsv"
-[ "$(wc -l <"$artifacts/calibration.tsv")" -eq 2 ]
+printf '%s %s\n' 5 "$(fixture_sha "$assets")" >"$assets/.crash-seed"
+rm -f -- "$TMP/tripwire-fired"
+capture cached_out cached_rc run_prepare "$assets" "$TMP/art-cached" 3 "$TMP/hermit-tripwire"
+[ "$cached_rc" -eq 0 ]
+grep -q 'cached seed 5 for fixture' <<<"$cached_out"
+[ ! -e "$TMP/tripwire-fired" ]
 
-echo 'PASS: Demo 8 calibration records engagement and detects a planted ASAN UAF'
+# A bare seed carrying no fixture identity is not evidence about this fixture.
+assets="$TMP/assets-cached-bare"
+make_assets "$assets"
+printf '5\n' >"$assets/.crash-seed"
+capture bare_out bare_rc run_prepare "$assets" "$TMP/art-bare" 1 "$TMP/hermit-never-ran"
+[ "$bare_rc" -ne 0 ]
+grep -q 'carries no fixture identity; recalibrating' <<<"$bare_out"
+
+# A seed calibrated against a DIFFERENT fixture is discarded, naming both.
+assets="$TMP/assets-cached-stale"
+make_assets "$assets"
+printf '5 %s\n' "$(printf 'de%.0s' $(seq 32))" >"$assets/.crash-seed"
+capture stale_out stale_rc run_prepare "$assets" "$TMP/art-stale" 1 "$TMP/hermit-never-ran"
+[ "$stale_rc" -ne 0 ]
+grep -q 'was calibrated for fixture' <<<"$stale_out"
+grep -q "but this fixture is $(fixture_sha "$assets" | cut -c1-12)" <<<"$stale_out"
+
+echo 'PASS: Demo 8 calibration separates never-ran from no-UAF, detects a planted'
+echo '      report, and refuses a crash seed bound to another fixture'
