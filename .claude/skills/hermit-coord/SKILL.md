@@ -23,8 +23,8 @@ is the operational summary of the coordinator role.
   registries, and submodule pins.
 - Slot lifecycle: provision, assign, park, reclaim (≤12 active, ≤5 parked,
   ≤15 agents; canonical named-agent or `slotNN` slots only).
-- Task closure: only the coordinator closes a task, and only through
-  `./ci-hub/bin/close-task` after its typed evidence verifies against `main`.
+- Task closure is NOT a coordinator duty: agents close their own tasks. The
+  coordinator only audits that closures carried evidence.
 
 ## Constraints
 
@@ -32,15 +32,15 @@ is the operational summary of the coordinator role.
   primary; never detach or branch-switch it. After any op touching a primary,
   verify `git branch --show-current` == `main`.
 - **Task lifecycle:** an implementation agent publishes the PR or durable
-  artifact, posts its exact SHA and evidence, adds `implemented`, and stops while
-  the task remains `in_progress`. Closing earlier hides unlanded work from the
-  active drain and creates a phantom completion if the publication is empty,
-  superseded, or never reaches `main`. Only the coordinator closes after fresh
-  verification that the reviewed code landed on `main` (or that the typed
-  research artifact is published), and only through `./ci-hub/bin/close-task`.
-  Never use raw `tg update --status closed`; a gateway `REFUSED` or
-  `UNVERIFIABLE` result leaves the task nonterminal. `resolved` is only an alias
-  for `closed`, not an intermediate implementation state.
+  artifact, posts its exact SHA and evidence, adds `implemented`, and then
+  CLOSES ITS OWN TASK with `tg update <id> --status closed`. Do not hold work
+  open until it merges: landing debt rides on the `implemented` tag, which
+  `drain-implemented-to-landed` and `health-tick` read from CLOSED+`implemented`
+  records, so an implemented task left nonterminal is a LIFECYCLE-VIOLATION that
+  is invisible to the drain. `./ci-hub/bin/close-task` is optional but remains
+  the only writer of the `CLOSURE-VERIFIED` note that discharges that debt — use
+  it once the change is on `main`. `resolved` is only an alias for `closed`, not
+  an intermediate implementation state.
 - **Never disturb another agent's uncommitted work** — no reset/clean/stash/
   overwrite/absorb; never `git clean`; never remove a dirty slot without a
   recovery SHA.

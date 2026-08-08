@@ -155,8 +155,13 @@ check-agent-utils-pin: ## Fetch and reject stale/diverged agent-utils state, plu
 # genuinely-required new policy pushes past LIMIT, move background to the companion doc
 # first; raise LIMIT deliberately here only for irreducible new predicates, never by
 # dropping a rule to fit a number.
+# 2026-08-08: 42000 -> 42600. Raised deliberately for ONE irreducible new predicate, the
+# owner-authorized RED-TIP DIRECT LAND exception, which had no prior home and whose absence
+# blocked a critical path. The 2026-08-08 contradiction sweep first paid for most of it by
+# DELETING superseded policy (coordinator-only closure, the "one agent in the parent" rule)
+# and moving merge-gate measurements to the companion doc; the raise covers only the residue.
 check-claude-md-size: ## Guard AGENTS.md against size regression + require the tail canary
-	@limit=42000; f=AGENTS.md; \
+	@limit=42600; f=AGENTS.md; \
 	test -f $$f || { echo "ERROR: $$f missing" >&2; exit 1; }; \
 	size=$$(wc -c < $$f); \
 	if [ $$size -gt $$limit ]; then \

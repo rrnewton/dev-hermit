@@ -103,8 +103,9 @@ The coordinator owns the decision:
 
 Retain losing branches until their commits are reachable or the coordinator has
 archived the exact SHAs. Release slots only through the registry-aware lifecycle.
-Close the umbrella task only after the selected change lands and the coordinator
-confirms it on the intended main branch.
+Close the umbrella task once the winner's PR is published and its evidence is
+recorded; tag it `implemented` so the landing stays tracked, and do not hold the
+task open waiting for the merge.
 
 ## Exit conditions
 

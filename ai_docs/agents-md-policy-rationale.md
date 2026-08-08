@@ -273,23 +273,42 @@ siblings' live work.
 
 ## Task Lifecycle — phantom-closure rationale
 
-Phantom closures (a task marked done while its work never landed) are a recurring failure mode; completion
-splits into an implementation step the worker performs and a closure step only the coordinator performs, with
-an adversarial review gate between. Ordinary agents have no reliable fleet-wide peer-message channel: the
+Phantom closures (a task marked done while its work never landed) are a recurring failure mode. The 2026-08-08
+policy stops fighting them with a gatekeeper — the coordinator-only closure step was unsatisfiable, because the
+ORC coordinator has no shell and could never run the gateway, so in practice NOTHING closed and finished work
+piled up as `implemented`-but-open. The defence is now the `implemented` tag plus the IMPLEMENTED evidence
+note: `closed` deliberately does NOT mean landed, landing debt is enumerated from CLOSED+`implemented` records
+by `drain-implemented-to-landed` and `health-tick`, and that debt is discharged only by the `CLOSURE-VERIFIED`
+note `./ci-hub/bin/close-task` writes. A phantom closure is now visible as a CLOSED task that carries
+`implemented` forever, rather than being prevented by a step nobody could execute. Ordinary agents have no
+reliable fleet-wide peer-message channel: the
 agent-side `SendMessage` registry is scoped to same-session subagents and cannot resolve fixed/numeric ORC
 fleet names (`hermit-lander`, `hermit-247`), so never claim another fleet agent was notified merely because a
 message was attempted. TaskGraph notes are pull-based — they preserve a handoff across recycling but do not
 wake a recipient and are not delivery acknowledgement.
 
-## Coordinator Checklist (coordinator-only preflight)
+## Coordinator Checklist (outcomes to require, not commands to run)
 
-Terse preflights recapping rules stated in full in AGENTS.md; each references a section there.
+Terse preflights recapping rules stated in full in AGENTS.md; each references a section there. The ORC
+coordinator has no shell (AGENTS.md **Role Boundary**), so each bullet is an outcome it must have evidence
+for — the agent holding the shell runs the commands and reports.
 
 - **Before dispatch:** reconcile `ACTIVE.md` + both Git worktree lists + physical slot children; check parent/primaries/candidate slot for unexpected changes; confirm ≤ 12 active worktrees and ≤ 15 agents; record exclusive ownership or every sharing agent + disjoint path; confirm base SHA + publication target per repo, verifying a handed SHA against `ci-hub newest-green`; register the slot before work; apply *Establish what you have* when a premise came from a note/number.
 - **Before Hermit publication or landing:** re-read concurrent local state, remote `main`, and the exact PR head; verify the handoff SHA, diff, evidence, cleanliness; push/open only when authorized; require both hosted and self-hosted checks green at the exact head SHA; merge only when authorized; record the resulting `main` SHA + CI.
 - **Before parent pinning:** submodule commits clean, reviewed, tested, fetchable; inspect `git diff --submodule=log` before staging; stage only intended gitlinks + parent-owned files; validate a coordinated Hermit/Reverie pair when both move; commit parent changes to `main` only when the task authorizes it.
 - **Before closeout:** each changed repo has a clean committed feature branch; record exact SHAs + validation in the task and `ARCHIVED.md`; detach slot children at their parent-pinned gitlinks; remove/update the slot row; keep ≤ 5 parked; leave unrelated concurrent work exactly as found.
-- **Before closing a task (coordinator only):** `in_progress` + `implemented` with a PR link/artifact path; adversarial reviewer verified the work exists; invoke `./ci-hub/bin/close-task` with that code/artifact/run reference. Proceed only on rc 0; never let a working agent close its own task; treat `--status resolved` as a raw close that bypasses the gate.
+- **Before closing a task (the OWNING AGENT closes it — superseded 2026-08-08):** the coordinator-only closure gate is GONE. An agent closes its own task with plain `tg update <id> --status closed` once it has posted the PR/artifact URL, exact SHA, and validation evidence and tagged `implemented`. `./ci-hub/bin/close-task` is retained but optional; it is still the only writer of the `CLOSURE-VERIFIED` note that discharges landing debt, so use it once the change is on `main`. See AGENTS.md **Task Lifecycle And Closure**.
+
+### Manual hosted-CI dispatch under `merge-gate-v4` — the measurements
+
+Evidence for the AGENTS.md predicate (Coordinator Judgement Rules). On a NO_RESULT the gate re-dispatches the
+missing legs and then *deliberately cancels itself*, logging `NO_RESULT blocks landing but is not a failure;
+cancelling gate run <id> after re-dispatch`. Measured on hermit#1911 at `18758e9a`: a hand-rolled second
+dispatch at the same SHA left 30+ jobs succeeding and exactly two — `test: sabre` and
+`e2e: c-programs__verify__ptrace` — cancelled, which was enough to flip `Regular tests (GitHub-managed
+portable)` to `failure`. Re-running `merge-gate-v4` instead produced `Every required leg has a PASSED result.`
+on the first attempt. The one-clean-dispatch repair was verified moving `fda945d7` from `HOSTED RED 0/1` to
+`HOSTED GREEN 1/1`.
 
 ## Action-time procedures (consulted when performing the action; invariants stay in AGENTS.md)
 

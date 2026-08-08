@@ -141,9 +141,10 @@ if (( orphan_n > 0 )); then
     echo "orphan owners (agent no longer exists):"
     for o in "${!ORPHAN_OWNERS[@]}"; do echo "  $o  -> ${ORPHAN_OWNERS[$o]} task(s)"; done
     echo
-    echo "ROUTE each (coordinator decision — never a silent third state):"
+    echo "ROUTE each (never a silent third state):"
     echo "  * still wanted -> reassign: tg claim <task> (as the new owner) or tg update <task> --owner <agent>"
-    echo "  * done/moot    -> coordinator records evidence, then uses ./ci-hub/bin/close-task"
+    echo "  * done/moot    -> record the evidence in a note, then close: tg update <task> --status closed"
+    echo "                    (already landed? use ./ci-hub/bin/close-task so CLOSURE-VERIFIED clears the landing debt)"
     echo "This tool only DETECTS. It does not reassign or close anything."
 fi
 # --gate: signal orphan presence through the exit code so a composite health poll
