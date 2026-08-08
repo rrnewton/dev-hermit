@@ -793,6 +793,15 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
                 );
                 return Ok(REFUSED_EXIT_CODE);
             }
+            // The anchor is a live-process signal; this is the durable one. A
+            // supervisor that died leaving its payload alive released the anchor,
+            // but its quarantine record is still outstanding, and now visible from
+            // here. ONE MORE necessary condition -- `require_no_cleanup` inside
+            // `acquire` still runs for this repository's own record.
+            if let Some(reason) = foreign_box_claim(&lock.paths.anchor, &lock.paths.cleanup) {
+                eprintln!("REFUSED: {reason}");
+                return Ok(REFUSED_EXIT_CODE);
+            }
             lock.acquire(&args)
         }
         LandLockCommand::Renew(args) => {
@@ -859,7 +868,19 @@ impl LandingLock {
             }
             self.require_no_cleanup(Some(&holder))?;
             write_cleanup_record(&self.paths.cleanup, &record)
-                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
+            // Publish the box-global pointer at the SAME moment the durable record
+            // is armed -- before any payload exists. From here on, if this
+            // supervisor dies its record outlives it, and every OTHER repository
+            // can now see that record instead of being admitted beside the escaped
+            // payload it describes.
+            register_box_claim(
+                &self.paths.anchor,
+                &self.paths.cleanup,
+                agent,
+                &format!("pr:{pr}"),
+            );
+            Ok(())
         })
     }
 
@@ -961,7 +982,7 @@ impl LandingLock {
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Armed { .. } => {
                     self.assert_current_process_owner("clear unstarted run")?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(LandLockError::InvalidState(format!(
@@ -1025,7 +1046,7 @@ impl LandingLock {
             })?;
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Recoverable { .. } => {
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(LandLockError::InvalidState(format!(
@@ -1513,7 +1534,7 @@ impl LandingLock {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.pr, reason)))
                 }
@@ -1576,6 +1597,15 @@ impl LandingLock {
             "landing-lock: box-global anchor held at {}",
             _box_anchor.path().display()
         );
+
+        // Durable half of box exclusion, checked WITH the anchor held so the
+        // answer cannot change under us. The anchor proves no LIVE supervisor
+        // holds the box; this proves no DEAD supervisor left a live payload
+        // behind in some other repository.
+        if let Some(reason) = foreign_box_claim(&self.paths.anchor, &self.paths.cleanup) {
+            eprintln!("REFUSED: {reason}");
+            return Ok(REFUSED_EXIT_CODE);
+        }
 
         let acquire = AcquireArgs {
             agent: args.agent.clone(),
@@ -2181,6 +2211,168 @@ pub(crate) fn remove_cleanup_record(path: &Path) -> io::Result<()> {
         File::open(parent)?.sync_all()?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Box-global claims: making the per-repository quarantine visible box-wide.
+//
+// THE GAP THIS CLOSES. The exclusion anchor above is an `flock`, and an flock
+// belongs to a PROCESS. When a supervisor dies but its payload escapes and keeps
+// running, the kernel drops the anchor while the payload is still burning the
+// box. Inside the owning repository that is already covered: the supervisor
+// armed a durable cleanup record before spawning, `require_no_cleanup` refuses
+// every later acquire there, and `reclaim-dead` / `census-orphaned-domain`
+// discharge it on evidence. ACROSS repositories nothing saw that record, so a
+// second clone was admitted next to a live escaped payload.
+//
+// WHAT IS AND IS NOT NEW HERE. No second quarantine, no second verifier, no new
+// notion of liveness. The authority stays exactly what it was — the per-repo
+// cleanup record, read by `verify_cleanup_record` — and it stays exactly where
+// it was on disk. A claim is a POINTER to that record, nothing more, so the two
+// can never disagree about whether the box is quarantined. In particular the
+// claim carries no liveness of its own: `CleanupRecord::cgroup` is the one
+// supervisor-independent anchor (a ppid walk needs the dead subreaper and a pgid
+// does not survive `setsid()`, but cgroup membership survives both), and it
+// already lives in the record.
+//
+// WHY A POINTER CANNOT WEDGE THE BOX. The flock's great virtue was that the
+// kernel released it on death, so it could never strand anything; a durable
+// record gives that up unless discharge is mechanical. Here it stays mechanical
+// twice over. A claim is discharged the moment its record is — and a reader that
+// dereferences a claim whose record is gone DELETES the claim on the spot. So a
+// crashed supervisor, a deleted clone, or a wiped `/run/user` all self-heal on
+// the next admission instead of requiring an operator.
+//
+// MIGRATION: NONE, deliberately. The claim is new state written alongside the
+// arming of a record. No existing lease or quarantine file is moved, reread
+// differently, or required to carry a new field, so a box with no claims behaves
+// exactly as it does today. The one honest limit: a run already in flight under
+// an older binary armed its record without a claim, so it keeps only the
+// per-repository coverage it has now — the same position it was already in, never
+// a worse one.
+// ---------------------------------------------------------------------------
+
+/// Directory of box-global claims for one anchor kind, beside the anchor itself.
+///
+/// Derived from the ANCHOR rather than from a global, so it inherits the anchor's
+/// constructor-scoped isolation for free: production gets the uid-derived
+/// location and each test gets its own beside its own temp lease.
+pub(crate) fn box_claim_dir(anchor: &Path) -> PathBuf {
+    let stem = anchor
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("box");
+    let parent = anchor.parent().unwrap_or(Path::new("."));
+    parent.join(format!("{stem}.claims"))
+}
+
+/// Stable filename for the claim pointing at `cleanup`. The file's CONTENT is
+/// authoritative; this only has to be collision-free per cleanup path.
+fn box_claim_file(anchor: &Path, cleanup: &Path) -> PathBuf {
+    let encoded: String = cleanup
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    box_claim_dir(anchor).join(format!("{encoded}.claim"))
+}
+
+/// Publish a box-global pointer to this repository's cleanup record.
+///
+/// Best effort by design: a claim that cannot be written must never block a
+/// legitimate run, because the per-repository quarantine — the actual authority —
+/// is unaffected either way. Failing to publish loses cross-repository coverage
+/// for that run and nothing else, which is exactly today's behaviour.
+pub(crate) fn register_box_claim(anchor: &Path, cleanup: &Path, agent: &str, operation: &str) {
+    let dir = box_claim_dir(anchor);
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let body = format!(
+        "version=1\ncleanup={}\nagent={}\noperation={}\nhost={}\n",
+        cleanup.display(),
+        agent,
+        operation,
+        current_host()
+    );
+    let _ = fs::write(box_claim_file(anchor, cleanup), body);
+}
+
+/// Drop this repository's claim. Called wherever its cleanup record is removed;
+/// a miss is harmless because readers prune a claim whose record is gone.
+pub(crate) fn clear_box_claim(anchor: &Path, cleanup: &Path) {
+    let _ = fs::remove_file(box_claim_file(anchor, cleanup));
+}
+
+/// Discharge a cleanup record and its box-global claim together.
+///
+/// The two must not drift, so every removal site goes through here rather than
+/// remembering to do both. Order matters: the RECORD goes first, because that is
+/// the authority — if the process dies between the two, the leftover claim
+/// dereferences to a missing record and the next reader prunes it. Doing it the
+/// other way round would leave a live record nobody outside its repository could
+/// see, which is precisely the gap being closed.
+pub(crate) fn remove_cleanup_record_and_claim(cleanup: &Path, anchor: &Path) -> io::Result<()> {
+    let outcome = remove_cleanup_record(cleanup);
+    clear_box_claim(anchor, cleanup);
+    outcome
+}
+
+fn parse_claim_cleanup(body: &str) -> Option<PathBuf> {
+    body.lines()
+        .find_map(|line| line.strip_prefix("cleanup="))
+        .map(PathBuf::from)
+}
+
+/// Is ANOTHER repository's cleanup record still outstanding on this box?
+///
+/// Returns the reason to refuse, or `None` to proceed. Dereferences each claim
+/// through `verify_cleanup_record`, the same and only cleanup authority the
+/// owning repository uses — this function decides nothing about quarantine
+/// itself, it only makes a decision already recorded elsewhere visible here.
+/// Claims whose record has been cleared are pruned as they are read.
+pub(crate) fn foreign_box_claim(anchor: &Path, own_cleanup: &Path) -> Option<String> {
+    let entries = fs::read_dir(box_claim_dir(anchor)).ok()?;
+    for entry in entries.flatten() {
+        let claim_path = entry.path();
+        if claim_path.extension().and_then(|e| e.to_str()) != Some("claim") {
+            continue;
+        }
+        let Ok(body) = fs::read_to_string(&claim_path) else {
+            continue;
+        };
+        let Some(cleanup) = parse_claim_cleanup(&body) else {
+            // Unparseable claim names no record, so it can never be discharged by
+            // one. Drop it rather than block the box on a file nobody can clear.
+            let _ = fs::remove_file(&claim_path);
+            continue;
+        };
+        if cleanup == own_cleanup {
+            continue; // my own repository; `require_no_cleanup` already covers it
+        }
+        match verify_cleanup_record(&cleanup, None) {
+            CleanupVerification::None => {
+                // The owning repository discharged its record. Prune and move on.
+                let _ = fs::remove_file(&claim_path);
+            }
+            other => {
+                let detail = match &other {
+                    CleanupVerification::Unknown { record: Some(r), .. } => {
+                        format!("agent={} operation={} phase={:?}", r.agent, r.operation, r.phase)
+                    }
+                    _ => "record present".to_string(),
+                };
+                return Some(format!(
+                    "another repository's payload domain is still quarantined: \
+                     {} ({detail}). Discharge it there with `reclaim-dead` (or \
+                     `census-orphaned-domain` first if the supervisor died before \
+                     censusing), which clears this claim automatically.",
+                    cleanup.display()
+                ));
+            }
+        }
+    }
+    None
 }
 
 /// A child whose wrapper has execed into its own process group but whose guest
@@ -4732,5 +4924,120 @@ exit 0
         );
         // Stable across calls, and never a function of the workspace.
         assert_eq!(box_exclusion_anchor_path(LANDING_BOX_ANCHOR), landing);
+    }
+
+    // --- box-global claims: the durable half of exclusion ---
+    //
+    // Pure-function tests on temp paths. The anchor is a PARAMETER, so the claim
+    // directory derived from it is per-test and can never touch the live box.
+
+    fn claim_fixture(name: &str) -> (PathBuf, PathBuf) {
+        let dir = env::temp_dir().join(format!(
+            "ci-hub-claim-{name}-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        (dir.join("box.lock"), dir)
+    }
+
+    fn armed_record_at(path: &Path, agent: &str, operation: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let record = CleanupRecord::new(agent, operation.to_string(), CleanupPhase::Armed).unwrap();
+        write_cleanup_record(path, &record).unwrap();
+    }
+
+    #[test]
+    fn no_claims_means_no_refusal() {
+        // NOT INERT IN THE WRONG DIRECTION: with nothing outstanding, ordinary work
+        // must be admitted. A box with no claims behaves exactly as it did before
+        // this mechanism existed -- which is also the whole migration story.
+        let (anchor, dir) = claim_fixture("empty");
+        assert_eq!(foreign_box_claim(&anchor, &dir.join("mine.cleanup-required")), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_foreign_outstanding_record_refuses_and_names_itself() {
+        // THE GAP. Another repository armed a record and its supervisor died; the
+        // anchor is long gone, but the record is not, and it is now visible here.
+        let (anchor, dir) = claim_fixture("foreign");
+        let theirs = dir.join("other-repo/.landing-lock.cleanup-required");
+        let mine = dir.join("my-repo/.landing-lock.cleanup-required");
+        armed_record_at(&theirs, "escaped-lander", "pr:999");
+        register_box_claim(&anchor, &theirs, "escaped-lander", "pr:999");
+
+        let refusal = foreign_box_claim(&anchor, &mine).expect("must refuse");
+        assert!(refusal.contains(&theirs.display().to_string()), "{refusal}");
+        assert!(refusal.contains("escaped-lander"), "{refusal}");
+        assert!(refusal.contains("reclaim-dead"), "must name the remedy: {refusal}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn my_own_record_is_not_a_foreign_claim() {
+        // This repository's own record is already enforced by `require_no_cleanup`
+        // inside acquire. Counting it here too would make a repository refuse
+        // itself and deadlock its own recovery commands.
+        let (anchor, dir) = claim_fixture("own");
+        let mine = dir.join("my-repo/.landing-lock.cleanup-required");
+        armed_record_at(&mine, "me", "pr:1");
+        register_box_claim(&anchor, &mine, "me", "pr:1");
+        assert_eq!(foreign_box_claim(&anchor, &mine), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_discharged_record_prunes_its_claim_and_admits() {
+        // CANNOT WEDGE THE BOX. The flock's virtue was kernel release on death; a
+        // durable record gives that up unless discharge is mechanical. Here the
+        // claim dies with the record it points at, and the reader does the pruning
+        // -- so a crashed supervisor, a deleted clone or a wiped /run/user all
+        // self-heal on the next admission rather than needing an operator.
+        let (anchor, dir) = claim_fixture("discharged");
+        let theirs = dir.join("other-repo/.landing-lock.cleanup-required");
+        let mine = dir.join("my-repo/.landing-lock.cleanup-required");
+        armed_record_at(&theirs, "lander", "pr:7");
+        register_box_claim(&anchor, &theirs, "lander", "pr:7");
+        assert!(foreign_box_claim(&anchor, &mine).is_some(), "must refuse while outstanding");
+
+        // The owning repository discharges its record, exactly as reclaim-dead does.
+        remove_cleanup_record(&theirs).unwrap();
+        assert_eq!(foreign_box_claim(&anchor, &mine), None, "must admit once discharged");
+        assert!(
+            fs::read_dir(box_claim_dir(&anchor)).unwrap().next().is_none(),
+            "the stale claim must be pruned, not merely ignored"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unparseable_claim_is_pruned_rather_than_wedging() {
+        // A claim naming no record can never be discharged by one, so blocking on
+        // it would be a permanent wedge with no remedy. Drop it instead.
+        let (anchor, dir) = claim_fixture("garbage");
+        fs::create_dir_all(box_claim_dir(&anchor)).unwrap();
+        let junk = box_claim_dir(&anchor).join("junk.claim");
+        fs::write(&junk, b"version=1\nnothing useful here\n").unwrap();
+        assert_eq!(foreign_box_claim(&anchor, &dir.join("mine")), None);
+        assert!(!junk.exists(), "unparseable claim must be pruned");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn record_and_claim_are_discharged_together() {
+        // The two must not drift, so every removal site goes through one helper.
+        let (anchor, dir) = claim_fixture("together");
+        let cleanup = dir.join("repo/.landing-lock.cleanup-required");
+        armed_record_at(&cleanup, "agent", "pr:3");
+        register_box_claim(&anchor, &cleanup, "agent", "pr:3");
+        assert!(box_claim_dir(&anchor).exists());
+        remove_cleanup_record_and_claim(&cleanup, &anchor).unwrap();
+        assert!(!cleanup.exists(), "record removed");
+        assert!(
+            fs::read_dir(box_claim_dir(&anchor)).unwrap().next().is_none(),
+            "claim removed with it"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -29,12 +29,13 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
-    box_exclusion_anchor_path as box_exclusion_anchor_at, repository_lock_root,
+    box_exclusion_anchor_path as box_exclusion_anchor_at, foreign_box_claim,
+    register_box_claim, remove_cleanup_record_and_claim, repository_lock_root,
     BoxExclusionAnchor,
     capture_and_freeze_residuals, census_disposition, census_recorded_domain, current_host,
     enable_child_subreaper, exact_process_liveness, exit_status_code, heartbeat_test_helper_delay,
     payload_cgroup_anchor, print_cleanup_record, process_group_exists, process_start_ticks,
-    reap_exited_children, remove_cleanup_record, signal_group, spawn_gated_child, suffix,
+    reap_exited_children, signal_group, spawn_gated_child, suffix,
     verify_cleanup_record, write_cleanup_record, CleanupPhase, CleanupRecord, CleanupVerification,
     DomainEvidence, GatedChild, ProcessIdentity, ResidualCapture,
 };
@@ -614,6 +615,15 @@ pub fn execute(root: &Path, args: ValidateLockArgs) -> Result<i32, ValidateLockE
                 );
                 return Ok(REFUSED_EXIT_CODE);
             }
+            // The anchor is a live-process signal; this is the durable one. A
+            // supervisor that died leaving its payload alive released the anchor,
+            // but its quarantine record is still outstanding, and now visible from
+            // here. ONE MORE necessary condition -- `require_no_cleanup` inside
+            // `acquire` still runs for this repository's own record.
+            if let Some(reason) = foreign_box_claim(&lock.paths.anchor, &lock.paths.cleanup) {
+                eprintln!("REFUSED: {reason}");
+                return Ok(REFUSED_EXIT_CODE);
+            }
             lock.acquire(&args.agent, args.kind, &args.target, args.wait, args.hold)
         }
         ValidateLockCommand::Renew(args) => {
@@ -812,7 +822,19 @@ impl ValidateLock {
             }
             self.require_no_cleanup(Some(&holder))?;
             write_cleanup_record(&self.paths.cleanup, &record)
-                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
+            // Publish the box-global pointer at the SAME moment the durable record
+            // is armed -- before any payload exists. From here on, if this
+            // supervisor dies its record outlives it, and every OTHER repository
+            // can now see that record instead of being admitted beside the escaped
+            // payload it describes.
+            register_box_claim(
+                &self.paths.anchor,
+                &self.paths.cleanup,
+                agent,
+                &format!("{}:{target}", kind.as_str()),
+            );
+            Ok(())
         })
     }
 
@@ -925,7 +947,7 @@ impl ValidateLock {
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Armed { .. } => {
                     self.assert_current_process_owner("clear unstarted run")?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(ValidateLockError::InvalidState(format!(
@@ -1000,7 +1022,7 @@ impl ValidateLock {
             })?;
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Recoverable { .. } => {
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(ValidateLockError::InvalidState(format!(
@@ -1401,7 +1423,7 @@ impl ValidateLock {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.kind, holder.target, reason)))
                 }
@@ -1668,6 +1690,15 @@ impl ValidateLock {
             "validate-lock: box-global anchor held at {}",
             _box_anchor.path().display()
         );
+
+        // Durable half of box exclusion, checked WITH the anchor held so the
+        // answer cannot change under us. The anchor proves no LIVE supervisor
+        // holds the box; this proves no DEAD supervisor left a live payload
+        // behind in some other repository.
+        if let Some(reason) = foreign_box_claim(&self.paths.anchor, &self.paths.cleanup) {
+            eprintln!("REFUSED: {reason}");
+            return Ok(REFUSED_EXIT_CODE);
+        }
 
         // Admission: block FIFO, or refuse immediately under --no-wait. Never
         // silently admit a second box-exclusive holder.
