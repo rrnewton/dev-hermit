@@ -238,7 +238,7 @@ def github_main_gate() -> int:
             overall_deadline=github_main_health.DEFAULT_OVERALL_DEADLINE,
         )
         state = github_main_health.overall_state(health)
-        summary = ",".join(
+        per_repo = ",".join(
             f"{repo.repo}:{repo.state if repo.available else 'unavailable'}"
             for repo in health
         )
@@ -246,8 +246,54 @@ def github_main_gate() -> int:
         _emit({"state": "unknown", "summary": _field(error)})
         return 1
 
-    _emit({"state": state, "summary": summary})
-    return 1 if state in {"red", "none", "degraded"} else 0
+    # SILENCE IS NOT EVIDENCE OF GREEN. This gate alarmed on explicit red and
+    # said nothing otherwise, so an authority that never resolved rendered
+    # exactly like a passing one -- and the ci-hub shard authority is absent or
+    # unreported on 9 of the last 25 main commits (36%), because queue-depth-1
+    # concurrency lets a newer push supersede a pending run. Measured 2026-08-08
+    # while this was being written: three main runs sat unresolved at 372s,
+    # 9198s and 15424s, and the gate was silent about all three.
+    #
+    # `stale-pending` now alarms; a FRESH `pending` deliberately does not, because
+    # alarming on pending fires after every push and is an alarm no coordinator
+    # can satisfy -- the anti-pattern removed from three other gates today.
+    stale = github_main_health.DEFAULT_PENDING_STALE_SECS
+    ages = {
+        repo.repo: github_main_health.pending_age_secs(getattr(repo, "runs", ()))
+        for repo in health
+        if repo.available
+    }
+    oldest = max((a for a in ages.values() if a is not None), default=None)
+    fields: dict[str, object] = {"state": state, "per_repo": per_repo}
+    if oldest is not None:
+        fields["oldest_pending_secs"] = int(oldest)
+    fields["pending_stale_after_secs"] = int(stale)
+
+    if state == "stale-pending":
+        named = ", ".join(
+            f"{r} pending {int(a)}s" for r, a in sorted(ages.items())
+            if a is not None and a > stale
+        ) or "unresolved authority with an unreadable creation time"
+        fields["summary"] = (
+            f"main authority has NOT RESOLVED past the {int(stale)}s bound: {named}. "
+            "This is a HOLE, not a green: the run was most likely superseded by a "
+            "newer push under queue-depth-1 concurrency. Re-dispatch the authority "
+            "for the current main head, or confirm a newer run has since reported. "
+            f"Per repo: {per_repo}"
+        )
+    elif state in {"none", "degraded", "unknown"}:
+        fields["summary"] = (
+            f"main authority COULD NOT BE MEASURED ({state}) -- this is not a green "
+            f"and not a red. Per repo: {per_repo}"
+        )
+    else:
+        # red / green / fresh-pending keep the EXACT prior summary contract -- the
+        # bare per-repo list. Prose is added only for the states that did not
+        # previously exist, so no existing consumer of `{summary}` changes shape.
+        fields["summary"] = per_repo
+    _emit(fields)
+    # `pending` (fresh) is the only non-green state that stays quiet.
+    return 1 if state in {"red", "none", "degraded", "stale-pending"} else 0
 
 
 def pull_request_gate() -> int:

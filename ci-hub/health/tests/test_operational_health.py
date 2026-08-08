@@ -808,3 +808,81 @@ class PrimarySnapshotDeferralTest(unittest.TestCase):
         with self.outcome(operational_health.primary_checkout.SNAPSHOT_BLOCKED):
             self.capture(state_path=self.state, now=1000.0 + 5 * 60)
         self.assertFalse(self.state.exists())
+
+
+class MainAuthorityAbsenceIsNotGreenTest(unittest.TestCase):
+    """Silence must stop meaning green, WITHOUT becoming unsatisfiable.
+
+    The gate alarmed on explicit red and stayed quiet otherwise, so an authority
+    that never resolved was indistinguishable from a passing one. The naive
+    repair -- alarm on `pending` -- fires after every push and is an alarm no
+    coordinator can satisfy, which is the anti-pattern removed from three other
+    gates today. So the discriminator is TIME, and both sides are planted here.
+    """
+
+    def _health(self, repo_states, available=True):
+        gh = operational_health.github_main_health
+        return [
+            gh.RepoMainHealth(repo=r, main_sha="a" * 40, state=s, runs=(),
+                              available=available)
+            for r, s in repo_states
+        ]
+
+    def capture(self, health, age):
+        gh = operational_health.github_main_health
+        out = io.StringIO()
+        with mock.patch.object(gh, "collect_health", return_value=health), \
+             mock.patch.object(gh, "pending_age_secs",
+                               side_effect=lambda runs, *a, **k: age):
+            with contextlib.redirect_stdout(out):
+                rc = operational_health.github_main_gate()
+        return rc, out.getvalue()
+
+    # ---- must NOT alarm -------------------------------------------------
+
+    def test_a_normal_post_push_pending_window_is_silent(self) -> None:
+        """90s of pending after a push is the common case and must stay quiet."""
+        rc, out = self.capture(self._health([("r/one", "pending")]), 90.0)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("state=pending", out)
+        self.assertIn("oldest_pending_secs=90", out)
+
+    def test_green_is_still_green(self) -> None:
+        rc, out = self.capture(self._health([("r/one", "green")]), None)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("state=green", out)
+
+    # ---- must alarm -----------------------------------------------------
+
+    def test_pending_past_the_bound_alarms_and_names_the_remedy(self) -> None:
+        """The live case: a run superseded under queue-depth-1, silent for hours."""
+        rc, out = self.capture(self._health([("r/one", "pending")]), 9198.0)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("state=stale-pending", out)
+        self.assertIn("9198", out)
+        self.assertIn("HOLE, not a green", out)
+        self.assertIn("Re-dispatch", out, "the alarm must name what clears it")
+
+    def test_an_absent_authority_reports_unmeasured_not_passing(self) -> None:
+        """`none` = no authority run at all. Not a green and not a red."""
+        rc, out = self.capture(self._health([("r/one", "none")]), None)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("COULD NOT BE MEASURED", out)
+        self.assertNotIn("main is green", out)
+
+    def test_an_unavailable_repo_reports_unmeasured(self) -> None:
+        rc, out = self.capture(
+            self._health([("r/one", "green")], available=False), None)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("COULD NOT BE MEASURED", out)
+
+    # ---- the threshold itself -------------------------------------------
+
+    def test_the_bound_is_above_the_slowest_observed_legitimate_run(self) -> None:
+        """758s was the slowest real completion measured; the bound must clear it.
+
+        If someone lowers this below observed reality the gate starts paging on
+        healthy runs, which is how it becomes unsatisfiable and then muted.
+        """
+        self.assertGreater(
+            operational_health.github_main_health.DEFAULT_PENDING_STALE_SECS, 758.0)

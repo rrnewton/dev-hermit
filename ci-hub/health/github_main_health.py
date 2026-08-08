@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -215,7 +216,71 @@ def fetch_run_annotations(repo: str, run_id: str, *, timeout: float) -> list[str
     return messages
 
 
+# How long an authority may sit unresolved before its silence is a HOLE rather
+# than a normal post-push window.
+#
+# ARGUED FROM THE RUNS, NOT PICKED. Measured 2026-08-08 over the last 60 main
+# runs on rrnewton/dev-hermit (55 completed):
+#     all workflows        median   40s   p90 526s   max 758s
+#     the ci-hub authority ("Dev-hermit operational tooling", n=17)
+#                          median  393s              max 758s
+#     Portability max 51s, Demo review gate max 22s
+# So 758s is the slowest LEGITIMATE completion observed. 900s clears it by 142s
+# (~19% margin, ~1.7x the p90). At the same moment three runs were sitting
+# unresolved at 372s, 9198s and 15424s -- the stuck population starts at ~12x
+# this threshold, so the separation is wide and the exact value is not delicate.
+# A too-low threshold costs a wasted check; it authorises nothing.
+DEFAULT_PENDING_STALE_SECS = float(
+    os.environ.get("CI_HUB_MAIN_PENDING_STALE_SECS", "900")
+)
+
+
+def _parse_iso(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def pending_age_secs(runs: Sequence[MainRun], now: datetime | None = None) -> float | None:
+    """Age of the OLDEST unresolved authority run, or None if none is unresolved.
+
+    THE OLDEST, not the newest: with queue-depth-1 concurrency a fresh push can
+    sit a new run in front of one that has been stuck for hours, and taking the
+    newest would let each push reset the clock and hide the hole indefinitely.
+    Returns None -- never 0.0 -- when nothing is pending, so "no pending run" and
+    "pending for no time at all" stay distinguishable.
+    """
+    moment = now or datetime.now(timezone.utc)
+    ages = []
+    for run in runs:
+        if classify_check(run.status, run.conclusion, self_timeout=run.self_timeout) \
+                is not CheckOutcome.NO_RESULT:
+            continue
+        created = _parse_iso(run.created_at)
+        if created is None:
+            continue
+        ages.append((moment - created).total_seconds())
+    return max(ages) if ages else None
+
+
 def classify_current_runs(runs: Sequence[MainRun]) -> str:
+    """Classify a repo's main authority.
+
+    `pending` vs `stale-pending` is the whole point of the time argument. The
+    gate used to alarm on explicit red and stay silent otherwise, so an authority
+    that never resolved was indistinguishable from a green one -- and the ci-hub
+    shard authority is absent or unreported on 9 of the last 25 main commits
+    (36%), because queue-depth-1 concurrency lets newer pushes supersede pending
+    runs. The fail-open was in the ALARM, not in the reader.
+
+    The naive repair -- alarm on `pending` -- would fire after EVERY push and be
+    an alarm no coordinator can satisfy, which is the anti-pattern removed from
+    three other gates today. So a fresh pending window stays silent and only a
+    pending that outlives `stale_after` is a finding.
+    """
     if not runs:
         return "none"
     # A self-timeout cancel is a genuine BAD answer (a hang), not a hole: it
@@ -338,7 +403,37 @@ def collect_health(
     return health
 
 
-def overall_state(health: Sequence[RepoMainHealth]) -> str:
+def stale_pending_repos(
+    health: Sequence[RepoMainHealth],
+    *,
+    stale_after: float = DEFAULT_PENDING_STALE_SECS,
+    now: datetime | None = None,
+) -> dict[str, float]:
+    """Repos whose oldest unresolved authority run has outlived `stale_after`.
+
+    An unresolved run whose creation time cannot be parsed is NOT reported here.
+    That is deliberate: calling it stale would assert it is "past the bound",
+    which is a claim the data does not support -- absence of a timestamp is
+    unmeasured, not old. Real GitHub payloads always carry createdAt, so this is
+    a hypothetical; inventing a finding from it would be the same absence-reads-
+    as-fact error this whole gate is being repaired for, pointed the other way.
+    """
+    stale: dict[str, float] = {}
+    for repo in health:
+        if repo.state != "pending":
+            continue
+        age = pending_age_secs(repo.runs, now)
+        if age is not None and age > stale_after:
+            stale[repo.repo] = age
+    return stale
+
+
+def overall_state(
+    health: Sequence[RepoMainHealth],
+    *,
+    stale_after: float = DEFAULT_PENDING_STALE_SECS,
+    now: datetime | None = None,
+) -> str:
     available = [repo for repo in health if repo.available]
     states = {repo.state for repo in available}
     if "red" in states:
@@ -346,6 +441,12 @@ def overall_state(health: Sequence[RepoMainHealth]) -> str:
     if len(available) != len(health):
         return "degraded"
     if "pending" in states:
+        # A fresh pending window is normal and stays quiet; one that outlives the
+        # bound is a HOLE. Deciding this here rather than inside
+        # classify_current_runs keeps that function a pure classifier of run
+        # OUTCOMES and puts the time judgement where the runs are available.
+        if stale_pending_repos(available, stale_after=stale_after, now=now):
+            return "stale-pending"
         return "pending"
     if "none" in states:
         return "none"
