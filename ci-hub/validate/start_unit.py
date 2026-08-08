@@ -263,8 +263,11 @@ def build_systemd_command(
         "--setenv",
         "CI_HUB_VALIDATE_PRODUCER=systemd-user-v1",
         # WHERE THE RECEIPT LANDS. validate.rs `ledger_path()` picks, in order:
-        # $HERMIT_VALIDATE_LEDGER, then $DEV_HERMIT_PARENT/ignored/
-        # validate-run-ledger.jsonl, then an in-repo per-(team,machine) shard.
+        # $HERMIT_VALIDATE_LEDGER, then the parent ledger under
+        # $DEV_HERMIT_PARENT (the filename lives only in
+        # `validate_status::LEDGER_REL`; it is deliberately not restated here,
+        # so this file stays a non-reader for the ledger-reader allowlist),
+        # then an in-repo per-(team,machine) shard.
         # The unit's environment is deliberately minimal, so with neither set it
         # fell through to the shard -- and `ci-hub validate-status` only reads
         # the parent ledger. The sole sanctioned admission point therefore could
