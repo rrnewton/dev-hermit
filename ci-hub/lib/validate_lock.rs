@@ -64,12 +64,60 @@ const CHILD_POLL_MILLIS: u64 = 500;
 /// fixed floor or the freshly fetched origin/main tip. Same 3 as an ownership
 /// refusal: a refusal, not a crash.
 const STALE_BASE_EXIT_CODE: i32 = 3;
-/// Env override for the composite validation-admission command (space-split
-/// argv). The target head is appended as `--head <sha>`. Defaults to the in-tree
-/// `ci-hub/validate/preflight_validate.py`, which checks both fixed floors and
-/// freshly fetched origin/main. Overridable so Rust tests need neither Python,
-/// egress, nor a Hermit checkout.
+/// TEST-BUILD-ONLY override of the composite validation-admission command
+/// (space-split argv). The target head is appended as `--head <sha>`.
+/// Production always runs the in-tree `ci-hub/validate/preflight_validate.py`,
+/// which checks both fixed floors and freshly fetched origin/main. See
+/// [`test_only_override`] for why the name is compiled into BOTH builds while
+/// its effect exists only under `cfg(test)`.
 const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
+/// TEST-BUILD-ONLY override of the box-exclusive lockfile base path. Production
+/// always uses `<root>/.validate-lock`.
+const VALIDATE_LOCK_PATH_ENV: &str = "CI_HUB_VALIDATE_LOCK";
+
+/// Read a TEST-BUILD-ONLY environment override.
+///
+/// **AN ADMISSION GATE WHOSE VERDICT ITS CALLER CAN SET IS NOT A GATE.** Both
+/// variables above began as convenience hooks so Rust tests would need neither
+/// Python, egress, nor a Hermit checkout — and both were live in the production
+/// admission path. Measured 2026-08-08 on the then-current `origin/main`
+/// (`ci-hub validate-lock run --kind validate --target <nonexistent 40-hex>`):
+/// `CI_HUB_ADMIT_PREFLIGHT_CMD=false` refused with exit 3 and 0 children, while
+/// `=true` ADMITTED the same nonexistent SHA, exit 0, 1 child. Separately,
+/// `CI_HUB_VALIDATE_LOCK=<tmp>` acquired the box with the workspace's real
+/// `.validate-lock*` never created at all — box exclusivity escaped by an
+/// ambient variable that any inherited environment could carry.
+///
+/// The names stay compiled into every build ON PURPOSE: a production binary
+/// must be able to SAY that it saw the override and refused it. Silently
+/// ignoring a variable an operator deliberately exported is its own trap — they
+/// would believe the stub took effect. The NOTICE is the whole observable
+/// difference; the admission verdict, the lock target, and the spawned-child
+/// count are identical whether the variables are set or unset.
+///
+/// Ignoring (rather than refusing) is fail-SAFE in both directions: an
+/// inert `CI_HUB_ADMIT_PREFLIGHT_CMD` means the real preflight runs, and an
+/// inert `CI_HUB_VALIDATE_LOCK` means the real box lock is contended. A hard
+/// refusal would instead let one stale exported variable wedge every validate
+/// on the box.
+#[cfg(test)]
+fn test_only_override(name: &str) -> Option<OsString> {
+    env::var_os(name).filter(|value| !value.is_empty())
+}
+
+#[cfg(not(test))]
+fn test_only_override(name: &str) -> Option<OsString> {
+    if env::var_os(name).is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "validate-lock: NOTICE: {name} is set but INERT in this build — it is \
+             a test-build-only override, compiled out of production. Admission \
+             uses the in-tree preflight and the workspace box lock regardless. \
+             To exercise the override, run the test binary \
+             (`rust-script --test ci-hub/ci-hub.rs`)."
+        );
+    }
+    None
+}
 
 #[derive(Args, Clone, Debug)]
 pub struct ValidateLockArgs {
@@ -476,9 +524,17 @@ struct LockPaths {
 
 impl LockPaths {
     fn for_workspace(root: &Path) -> Self {
-        // Env override mirrors CI_HUB_LANDING_LOCK; default base is DISTINCT from
-        // `.landing-lock` so a validate never contends with a lander.
-        let lock = env::var_os("CI_HUB_VALIDATE_LOCK")
+        // The base is DISTINCT from `.landing-lock` so a validate never contends
+        // with a lander. The path is NOT caller-selectable in a production build:
+        // `test_only_override` returns None there (and says so), because an
+        // ambient variable that redirects the box-exclusive lockfile escapes box
+        // exclusivity outright.
+        //
+        // NOT IN SCOPE HERE: `root` itself still varies per checkout, so two
+        // worktrees still derive two different lockfiles. That residue belongs to
+        // `validate-lock-exclusion-is-per-file-not-box-global`, which anchors the
+        // lock box-globally; this change only removes the ENVIRONMENT as an input.
+        let lock = test_only_override(VALIDATE_LOCK_PATH_ENV)
             .map(PathBuf::from)
             .unwrap_or_else(|| root.join(".validate-lock"));
         Self {
@@ -570,8 +626,12 @@ fn is_full_sha(target: &str) -> bool {
 /// the legacy `--skip-base-check` flag are refused: either would sever the
 /// observable binding between the admission verdict and the validated commit.
 /// The predicate is shelled out to `preflight_validate.py`, the same composite
-/// authority used by all other ci-hub validation producers. Overridable via
-/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither Python nor a checkout.
+/// authority used by all other ci-hub validation producers. THAT IS THE ONLY
+/// PREDICATE A PRODUCTION BUILD WILL RUN: `CI_HUB_ADMIT_PREFLIGHT_CMD` is
+/// compiled out of it (see [`test_only_override`]), so the verdict is not
+/// caller-settable. This function adds no second implementation of the
+/// admission predicate in any language; it dereferences the one Python
+/// authority and maps its exit code.
 ///
 /// Fail-CLOSED: preflight exit 2 (REFUSED) and any other non-zero (ERROR: head
 /// unresolved) both become `StaleBase`. An admission gate that admitted on "I
@@ -601,14 +661,21 @@ fn base_admission_check(
         )));
     }
 
-    let mut argv: Vec<OsString> = match env::var(ADMIT_PREFLIGHT_CMD_ENV) {
-        Ok(cmd) if !cmd.trim().is_empty() => cmd.split_whitespace().map(OsString::from).collect(),
-        _ => vec![
+    let override_argv = test_only_override(ADMIT_PREFLIGHT_CMD_ENV)
+        .map(|cmd| cmd.to_string_lossy().into_owned())
+        .filter(|cmd| !cmd.trim().is_empty())
+        .map(|cmd| {
+            cmd.split_whitespace()
+                .map(OsString::from)
+                .collect::<Vec<OsString>>()
+        });
+    let mut argv: Vec<OsString> = override_argv.unwrap_or_else(|| {
+        vec![
             OsString::from("python3"),
             root.join("ci-hub/validate/preflight_validate.py")
                 .into_os_string(),
-        ],
-    };
+        ]
+    });
     argv.push(OsString::from("--head"));
     argv.push(OsString::from(target));
 
@@ -3541,6 +3608,64 @@ exit 0
     }
 
     const HEX_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    // --- the two overrides are TEST-BUILD-ONLY ---
+    //
+    // These run in a `cfg(test)` binary, so they see the override arm of
+    // `test_only_override`. They are the sanctioned mechanism that replaced
+    // poking a production binary with an ambient env var: the capability is
+    // retained, but only where `cfg(test)` holds.
+    //
+    // The complementary half — that a PRODUCTION build ignores both — cannot be
+    // asserted from inside this crate, because a `cfg(test)` build is by
+    // definition not that build. It is bracketed out-of-process against the real
+    // `ci-hub` binary; see the task evidence for
+    // `remove-production-admission-overrides-from-validate-lock`.
+
+    #[test]
+    fn preflight_override_is_honored_only_in_a_test_build() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("cfg-gate", "#!/bin/sh\necho OK\nexit 0\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let observed = test_only_override(ADMIT_PREFLIGHT_CMD_ENV);
+        // `/nonexistent` has no preflight_validate.py, so an admitted verdict
+        // proves the STUB ran, not the default authority.
+        let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let after = test_only_override(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+        assert_eq!(observed.as_deref(), Some(stub.as_os_str()));
+        assert!(res.is_ok(), "the test-build override must fire, got {res:?}");
+        assert!(after.is_none(), "an unset override must read as absent");
+    }
+
+    #[test]
+    fn lock_path_override_is_honored_only_in_a_test_build() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let root = env::temp_dir().join(format!(
+            "ci-hub-vlock-cfg-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        let alt = root.join("alt-validate-lock");
+        // Default: derived from the workspace root, never from the environment.
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        let default_paths = LockPaths::for_workspace(&root);
+        assert_eq!(default_paths.lock, root.join(".validate-lock"));
+        assert_eq!(default_paths.guard, root.join(".validate-lock.guard"));
+        // Override arm: present only because this is a `cfg(test)` build.
+        env::set_var(VALIDATE_LOCK_PATH_ENV, &alt);
+        let overridden = LockPaths::for_workspace(&root);
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        assert_eq!(overridden.lock, alt);
+        assert_eq!(overridden.queue, suffix(&alt, ".queue"));
+        // An empty value is not an override -- it would otherwise select "" and
+        // silently relocate every lock file to the process working directory.
+        env::set_var(VALIDATE_LOCK_PATH_ENV, "");
+        let empty = LockPaths::for_workspace(&root);
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        assert_eq!(empty.lock, root.join(".validate-lock"));
+    }
 
     // NEGATIVE direction: a floor-blocked head is REFUSED, and the refusal
     // carries the NAMED remedy (not a bare "refused"). This is the mutation that
