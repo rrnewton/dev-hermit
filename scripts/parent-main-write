@@ -2,11 +2,40 @@
 # Serialize every parent-main publication and bind it to a freshly fetched
 # origin/main value.  Hooks call the verify-* subcommands; humans and tools use
 # commit, publish, or sync.  No mode force-pushes or rewrites a branch.
-set -euo pipefail
+set -Eeuo pipefail
 
 ZERO=0000000000000000000000000000000000000000
 
+# NO SILENT FAILURE ON THE ONE PATH EVERY AGENT MUST USE.
+#
+# `set -e` aborts with no output at all when an un-`if`-guarded command fails,
+# and this is the single serialized route to landing anything -- so a wordless
+# abort costs every reader the same reconstruction. It happened: a SIGPIPE in the
+# reversion guard killed the script mid-sentence and agents saw a publish that
+# simply did not work.
+#
+# `die` is the EXPLAINED exit. This trap catches everything else and says WHERE,
+# so an unexplained failure is at worst a located one. It only prints: it never
+# changes an exit status and never turns a failure into a success. `set -E` is
+# required for it to fire inside functions and subshells, which is where the
+# interesting failures are.
+_pmw_explained=0
+_pmw_on_err() {
+  local rc=$1 line=$2
+  [ "$_pmw_explained" = 1 ] && return 0
+  echo "parent-main-write: ABORTED at line $line with status $rc, and no reason" >&2
+  echo "  was printed. That is a defect in this tool, not a verdict on your" >&2
+  echo "  change: nothing was published and nothing was modified." >&2
+  case "$rc" in
+    141) echo "  Status 141 is SIGPIPE -- a producer was still writing when a" >&2
+         echo "  reader (head/grep -q) closed the pipe, and pipefail promoted it." >&2 ;;
+  esac
+  return 0
+}
+trap '_pmw_on_err "$?" "$LINENO"' ERR
+
 die() {
+  _pmw_explained=1
   echo "parent-main-write: REFUSED: $*" >&2
   exit 1
 }
@@ -239,7 +268,18 @@ refuse_unauthored_reverts() {
         if [ -n "$lost_lines" ]; then
           findings=$((findings + 1))
           report+="  $file: would drop content that landed on main after ${base:0:12}"$'\n'
-          report+=$(printf '%s\n' "$lost_lines" | sed 's/^/      LOST: /' | head -6)$'\n'
+          # TRUNCATE IN awk, NOT WITH `| head -6` (2026-08-08). `head` closes
+          # the pipe after six lines; if `sed` is still writing it dies of
+          # SIGPIPE, `pipefail` makes this substitution exit 141, and `set -e`
+          # aborts the script -- while building the very message that explains
+          # the refusal. It was SIZE-DEPENDENT, so the message went missing
+          # exactly when there was most to say: measured, 55 lost lines reported
+          # fine and 4995 aborted with no output at all. awk reads the whole
+          # stream and caps its own output, so no reader closes the pipe early.
+          report+=$(printf '%s\n' "$lost_lines" \
+            | awk '{ if (++n <= 6) print "      LOST: " $0 }
+                   END { if (n > 6) printf "      ... and %d more lost line(s)\n", n - 6 }' \
+            )$'\n'
           break
         fi
       fi
