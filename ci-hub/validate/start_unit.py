@@ -181,6 +181,49 @@ def assert_row_readable_from_canonical_ledger(
     return matched[0]
 
 
+# Directories a receipt is never written into and that are expensive to walk.
+RECEIPT_SCAN_PRUNE = {".git", "target", "node_modules"}
+
+
+def orphaned_receipt_locations(fresh: Path, *, run: Runner) -> list[str]:
+    """Receipt files THIS RUN left inside the temp checkout, if any.
+
+    The discriminator between two states the retention path used to conflate:
+
+      * a receipt was produced but written where no consumer reads it -- the
+        exact hazard requirement (a) exists to catch. The temp tree is then the
+        ONLY trace the hazard occurred, so reclaiming it destroys the evidence.
+        RETAIN.
+      * the run failed before producing any receipt at all -- ordinary, and the
+        common case, because validate.sh is fail-fast and its first gate can
+        abort in seconds. Nothing is preserved by keeping 26 MB of build tree.
+        RECLAIM.
+
+    THE TEST IS SHAPE, NOT NAME, and that choice is the safety-critical one. A
+    whitelist of known ledger filenames fails in the DANGEROUS direction: a
+    receipt written under a name nobody enumerated would read as "no evidence"
+    and be deleted -- a disk-hygiene fix eating the evidence path. So this looks
+    for any `*.jsonl` in the tree that git does not track. Measured before
+    relying on it: hermit tracks ZERO `.jsonl` files, so anything found here was
+    produced by this run. The tracked-ness check is kept regardless, so the
+    property survives that changing.
+
+    Reads no ledger CONTENT -- existence and tracked-ness are the whole test --
+    so this module stays a non-reader under the ledger-reader allowlist.
+    """
+    candidates: list[str] = []
+    for current, dirs, files in os.walk(fresh):
+        dirs[:] = [d for d in dirs if d not in RECEIPT_SCAN_PRUNE]
+        for name in files:
+            if name.endswith(".jsonl"):
+                candidates.append(str(Path(current, name).relative_to(fresh)))
+    if not candidates:
+        return []
+    tracked = run(["git", "-C", str(fresh), "ls-files", "--", *candidates], check=False)
+    known = set(tracked.stdout.split()) if tracked.returncode == 0 else set()
+    return sorted(c for c in candidates if c not in known)
+
+
 def validate_checkout(checkout: Path, target: str, *, run: Runner) -> Path:
     checkout = checkout.resolve()
     if not SHA_RE.fullmatch(target):
@@ -804,9 +847,30 @@ def main(
             )
         except RuntimeError as error:
             print(f"validate-run: RECEIPT-NOT-CANONICAL: {error}", file=sys.stderr)
-            # Deliberately NOT removed: the temp tree is now the only place the
-            # evidence exists, so destroying it would destroy the only record of
-            # a run that really happened.
+            # Retention is for EVIDENCE, not for every failure. Retaining
+            # unconditionally cost 26 MB per failed validate, and because
+            # validate.sh is fail-fast that is most of them.
+            try:
+                orphans = orphaned_receipt_locations(fresh_checkout, run=run)
+            except OSError as scan_error:
+                # Could not look. A NO-RESULT must never authorize deletion.
+                orphans = [f"<scan failed: {scan_error}>"]
+            if orphans:
+                print(
+                    "validate-run: ORPHANED-RECEIPT: this run wrote a receipt into "
+                    f"{', '.join(orphans)} inside the temp checkout, where no "
+                    f"consumer reads it. Temp checkout RETAINED at {fresh_checkout} "
+                    "-- it is the only trace that this happened.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(
+                "validate-run: NO-RECEIPT-PRODUCED: the run failed before writing a "
+                "receipt anywhere, so the temp checkout holds no evidence; "
+                "reclaiming it.",
+                file=sys.stderr,
+            )
+            remove_fresh_checkout(source_checkout, fresh_checkout, run=run)
             return 2
         if not args.json:
             print(f"RECEIPT-CANONICAL commit={args.target} cwd={fresh_checkout}")

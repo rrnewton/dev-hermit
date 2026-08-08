@@ -36,6 +36,13 @@ class FakeRun:
         self.fresh_complete = True
         self.ledger_rows: list[str] | None = None
         self.removed: list[str] = []
+        # What `git ls-files` reports as TRACKED inside the fresh checkout.
+        # Empty is the real-world case: hermit tracks zero .jsonl files.
+        self.fresh_tracked_jsonl = ""
+        # Relative path of a receipt the RUN writes inside its own temp
+        # checkout. Planted when the fresh tree is created, because that is the
+        # first moment the directory exists.
+        self.plant_receipt: str | None = None
 
     def __call__(self, command: list[str], **_kwargs: object):
         self.commands.append(command)
@@ -47,6 +54,10 @@ class FakeRun:
                 dep = self.fresh / "agent-utils/rs/safe-ci-dag-runner"
                 dep.mkdir(parents=True, exist_ok=True)
                 (dep / "Cargo.toml").write_text("[package]\n")
+            if self.plant_receipt is not None:
+                receipt = self.fresh / self.plant_receipt
+                receipt.parent.mkdir(parents=True, exist_ok=True)
+                receipt.write_text(f'{{"commit": "{SHA}", "cwd": "{self.fresh}"}}\n')
             return completed(command, stdout=f"{self.fresh}\n")
         if self.fresh is not None and command[:4] == ["git", "-C", str(self.fresh), "rev-parse"]:
             return completed(command, stdout=f"{SHA}\n")
@@ -56,6 +67,9 @@ class FakeRun:
             return completed(command)
         if self.fresh is not None and command[:4] == ["git", "-C", str(self.fresh), "submodule"]:
             return completed(command)
+        if self.fresh is not None and command[:4] == ["git", "-C", str(self.fresh), "ls-files"]:
+            # A planted receipt is untracked by construction, so git lists nothing.
+            return completed(command, stdout=self.fresh_tracked_jsonl)
         if command[0].endswith("ci-hub") and command[1:3] == ["ledger", "qualified-rows"]:
             rows = self.ledger_rows
             if rows is None:
@@ -355,14 +369,87 @@ class StartUnitTest(unittest.TestCase):
         — strictly worse than validating in place. The audit measured this exact
         shape: 111 validate.rs fallback rows in two per-checkout ledgers that
         default consumers discover ZERO of.
+
+        THE FIXTURE NOW PLANTS THE HAZARD IT DESCRIBES. It previously only
+        emptied the canonical ledger, which models "the canonical lookup found
+        nothing" — true of this case AND of an ordinary early failure. Those
+        need opposite dispositions, so the fixture has to distinguish them.
         """
         self.fake.ledger_rows = []
+        self.plant_orphan_receipt()
 
         rc, _output, error = self.invoke(["--", "full"])
 
         self.assertEqual(2, rc)
         self.assertIn("RECEIPT-NOT-CANONICAL", error)
+        self.assertIn("ORPHANED-RECEIPT", error)
         self.assertEqual([], self.fake.removed, "evidence must not be destroyed")
+
+    def plant_orphan_receipt(self, rel: str = ".hermit-validate-ledger.jsonl") -> None:
+        """Have the run write its receipt inside its own temp checkout."""
+        self.fake.plant_receipt = rel
+
+    def test_ordinary_early_failure_leaves_NO_retained_tree(self) -> None:
+        """The reclaim half. validate.sh is fail-fast: its first gate can abort
+        in seconds, so this is the COMMON outcome, and it used to strand a 26 MB
+        worktree every time. Nothing was produced, so nothing is preserved."""
+        self.fake.ledger_rows = []
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("NO-RECEIPT-PRODUCED", error)
+        self.assertNotIn("ORPHANED-RECEIPT", error)
+        self.assertEqual([str(self.fake.fresh)], self.fake.removed)
+
+    def test_a_receipt_under_an_UNANTICIPATED_name_is_still_retained(self) -> None:
+        """Why the test is SHAPE, not a whitelist of ledger filenames.
+
+        A whitelist fails in the dangerous direction: a receipt written under a
+        name nobody enumerated reads as "no evidence" and gets deleted. Any
+        untracked *.jsonl in the tree counts.
+        """
+        self.fake.ledger_rows = []
+        self.plant_orphan_receipt("ci/some-unanticipated-receipt.jsonl")
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("ORPHANED-RECEIPT", error)
+        self.assertEqual([], self.fake.removed)
+
+    def test_a_TRACKED_jsonl_is_not_mistaken_for_a_produced_receipt(self) -> None:
+        """Attribution is by tracked-ness. A .jsonl that git tracks at this
+        commit came from the checkout, not from the run, and must not pin a
+        26 MB tree forever."""
+        self.fake.ledger_rows = []
+        self.plant_orphan_receipt("fixtures/committed.jsonl")
+        self.fake.fresh_tracked_jsonl = "fixtures/committed.jsonl\n"
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("NO-RECEIPT-PRODUCED", error)
+        self.assertEqual([str(self.fake.fresh)], self.fake.removed)
+
+    def test_a_scan_that_cannot_look_retains_rather_than_reclaims(self) -> None:
+        """Fail-closed. A NO-RESULT is not a negative: if the tree cannot be
+        inspected we do not know whether evidence is in it, so it stays."""
+        self.fake.ledger_rows = []
+        original = start_unit.orphaned_receipt_locations
+
+        def explode(*_a: object, **_k: object) -> list[str]:
+            raise OSError("permission denied")
+
+        start_unit.orphaned_receipt_locations = explode
+        self.addCleanup(setattr, start_unit, "orphaned_receipt_locations", original)
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("ORPHANED-RECEIPT", error)
+        self.assertIn("scan failed", error)
+        self.assertEqual([], self.fake.removed)
 
     def test_a_row_for_the_same_sha_from_a_DIFFERENT_run_does_not_satisfy_it(self) -> None:
         """Identity binding, not a correlated proxy.
@@ -377,7 +464,11 @@ class StartUnitTest(unittest.TestCase):
 
         self.assertEqual(2, rc)
         self.assertIn("RECEIPT-NOT-CANONICAL", error)
-        self.assertEqual([], self.fake.removed)
+        # The property under test is IDENTITY BINDING -- a foreign row must not
+        # satisfy the check. Retention is a separate question: this run left no
+        # receipt in its own tree, so there is nothing to preserve and the tree
+        # is reclaimed. Asserting retention here conflated the two.
+        self.assertEqual([str(self.fake.fresh)], self.fake.removed)
 
 
 class LibunwindEnvTest(unittest.TestCase):
