@@ -32,6 +32,9 @@ const INVOCATION_LABEL: &str = "io.dev-hermit.owner-invocation";
 const PANE_LABEL: &str = "io.dev-hermit.owner-pane";
 const TASK_LABEL: &str = "io.dev-hermit.owner-task";
 const LIFETIME_LABEL: &str = "io.dev-hermit.lifetime";
+/// Key under which `discover_live_invocations` files the fleet-wide `/proc` sweep.
+/// Its PRESENCE is the proof that the sweep completed; see `classify`.
+const PROCESS_SCAN_KEY: &str = "@proc:all";
 const SNAPSHOT_MAX_AGE_SECS: u64 = 10 * 60;
 const QUERY_TIMEOUT_SECS: &str = "3s";
 const EVIDENCE_TIMEOUT_SECS: &str = "1s";
@@ -784,7 +787,17 @@ fn reconcile(
     };
     let agents = load_live_agents(agents_path)?;
     let invocations = match live_invocations_path {
-        Some(path) => load_live_invocations(path)?,
+        // An explicitly supplied evidence file IS an assertion of completeness by
+        // its author -- that is what `--live-invocations` means and it is how the
+        // fixtures inject a controlled process table. Stamp the completed-scan key
+        // so `classify` can still tell it apart from "no evidence was gathered".
+        // The tick never takes this path; it takes the sweep below.
+        Some(path) => {
+            let mut loaded = load_live_invocations(path)?;
+            let union: BTreeSet<String> = loaded.values().flatten().cloned().collect();
+            loaded.entry(PROCESS_SCAN_KEY.to_string()).or_insert(union);
+            loaded
+        }
         None => discover_live_invocations(&agents),
     };
     let registry_path = state_path()?;
@@ -839,7 +852,7 @@ fn reconcile(
             continue;
         };
         report.managed += 1;
-        let disposition = classify(&ownership, &agents, &invocations);
+        let disposition = classify(&ownership, &invocations);
         let action = match disposition {
             Disposition::Live => {
                 report.live += 1;
@@ -934,35 +947,42 @@ fn reconcile(
     Ok(i32::from(attention))
 }
 
+/// Reclaim rests on PROCESS EVIDENCE ALONE. The ORC agent census is deliberately
+/// not consulted.
+///
+/// The removed branch was `!live_agents.contains_key(owner_agent) -> Reclaimable`.
+/// It was reached exactly when the process walk had already FAILED to find the
+/// owner, and it then let a JSON file decide whether to destroy a container. Two
+/// independent ways that file lies: it is written by ORC and can be stale or
+/// degenerate (on 2026-08-08 it briefly held a single synthetic `worker` row), and
+/// a headless agent has no tmux pane, so nothing about it ever appears in either
+/// the census or the pane-rooted walk. Measured on this box the same day: 15
+/// invocations were reachable from the 17 tmux panes while 33 were live in
+/// `/proc` -- 18 live invocations, among them a running `validate.sh full`, were
+/// invisible to the pane walk and would have been classified on the census alone.
+///
+/// `PROCESS_SCAN_KEY` present means the fleet-wide `/proc` scan COMPLETED. Its
+/// absence is a NO-RESULT, not a negative, and must never authorize deletion --
+/// the same distinction that `unverifiable`-rendered-as-drift got wrong elsewhere
+/// in this tree.
 fn classify(
     ownership: &Ownership,
-    live_agents: &BTreeMap<String, String>,
     live_invocations: &BTreeMap<String, BTreeSet<String>>,
 ) -> Disposition {
-    // ORC may be between agent-list updates while the process is still alive.
-    // Exact process evidence always wins over an absent/recycled name.
+    // Exact incarnation is alive somewhere in this user's process table.
     if live_invocations
         .values()
         .any(|invocations| invocations.contains(&ownership.owner_invocation))
     {
         return Disposition::Live;
     }
-    if !live_agents.contains_key(&ownership.owner_agent) {
-        return if ownership.lifetime == Lifetime::Agent {
-            Disposition::Reclaimable
-        } else {
-            Disposition::TransferRequired
-        };
-    }
-    let Some(invocations) = live_invocations.get(&ownership.owner_agent) else {
-        return Disposition::OwnerUnknown;
-    };
-    if invocations.is_empty() {
+    // We could not look. Refuse.
+    if !live_invocations.contains_key(PROCESS_SCAN_KEY) {
         return Disposition::OwnerUnknown;
     }
-    if invocations.contains(&ownership.owner_invocation) {
-        Disposition::Live
-    } else if ownership.lifetime == Lifetime::Agent {
+    // The scan completed and the owning incarnation is absent from it, so the
+    // exact process that created this container is provably gone.
+    if ownership.lifetime == Lifetime::Agent {
         Disposition::Reclaimable
     } else {
         Disposition::TransferRequired
@@ -1496,7 +1516,61 @@ fn discover_live_invocations(
             .entry(format!("@pane:{pane}"))
             .or_insert_with(|| descendant_invocations(pid, &process_tree));
     }
+    // Fleet-wide sweep. Everything above is rooted at a tmux pane and therefore
+    // cannot see a headless agent, which has no pane by construction. `classify`
+    // treats the presence of this key as proof that the scan ran, so it is
+    // inserted ONLY on success.
+    if let Some(all) = all_process_invocations() {
+        discovered.insert(PROCESS_SCAN_KEY.to_string(), all);
+    }
     discovered
+}
+
+/// Every invocation id in this user's process table, or `None` if `/proc` could
+/// not be enumerated at all. Same shape as `residue_sweep.py`'s `process_cwds`:
+/// walk `/proc`, keep same-uid entries, and raise rather than silently return an
+/// empty set -- an unreadable `/proc` must read as "we do not know", never as
+/// "nobody is alive".
+fn all_process_invocations() -> Option<BTreeSet<String>> {
+    use std::os::unix::fs::MetadataExt;
+    let entries = fs::read_dir("/proc").ok()?;
+    // Our own uid without pulling in a libc dependency for one call.
+    let uid = fs::metadata("/proc/self").ok()?.uid();
+    let mut invocations = BTreeSet::new();
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        // Only same-uid processes are readable, and only ours are ours to judge.
+        match fs::metadata(entry.path()) {
+            Ok(meta) if meta.uid() == uid => {}
+            _ => continue,
+        }
+        let Ok(raw) = fs::read(format!("/proc/{pid}/environ")) else {
+            continue;
+        };
+        for field in raw.split(|byte| *byte == 0) {
+            let text = String::from_utf8_lossy(field);
+            if let Some(value) = text.strip_prefix("META_3PAI_INVOCATION_ID=") {
+                if !value.is_empty() {
+                    invocations.insert(value.to_string());
+                }
+            } else if let Some(metadata) = text.strip_prefix("CODING_AGENT_METADATA=") {
+                for item in metadata.split(',') {
+                    if let Some(value) = item.trim().strip_prefix("invocation_id=") {
+                        if !value.is_empty() {
+                            invocations.insert(value.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Some(invocations)
 }
 
 fn tmux_pane_pids() -> BTreeMap<String, u32> {
@@ -2062,14 +2136,22 @@ mod tests {
         }
     }
 
+    /// A COMPLETED fleet-wide scan that observed `found`. The distinction between
+    /// this and `BTreeMap::new()` is the whole point: one says "we looked and the
+    /// owner is gone", the other says "we did not look".
+    fn completed_scan(found: &[&str]) -> BTreeMap<String, BTreeSet<String>> {
+        BTreeMap::from([(
+            PROCESS_SCAN_KEY.to_string(),
+            found.iter().map(|s| (*s).to_string()).collect(),
+        )])
+    }
+
+    // ---- POSITIVE SIDE: reclamation still fires, or we have lost the capability ----
+
     #[test]
     fn retired_agent_container_is_reclaimable() {
         assert_eq!(
-            classify(
-                &ownership(Lifetime::Agent),
-                &BTreeMap::new(),
-                &BTreeMap::new()
-            ),
+            classify(&ownership(Lifetime::Agent), &completed_scan(&["inv-other"])),
             Disposition::Reclaimable
         );
     }
@@ -2077,41 +2159,33 @@ mod tests {
     #[test]
     fn task_container_requires_transfer_when_creator_is_gone() {
         assert_eq!(
-            classify(
-                &ownership(Lifetime::Task),
-                &BTreeMap::new(),
-                &BTreeMap::new()
-            ),
+            classify(&ownership(Lifetime::Task), &completed_scan(&[])),
             Disposition::TransferRequired
         );
     }
 
     #[test]
     fn exact_invocation_not_reused_agent_name_defines_liveness() {
-        let agents = BTreeMap::from([("hermit-1".to_string(), "%1".to_string())]);
-        let matching = BTreeMap::from([(
-            "hermit-1".to_string(),
-            BTreeSet::from(["inv-old".to_string()]),
-        )]);
-        let recycled = BTreeMap::from([(
-            "hermit-1".to_string(),
-            BTreeSet::from(["inv-new".to_string()]),
-        )]);
         assert_eq!(
-            classify(&ownership(Lifetime::Agent), &agents, &matching),
+            classify(&ownership(Lifetime::Agent), &completed_scan(&["inv-old"])),
             Disposition::Live
         );
+        // Same agent NAME, new incarnation: the old container is still garbage.
         assert_eq!(
-            classify(&ownership(Lifetime::Agent), &agents, &recycled),
+            classify(&ownership(Lifetime::Agent), &completed_scan(&["inv-new"])),
             Disposition::Reclaimable
         );
     }
 
+    // ---- NEGATIVE SIDE: no live owner is ever reclaimed ----
+
     #[test]
     fn missing_invocation_evidence_never_authorizes_removal() {
-        let agents = BTreeMap::from([("hermit-1".to_string(), "%1".to_string())]);
+        // No scan ran at all. Previously this returned Reclaimable whenever the
+        // census also lacked the agent, which is how an empty snapshot could
+        // authorize deleting a live agent's container.
         assert_eq!(
-            classify(&ownership(Lifetime::Agent), &agents, &BTreeMap::new()),
+            classify(&ownership(Lifetime::Agent), &BTreeMap::new()),
             Disposition::OwnerUnknown
         );
     }
@@ -2123,10 +2197,53 @@ mod tests {
             BTreeSet::from(["inv-old".to_string()]),
         )]);
         assert_eq!(
+            classify(&ownership(Lifetime::Agent), &process_evidence),
+            Disposition::Live
+        );
+    }
+
+    #[test]
+    fn headless_owner_invisible_to_the_pane_walk_is_never_reclaimed() {
+        // THE REGRESSION THIS RESCOPE EXISTS FOR, modelled as the OLD code would
+        // have seen it: panes enumerated fine but the owner is headless so its
+        // pane set is empty, and the census does not list it either. The old
+        // classify fell through to `!live_agents.contains_key(..)` and returned
+        // Reclaimable -- destroying a live agent's container. There is no
+        // completed sweep here, so the only safe answer is "we do not know".
+        let pane_only: BTreeMap<String, BTreeSet<String>> =
+            BTreeMap::from([("@pane:%1".to_string(), BTreeSet::new())]);
+        assert_eq!(
+            classify(&ownership(Lifetime::Agent), &pane_only),
+            Disposition::OwnerUnknown
+        );
+    }
+
+    #[test]
+    fn the_fleet_wide_sweep_rescues_an_owner_the_pane_walk_missed() {
+        // Same headless owner, but now the /proc sweep ran and found it. This is
+        // the evidence source the rescope adds: measured on this box 2026-08-08,
+        // the pane walk saw 15 invocations and the sweep saw 33.
+        let mut evidence: BTreeMap<String, BTreeSet<String>> =
+            BTreeMap::from([("@pane:%1".to_string(), BTreeSet::new())]);
+        evidence.insert(
+            PROCESS_SCAN_KEY.to_string(),
+            BTreeSet::from(["inv-old".to_string()]),
+        );
+        assert_eq!(
+            classify(&ownership(Lifetime::Agent), &evidence),
+            Disposition::Live
+        );
+    }
+
+    #[test]
+    fn a_degenerate_agent_census_cannot_authorize_removal() {
+        // Exactly the 2026-08-08 shape: the snapshot held one synthetic row and
+        // named no real agent. classify no longer takes the census at all, so the
+        // only thing that decides is whether the sweep saw the invocation.
+        assert_eq!(
             classify(
                 &ownership(Lifetime::Agent),
-                &BTreeMap::new(),
-                &process_evidence
+                &completed_scan(&["inv-old", "unrelated-inv"])
             ),
             Disposition::Live
         );
