@@ -35,7 +35,9 @@ QUALIFYING = frozenset((FULL, SPOT_CHECK))
 # the field blank or being silently promoted to one of the strict tiers.
 UNQUALIFIED = frozenset((
     "legacy-unqualified",
+    "unqualified-no-comparison",
     "unqualified-stdout-only",
+    "unqualified-self-verify-only",
     "unqualified-tool-count-only",
 ))
 KNOWN = QUALIFYING | UNQUALIFIED

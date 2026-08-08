@@ -138,7 +138,9 @@ const FULL_COMPARISON_TIER: &str = "full-stdout-info-stack-heap";
 const SPOT_CHECK_COMPARISON_TIER: &str = "stdout-info-stack-heap-spot-check";
 const UNQUALIFIED_COMPARISON_TIERS: &[&str] = &[
     "legacy-unqualified",
+    "unqualified-no-comparison",
     "unqualified-stdout-only",
+    "unqualified-self-verify-only",
     "unqualified-tool-count-only",
 ];
 
