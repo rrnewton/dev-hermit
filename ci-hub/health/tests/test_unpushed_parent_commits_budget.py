@@ -249,3 +249,112 @@ class UnpushedParentCommitsBudget(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ObservationSurvivesRescue(unittest.TestCase):
+    """The 2026-08-08 fix: the measurement is emitted BEFORE rescue is attempted.
+
+    The gate had never emitted a measurement in a full day of ticks, and the
+    reason was not that it could not measure. `main` computed the correct answer
+    in 0.4s, then called `rescue`, and printed only afterwards -- so the 30s
+    timeout killed a process that was already holding a complete result. These
+    tests pin the ordering and the bounded-rescue reporting so the measurement
+    can never again be discarded by a slow or broken publish leg.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="unpushed-order-")
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def test_measurement_survives_a_rescue_that_never_finishes(self) -> None:
+        """POSITIVE: kill the gate mid-rescue; the count is already on stdout.
+
+        This reproduces the tick timeout exactly -- an external killer stops the
+        process while rescue is still running -- and asserts the observation is
+        not lost with it.
+        """
+        fx = Fixture(self.tmp, herdr_delay=30.0)
+        fx.commit("local-only-and-unpublished")
+
+        proc = subprocess.Popen(
+            [sys.executable, str(fx.gate), "--scope", "all", "--rescue"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        )
+        try:
+            proc.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            # Our own child, by exact pid, and reaped so it cannot linger on a
+            # shared box (Hard Invariant 15).
+            proc.kill()
+            proc.wait(timeout=10)
+        out = proc.stdout.read()
+        proc.stdout.close()
+
+        self.assertIn("unpushed-parent-commits scope=all count=1", out)
+        self.assertIn("local-only-and-unpublished", out)
+        self.assertIn("summary=", out)
+        # And the publish leg genuinely had not finished when we killed it.
+        self.assertNotIn("rescue attempted=", out)
+
+    def test_deadline_reports_skipped_never_verified(self) -> None:
+        """NEGATIVE: commits the budget never reached are named, not implied done."""
+        fx = Fixture(self.tmp, herdr_delay=1.0)
+        for n in range(3):
+            fx.commit(f"unpublished-{n}")
+
+        rc, out, _ = fx.gate_run(
+            "--scope", "all", "--rescue", "--rescue-deadline", "0.2"
+        )
+        self.assertIn("skipped-deadline", out)
+        skipped = out.count("skipped-deadline")
+        self.assertGreaterEqual(skipped, 1)
+        # Partial coverage is not success: nothing unpublished may exit 0.
+        self.assertEqual(1, rc)
+        # The count line states what was skipped rather than burying it.
+        self.assertRegex(out, r"skipped_deadline=[1-9]")
+
+    def test_summary_key_is_emitted_so_the_alarm_names_its_subject(self) -> None:
+        """tick-hub resolves `{summary}` from key=value stdout lines.
+
+        Without a `summary=` line the emitted warning renders the LITERAL
+        `{summary}` -- the unactionable-alarm defect the worktree-liveness gate
+        shipped. It was invisible here only because the gate never completed.
+        """
+        fx = Fixture(self.tmp)
+        fx.commit("names-its-subject")
+        _, out, _ = fx.gate_run("--scope", "all")
+
+        summary = [l for l in out.splitlines() if l.startswith("summary=")]
+        self.assertEqual(1, len(summary), out)
+        self.assertIn("names-its-subject", summary[0])
+        self.assertNotIn("{summary}", out)
+
+    def test_clean_tree_still_emits_a_summary(self) -> None:
+        """A gate that only names its subject when firing leaves `{summary}`
+        literal on the quiet path. Both branches must emit the key."""
+        fx = Fixture(self.tmp)
+        rc, out, _ = fx.gate_run("--scope", "all")
+        self.assertEqual(0, rc)
+        self.assertIn("summary=no local-only commits", out)
+
+
+class TickGateKeepsObservationSeparateFromRescue(unittest.TestCase):
+    """The split is the fix; pin it so it cannot silently regress.
+
+    Measured 2026-08-08: scan 0.40s versus one herdr-run rescue round-trip at
+    65.8s and 74.8s (both failing), two per commit. Putting `--rescue` back on a
+    30s tick budget restores a gate that can never report.
+    """
+
+    def test_tick_gate_runs_observation_only(self) -> None:
+        config = (REPO_ROOT / "ci-hub" / "health" / "tick-hub.yaml").read_text()
+        block = config.split("- name: unpushed_parent_commits", 1)
+        self.assertEqual(2, len(block), "gate missing from tick-hub.yaml")
+        cmd = [
+            line for line in block[1].splitlines()
+            if "unpushed_parent_commits.py" in line
+        ]
+        self.assertEqual(1, len(cmd), block[1][:400])
+        self.assertIn("--scope all", cmd[0])
+        self.assertNotIn("--rescue", cmd[0])

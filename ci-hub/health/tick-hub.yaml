@@ -148,14 +148,25 @@ reminders:
       title: "owner tooling directives need action: {summary}"
 
   # Local-only parent commits are the state that got 45 commits orphaned on
-  # 2026-08-06. They emit no error and no failing check, so this runs on a
-  # timer and PUBLISHES them rather than reporting: a report needs a reader.
+  # 2026-08-06. They emit no error and no failing check, so this runs on a timer.
   # --scope all is load-bearing -- a HEAD-scoped probe read 0 while 24 commits
   # sat unpublished.
+  #
+  # OBSERVATION ONLY ON THE TICK -- `--rescue` was REMOVED 2026-08-08. Measured:
+  # the scan is 0.40s, while ONE herdr-run rescue round-trip took 65.8s and
+  # 74.8s (both failing rc=69) and rescue makes two per commit. Sharing the 30s
+  # budget meant this gate reported `could not run ... timed out` on EVERY cycle
+  # for a full day and therefore never emitted a measurement -- while a 20-commit
+  # stack sat in zero origin refs and had to be found by hand. Observation is
+  # read-only and cheap; rescue is remote mutation and slow. They do not belong
+  # on one budget. Run the rescue deliberately, off the tick:
+  #   ./ci-hub/health/unpushed_parent_commits.py --scope all --rescue
+  # (it bounds itself with --rescue-deadline and reports skipped-deadline rather
+  # than implying coverage it never attempted).
   - name: unpushed_parent_commits
     cadence_secs: 900
     gate:
-      cmd: ./ci-hub/health/unpushed_parent_commits.py --scope all --rescue
+      cmd: ./ci-hub/health/unpushed_parent_commits.py --scope all
       when: failure
       capture: true
     emit:
@@ -163,7 +174,7 @@ reminders:
       skill: hard-warn-coordinator
       fields:
         component: unpushed-parent-commits
-      title: "parent commits existed only locally (now published to rescue/): {summary}"
+      title: "parent commits exist ONLY locally (not yet published): {summary}"
 
   - name: speculative_land_obligations
     cadence_secs: 300
