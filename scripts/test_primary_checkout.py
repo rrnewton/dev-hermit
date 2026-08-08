@@ -480,7 +480,16 @@ class PrimaryCheckoutTests(_ParentWorkspaceFixture):
         )
         self.assertIn("Published parent snapshot", out.getvalue())
 
-    def test_snapshot_refuses_reverie_manifest_mismatch(self) -> None:
+    def test_snapshot_refuses_pin_lagging_the_recorded_gitlink(self) -> None:
+        """An UPSTREAM ADVANCE, not a manifest mismatch.
+
+        `self.advance("reverie")` lands a README-only commit upstream; the hermit
+        manifests are untouched and still agree with each other. The snapshot must
+        still refuse -- publishing hermit-pins-X beside reverie-gitlink-Y hands a
+        clone a mismatched pair -- but it must SAY that, not claim the manifests
+        are mutually inconsistent. This test previously asserted "not globally
+        consistent" and so enshrined the conflation its own name describes.
+        """
         original_parent = git(self.root, "rev-parse", "HEAD")
         self.advance("reverie")
         out, err = StringIO(), StringIO()
@@ -496,7 +505,44 @@ class PrimaryCheckoutTests(_ParentWorkspaceFixture):
 
         self.assertEqual(result, 1)
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), original_parent)
-        self.assertIn("not globally consistent", err.getvalue())
+        message = err.getvalue()
+        self.assertIn("pin lags the reverie gitlink", message)
+        self.assertIn("consistent with each other", message)
+        self.assertNotIn("disagree with EACH OTHER", message)
+
+    def test_snapshot_names_manifests_that_disagree_with_each_other(self) -> None:
+        """The OTHER failure, which must be distinguishable from the one above.
+
+        Two tracked Cargo.toml naming different revisions is unfixable by any pin
+        bump -- no single value satisfies both -- so it must never be reported in
+        the same words as "upstream moved".
+        """
+        subcrate = self.seeds["hermit"] / "subcrate"
+        subcrate.mkdir(exist_ok=True)
+        (subcrate / "Cargo.toml").write_text(
+            "[dependencies]\nreverie = { git = "
+            '"https://github.com/rrnewton/reverie.git", '
+            f'rev = "{"c" * 40}" }}\n'
+        )
+        git(self.seeds["hermit"], "add", "subcrate/Cargo.toml")
+        git(self.seeds["hermit"], "commit", "-m", "second toml, different rev")
+        git(self.seeds["hermit"], "push", "origin", "main")
+        out, err = StringIO(), StringIO()
+
+        result = primary_checkout.checkout_fresh(
+            self.root,
+            publish_parent=True,
+            strict=True,
+            use_proxy=False,
+            out=out,
+            err=err,
+        )
+
+        self.assertEqual(result, 1)
+        message = err.getvalue()
+        self.assertIn("disagree with EACH OTHER", message)
+        self.assertIn("c" * 40, message)
+        self.assertNotIn("pin lags the reverie gitlink", message)
 
     def test_snapshot_refuses_stale_reverie_lock(self) -> None:
         original_parent = git(self.root, "rev-parse", "HEAD")

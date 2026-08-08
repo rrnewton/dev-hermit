@@ -414,10 +414,43 @@ def publish_parent_snapshot(
         expected = heads["reverie"]
         if pin_count == 0:
             failures.append("hermit: no tracked Cargo manifest pins rrnewton/reverie")
-        elif pins != {expected}:
+        elif len(pins) > 1:
+            # INTERNAL INCOHERENCE: the manifests contradict each other. No pin
+            # value could satisfy them, so this is unfixable by any bump and is
+            # never a moving-reference complaint.
             failures.append(
-                "Hermit Reverie pins are not globally consistent: "
-                f"manifests={','.join(sorted(pins)) or 'none'} reverie/main={expected}"
+                "Hermit Reverie pins disagree with EACH OTHER across tracked "
+                f"Cargo.toml: {', '.join(sorted(pins))}"
+            )
+        elif pins != {expected}:
+            # SNAPSHOT INCOHERENCE: the manifests agree with each other but name a
+            # different Reverie than the gitlink this snapshot would record. Say
+            # that, rather than "not globally consistent" -- the manifests ARE
+            # globally consistent here, and calling them inconsistent sent readers
+            # hunting for a disagreement that does not exist.
+            #
+            # This is EXACT on purpose and must stay exact. `expected` is the
+            # gitlink about to be recorded; publishing hermit-pins-X alongside
+            # reverie-gitlink-Y hands a colleague who runs `git submodule update
+            # --init` a mismatched pair. A small gap is not less broken than a
+            # large one, so this is NOT the place for a staleness bound.
+            #
+            # It nevertheless reads as a treadmill, and the cause is one level up:
+            # an earlier loop requires every primary HEAD to equal its own
+            # origin/main, so `expected` IS the upstream tip. Coherence-with-the-
+            # gitlink therefore composes into currency-with-the-tip. Bound the
+            # CURRENCY leg where it lives (that loop, and
+            # check_reverie_pin_invariant.py leg C) -- not here.
+            behind = run_git(
+                root / "reverie", "rev-list", "--count", f"{next(iter(pins))}..{expected}"
+            )
+            n = behind.stdout.strip() if behind.returncode == 0 else ""
+            distance = f"{n} commit{'' if n == '1' else 's'}" if n else "an unknown number of commits"
+            failures.append(
+                "Hermit Reverie pin lags the reverie gitlink this snapshot would "
+                f"record: manifests all agree at {next(iter(pins))}, gitlink/"
+                f"reverie-main={expected} ({distance} ahead). The manifests "
+                "are consistent with each other; only the recorded gitlink differs."
             )
         failures.extend(
             f"hermit: {message}"

@@ -4248,10 +4248,24 @@ def resolve_obligation(args: argparse.Namespace) -> int:
             f"obligation {args.id!r} durable remediation kind does not match its "
             "recommendation"
         )
+    # A recommendation is a PREDICTION made at failure time, before anyone had
+    # diagnosed the failure. The resolution is a STATEMENT OF WHAT WAS DONE.
+    # Requiring them to agree meant the ledger could only record cases where the
+    # first guess happened to be right, and left every other case with two
+    # dishonest options: refuse to resolve a genuinely discharged obligation
+    # (corrupting the ledger by omission), or record a repair that never
+    # happened (corrupting it by commission).
+    #
+    # So a differing kind is ACCEPTED AND RECORDED AS DIFFERING -- never
+    # silently coerced. Evidence is NOT relaxed: the proof obligations below key
+    # on `args.kind`, the kind actually CLAIMED, so claiming `revert` still
+    # requires proving a revert happened. What is gone is the requirement that
+    # the claim match the prediction, not the requirement that it match reality.
     if args.kind != durable_action:
-        raise ProtocolError(
-            f"--kind {args.kind!r} contradicts durable recommendation "
-            f"{durable_action!r}"
+        print(
+            f"resolution kind {args.kind!r} differs from durable recommendation "
+            f"{durable_action!r}; recording the repair that actually happened",
+            file=sys.stderr,
         )
     repo = record.get("repo")
     if not isinstance(repo, str):
@@ -4279,11 +4293,19 @@ def resolve_obligation(args: argparse.Namespace) -> int:
         raise ProtocolError(
             f"repair {resolved} does not descend from failed land {landed_sha}"
         )
+    # `kind` is what was ACTUALLY done; `recommended_kind` is what was PREDICTED.
+    # Both are recorded so a reader can see the two disagreeing rather than
+    # having to infer it, and `durable_recommendation_matches` is now COMPUTED
+    # instead of hardcoded True.
     kind_verification: dict[str, object] = {
-        "kind": durable_action,
-        "durable_recommendation_matches": True,
+        "kind": args.kind,
+        "recommended_kind": durable_action,
+        "durable_recommendation_matches": args.kind == durable_action,
     }
-    if durable_action == "revert":
+    # Keyed on the CLAIM, not the recommendation: a `revert` resolution must
+    # prove a revert regardless of what was recommended, and a `fix-forward`
+    # resolution cannot borrow revert's proof by having been recommended one.
+    if args.kind == "revert":
         repair_parents = _commit_parents(source, resolved)
         if repair_parents != [landed_sha]:
             raise ProtocolError(
