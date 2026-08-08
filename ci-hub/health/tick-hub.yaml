@@ -147,6 +147,35 @@ reminders:
         component: owner-tooling-directives
       title: "owner tooling directives need action: {summary}"
 
+  # THE TICK POLICES ITS OWN CODE. It executes from the shared parent WORKING
+  # TREE (hermitOperationalTick does `cd <parent> && ./ci-hub/bin/health-tick`),
+  # and the parent is chronically behind origin/main because it cannot
+  # fast-forward while other agents hold dirty paths. A behind-checkout displays
+  # LANDED content as modified, so `git restore` -- an entirely ordinary cleanup
+  # command -- silently rewinds live tick code. That happened TWICE to
+  # unpushed_parent_commits on 2026-08-08; the second time the whole tick went
+  # 4s -> 36s and the detector for unpushed work went blind, with `git status`
+  # reporting the file CLEAN throughout.
+  #
+  # This does not prevent the restore -- nothing can, and nobody has to be
+  # careless for it to happen. It removes the SILENCE: drift pages on the next
+  # tick, by path. It pages only on STALE (clean at HEAD, behind origin/main),
+  # never on work-in-progress edits, because a gate that fires during ordinary
+  # editing gets ignored and is then worth nothing when the real thing happens.
+  # Detect-only; repairing drift means syncing or landing, both owned decisions.
+  - name: tick_code_currency
+    cadence_secs: 900
+    gate:
+      cmd: ./ci-hub/health/tick_code_currency.py --gate
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: tick-code-currency
+      title: "the tick is running code that is not what landed: {summary}"
+
   # Local-only parent commits are the state that got 45 commits orphaned on
   # 2026-08-06. They emit no error and no failing check, so this runs on a timer.
   # --scope all is load-bearing -- a HEAD-scoped probe read 0 while 24 commits
