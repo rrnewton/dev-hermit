@@ -194,6 +194,60 @@ fn git(dir: &Path, args: &[&str]) -> (bool, String, String) {
     )
 }
 
+/// True when any of the slot's recorded product checkouts has uncommitted work.
+/// FAILS CLOSED: an unreadable checkout, or a `git status` that errors, counts
+/// as dirty. Absent children (`-`) are skipped, not treated as clean evidence.
+fn slot_has_uncommitted_work(root: &Path, record: &Value) -> bool {
+    for key in ["hermit_path", "reverie_path", "liteinst2_path"] {
+        let Some(rel) = record.get(key).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if rel.is_empty() || rel == "-" {
+            continue;
+        }
+        let path = root.join(rel);
+        if !path.join(".git").exists() {
+            continue;
+        }
+        let (ok, out, _) = git(&path, &["status", "--porcelain"]);
+        if !ok || !out.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether a `coordinator_lease_revocation` journal should still block `--repair`.
+///
+/// The refusal list this feeds is an IN-FLIGHT TRANSACTION guard, not an audit
+/// registry: its siblings `release_journal` and `orphan_residue_journal` delete
+/// themselves on completion, and the durable `coordinator_lease` is deliberately
+/// excluded. The hazard it protects against is a checkout fenced aside mid-release,
+/// which repair must not reconcile into `branch="-"` (see the RELEASE-JOURNAL
+/// ISOLATION fixture in scripts/allocate-worktree-repair-test.sh).
+///
+/// A revocation cannot create that hazard at all — `arm_coordinator_lease_revocation`
+/// stops a systemd unit and moves no file. Once `complete_coordinator_lease_revocation`
+/// records `phase="revoked"` with its proof of death, the transaction is over.
+/// Blocking on the mere PRESENCE of the key made every completed revocation a
+/// permanent, undischargeable veto over repair for the whole registry.
+///
+/// NOTHING IS ERASED HERE. The journal, its lease identity and its proof all
+/// remain in the record; repair merely stops mistaking a finished transaction for
+/// a running one. The clean-tree condition is deliberately stricter than the
+/// mechanism requires — repair only rewrites recorded branch cells and never
+/// touches a file — because a completed revocation sitting on top of uncommitted
+/// work is an anomaly that should stay visible rather than be reconciled away.
+fn revocation_journal_blocks_repair(root: &Path, record: &Value) -> bool {
+    let Some(journal) = record.get("coordinator_lease_revocation") else {
+        return false;
+    };
+    if journal["phase"].as_str() != Some("revoked") {
+        return true;
+    }
+    slot_has_uncommitted_work(root, record)
+}
+
 fn epoch_now() -> i64 {
     Command::new("date")
         .args(["+%s"])
@@ -700,7 +754,7 @@ fn repair_registry(root: &Path, dry_run: bool) -> ! {
                 || record.get("release_journal").is_some()
                 || record.get("orphan_residue_journal").is_some()
                 || record.get("coordinator_lease_intent").is_some()
-                || record.get("coordinator_lease_revocation").is_some()
+                || revocation_journal_blocks_repair(root, record)
         })
         .collect();
     if !releasing.is_empty() {
