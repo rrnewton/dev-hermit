@@ -1,0 +1,17 @@
+guest,gate,context,counted_syscall,expected,observed,verdict
+guest_k_syscalls,G1_exit_code,single,-,0,0,PASS
+guest_k_syscalls,G2_count,single_pipe,getpid,10000,10000,PASS
+guest_k_syscalls,G3_env_invariance,pipe,getpid,10000,10000,PASS
+guest_k_syscalls,G3_env_invariance,file,getpid,10000,10000,PASS
+guest_k_syscalls,G4_exit_codes,20x_parallel,-,0,20/20 zero,PASS
+guest_k_syscalls,G4_counts,20x_parallel,getpid,10000,all 10000,PASS
+guest_k_syscalls,VERDICT,-,-,-,-,ACCEPTED
+guest_rejected_nondet,G1_exit_code,single,-,0,0,PASS
+guest_rejected_nondet,G2_count,single_pipe,sched_yield,270,270,PASS
+guest_rejected_nondet,G3_env_invariance,pipe,sched_yield,270,277,FAIL
+guest_rejected_nondet,G3_env_invariance,file,sched_yield,270,260,FAIL
+guest_rejected_nondet,G4_exit_codes,20x_parallel,-,0,20/20 zero,PASS
+guest_rejected_nondet,G4_counts,20x_parallel,sched_yield,270,"14 distinct values 64..148",FAIL
+guest_rejected_nondet,VERDICT,-,-,-,-,REJECTED
+guest_rejected,G2_count,single_pipe,write,10,1,FAIL
+guest_rejected,VERDICT,-,-,-,-,REJECTED

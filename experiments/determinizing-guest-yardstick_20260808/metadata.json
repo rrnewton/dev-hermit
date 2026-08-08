@@ -1,0 +1,17 @@
+{
+  "name": "determinizing-guest-yardstick",
+  "date": "2026-08-08",
+  "question": "Can a guest with an invariant true BY CONSTRUCTION hold that invariant natively, including under ~20x parallel stress, well enough to serve as a golden yardstick for later backend parity comparison?",
+  "answer": "Yes for guest_k_syscalls (exactly 10000 getpid, 20/20 under stress). The validation gate is proven to discriminate: a load-dependent guest passed the single-run check and was rejected only by the stress check.",
+  "host": "devbig014",
+  "counted_by": "strace -c (ptrace-based; corroboration only, NOT the golden reference)",
+  "golden_signal": "guest self-check exit code, which needs no external observer",
+  "artifacts": {
+    "guest_k_syscalls.c": "ACCEPTED guest #1: freestanding, static, nostdlib; exactly K=10000 getpid then exit_group",
+    "guest_rejected_nondet.c": "REJECTED: time-bounded loop; sched_yield count is load-dependent",
+    "guest_rejected.c": "REJECTED: libc/stdio; count is a function of buffering and environment",
+    "validate_guest.sh": "the gate: G1 exit code, G2 count, G3 environment invariance, G4 20x parallel"
+  },
+  "reproduce": "gcc -O2 -static -nostdlib -nostartfiles -fno-stack-protector -o guest_k_syscalls guest_k_syscalls.c && ./validate_guest.sh ./guest_k_syscalls getpid 10000 20",
+  "backends_compared": "NONE - deliberately out of scope; this task validates the instrument only"
+}

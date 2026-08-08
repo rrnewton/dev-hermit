@@ -1,0 +1,4 @@
+# Compiled guests are build artifacts; rebuild with the command in metadata.json
+guest_k_syscalls
+guest_rejected
+guest_rejected_nondet
