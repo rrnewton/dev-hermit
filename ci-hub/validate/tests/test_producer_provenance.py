@@ -76,6 +76,9 @@ def green_row(*, finished_at: str, producer=None, omit_producer: bool = False) -
         "executed_tests": 427,
         "filtered_tests": 0,
         "finished_at": finished_at,
+        "admission": "ci-hub-validate-lock",
+        "concurrent_validates": 0,
+        "concurrency_proof": "validate_lock_owner_ancestry",
         "coverage": {
             "planned_test_nodes": 19,
             "executed_test_nodes": 19,
@@ -273,25 +276,26 @@ class GrandfatherTest(unittest.TestCase):
     """The property that makes activation safe: history keeps its authority."""
 
     def test_a_pre_epoch_row_without_producer_still_qualifies(self) -> None:
+        row = green_row(finished_at=BEFORE_EPOCH, omit_producer=True)
+        row["schema_version"] = 4
         ok, reason = qr.row_qualification(
-            green_row(finished_at=BEFORE_EPOCH, omit_producer=True),
+            row,
             SHA,
             enforcing_predicate(),
         )
-        self.assertTrue(ok, f"pre-epoch history must survive, got: {reason}")
+        self.assertTrue(ok, f"schema-4 history must survive, got: {reason}")
 
     def test_a_grandfathered_row_reports_null_not_false(self) -> None:
         """It must never CLAIM a provenance it does not carry -- the same
         discipline as coverage_satisfied on a grandfathered schema-4 receipt."""
-        verdict = qr.producer_verdict(
-            green_row(finished_at=BEFORE_EPOCH, omit_producer=True),
-            enforcing_predicate(),
-        )
+        row = green_row(finished_at=BEFORE_EPOCH, omit_producer=True)
+        row["schema_version"] = 4
+        verdict = qr.producer_verdict(row, enforcing_predicate())
         self.assertIs(verdict, qr.ProducerVerdict.GRANDFATHERED)
 
 
-class ShippedPredicateIsInertTest(unittest.TestCase):
-    """The shipped file must be inert, and must SAY it is inert deliberately."""
+class ShippedPredicateAdmissionTest(unittest.TestCase):
+    """The legacy producer epoch is inert; admission is deliberately active."""
 
     def test_the_live_predicate_declares_the_column(self) -> None:
         # Both engines default the clause inert when absent, so the live file
@@ -301,19 +305,19 @@ class ShippedPredicateIsInertTest(unittest.TestCase):
         self.assertIn("producer", pred)
         self.assertTrue(pred["producer"]["required"])
 
-    def test_the_live_predicate_refuses_nothing_today(self) -> None:
-        """Shipping inert is deliberate (three repos, staged deployment). This
-        pins that intent: if someone flips the epoch without landing the
-        writers, this test fails and names why."""
+    def test_the_live_predicate_accepts_a_canonically_admitted_row(self) -> None:
+        """The producer epoch remains staged, but schema-5 admission is live."""
         pred = live_predicate()
         self.assertIsNone(
             pred["producer"]["applies_from_finished_at"],
             "flipping this epoch requires all four writers deployed first",
         )
         ok, reason = qr.row_qualification(
-            green_row(finished_at=AFTER_EPOCH, omit_producer=True), SHA, pred
+            green_row(finished_at=AFTER_EPOCH, producer="hermit-validate-sh"),
+            SHA,
+            pred,
         )
-        self.assertTrue(ok, f"shipped predicate must not refuse yet, got: {reason}")
+        self.assertTrue(ok, f"canonically admitted row must qualify, got: {reason}")
 
 
 class CountedMutationSummary(unittest.TestCase):
@@ -328,10 +332,12 @@ class CountedMutationSummary(unittest.TestCase):
             green_row(finished_at=AFTER_EPOCH, producer=""),
             green_row(finished_at=AFTER_EPOCH, producer={"definition": {}}),
         ]
+        grandfathered = green_row(finished_at=BEFORE_EPOCH, omit_producer=True)
+        grandfathered["schema_version"] = 4
         accepted_cases = [
             green_row(finished_at=AFTER_EPOCH, producer=slug)
             for slug in live_predicate()["producer"]["known"]
-        ] + [green_row(finished_at=BEFORE_EPOCH, omit_producer=True)]
+        ] + [grandfathered]
 
         refused = sum(1 for r in refused_cases if not qr.row_qualifies(r, SHA, pred))
         accepted = sum(1 for r in accepted_cases if qr.row_qualifies(r, SHA, pred))
@@ -388,10 +394,13 @@ class RustEngineParityTest(unittest.TestCase):
         self.assertTrue(proc.stdout, f"no report: {proc.stderr[-600:]}")
         return json.loads(proc.stdout)["verdict"]
 
-    def _row(self, producer=None, finished: str = AFTER_EPOCH) -> dict:
+    def _row(self, producer=None, finished: str = AFTER_EPOCH, schema: int = 5) -> dict:
         row = self._green_row(SHA)
         row["finished_at"] = finished
-        if producer is not None:
+        row["schema_version"] = schema
+        if producer is None:
+            row.pop("producer", None)
+        else:
             row["producer"] = producer
         return row
 
@@ -408,7 +417,7 @@ class RustEngineParityTest(unittest.TestCase):
             self.assertEqual(self._ask(row, pred), "VALIDATED")
             self.assertTrue(qr.row_qualifies(row, SHA, pred), "engines must agree")
             accepted += 1
-        grandfathered = self._row(finished=BEFORE_EPOCH)
+        grandfathered = self._row(finished=BEFORE_EPOCH, schema=4)
         self.assertEqual(self._ask(grandfathered, pred), "VALIDATED")
         accepted += 1
         self.assertEqual((refused, accepted), (2, len(live_predicate()["producer"]["known"]) + 1))
@@ -417,8 +426,11 @@ class RustEngineParityTest(unittest.TestCase):
             f"accepted={accepted} (every registered writer + 1 grandfathered)"
         )
 
-    def test_rust_is_inert_under_the_shipped_predicate(self) -> None:
-        self.assertEqual(self._ask(self._row(), live_predicate()), "VALIDATED")
+    def test_rust_accepts_canonical_admission_under_the_shipped_predicate(self) -> None:
+        self.assertEqual(
+            self._ask(self._row(producer="hermit-validate-sh"), live_predicate()),
+            "VALIDATED",
+        )
 
 
 if __name__ == "__main__":

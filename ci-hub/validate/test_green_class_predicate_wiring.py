@@ -54,6 +54,10 @@ def qualifying_row(**over) -> dict:
         "failures": 0,
         "executed_tests": 412,
         "schema_version": 5,
+        "producer": "hermit-validate-sh",
+        "admission": "ci-hub-validate-lock",
+        "concurrent_validates": 0,
+        "concurrency_proof": "validate_lock_owner_ancestry",
         "coverage": {"planned_test_nodes": 19, "zero_executed_nodes": [], "absent_nodes": []},
     }
     row.update(over)

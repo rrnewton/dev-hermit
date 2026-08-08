@@ -605,6 +605,9 @@ mod tests {
                 "profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass",
                 "executed_tests":36,"filtered_tests":0,
+                "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
+                "concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry",
                 "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90}}"#
         ))
     }

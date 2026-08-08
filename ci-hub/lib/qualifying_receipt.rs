@@ -22,11 +22,11 @@
 //! ONE data artifact — `ci-hub/validate/qualifying-receipt.json` — colocated
 //! with `rebase-base-floors.json` / `gate_floors.py` so tightening the floor is
 //! ONE edit. All consumers READ it rather than restating its values inline.
-//! Because the consumers span Rust, Python, and jq, the shared thing cannot be a
-//! single function; it is a single DATUM that each language loads. A mutation of
-//! the datum (e.g. `counts_schema` 5 -> 6, or `executed_tests_min` 1 -> huge)
-//! must move every consumer's answer; any consumer whose answer does not move is
-//! still bypassing the registry.
+//! Admission provenance is additionally a single semantic implementation:
+//! `ci-hub/qualifying_receipt.py::admission_verdict`. Rust delegates that clause
+//! to the Python authority and the shell verifier reaches it through Rust's
+//! receipt-digest command. Canonical lock identity and owner ancestry therefore
+//! have one verifier, not parallel Rust/Python/Bash copies.
 //!
 //! # Resolution order (single source at run time)
 //!
@@ -46,7 +46,9 @@
 
 use crate::records::{CoverageRow, HistoryRow};
 use serde::Deserialize;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 /// Repo-relative path of the canonical predicate. The literal lives ONLY here.
@@ -78,6 +80,20 @@ pub struct RequireClause {
 pub struct CoverageClause {
     pub applies_at_schema_min: u32,
     pub per_node: bool,
+}
+
+/// Data consumed by the one Python admission-provenance verifier.
+///
+/// Rust intentionally carries no semantic methods for this clause: duplicating
+/// its exact comparisons here would recreate the split authority this task
+/// removes.
+#[derive(Clone, Debug, Deserialize)]
+pub struct AdmissionClause {
+    pub applies_at_schema_min: u32,
+    pub required_admission: String,
+    pub required_concurrent_validates: u64,
+    pub required_concurrency_proof: String,
+    pub require_registered_producer: bool,
 }
 
 /// WHO WROTE THE ROW, and from when that must be declared.
@@ -212,6 +228,9 @@ pub struct QualifyingPredicate {
     #[serde(default = "default_accepts_green_class")]
     pub accepts_green_class: Vec<String>,
     pub coverage: CoverageClause,
+    /// Canonical admission/owner-ancestry obligation. Semantics live only in
+    /// `qualifying_receipt.py::admission_verdict`.
+    pub admission: AdmissionClause,
     /// Provenance obligation. Defaulted inert so an older override fixture that
     /// predates the key still parses; the live file declares it explicitly.
     #[serde(default)]
@@ -391,6 +410,73 @@ fn derived_green_class(row: &HistoryRow) -> Option<&'static str> {
     Some(derived)
 }
 
+#[derive(Debug, Deserialize)]
+struct AdmissionReport {
+    accepted: bool,
+    admission_satisfied: Option<bool>,
+    admission_status: String,
+}
+
+/// Delegate admission provenance to its ONE semantic implementation.
+///
+/// Exit 0/1 is a typed accept/refuse verdict. Any launch, parse, or exit-code
+/// inconsistency is a deploy defect and fails closed; a missing verifier must
+/// never make a receipt more authoritative.
+fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> bool {
+    let root = resolve_root();
+    let verifier = root.join("ci-hub/qualifying_receipt.py");
+    let request = serde_json::json!({
+        "row": row,
+        "admission": {
+            "applies_at_schema_min": pred.admission.applies_at_schema_min,
+            "required_admission": pred.admission.required_admission,
+            "required_concurrent_validates": pred.admission.required_concurrent_validates,
+            "required_concurrency_proof": pred.admission.required_concurrency_proof,
+            "require_registered_producer": pred.admission.require_registered_producer,
+        },
+        "producer": {
+            "required": pred.producer.required,
+            "applies_from_finished_at": pred.producer.applies_from_finished_at,
+            "known": pred.producer.known,
+        },
+    });
+    let mut child = match Command::new("python3")
+        .arg(verifier)
+        .arg("--admission-only")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return false;
+    };
+    if serde_json::to_writer(&mut stdin, &request).is_err() || stdin.flush().is_err() {
+        return false;
+    }
+    drop(stdin);
+    let Ok(output) = child.wait_with_output() else {
+        return false;
+    };
+    let Ok(report) = serde_json::from_slice::<AdmissionReport>(&output.stdout) else {
+        return false;
+    };
+    let exit_matches = match output.status.code() {
+        Some(0) => report.accepted,
+        Some(1) => !report.accepted,
+        _ => false,
+    };
+    let status_matches = match report.admission_status.as_str() {
+        "satisfied" => report.admission_satisfied == Some(true),
+        "grandfathered-unknown" => report.admission_satisfied.is_none(),
+        _ => report.admission_satisfied == Some(false),
+    };
+    exit_matches && status_matches && report.accepted
+}
+
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
 /// control flow mirrors what the inline certifiers did, but every constant and
 /// flag is sourced from `pred` so there is one place to tighten.
@@ -504,6 +590,13 @@ pub fn row_qualification(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate
             ProducerVerdict::Ok | ProducerVerdict::Grandfathered => {}
         }
     }
+    // Admission provenance is one cross-language authority, not a Rust copy of
+    // the Python comparisons. Schema-4 returns grandfathered-unknown and stays
+    // accepted; schema-5+ must carry canonical lock identity, zero concurrency,
+    // registered producer provenance, and the owner-ancestry proof.
+    if !shared_admission_accepts(row, pred) {
+        return Qualification::Refused("admission provenance not satisfied");
+    }
     // Green-class gate (from origin/main): a receipt passing every value clause
     // must ALSO be of a green class the predicate accepts. Expressed as a
     // REFUSAL rather than a bare `false` so the reason survives into the typed
@@ -602,7 +695,10 @@ mod tests {
         serde_json::from_str(&format!(
             r#"{{"schema_version":5,"profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
-                "executed_tests":427,"filtered_tests":0,"coverage":{coverage}}}"#
+                "executed_tests":427,"filtered_tests":0,"coverage":{coverage},
+                "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
+                "concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry"}}"#
         ))
         .unwrap()
     }
@@ -619,7 +715,9 @@ mod tests {
                 "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
                 "executed_tests":427,"filtered_tests":0,"finished_at":"{finished_at}",
                 "coverage":{{"planned_test_nodes":19,"executed_test_nodes":19,
-                "zero_executed_nodes":[],"absent_nodes":[]}}{prod}}}"#
+                "zero_executed_nodes":[],"absent_nodes":[]}},
+                "admission":"ci-hub-validate-lock","concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry"{prod}}}"#
         ))
         .unwrap()
     }
@@ -695,12 +793,14 @@ mod tests {
             assert!(row_qualifies(&row, &sha, &pred), "{slug} must be accepted");
         }
 
-        // GRANDFATHER: pre-epoch history keeps its authority. This is the
-        // property that stops activation from blocking every landing.
-        let old = row_with_producer(&sha, "2026-08-07T20:15:31Z", None);
+        // GRANDFATHER: schema-4 history keeps its authority even when it lacks
+        // both producer and admission fields.
+        let mut old = row_with_producer(&sha, "2026-08-07T20:15:31Z", None);
+        old.schema_version = Some(4);
+        let old_qualification = row_qualification(&old, &sha, &pred);
         assert!(
-            row_qualifies(&old, &sha, &pred),
-            "pre-epoch row must survive"
+            old_qualification.accepted(),
+            "schema-4 row must survive: {old_qualification:?}"
         );
         assert_eq!(
             producer_verdict(&old, &pred),
@@ -713,11 +813,10 @@ mod tests {
         assert!(!row_qualifies(&undated, &sha, &pred));
     }
 
-    /// The SHIPPED file must refuse nothing yet -- staged deployment across
-    /// three repos. If someone flips the epoch without landing the writers,
-    /// this fails and names why.
+    /// The legacy producer epoch remains inert, but schema-5 admission now
+    /// requires a registered producer. Schema-4 remains grandfathered.
     #[test]
-    fn shipped_predicate_declares_producer_but_is_inert() {
+    fn shipped_predicate_requires_admission_and_grandfathers_schema4() {
         let sha = "b".repeat(40);
         let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
         assert!(
@@ -729,9 +828,20 @@ mod tests {
             "flipping this epoch requires all four writers deployed first"
         );
         let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", None);
+        assert_eq!(
+            producer_verdict(&row, &pred),
+            ProducerVerdict::Grandfathered,
+            "the old timestamp-based producer gate remains staged"
+        );
         assert!(
-            row_qualifies(&row, &sha, &pred),
-            "shipped predicate must not refuse today's rows"
+            !row_qualifies(&row, &sha, &pred),
+            "schema-5 admission must refuse a missing producer"
+        );
+        let mut schema4 = row;
+        schema4.schema_version = Some(4);
+        assert!(
+            row_qualifies(&schema4, &sha, &pred),
+            "schema-4 must remain grandfathered"
         );
     }
 
@@ -898,7 +1008,10 @@ mod tests {
                 "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
                 "executed_tests":740,"filtered_tests":3,
                 "coverage":{{"planned_test_nodes":4,"executed_test_nodes":4,
-                    "zero_executed_nodes":[],"absent_nodes":[]}}}}"#
+                    "zero_executed_nodes":[],"absent_nodes":[]}},
+                "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
+                "concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry"}}"#
         ))
         .unwrap();
         let live_pred =
@@ -938,7 +1051,11 @@ mod tests {
                 "executed_test_nodes": 4,
                 "zero_executed_nodes": [],
                 "absent_nodes": []
-            }
+            },
+            "producer": "hermit-validate-sh",
+            "admission": "ci-hub-validate-lock",
+            "concurrent_validates": 0,
+            "concurrency_proof": "validate_lock_owner_ancestry"
         }))
         .unwrap();
         assert!(row_qualifies(&hard, &sha, &pred));

@@ -818,6 +818,17 @@ mod tests {
             zero_executed_nodes: Some(Vec::new()),
             absent_nodes: Some(Vec::new()),
         });
+        row.extra
+            .insert("producer".into(), serde_json::json!("hermit-validate-sh"));
+        row.extra.insert(
+            "admission".into(),
+            serde_json::json!("ci-hub-validate-lock"),
+        );
+        row.concurrent_validates = Some(0);
+        row.extra.insert(
+            "concurrency_proof".into(),
+            serde_json::json!("validate_lock_owner_ancestry"),
+        );
         row
     }
 

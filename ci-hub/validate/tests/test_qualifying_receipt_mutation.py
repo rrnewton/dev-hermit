@@ -56,6 +56,9 @@ ANCHOR_PY = CI_HUB / "validate" / "anchor_select.py"
 FINALIZE_PY = CI_HUB / "validate" / "finalize_receipt.py"
 VERIFY_SH = CI_HUB / "validation" / "verify_receipt.sh"
 
+sys.path.insert(0, str(CI_HUB))
+import qualifying_receipt  # noqa: E402
+
 SHA = "a" * 40
 RECEIPT_COMMIT = "b" * 40  # the parent commit a receipt was committed at
 REPO = "rrnewton/hermit"
@@ -97,7 +100,35 @@ def _green_row(sha: str) -> dict:
             "zero_executed_nodes": [],
             "absent_nodes": [],
         },
+        "producer": "hermit-validate-sh",
+        "admission": "ci-hub-validate-lock",
+        "concurrent_validates": 0,
+        "concurrency_proof": "validate_lock_owner_ancestry",
     }
+
+
+def _forged_unadmitted_row(sha: str) -> dict:
+    """The audit's exact bypass shape: authoritative-looking but unadmitted."""
+    row = _green_row(sha)
+    row.update(
+        producer="unregistered-forged-writer",
+        admission="none",
+        concurrent_validates=None,
+        concurrency_proof=None,
+    )
+    return row
+
+
+def _grandfathered_schema4_row(sha: str) -> dict:
+    """A counted schema-4 green that predates per-node/admission evidence."""
+    row = _green_row(sha)
+    row["schema_version"] = 4
+    row.pop("coverage")
+    row.pop("producer")
+    row.pop("admission")
+    row.pop("concurrent_validates")
+    row.pop("concurrency_proof")
+    return row
 
 
 def _ee303899_row(sha: str) -> dict:
@@ -421,8 +452,83 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
     def test_live_accepts_genuine_green_unanimously(self) -> None:
         """POSITIVE control: a real schema-5 full green is accepted everywhere."""
         panel = self._panel(_green_row(SHA), predicate=None)
+        print(
+            "\nADMISSION POSITIVE: "
+            f"legs={sum(panel.values())}/{len(panel)} certifier-sites=7/7 panel={panel}"
+        )
         self.assertTrue(all(panel.values()),
                         f"a genuine green must be accepted by every consumer: {panel}")
+
+    def test_live_refuses_forged_unadmitted_row_per_leg(self) -> None:
+        """The audit's 6/6 accept bypass must invert independently on every leg."""
+        panel = self._panel(_forged_unadmitted_row(SHA), predicate=None)
+        refused = sum(not accepted for accepted in panel.values())
+        print(
+            "\nADMISSION NEGATIVE: "
+            f"refused={refused}/{len(panel)} legs certifier-sites="
+            f"{7 if refused == len(panel) else 0}/7 panel={panel}"
+        )
+        self.assertEqual(
+            refused,
+            len(panel),
+            f"every consumer leg must refuse forged admission provenance: {panel}",
+        )
+
+    def test_each_admission_condition_is_load_bearing_per_leg(self) -> None:
+        """Mutate one condition at a time so no composite refusal is vacuous."""
+        mutations = {
+            "registered-producer": ("producer", "unregistered-forged-writer"),
+            "canonical-admission": ("admission", "none"),
+            "zero-concurrency": ("concurrent_validates", 1),
+            "owner-ancestry": ("concurrency_proof", "self-declared"),
+        }
+        for condition, (field, value) in mutations.items():
+            with self.subTest(condition=condition):
+                row = _green_row(SHA)
+                row[field] = value
+                panel = self._panel(row, predicate=None)
+                refused = sum(not accepted for accepted in panel.values())
+                print(
+                    f"\nADMISSION CLAUSE {condition}: refused={refused}/{len(panel)} "
+                    f"legs certifier-sites={7 if refused == len(panel) else 0}/7 "
+                    f"panel={panel}"
+                )
+                self.assertEqual(
+                    refused,
+                    len(panel),
+                    f"{condition} must be load-bearing in every leg: {panel}",
+                )
+
+    def test_schema4_remains_grandfathered_without_consumer_regression(self) -> None:
+        """Admission tightening must not revoke counted schema-4 authority.
+
+        ``finalize_receipt`` is intentionally false here: its consumer is an
+        idempotency question named ``_has_satisfied_schema5``, not a schema-4
+        landing verdict. That was its baseline before admission tightened.
+        """
+        row = _grandfathered_schema4_row(SHA)
+        panel = self._panel(row, predicate=None)
+        verdict = qualifying_receipt.admission_verdict(row, qualifying_receipt.active())
+        authority = {name: accepted for name, accepted in panel.items()
+                     if name != "finalize_receipt.py"}
+        print(
+            "\nADMISSION GRANDFATHER: "
+            f"authority-accepted={sum(authority.values())}/{len(authority)} legs "
+            "finalizer-schema5-idempotency=false "
+            f"status={verdict.value} panel={panel}"
+        )
+        self.assertIs(
+            verdict,
+            qualifying_receipt.AdmissionVerdict.GRANDFATHERED_UNKNOWN,
+        )
+        self.assertTrue(
+            all(authority.values()),
+            f"schema-4 grandfather must remain accepted by authority legs: {panel}",
+        )
+        self.assertFalse(
+            panel["finalize_receipt.py"],
+            "schema-4 is not an already-finalized schema-5 row",
+        )
 
     def test_mutation_rejects_green_unanimously(self) -> None:
         """THE mutation proof: raise executed_tests_min in a COPY and every

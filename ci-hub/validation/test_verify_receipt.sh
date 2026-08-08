@@ -371,7 +371,12 @@ fi
 # legitimate landing authorizations rather than repeated parsing of one row.
 sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 make_receipt 12 "$tmp/schema5-base.json"
-jq '.ledger_record.schema_version = 5' "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
+jq '.ledger_record.schema_version = 5
+    | .ledger_record.producer = "hermit-validate-sh"
+    | .ledger_record.admission = "ci-hub-validate-lock"
+    | .ledger_record.concurrent_validates = 0
+    | .ledger_record.concurrency_proof = "validate_lock_owner_ancestry"' \
+    "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
 assert_mutated "$tmp/schema5-base.json" "$tmp/schema5-missing-raw.json" "COVERAGE schema5 missing coverage block"
 refresh_selected_identity "$tmp/schema5-missing-raw.json" "$tmp/schema5-missing.json"
 verify_file "$tmp/schema5-missing.json" fail "schema5 missing coverage"
