@@ -2057,24 +2057,42 @@ fn emit_report(report: &ReconcileReport, json_output: bool) -> Result<()> {
         println!("{text}");
         return Ok(());
     }
-    println!(
-        "state={} managed={} live={} reclaimed={} reclaimable={} transfer_required={} owner_unknown={} unmanaged={} zombie_containers={} zombies={} summary={}",
-        report.state,
-        report.managed,
-        report.live,
-        report.reclaimed,
-        report.reclaimable,
-        report.transfer_required,
-        report.owner_unknown,
-        report.unmanaged,
-        report.zombie_containers,
-        report.zombies,
-        if report.state == "ok" {
-            "all-managed-containers-have-live-owners"
-        } else {
-            "container-lifecycle-needs-action"
-        }
-    );
+    // ONE `key=value` PAIR PER LINE. tick-hub's `capture: true` parses stdout with
+    // parse_kv_lines, which is strictly line-oriented: emitted as a single
+    // space-separated line, all ten fields collapsed into ONE key whose value was
+    // the rest of the line, `summary` was never captured, and the action rendered
+    // a LITERAL `{summary}` naming nothing. Measured 2026-08-08 -- a producer can
+    // emit a perfectly good summary and still lose it to line discipline.
+    let summary = if report.state == "ok" {
+        format!(
+            "all {} managed container(s) have live owners; nothing to reclaim",
+            report.managed
+        )
+    } else {
+        format!(
+            "container lifecycle needs action: {} reclaimable, {} transfer-required, \
+             {} owner-unknown, {} unmanaged, {} zombie(s) in {} container(s) \
+             (REPORT-ONLY: reclaim with `scripts/agent-podman.rs reconcile \
+             --agents-json ignored/ci-hub/agent-snapshot.json --apply`)",
+            report.reclaimable,
+            report.transfer_required,
+            report.owner_unknown,
+            report.unmanaged,
+            report.zombies,
+            report.zombie_containers
+        )
+    };
+    println!("state={}", report.state);
+    println!("summary={summary}");
+    println!("managed={}", report.managed);
+    println!("live={}", report.live);
+    println!("reclaimed={}", report.reclaimed);
+    println!("reclaimable={}", report.reclaimable);
+    println!("transfer_required={}", report.transfer_required);
+    println!("owner_unknown={}", report.owner_unknown);
+    println!("unmanaged={}", report.unmanaged);
+    println!("zombie_containers={}", report.zombie_containers);
+    println!("zombies={}", report.zombies);
     for detail in &report.details {
         println!(
             "DETAIL: name={} id={} disposition={:?} owner={} invocation={} task={} lifetime={} namespace={} zombies={} action={}",

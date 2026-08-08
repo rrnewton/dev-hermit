@@ -59,7 +59,33 @@ Bold = removed 2026-08-08 (`119aa11`).
 
 ---
 
-## 2. Four failure shapes
+## 2. Four failure shapes — a checklist for anyone adding a gate
+
+**Every one of these looks correct in source and fails in operation.** That is the
+common thread, and it is why each must be checked by RUNNING the gate, not by
+reading it. Reading the source is how all four survived.
+
+| # | Shape | Ask | Antidote |
+|---|---|---|---|
+| 1 | **Bound to a moving reference** it cannot catch | Can the actor hold the target still long enough to satisfy this? | Time-budgeted deferral; judge "already done" against the *published* reference |
+| 2 | **Alarms on a condition the recipient cannot clear** | Is the remedy available to whoever receives this page? | DELTA (page on newly-qualifying only); carry the standing set in fields |
+| 3 | **The process outlives its own report** | Can this gate's work continue after the tick records a verdict, and does it mutate? | Process-group teardown on timeout (already present); never hold a shared lock |
+| 4 | **The alarm text was never exercised** | Has anyone ever seen this gate's output *rendered*, not just its source? | Run it through `parse_kv_lines` + `render_emit`; assert `summary` captured and zero surviving `{placeholder}` |
+
+Shape 4's predicate is narrower than it first looks and the correction matters:
+the risk is **not** "a gate that has never fired". `validate_wall_series_readiness`
+fired every day for a day and a half emitting a literal `{summary}` plus a garbage
+field, and nobody read it. The operative predicate is **a gate whose rendered
+output has never been inspected.** Waiting for a first fire would not have caught it.
+
+### What a good gate looks like
+
+`merge_gate_refire_due` after its rework is the counter-example to hold up. It
+separates newly-parked from standing so it is satisfiable; it names the exact
+remedy command in the alarm so the reader can act without re-deriving; and it
+states its own coverage as *"70 of 143 heads, a floor not a census"* so the count
+travels with its denominator. A gate that does those three things is hard to get
+wrong in operation.
 
 Three were known when this audit was commissioned; the fourth was found during it.
 Shape 3 as originally written here was **wrong and has been corrected** — see §3a.

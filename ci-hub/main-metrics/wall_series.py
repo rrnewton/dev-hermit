@@ -360,35 +360,82 @@ def series_readiness(rep: dict, min_days: float, min_conditioned_frac: float) ->
             "conditioned_frac": round(frac, 4), "shortfalls": shortfalls}
 
 
+def _emit(state: str, summary: str, **fields: object) -> None:
+    """Emit ONE `key=value` PAIR PER LINE, because that is what parses.
+
+    These gates used to print a prose sentence and nothing else. tick-hub's
+    `capture: true` runs stdout through `parse_kv_lines`, which is strictly
+    line-oriented, so a bare sentence yielded no `summary` key and the emitted
+    action rendered a LITERAL `{summary}` naming nothing.
+
+    Worse than nothing, in fact: these particular sentences contain an equals
+    sign ("conditioning 6/18 = 33% < 90%"), so the parser split on it and
+    manufactured a key whose NAME was half a sentence. Measured 2026-08-08, the
+    readiness gate had been firing DAILY since 0630284 emitting exactly that.
+
+    The prose is kept, as the VALUE of `summary`. That is safe even when it
+    contains "=", because the split is on the FIRST "=" of each line -- but only
+    if each pair is on its own line, which is the whole point.
+    """
+    print(f"state={state}")
+    print(f"summary={summary}")
+    for key, value in fields.items():
+        print(f"{key}={value}")
+
+
 def _gate(rep: dict, args) -> int:
     ready = series_readiness(rep, args.min_days, args.min_conditioned_frac)
+    shortfalls = "; ".join(ready["shortfalls"])
+    common = {
+        "span_days": ready["span_days"],
+        "conditioned": ready["conditioned"],
+        "n": ready["n"],
+        "conditioned_frac": ready["conditioned_frac"],
+    }
     if args.readiness:
         if ready["ready"]:
-            print(f"wall series READY: {ready['span_days']}d, "
-                  f"conditioned {ready['conditioned']}/{ready['n']}")
+            _emit("ready",
+                  f"wall series READY: {ready['span_days']}d, "
+                  f"conditioned {ready['conditioned']}/{ready['n']}",
+                  **common)
             return 0
-        print("wall series CANNOT support a regression verdict: "
-              + "; ".join(ready["shortfalls"]))
+        _emit("not-ready",
+              f"wall series CANNOT support a regression verdict: {shortfalls}",
+              shortfalls=shortfalls, **common)
         return 1
     # --gate-regression. A series that cannot support a verdict must NOT emit one,
     # and must NOT page either -- that is what the separate low-cadence readiness
     # reminder is for. Silence here is deliberate and is stated on stdout so a
     # reader can tell "no regression" from "could not look".
     if not ready["ready"]:
-        print("HOLDING: series cannot support a verdict ("
-              + "; ".join(ready["shortfalls"]) + "). No regression claim made.")
+        _emit("holding",
+              f"HOLDING: series cannot support a verdict ({shortfalls}). "
+              "No regression claim made.",
+              shortfalls=shortfalls, **common)
         return 0
     pts = [p for p in _points_from(rep) if p.conditioned]
     cut = max(1, int(len(pts) * args.baseline_frac))
     verdict = compare(pts[:cut], pts[cut:], args.threshold)
     if verdict["verdict"] == "REGRESSION":
-        print(f"WALL REGRESSION on main: {verdict['baseline_median']}s -> "
+        _emit("regression",
+              f"WALL REGRESSION on main: {verdict['baseline_median']}s -> "
               f"{verdict['candidate_median']}s "
               f"(+{verdict['delta_fraction']:.1%}, threshold {args.threshold:.0%}); "
-              f"{verdict['cause']}")
+              f"{verdict['cause']}",
+              baseline_median=verdict["baseline_median"],
+              candidate_median=verdict["candidate_median"],
+              delta_fraction=verdict["delta_fraction"],
+              threshold=args.threshold,
+              cause=verdict["cause"],
+              baseline_n=verdict.get("baseline_n"),
+              candidate_n=verdict.get("candidate_n"))
         return 1
-    print(f"wall OK: {verdict['verdict']} "
-          f"(baseline n={verdict.get('baseline_n')}, candidate n={verdict.get('candidate_n')})")
+    _emit("ok",
+          f"wall OK: {verdict['verdict']} "
+          f"(baseline n={verdict.get('baseline_n')}, candidate n={verdict.get('candidate_n')})",
+          verdict=verdict["verdict"],
+          baseline_n=verdict.get("baseline_n"),
+          candidate_n=verdict.get("candidate_n"))
     return 0
 
 
