@@ -310,17 +310,13 @@ def do_refire(repo: str, verdicts: Sequence[PrVerdict], call_timeout: int = 180)
     return fired
 
 
-def default_delta_state(source: str | Path = __file__) -> Path:
-    """Bind state to the dev-hermit checkout containing this script."""
-    script = Path(source).resolve()
-    root = script.parents[2]
-    expected = root / "ci-hub" / "health" / "gate_refire.py"
-    if script != expected or not (root / ".gitmodules").is_file():
-        raise RuntimeError(f"gate_refire.py is outside a dev-hermit checkout: {script}")
-    return root / ".tick-hub" / "gate-refire-due.json"
-
-
-DEFAULT_DELTA_STATE = default_delta_state()
+# Repo-relative, not a literal home: this file lives at ci-hub/health/, so
+# parents[2] is the parent checkout. A hardcoded /home/<owner>/... reds
+# `make check-portability` and silently points every other checkout on the box
+# at one workspace's state file.
+DEFAULT_DELTA_STATE = str(
+    Path(__file__).resolve().parents[2] / ".tick-hub" / "gate-refire-due.json"
+)
 
 
 def read_baseline(path):
@@ -333,6 +329,8 @@ def read_baseline(path):
     very next due PR is genuine news and MUST page. Returning set() for both
     makes the first alarm after a fully-drained backlog disappear.
     """
+    from pathlib import Path
+
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -342,6 +340,8 @@ def read_baseline(path):
 
 
 def write_baseline(path, reported: set) -> None:
+    from pathlib import Path
+
     try:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
