@@ -69,6 +69,15 @@ ALLOWED: dict[str, str] = {
     "ci-hub/remediation/nonzero_result.py": "remediation classification",
     "ci-hub/remediation/protocol.py": "remediation protocol",
     "ci-hub/pin/validation_gate.py": "pin validation gate",
+    # Reads a SCORECARD CELL's own `executed_tests`, not a validate-ledger row,
+    # and only as a REFUSAL FLOOR: a cell reporting <= 0 becomes NO_RESULT
+    # ("scorecard cell N executed zero tests"). It never treats a positive count
+    # as completeness -- the completeness verdict for a cell comes from the
+    # comparison_tier / stdout_parity / stack+heap checks immediately below it.
+    # Floor-only refusal is the same disposition already reviewed for
+    # validate_status.rs. If the scorecard ever grows a coverage-shaped field,
+    # this call site should move to it and leave this list.
+    "scripts/release-0.3-acceptance.py": "acceptance gate; floor-only refusal on a scorecard cell",
 }
 
 

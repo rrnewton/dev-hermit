@@ -22,7 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 52
+EXPECTED_COMMANDS = 53
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -114,6 +114,13 @@ def _classify(text: str) -> str:
     # The landing preflight is illustrated with <placeholder> arguments, so it is
     # parse-only: the snippet documents the three checks, it is not run verbatim.
     if normalized.startswith("python3 ci-hub/landing/preflight.py"):
+        return "parse"
+    # Same shape as the preflight snippet above: the coalesce-guard example is
+    # written with a `<you>` placeholder and a literal `...` standing in for the
+    # constituent PR list, so it documents the invocation rather than being a
+    # command anyone runs verbatim. Parse-only is the truthful classification --
+    # calling it live-read would assert it executes, which it cannot.
+    if normalized.startswith("python3 ci-hub/landing/coalesce_guard.py"):
         return "parse"
     if normalized == "./ci-hub/directives/check.py --quickstart":
         return "local-read"
