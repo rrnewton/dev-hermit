@@ -219,14 +219,27 @@ refuse_unauthored_reverts() {
       if cmp -s "$tmp/base" "$tmp/ours"; then continue; fi
       cp "$tmp/theirs" "$tmp/probe"
       if git merge-file -q -p "$tmp/probe" "$tmp/base" "$tmp/ours" >"$tmp/merged" 2>/dev/null; then
-        if ! cmp -s "$tmp/merged" "$tmp/theirs"; then
+        # merged != theirs is NOT sufficient. Two independent insertions at the
+        # same place (main appended a class; the author appended another) merge
+        # cleanly into a DIFFERENT file without anything being dropped -- the
+        # merge merely re-inserts what the author already has. Refusing on
+        # inequality alone fires on "append to a file main also appended to",
+        # which is routine, and a guard that fires on routine work is switched
+        # off within a day. Refuse only on content that main has and the
+        # submission genuinely LACKS.
+        # Every stage guarded: `grep -v` exits 1 when it filters everything out,
+        # and under `set -e -o pipefail` that aborts the script mid-classification
+        # -- silently, which is the failure mode this whole file exists to avoid.
+        lost_lines=$( { diff "$tmp/theirs" "$tmp/merged" 2>/dev/null || true; } \
+          | { sed -n 's/^> //p' || true; } \
+          | { grep -v '^[[:space:]]*$' || true; } \
+          | while IFS= read -r line; do
+              grep -Fqx -- "$line" "$tmp/theirs" || printf '%s\n' "$line"
+            done || true)
+        if [ -n "$lost_lines" ]; then
           findings=$((findings + 1))
           report+="  $file: would drop content that landed on main after ${base:0:12}"$'\n'
-          # `diff` exits 1 when files differ, which is the ONLY case we reach.
-          # Under `set -e -o pipefail` that failure would abort the script while
-          # building the very message that explains the refusal.
-          report+=$( { diff "$tmp/theirs" "$tmp/merged" 2>/dev/null || true; } \
-            | sed -n 's/^> /      LOST: /p' | head -6)$'\n'
+          report+=$(printf '%s\n' "$lost_lines" | sed 's/^/      LOST: /' | head -6)$'\n'
           break
         fi
       fi

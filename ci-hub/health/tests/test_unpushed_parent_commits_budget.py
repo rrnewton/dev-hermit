@@ -29,6 +29,7 @@ parent checkout, or any live tmux pane.
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -247,8 +248,6 @@ class UnpushedParentCommitsBudget(unittest.TestCase):
         self.assertIn("measured", result.stdout)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class ObservationSurvivesRescue(unittest.TestCase):
@@ -358,3 +357,145 @@ class TickGateKeepsObservationSeparateFromRescue(unittest.TestCase):
         self.assertEqual(1, len(cmd), block[1][:400])
         self.assertIn("--scope all", cmd[0])
         self.assertNotIn("--rescue", cmd[0])
+
+
+class PublicationContentClassification(unittest.TestCase):
+    """A local-only OBJECT is not the same fact as unpublished WORK.
+
+    The gate's first successful run flagged `ef7cd9b`, a pre-rebase object whose
+    content was already on main as `f37bd1c8`, and it was reported upward as a
+    real catch before anyone checked. Rebase-then-force-update produces one of
+    those on every routine landing, so without this split the gate pages
+    constantly, gets ignored, and is not believed on the day it is right.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def routine_landing(self, fx) -> str:
+        """The normal shape: branch, rebase past an advanced main, land, and keep
+        a local ref at the PRE-rebase object so it is still reachable locally."""
+        run("git", "checkout", "-q", "-b", "feat", cwd=fx.root)
+        (fx.root / "feature.txt").write_text("a feature\n")
+        run("git", "add", "feature.txt", cwd=fx.root)
+        run("git", "commit", "-q", "-m", "add feature", cwd=fx.root)
+        orphan = run("git", "rev-parse", "HEAD", cwd=fx.root).strip()
+        run("git", "branch", "-q", "keep-prerebase", cwd=fx.root)
+        run("git", "checkout", "-q", "main", cwd=fx.root)
+        (fx.root / "unrelated.txt").write_text("unrelated\n")
+        run("git", "add", "unrelated.txt", cwd=fx.root)
+        run("git", "commit", "-q", "-m", "main advances", cwd=fx.root)
+        run("git", "push", "-q", "origin", "main", cwd=fx.root)
+        run("git", "checkout", "-q", "feat", cwd=fx.root)
+        run("git", "rebase", "-q", "main", cwd=fx.root)
+        run("git", "checkout", "-q", "main", cwd=fx.root)
+        run("git", "merge", "-q", "--ff-only", "feat", cwd=fx.root)
+        run("git", "push", "-q", "origin", "main", cwd=fx.root)
+        run("git", "fetch", "-q", "origin", cwd=fx.root)
+        return orphan
+
+    def plant_unpublished(self, fx, name: str, text: str) -> str:
+        (fx.root / name).write_text(text)
+        run("git", "add", name, cwd=fx.root)
+        run("git", "commit", "-q", "-m", f"unpublished: {name}", cwd=fx.root)
+        return run("git", "rev-parse", "HEAD", cwd=fx.root).strip()
+
+    def test_negative_a_routine_landing_does_not_page(self) -> None:
+        fx = Fixture(self.tmp)
+        orphan = self.routine_landing(fx)
+        # It really is local-only: that is precisely why the old gate paged.
+        self.assertEqual(
+            "", run("git", "branch", "-r", "--contains", orphan, cwd=fx.root).strip(),
+            "fixture must reproduce a genuinely local-only object")
+        rc, out, _ = fx.gate_run("--scope", "all")
+        self.assertEqual(rc, 0, f"a routine landing must not page:\n{out}")
+        self.assertIn("unpublished=0", out, out)
+        self.assertIn("superseded=1", out, out)
+        # Reported, not hidden: it is prune-able and the reader should know.
+        self.assertIn("[superseded, content published]", out, out)
+        self.assertIn("no unpublished work", out, out)
+
+    def test_positive_content_absent_from_the_remote_still_pages(self) -> None:
+        """THE CASE THAT JUSTIFIES THE GATE.
+
+        Proved with content that exists NOWHERE on the remote -- the blob is
+        absent from origin's OBJECT STORE -- not merely with a local-only ref.
+        Those are different tests and only this one proves the property; a
+        local-only ref can still point at fully published content, which is
+        exactly the false positive being fixed.
+        """
+        fx = Fixture(self.tmp)
+        sha = self.plant_unpublished(fx, "precious.md", "IRREPLACEABLE ANALYSIS\n")
+        blob = run("git", "rev-parse", f"{sha}:precious.md", cwd=fx.root).strip()
+        probe = subprocess.run(["git", "cat-file", "-e", blob], cwd=fx.origin,
+                               capture_output=True)
+        self.assertNotEqual(0, probe.returncode,
+                            "the blob must be ABSENT from origin's object store")
+        rc, out, _ = fx.gate_run("--scope", "all")
+        self.assertEqual(rc, 1, f"unpublished work must page:\n{out}")
+        self.assertIn("unpublished=1", out, out)
+        self.assertIn(sha[:7], out, out)
+        self.assertIn("hold UNPUBLISHED work", out, out)
+
+    def test_mixed_reports_only_the_genuinely_unpublished_one(self) -> None:
+        fx = Fixture(self.tmp)
+        orphan = self.routine_landing(fx)
+        sha = self.plant_unpublished(fx, "precious.md", "IRREPLACEABLE\n")
+        rc, out, _ = fx.gate_run("--scope", "all")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("count=2", out, out)
+        self.assertIn("unpublished=1", out, out)
+        self.assertIn("superseded=1", out, out)
+        # The alarm names the real one and NOT the twin.
+        summary = [ln for ln in out.splitlines() if ln.startswith("summary=")][0]
+        self.assertIn(sha[:7], summary, summary)
+        self.assertNotIn(orphan[:7], summary, summary)
+
+    def test_patch_id_still_recognises_a_landing_that_main_has_since_moved_past(self) -> None:
+        """The case blob identity ALONE cannot decide, and the reason
+        `git cherry` is in the classifier rather than a redundant second look.
+
+        After a change lands, main keeps moving. Once someone edits the same
+        file again, the pre-rebase object's blob no longer matches main even
+        though its patch did land -- blob identity then says `unpublished` and
+        the false positive is back. Patch-id equivalence survives that.
+        """
+        fx = Fixture(self.tmp)
+        orphan = self.routine_landing(fx)
+        # Main moves past the landing, touching the SAME file.
+        (fx.root / "feature.txt").write_text("a feature, since revised\n")
+        run("git", "add", "feature.txt", cwd=fx.root)
+        run("git", "commit", "-q", "-m", "revise the feature", cwd=fx.root)
+        run("git", "push", "-q", "origin", "main", cwd=fx.root)
+        run("git", "fetch", "-q", "origin", cwd=fx.root)
+        # Blob identity is now FALSE for the orphan's only path ...
+        self.assertNotEqual(
+            run("git", "rev-parse", f"{orphan}:feature.txt", cwd=fx.root).strip(),
+            run("git", "rev-parse", "origin/main:feature.txt", cwd=fx.root).strip(),
+            "fixture must make the blob test fail, or it proves nothing")
+        # ... and the gate must STILL not page, on patch-id evidence alone.
+        rc, out, _ = fx.gate_run("--scope", "all")
+        self.assertEqual(rc, 0, f"patch-id must still recognise this landing:\n{out}")
+        self.assertIn("superseded=1", out, out)
+        self.assertIn("git cherry", out, out)
+
+    def test_the_full_census_still_carries_every_local_only_object(self) -> None:
+        """Narrowing the ALARM must not narrow the RECORD -- rescue and --json
+        still have to see everything, or the refinement would lose the objects
+        it declines to page about."""
+        fx = Fixture(self.tmp)
+        orphan = self.routine_landing(fx)
+        sha = self.plant_unpublished(fx, "precious.md", "IRREPLACEABLE\n")
+        rc, out, _ = fx.gate_run("--scope", "all", "--json")
+        payload = json.loads(out[out.index("{"):out.rindex("}") + 1])
+        self.assertEqual(2, payload["count"])
+        self.assertEqual(1, payload["unpublished_count"])
+        self.assertEqual(1, payload["superseded_count"])
+        got = {c["short"]: c["disposition"] for c in payload["commits"]}
+        self.assertEqual("superseded", got[orphan[:7]])
+        self.assertEqual("unpublished", got[sha[:7]])
+
+if __name__ == "__main__":
+    unittest.main()

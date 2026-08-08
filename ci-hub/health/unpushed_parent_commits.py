@@ -87,6 +87,58 @@ def local_only(scope: str) -> list[dict[str, str]]:
     return rows
 
 
+PUBLISH_TARGET = "origin/main"
+
+
+def classify_publication(rows: list[dict[str, str]], target: str = PUBLISH_TARGET) -> None:
+    """Split local-only commits by CONTENT into `unpublished` and `superseded`.
+
+    A commit reachable from no remote ref is NOT the same fact as unpublished
+    WORK. Rebase-then-force-update -- the normal landing path on this fleet --
+    orphans the pre-rebase object every single time while its content lands
+    perfectly well. This gate's first successful run flagged exactly one of
+    those (`ef7cd9b`, whose change was already on main as `f37bd1c8`), and it
+    was reported upward as a real catch before anyone checked it.
+
+    A gate whose alarms are usually wrong is worse than no gate: it spends the
+    attention a real alarm needs, and it will not be believed on the day it is
+    right. The failure this gate exists for -- a 20-commit stack in zero origin
+    refs -- is unrecoverable; the failure it produced here costs one check.
+    Those are not symmetric, so BOTH tests below are biased toward reporting.
+
+      1. `git cherry` -- patch-id equivalence. Survives rebase and reword, which
+         plain blob comparison does not.
+      2. Blob identity for every touched path, which catches a change that
+         landed folded into some other commit, where no patch id matches.
+
+    Anything else stays `unpublished` and still pages. A conflict resolved
+    during a rebase changes the patch and can defeat both tests; that direction
+    is deliberate -- it re-reports a superseded commit rather than silencing a
+    real one.
+    """
+    for row in rows:
+        sha = row["sha"]
+        row["disposition"] = "unpublished"
+        row["evidence"] = f"no equivalent patch, and content differs at {target}"
+        first = (git("cherry", target, sha).split("\n", 1)[0] or "").strip()
+        if first.startswith("-"):
+            row["disposition"] = "superseded"
+            row["evidence"] = f"equivalent patch already on {target} (git cherry)"
+            continue
+        paths = [q for q in git("diff", "--name-only", f"{sha}^", sha).splitlines() if q]
+        if not paths:
+            continue
+
+        def blob(rev: str, path: str) -> str:
+            return git("rev-parse", "--verify", "--quiet", f"{rev}:{path}") or "absent"
+
+        if all(blob(sha, q) == blob(target, q) for q in paths):
+            row["disposition"] = "superseded"
+            row["evidence"] = (
+                f"all {len(paths)} touched path(s) byte-identical at {target}"
+            )
+
+
 def rescue(
     rows: list[dict[str, str]],
     agent: str,
@@ -156,11 +208,18 @@ def main() -> int:
     scan_started = time.monotonic()
     rows = local_only(a.scope)
     head_n = len(local_only("head")) if a.scope == "all" else len(rows)
+    classify_publication(rows)
+    # `rows` stays the FULL census: rescue and --json must still see every
+    # local-only object. Only the ALARM narrows to genuinely unpublished work.
+    unpublished = [r for r in rows if r["disposition"] == "unpublished"]
+    superseded = [r for r in rows if r["disposition"] == "superseded"]
     scan_secs = time.monotonic() - scan_started
 
     def emit(published: list[dict[str, str]]) -> None:
         if a.json:
             print(json.dumps({"scope": a.scope, "count": len(rows),
+                              "unpublished_count": len(unpublished),
+                              "superseded_count": len(superseded),
                               "head_scoped_count": head_n,
                               "scan_seconds": round(scan_secs, 3),
                               "rescued": bool(published),
@@ -168,14 +227,23 @@ def main() -> int:
             return
         # COUNT AND SUBJECTS, never a bare boolean.
         print(f"unpushed-parent-commits scope={a.scope} count={len(rows)} "
+              f"unpublished={len(unpublished)} superseded={len(superseded)} "
               f"head_scoped_count={head_n} scan_seconds={scan_secs:.2f}", flush=True)
-        for r in (published or rows):
+        for r in (published or unpublished):
             extra = f"  -> {r['ref']} [{r['published']}]" if "ref" in r else ""
             print(f"  {r['short']}  {r['date']}  {r['author']:<14.14}  "
                   f"{r['subject'][:72]}{extra}", flush=True)
+        # Listed, never hidden: a superseded object is prune-able, not lost,
+        # and naming it is what stops the next reader re-deriving it by hand.
+        for r in superseded:
+            print(f"  [superseded, content published] {r['short']}  "
+                  f"{r['subject'][:56]}  ({r['evidence']})", flush=True)
         if not rows:
             print("  (none: every local commit is reachable from a remote ref)",
                   flush=True)
+        elif not unpublished:
+            print("  (no unpublished work: every local-only commit's content is "
+                  "already on the publication target)", flush=True)
         if head_n != len(rows) and a.scope == "all":
             print(f"  NOTE: a HEAD-scoped probe would report {head_n}, missing "
                   f"{len(rows) - head_n}. Scope to --all.", flush=True)
@@ -185,13 +253,18 @@ def main() -> int:
         # gate shipped. It stayed invisible here only because the gate never
         # completed, so it never emitted anything at all. Name the subjects: an
         # alarm that omits its own subject cannot be verified.
-        subjects = ", ".join(f"{r['short']} {r['subject'][:40]}" for r in rows[:3])
-        residue = f" (+{len(rows) - 3} more)" if len(rows) > 3 else ""
-        print(
-            f"summary={len(rows)} parent commit(s) exist only locally: "
-            f"{subjects}{residue}" if rows else "summary=no local-only commits",
-            flush=True,
-        )
+        subjects = ", ".join(
+            f"{r['short']} {r['subject'][:40]}" for r in unpublished[:3])
+        residue = f" (+{len(unpublished) - 3} more)" if len(unpublished) > 3 else ""
+        if unpublished:
+            summary = (f"{len(unpublished)} parent commit(s) hold UNPUBLISHED "
+                       f"work: {subjects}{residue}")
+        elif superseded:
+            summary = (f"no unpublished work; {len(superseded)} superseded local "
+                       f"object(s) are prune-able")
+        else:
+            summary = "no local-only commits"
+        print(f"summary={summary}", flush=True)
 
     # EMIT THE MEASUREMENT FIRST. Rescue is slower than the scan by two orders
     # of magnitude and can hang on a broken transport; printing afterwards is
@@ -200,7 +273,7 @@ def main() -> int:
     # observation.
     emit([])
     if not a.rescue:
-        return 1 if rows else 0
+        return 1 if unpublished else 0
 
     published = rescue(rows, a.agent, a.dry_run, a.rescue_deadline)
     verified = sum(1 for r in published if r.get("published") == "verified")
@@ -214,7 +287,7 @@ def main() -> int:
           flush=True)
     # Partial coverage is NOT success. Anything unpublished keeps the nonzero
     # exit, so a deadline or a broken transport can never read as "all clear".
-    return 1 if rows else 0
+    return 1 if unpublished else 0
 
 
 if __name__ == "__main__":
