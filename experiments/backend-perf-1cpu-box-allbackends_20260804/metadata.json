@@ -4,7 +4,7 @@
   "lane": "hermit-perf",
   "task": "backend-rb-readiness-assessment (single-core CPU-time extension)",
   "question": "Put all six backends (esp. the previously-unboxed DBI/SaBRe/e9patch) on the contamination-proof single-core CPU-time instrument, comparable in one session to the ptrace/liteinst anchors.",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cpu": "AMD EPYC 9D85, 316 logical CPUs",
   "box_mechanism": "sched_setaffinity",
   "box_mechanism_reason": "cgroup cpuset NOT delegated on 3pai sandbox (cgroup.controllers = io memory pids); sched_setaffinity is the only working size-K box on this host",

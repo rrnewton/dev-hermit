@@ -3,7 +3,7 @@
 **Date:** 2026-07-31
 **Task:** `e9patch-corpus-round-3` (rolling continuation — round-4)
 **Backend:** e9patch preprocessing + ptrace backend
-**Host:** devbig014.atn7.facebook.com, kernel 6.18.39, GCC 11.5.0, E9Tool 1.0.1
+**Host:** devbig014, kernel 6.18.39, GCC 11.5.0, E9Tool 1.0.1
 **Hermit PR:** https://github.com/rrnewton/hermit/pull/1231
 (branch `codex/e9patch-corpus-round4-families` @ `5780f573`, **stacked on**
 #1226 → #1220; runner = hermit built `--features e9patch` at merged #1216

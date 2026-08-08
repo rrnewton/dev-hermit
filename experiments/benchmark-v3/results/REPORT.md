@@ -1,7 +1,7 @@
 # Counter1 syscall benchmark v3 results
 
 Date: 2026-07-26  
-Host: `devbig030.atn3.facebook.com`  
+Host: `devbig030`
 Status: complete, 28/28 backend/workload rows
 
 ## Executive result

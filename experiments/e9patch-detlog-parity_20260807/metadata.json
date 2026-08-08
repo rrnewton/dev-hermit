@@ -1,0 +1,22 @@
+{
+  "question": "Score e9patch cross-backend DETLOG parity against the ptrace golden, per cell, with denominators.",
+  "answer": "20/20 engaged, 20/20 comparable, 0/20 parity. Prefix depth is a CONSTANT 6 on every guest: e9patch's runtime injects readlink(/proc/self/exe) at record 6 where ptrace proceeds to the guest's first syscall. Prologue-pinned, not guest-dependent.",
+  "population": "hermit/tests/backend-parity/e9patch_corpus/*.c, 20 guests, 20/20 built",
+  "build_flags": "-nostdlib -static -ffreestanding -O0 -fno-pie -no-pie",
+  "hermit_binary": "scratch/p4/bin/hermit = hermit 0.2.0 (2026-08-07, g590fcc9eeb03), clean, == origin/main 590fcc9",
+  "invocation": "--log=info --log-file=<f> run --base-env minimal --backend <ptrace|e9patch> -- <guest>",
+  "tier": "DETLOG+COMMIT record stream; wall-clock prefix stripped; 0x hex normalised. NOT stdout-only, NOT four-signal.",
+  "runs": "4 per guest (ptrace x2, e9patch x2) = 80 runs, all rc=0",
+  "engagement_witness": "candidate_sites/mapped_sites parsed from the e9patch banner; 19 guests mapped_sites=1, multi_site=3",
+  "planted_divergence": {
+    "guest": "minimal_exit + one extra getpid",
+    "ptrace": "8->10 records DETECTED depth 6/8",
+    "e9patch": "25->27 records DETECTED depth 7/25",
+    "positive_control": "ptrace run1==run2 identical"
+  },
+  "caveats": [
+    "e9patch is TSC-clean by INHERITANCE: reverie-e9patch/README.md:34 keeps ptrace attached for CPUID/RDTSC.",
+    "ARCHITECTURE GATE: DETLOG routes via the ptrace host, not in-guest. Perf work out of scope.",
+    "The committed compat-envelope/e9patch-scorecard.csv has candidate_sites/mapped_sites/reach_state BLANK on 227/227 e9patch rows (run_id e9patch-20260801, hermit b1fdeaf6) - stale data predating those columns."
+  ]
+}

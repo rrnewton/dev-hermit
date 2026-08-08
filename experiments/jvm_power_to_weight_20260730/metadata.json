@@ -1,7 +1,7 @@
 {
   "question": "Which small JVM programs give the most syscall + JIT coverage per wall-second under `hermit run --strict --verify`, so we can keep meaningful JVM validation on every commit without javac's cost?",
   "date": "2026-07-30",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "cores": 316,
   "host_load_caveat": "The host ran many concurrent Hermit workloads from other agents during the hermit pass; absolute wall times are inflated upper bounds. Relative ranking is the reliable signal.",

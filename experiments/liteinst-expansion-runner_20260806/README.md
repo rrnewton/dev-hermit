@@ -1,7 +1,7 @@
 # LiteInst expansion-runner: the 220 recorded cells do not reproduce, and the runner named in them never ran them
 
 **Date:** 2026-08-06 · **Task:** `liteinst-expansion-runner-experiment` · **Agent:** hermit-oci2 (opus-5)
-**Host:** devbig014.atn7.facebook.com · kernel 6.18.39-0_fbk0_hardened_0_ga43d5727b443 · **Local only, no egress**
+**Host:** devbig014 · kernel 6.18.39-0_fbk0_hardened_0_ga43d5727b443 · **Local only, no egress**
 
 ## Question
 
@@ -99,7 +99,7 @@ Not stale, not regressed — unreproducible from what was recorded.
 
 **Credit and one correction, in the predecessor's favour.** They wrote that the scorecard records
 `hermit_sha`/`reverie_sha` "but NOT the host". True of the CSV, but both producers' own
-`results/metadata.json` **do** record `host=devbig014.atn7.facebook.com` and the kernel. The gap is a CSV
+`results/metadata.json` **do** record `host=devbig014` and the kernel. The gap is a CSV
 **schema** gap, not a missing record — and it matters, because that is **this host**. "Host-specific to some
 other box" is therefore refuted, not merely untested. What the CSV additionally fails to record, and what
 would have shortened this by a day: the **producer** (`run_mode` is a constant), and

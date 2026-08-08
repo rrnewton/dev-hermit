@@ -2,7 +2,7 @@
   "question": "Does every scorecard parity/det cell trace to a real run with provenance sufficient to bind and re-derive it?",
   "standard": "#268 carry-the-condition-with-the-value",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "artifact_audited": "compat-envelope/scorecard.csv (618 rows, 180 enabled, written 2026-08-05T00:24)",
   "hermit_origin_main_at_audit": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
   "dev_hermit_parent_head": "5220310b835e9429fe862db2e247d1ae78a01b36",

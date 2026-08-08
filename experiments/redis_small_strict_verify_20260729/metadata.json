@@ -11,7 +11,7 @@
   "backend": "ptrace",
   "redis": "redis-server v=6.2.22 sha=00000000:0 malloc=jemalloc-5.1.0 bits=64 build=5d43f02b8d896191, package redis-6.2.22-2.el9",
   "redis_cli": "redis-cli 6.2.22",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "nproc": 316,
   "question": "Is a real Redis server + small client workload (SET/GET/INCR + small pipeline, TCP loopback, epoll/serverCron timer) bitwise-deterministic under hermit run --strict --verify, and does it hold across two fully independent hermit invocations?",
   "workload": "scratch/redis-small-227/redis_small.sh (copied here): redis-server on 127.0.0.1:6399 persistence-off; poll ping->PONG; SET/GET/INCR/INCRBY; small pipeline (SET p:a/p:b/p:c, INCR, APPEND, MGET via redis-cli --pipe); shutdown nosave; exit 0",

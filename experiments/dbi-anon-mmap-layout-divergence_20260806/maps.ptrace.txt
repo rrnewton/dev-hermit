@@ -1,0 +1,25 @@
+00400000-00401000 r--p 00000000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00401000-00402000 r-xp 00001000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00402000-00403000 r--p 00002000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00403000-00404000 r--p 00002000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00404000-00405000 rw-p 00003000 00:2d 236962431                          /home/newton/work/dev-hermit/ignored/dbimaps/rawmaps
+00405000-00426000 rw-p 00000000 00:00 0                                  [heap]
+71000000-71001000 r-xp 00000000 00:00 0 
+7ffff7c00000-7ffff7c29000 r--p 00000000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff7c29000-7ffff7d9e000 r-xp 00029000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff7d9e000-7ffff7df7000 r--p 0019e000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff7df7000-7ffff7dfb000 r--p 001f6000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff7dfb000-7ffff7dfd000 rw-p 001fa000 00:1f 1253154                    /usr/lib64/libc.so.6
+7ffff7dfd000-7ffff7e0a000 rw-p 00000000 00:00 0 
+7ffff7fb0000-7ffff7fb3000 rw-p 00000000 00:00 0 
+7ffff7fba000-7ffff7fbc000 rw-p 00000000 00:00 0 
+7ffff7fbc000-7ffff7fc0000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fc0000-7ffff7fc2000 r--p 00000000 00:00 0                          [vvar_vclock]
+7ffff7fc2000-7ffff7fc4000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fc4000-7ffff7fc6000 r--p 00000000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fc6000-7ffff7fef000 r-xp 00002000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7fef000-7ffff7ffb000 r--p 0002b000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7ffb000-7ffff7ffd000 r--p 00037000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffff7ffd000-7ffff7fff000 rw-p 00039000 00:1f 1253150                    /usr/lib64/ld-linux-x86-64.so.2
+7ffffffdb000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]

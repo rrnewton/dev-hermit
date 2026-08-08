@@ -1,6 +1,6 @@
 # Counter2 shootout
 
-Run `20260804T070525Z` on `devbig014.atn7.facebook.com` at Reverie `bfea4d5aa7d662cacf21f41ff2df5b60925dff2d`.
+Run `20260804T070525Z` on `devbig014` at Reverie `bfea4d5aa7d662cacf21f41ff2df5b60925dff2d`.
 Each workload has 3 measured repetitions after 1 warmup(s).
 Slowdown is median backend wall time / median matching native-variant wall time.
 

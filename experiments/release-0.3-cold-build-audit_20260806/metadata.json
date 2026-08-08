@@ -1,0 +1,26 @@
+{
+  "audit": "release-0.3-cold-build-audit",
+  "date_utc": "2026-08-07",
+  "hermit_sha": "1fadc03779f2a246a9b5af5d4a93533511c837df",
+  "hermit_branch": "main (origin default at audit time)",
+  "hermit_repo": "https://github.com/rrnewton/hermit.git",
+  "binary_self_report": "hermit 0.2.0 (2026-08-07, g1fadc03779f2)",
+  "submodules": {
+    "agent-utils": "a6f4232f849271af4c65585f9861769912411222",
+    "third-party/rr": "39e5c18e7e43236b7ca0fb1eb647fe9c93e3934e"
+  },
+  "cargo_git_deps_fetched": [
+    "https://github.com/rrnewton/reverie.git",
+    "https://github.com/facebookexperimental/rust-shed.git",
+    "https://github.com/rrnewton/liteinst2"
+  ],
+  "isolation": {
+    "clone_path": "ignored/w3-cold03/hermit (throwaway, gitignored)",
+    "CARGO_HOME": "ignored/w3-cold03/cargo-home (created empty; 554 MB after)",
+    "CARGO_TARGET_DIR": "default, inside the throwaway clone (4.2 GB after)",
+    "RUSTUP_HOME": "SHARED, not isolated -- toolchain treated as host prerequisite, not project dep"
+  },
+  "host": {"cores": 316, "load_avg_1m_at_build": 88.87},
+  "slot": "no worktree slot; throwaway clone under ignored/ (audit is read-only)",
+  "mutations": "none to any tracked source or SCM state"
+}

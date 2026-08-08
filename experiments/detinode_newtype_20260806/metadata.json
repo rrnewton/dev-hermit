@@ -1,7 +1,7 @@
 {
   "question": "Make DetInode a newtype so a raw host inode cannot reach the deterministic log, and enumerate sibling aliases.",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "proof": {"alias_compiles_the_leak": true, "newtype_rejects_it": "error[E0631] type mismatch in function arguments"},
   "bypass_sites": ["detcore/src/syscalls/files.rs:969","detcore/src/syscalls/files.rs:1226","detcore/src/syscalls/files.rs:1256"],
   "unverified_adjacent_site": "detcore/src/syscalls/files.rs:849 (out_inode)",

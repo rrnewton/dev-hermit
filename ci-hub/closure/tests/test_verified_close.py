@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import unittest
@@ -31,6 +32,8 @@ class FakeRunner:
         artifact_present=True,
         artifact_type="blob",
         artifact_ancestry_rc=0,
+        observation_output="0\t0\n",
+        observation_rc=0,
         tags="implemented",
     ):
         self.tags = tags
@@ -38,6 +41,8 @@ class FakeRunner:
         self.artifact_present = artifact_present
         self.artifact_type = artifact_type
         self.artifact_ancestry_rc = artifact_ancestry_rc
+        self.observation_output = observation_output
+        self.observation_rc = observation_rc
         self.task_mutations: list[tuple[str, ...]] = []
         self.commands: list[tuple[str, ...]] = []
 
@@ -74,6 +79,23 @@ class FakeRunner:
                 "conclusion": "success",
             }
             return completed(command, stdout=json.dumps(payload))
+        if (
+            Path(command[0]).name == "git"
+            and command[1:]
+            == (
+                "-C",
+                "hermit",
+                "rev-list",
+                "--left-right",
+                "--count",
+                "HEAD...origin/main",
+            )
+        ):
+            return completed(
+                command,
+                rc=self.observation_rc,
+                stdout=self.observation_output,
+            )
         if command[:3] == ("with-proxy", "git", "-C"):
             return completed(command)
         if command[:5] == (
@@ -224,24 +246,31 @@ class VerifiedCloseTest(unittest.TestCase):
         )
         self.assertNotEqual([], runner.task_mutations)
 
-    def test_three_legitimate_fixture_closures_succeed(self):
+    def test_four_legitimate_fixture_closures_succeed(self):
         runner = FakeRunner()
         cases = (
             ["code-task", "--code", "123", "--repo", "rrnewton/hermit", "--source", "."],
             ["artifact-task", "--artifact", "AGENTS.md"],
             ["run-task", "--run-id", "987", "--repo", "rrnewton/hermit"],
+            [
+                "observation-task",
+                "--observation-command",
+                '["git","-C","hermit","rev-list","--left-right","--count","HEAD...origin/main"]',
+                "--observation-output",
+                "0\t0",
+            ],
         )
         results = [verified_close.main(case, run=runner) for case in cases]
 
-        self.assertEqual([0, 0, 0], results)
+        self.assertEqual([0, 0, 0, 0], results)
         notes = [command for command in runner.task_mutations if command[1] == "note"]
         closes = [command for command in runner.task_mutations if command[1] == "update"]
-        self.assertEqual(3, len(notes))
-        self.assertEqual(3, len(closes))
+        self.assertEqual(4, len(notes))
+        self.assertEqual(4, len(closes))
         self.assertTrue(all("CLOSURE-VERIFIED:" in command[3] for command in notes))
         self.assertTrue(all(command[-2:] == ("--status", "closed") for command in closes))
         self.assertEqual(
-            ["note", "update"] * 3,
+            ["note", "update"] * 4,
             [command[1] for command in runner.task_mutations],
         )
         artifact_note = next(
@@ -251,6 +280,146 @@ class VerifiedCloseTest(unittest.TestCase):
         )
         self.assertIn("rrnewton/dev-hermit:AGENTS.md@" + "d" * 40, artifact_note)
         self.assertIn("target=main@" + "c" * 40, artifact_note)
+        observation_note = next(
+            command[3]
+            for command in notes
+            if "kind=observation" in command[3]
+        )
+        git_path = str(Path(shutil.which("git") or "git").resolve())
+        self.assertIn(
+            f'reference=["{git_path}","-C","hermit","rev-list","--left-right","--count","HEAD...origin/main"]',
+            observation_note,
+        )
+        self.assertIn(
+            'resolved={"output":"0\\t0","returncode":0}',
+            observation_note,
+        )
+
+    def test_fabricated_observation_output_is_refused_without_task_mutation(self):
+        runner = FakeRunner(observation_output="0\t0\n")
+
+        rc = verified_close.main(
+            [
+                "fabricated-observation",
+                "--observation-command",
+                '["git","-C","hermit","rev-list","--left-right","--count","HEAD...origin/main"]',
+                "--observation-output",
+                "1\t0",
+            ],
+            run=runner,
+        )
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.task_mutations)
+        self.assertTrue(
+            any(
+                Path(command[0]).name == "git"
+                and command[1:]
+                == (
+                    "-C",
+                    "hermit",
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    "HEAD...origin/main",
+                )
+                for command in runner.commands
+            ),
+            runner.commands,
+        )
+
+    def test_mutating_observation_command_is_refused_before_execution(self):
+        runner = FakeRunner()
+
+        rc = verified_close.main(
+            [
+                "not-a-bypass",
+                "--observation-command",
+                '["tg","update","not-a-bypass","--status","closed"]',
+                "--observation-output",
+                "closed",
+            ],
+            run=runner,
+        )
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.commands)
+        self.assertEqual([], runner.task_mutations)
+
+    def test_systemctl_option_value_cannot_hide_a_mutating_subcommand(self):
+        runner = FakeRunner()
+
+        rc = verified_close.main(
+            [
+                "systemctl-not-a-bypass",
+                "--observation-command",
+                '["systemctl","--root","/tmp","restart","example.service"]',
+                "--observation-output",
+                "restarted",
+            ],
+            run=runner,
+        )
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.commands)
+        self.assertEqual([], runner.task_mutations)
+
+    def test_caller_writable_lookalike_observer_is_refused(self):
+        import tempfile
+
+        runner = FakeRunner()
+        with tempfile.TemporaryDirectory() as directory:
+            lookalike = Path(directory) / "git"
+            lookalike.write_text("#!/bin/sh\nprintf fabricated\\n")
+            lookalike.chmod(0o755)
+
+            rc = verified_close.main(
+                [
+                    "lookalike-not-a-bypass",
+                    "--observation-command",
+                    json.dumps([str(lookalike), "status"]),
+                    "--observation-output",
+                    "fabricated",
+                ],
+                run=runner,
+            )
+
+        self.assertEqual(verified_close.REFUSED, rc)
+        self.assertEqual([], runner.commands)
+        self.assertEqual([], runner.task_mutations)
+
+    def test_observation_command_and_output_are_an_indivisible_pair(self):
+        command_only = FakeRunner()
+        output_smuggled_into_code = FakeRunner()
+
+        self.assertEqual(
+            verified_close.REFUSED,
+            verified_close.main(
+                [
+                    "missing-output",
+                    "--observation-command",
+                    '["git","-C","hermit","rev-list","--left-right","--count","HEAD...origin/main"]',
+                ],
+                run=command_only,
+            ),
+        )
+        self.assertEqual(
+            verified_close.REFUSED,
+            verified_close.main(
+                [
+                    "stray-output",
+                    "--code",
+                    "a" * 40,
+                    "--observation-output",
+                    "fabricated",
+                ],
+                run=output_smuggled_into_code,
+            ),
+        )
+        self.assertEqual([], command_only.commands)
+        self.assertEqual([], output_smuggled_into_code.commands)
+        self.assertEqual([], command_only.task_mutations)
+        self.assertEqual([], output_smuggled_into_code.task_mutations)
 
     def test_missing_or_nonancestral_artifact_never_mutates_task(self):
         missing = FakeRunner(artifact_present=False)

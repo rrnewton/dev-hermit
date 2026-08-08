@@ -1,7 +1,7 @@
 {
   "question": "Is memory.oom.group set on the boxing cgroups, does it contain the blast radius, and what does enabling it cost?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "agent_utils_pin": "570e78655e4cbfd398748b278252bfbaf4cc5930",
   "hermit_origin_main": "f89c69766371806d3c9b2c3003531df2d59d6118",

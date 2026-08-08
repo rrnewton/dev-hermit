@@ -2,7 +2,7 @@
   "name": "batch-3",
   "reason": "batch-3 coalesce: 16 conflict-free MERGEABLE PRs on main b7f9c7131; #1620 dropped (privileged DAG critical path 370s>270s hard bound, self-inconsistent), #1547/1585/1618/1629 fell out as in-batch conflicts",
   "since": "2026-08-05T06:06:54Z",
-  "actor": "devbig014.atn7.facebook.com:1163546",
+  "actor": "devbig014:1163546",
   "prs": [
     {
       "repo": "rrnewton/hermit",

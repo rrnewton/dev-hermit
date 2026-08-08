@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -23,6 +24,66 @@ Run = Callable[..., subprocess.CompletedProcess[str]]
 CLOSED = 0
 REFUSED = 1
 UNVERIFIABLE = 2
+MAX_OBSERVATION_COMMAND_BYTES = 4096
+MAX_OBSERVATION_OUTPUT_BYTES = 8192
+
+# Observation evidence is deliberately not an arbitrary command runner.  These
+# programs have read-only semantics; commands with action verbs get a second,
+# program-specific check below.  A shell, interpreter, `tg`, or an unclassified
+# executable is refused before it can run.
+READ_ONLY_OBSERVERS = {
+    "cmp",
+    "df",
+    "diff",
+    "du",
+    "free",
+    "grep",
+    "id",
+    "ls",
+    "ps",
+    "readlink",
+    "realpath",
+    "sha256sum",
+    "stat",
+    "uname",
+    "uptime",
+    "wc",
+}
+READ_ONLY_GIT_SUBCOMMANDS = {"rev-list", "rev-parse", "status"}
+READ_ONLY_SYSTEMCTL_SUBCOMMANDS = {
+    "is-active",
+    "is-failed",
+    "list-jobs",
+    "list-units",
+    "show",
+    "status",
+}
+SYSTEMCTL_FLAG_OPTIONS = {
+    "--all",
+    "--full",
+    "--no-legend",
+    "--no-pager",
+    "--plain",
+    "--quiet",
+    "--system",
+    "--user",
+}
+SYSTEMCTL_VALUE_OPTIONS = {
+    "--host",
+    "--lines",
+    "--machine",
+    "--output",
+    "--property",
+    "--root",
+    "--state",
+    "--type",
+    "-H",
+    "-M",
+    "-n",
+    "-o",
+    "-p",
+    "-t",
+}
 
 
 @dataclass(frozen=True)
@@ -90,6 +151,162 @@ def _json_object(output: str) -> dict[str, object] | None:
     except json.JSONDecodeError:
         return None
     return value if isinstance(value, dict) else None
+
+
+def _observation_command(
+    command_json: str,
+) -> tuple[tuple[str, ...] | None, str | None]:
+    """Decode and classify an observation argv without ever invoking a shell."""
+    if len(command_json.encode()) > MAX_OBSERVATION_COMMAND_BYTES:
+        return None, "observation command exceeds the 4096-byte limit"
+    try:
+        value = json.loads(command_json)
+    except json.JSONDecodeError as error:
+        return None, f"observation command is not JSON: {error.msg}"
+    if not isinstance(value, list) or not value:
+        return None, "observation command must be a non-empty JSON argv array"
+    if len(value) > 64 or any(not isinstance(item, str) for item in value):
+        return None, "observation command must contain at most 64 string arguments"
+    command = tuple(value)
+    if any(not item or "\0" in item for item in command):
+        return None, "observation command arguments must be non-empty and contain no NUL"
+
+    executable_path = shutil.which(command[0])
+    if executable_path is None:
+        return None, f"observation executable does not resolve: {command[0]}"
+    executable_path = str(Path(executable_path).resolve())
+    executable = Path(executable_path)
+    try:
+        executable.stat()
+    except OSError as error:
+        return None, f"cannot inspect observation executable: {error}"
+    protected_paths = (executable, *executable.parents)
+    if any(
+        path.stat().st_mode & 0o022 or os.access(path, os.W_OK)
+        for path in protected_paths
+    ):
+        return (
+            None,
+            "observation executable and its parent directories must be caller-immutable",
+        )
+    command = (executable_path, *command[1:])
+    executable_name = executable.name
+    if executable_name in READ_ONLY_OBSERVERS:
+        return command, None
+    if executable_name == "git":
+        index = 1
+        while index < len(command):
+            argument = command[index]
+            if argument == "-C":
+                index += 2
+                continue
+            if argument in {"--no-pager", "--literal-pathspecs"}:
+                index += 1
+                continue
+            if argument.startswith("-"):
+                return (
+                    None,
+                    f"unclassified git global option is not allowed: {argument}",
+                )
+            if argument not in READ_ONLY_GIT_SUBCOMMANDS:
+                return None, f"git subcommand is not a read-only observer: {argument}"
+            return command, None
+        return None, "git observation command has no subcommand"
+    if executable_name == "systemctl":
+        index = 1
+        subcommand = None
+        while index < len(command):
+            argument = command[index]
+            if argument in SYSTEMCTL_FLAG_OPTIONS:
+                index += 1
+                continue
+            if argument in SYSTEMCTL_VALUE_OPTIONS:
+                if index + 1 >= len(command):
+                    return None, f"systemctl option requires a value: {argument}"
+                index += 2
+                continue
+            if any(
+                argument.startswith(option + "=")
+                for option in SYSTEMCTL_VALUE_OPTIONS
+                if option.startswith("--")
+            ):
+                index += 1
+                continue
+            if argument.startswith("-"):
+                return None, f"unclassified systemctl global option: {argument}"
+            subcommand = argument
+            break
+        if subcommand not in READ_ONLY_SYSTEMCTL_SUBCOMMANDS:
+            return (
+                None,
+                "systemctl observation must use a classified read-only subcommand",
+            )
+        return command, None
+    return None, f"executable is not a classified read-only observer: {executable_name}"
+
+
+def _canonical_observation_output(stdout: str, stderr: str) -> str:
+    """Canonical combined capture: stdout followed by stderr, sans final newlines."""
+    return (stdout + stderr).rstrip("\r\n")
+
+
+def verify_observation(
+    command_json: str,
+    expected_output: str,
+    *,
+    run: Run = _run,
+) -> Evidence:
+    """Re-run a read-only observation and bind closure to its exact output."""
+    command, error = _observation_command(command_json)
+    if command is None:
+        return Evidence("refused", "observation", command_json, reason=error)
+
+    expected = expected_output.rstrip("\r\n")
+    if not expected:
+        return Evidence(
+            "refused",
+            "observation",
+            json.dumps(command, separators=(",", ":")),
+            reason="observation output must be non-empty",
+        )
+    if len(expected.encode()) > MAX_OBSERVATION_OUTPUT_BYTES:
+        return Evidence(
+            "refused",
+            "observation",
+            json.dumps(command, separators=(",", ":")),
+            reason="observation output exceeds the 8192-byte limit",
+        )
+
+    result = run(command, cwd=ROOT, timeout=30)
+    actual = _canonical_observation_output(result.stdout or "", result.stderr or "")
+    reference = json.dumps(command, separators=(",", ":"))
+    if result.returncode != 0:
+        return Evidence(
+            "refused",
+            "observation",
+            reference,
+            reason=(
+                f"observation command returned {result.returncode}; captured="
+                f"{json.dumps(actual[:512])}"
+            ),
+        )
+    if actual != expected:
+        return Evidence(
+            "refused",
+            "observation",
+            reference,
+            reason=(
+                "fresh output did not match the quoted output; "
+                f"expected={json.dumps(expected[:512])} "
+                f"actual={json.dumps(actual[:512])}"
+            ),
+        )
+    resolved = json.dumps(
+        {"returncode": result.returncode, "output": actual},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return Evidence("verified", "observation", reference, resolved=resolved)
 
 
 def verify_code(
@@ -467,6 +684,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     reference.add_argument("--code", metavar="PR_OR_SHA")
     reference.add_argument("--artifact", metavar="PATH_OR_URL")
     reference.add_argument("--run-id")
+    reference.add_argument(
+        "--observation-command",
+        metavar="JSON_ARGV",
+        help="read-only command as a JSON argv array; freshly re-run without a shell",
+    )
+    parser.add_argument(
+        "--observation-output",
+        metavar="TEXT",
+        help="non-empty quoted output that the fresh observation must reproduce",
+    )
     # Sentinel defaults so main() can tell "the caller chose hermit" from "the
     # caller said nothing and got hermit" -- the distinction that let a
     # parent-repo task close against a hermit PR.
@@ -486,6 +713,14 @@ DEFAULT_REPO = "rrnewton/hermit"
 
 def main(argv: Sequence[str] | None = None, *, run: Run = _run) -> int:
     args = parse_args(argv)
+    if (args.observation_command is None) != (args.observation_output is None):
+        print(
+            f"REFUSED task={args.task} kind=observation reason="
+            "--observation-command and --observation-output must be supplied together "
+            f"rc={REFUSED}",
+            file=sys.stderr,
+        )
+        return REFUSED
     repo_was_explicit = args.repo is not None
     repo = args.repo or DEFAULT_REPO
     source = args.source if args.source is not None else ROOT / "hermit"
@@ -519,6 +754,12 @@ def main(argv: Sequence[str] | None = None, *, run: Run = _run) -> int:
         )
     elif args.artifact is not None:
         evidence = verify_artifact(args.artifact, run=run)
+    elif args.observation_command is not None:
+        evidence = verify_observation(
+            args.observation_command,
+            args.observation_output,
+            run=run,
+        )
     else:
         evidence = verify_run(args.run_id, repo=repo, run=run)
 

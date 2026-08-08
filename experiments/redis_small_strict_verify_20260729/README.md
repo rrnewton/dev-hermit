@@ -5,7 +5,7 @@
 primary `hermit/` HEAD observed **`103657d4`** at run time (main advanced to
 `eb76b3a0` afterward by concurrent activity; the binary was unchanged throughout).
 **Backend:** ptrace · **Redis:** `redis-server v6.2.22` build `5d43f02b8d896191`
-(jemalloc-5.1.0), `redis-6.2.22-2.el9` · **Host:** devbig014.atn7.facebook.com (nproc 316)
+(jemalloc-5.1.0), `redis-6.2.22-2.el9` · **Host:** devbig014 (nproc 316)
 
 ## Question
 

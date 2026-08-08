@@ -2,7 +2,7 @@
 
 **Task:** `demo5-log-science-diff` (hermit-237, log-science evidence agent).
 **Feeds:** `demo5-rigorous-rootcause` (lead hermit-226; see `../ledger.md`, H1).
-**Date:** 2026-07-31. **Host:** devbig014.atn7.facebook.com (316 CPU).
+**Date:** 2026-07-31. **Host:** devbig014 (316 CPU).
 
 This is the log-science slot of the demo5 evidence fleet. It (a) reproduces the
 good-vs-bad demo5 first divergence with the built-in tooling, (b) quantifies the

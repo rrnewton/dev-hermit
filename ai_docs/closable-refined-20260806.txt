@@ -1,0 +1,120 @@
+LANDED candidates=115  ATTRIBUTED(closable)=83  DEMOTED->UNKNOWN=31
+evidence mix: Counter({'subject-match': 49, 'path-overlap': 46, 'deliverable-marker': 40})
+
+### CLOSABLE -- SHA tied to the task's OWN work
+add-long-running-multibackend-perf-tests | hermit | 630f44aab7fdf4ee52e572c38ae09818e92271b2 | deliverable-marker
+adv-review-boxing-artifacts | parent | 8f15ea4b151be2ccc697dea44bfea08c97a0cb7f | subject-match
+adv-review-landing-ledger-artifacts | parent | 5645376a7ae6b58d4476a44be5c617a7727c7c6a | path-overlap:ai_docs/adv-review-landing-ledger-artifacts-20260805.md,subject-match
+backend-perf-readiness-post-architecture | parent | 892a5088684ca3f3887d93ebb013c2bdf43e0566 | path-overlap:ai_docs/backend-perf-readiness-ptracer-in-hot-path-measured_20260806.md,subject-match
+backend-prefix-match-and-cli-cleanup | hermit | 630f44aab7fdf4ee52e572c38ae09818e92271b2 | deliverable-marker,subject-match
+backend-short-flag-b | hermit | 630f44aab7fdf4ee52e572c38ae09818e92271b2 | deliverable-marker
+can-github-merge-queue-satisfy-our-local-validation-without-losing-the-local-loop | parent | d64a2d32689aca4d472d0538e3b477d41c3b0894 | deliverable-marker,path-overlap:ai_docs/github-merge-queue-local-validation-composition-20260805.md,subject-match
+cancelled-scheduled-run-is-silent | parent | 9fbb14fc02a0f9ed44e6ac61b9998f9d51f3e4fd | subject-match
+cap-concurrent-validates-at-6-measured-knee | parent | aa12eda07231f94b9e3dcf4b286d1302864e19c6 | deliverable-marker,path-overlap:ai_docs/concurrent-validate-cap-measured-knee-20260805.md
+ci-hub-owned-validate-panes-outside-the-agent-jail | parent | 0ff921e501b2f9f95a2403260f4e8247d710ba56 | deliverable-marker,path-overlap:ai_docs/ci-hub-owned-validate-panes-20260806.md
+close-top-gap-cells-toward-100 | parent | b9c69768a835f3ce9c010de40723a07e8a2707d9 | subject-match
+cmake-trusts-mtime-not-content-so-a-truncated-artifact-is-permanent | parent | 407874b391e339463637cca67f2b6da0a6dcade1 | deliverable-marker,path-overlap:experiments/cmake_mtime_vs_content_20260806/repro.sh,subject-match
+coalesce-and-rebase-onto-fresh-main | reverie | 9470712afa9b421c72850ab7955fb335692e43a0 | path-overlap:reverie-ptrace/src/task.rs
+coalesce-staged-work-into-topic-prs | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+compat-scorecard-refresh-and-drive | parent | 71d159900a988528ada30cb87f6a15215f641d4a | subject-match
+crates-io-also-403-blocks-rebuild | parent | 0d57f5c4a802892888ed38c8feadb9c3590a7914 | path-overlap:ai_docs/verify-strict-already-works-offline-build-unblocked_20260806.md,subject-match
+dag-test-steps-should-call-the-hermit-binary-not-cargo | parent | 19feac38110af940c42c84216937e18296509254 | deliverable-marker,subject-match
+dbi-determinize-detlog-thread-id | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:experiments/dbi-strict-parity_20260806/README.md,subject-match
+dbi-detlog-heap-stack-parity | parent | 3559c19224624e52f33dd13438917f68683c78a8 | deliverable-marker,subject-match
+dbi-log-file-stack1 | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+dbi-route-detlog-to-log-file | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:experiments/dbi-strict-parity_20260806/README.md
+dbi-standardize-detlog-record-framing | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:experiments/dbi-strict-parity_20260806/README.md,subject-match
+dbi_log_file_is | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+derive-all-dag-memory-caps-as-a-set-not-reactively | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef | path-overlap:ci/dag/portable.json
+determinize_fchown_under_dbi | hermit | f89c69766371806d3c9b2c3003531df2d59d6118 | deliverable-marker
+detinode-newtype-make-invalid-unrepresentable | parent | 61c1941bf03513121c87413f01c27a53846c669c | deliverable-marker,subject-match
+e9patch-corpus-power-to-weight-selection | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef | deliverable-marker
+env-auxv-argv-determinism | parent | e23c8413f3ce84b4228e30898f094aed53b711bc | path-overlap:ai_docs/env-auxv-argv-startup-surface-dbi-host-leak_20260806.md
+env-var-hash-in-info-log | hermit | 065980ea661f9d5e84b4fbaa0c69f4a4f69a81a9 | deliverable-marker
+exit-abnormal-termination-determinism | parent | 57017d3d6d88bb8931fb29e8e42c0b32122b3f8e | subject-match
+expand-strict-corpus-new-e2e | parent | a7c79b7f4fdec0fff268d4ba9c89ffa99ee39ccd | path-overlap:ai_docs/strict-corpus-jit-and-mt-expansion-20260806.md,subject-match
+fix-ledger-gate-counts-partial-accept | parent | 7b94becb79ab2b27b869e7eb21c92fe44bb64e47 | path-overlap:ci-hub/validate/gate_completeness.py,subject-match
+fix_pr_1147_detpid | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+flaky-failure-attribution-capability | parent | f43398c3501f7959558f9caf929dc71c6b0a5cc4 | deliverable-marker,path-overlap:ai_docs/flaky-attribution-kill-signature-livelock-vs-contention_20260805.md,subject-match
+green-inheritance-test-selection-anchored-on-full-main-validates | hermit | b4e94ce4455daef251e10af2174c6998c1ae1a4d | path-overlap:ci/run-dag.sh
+herdr-path-smoke-matrix | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+hermit-default-run-passes-entire-host-dev-through | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef | deliverable-marker
+kvm-stdout-tty-winsize-divergence | reverie | c1355d17581216492d3d0101888a59fa2867c9b6 | deliverable-marker,path-overlap:reverie-kvm/src/executor.rs
+liteinst-backend-feature-capability-gate | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:ai_docs/liteinst-strict-parity-ratchet-blocked-20260806.md,subject-match
+liteinst-build-then-stage-runtime | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:ai_docs/liteinst-strict-parity-ratchet-blocked-20260806.md
+liteinst-expansion-runner-experiment | parent | ed9ae482080d1b2af17db0bba75b92e42180729d | deliverable-marker,subject-match
+liteinst-runtime-rebuilt-with-hermit | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:ai_docs/liteinst-strict-parity-ratchet-blocked-20260806.md
+liteinst_preload_handshake_fails | parent | 770c10db975be9604611eaad9f9f876ef010a9d4 | path-overlap:ai_docs/liteinst-preload-handshake-root-cause-narrowed_20260806.md,subject-match
+main-queue-depth-1-not-cancel-in-progress | hermit | d5fcdbe822bd80b5ee16b1d4bad6e34a63eca82b | subject-match
+mmap-address-space-layout-determinism | parent | d606952330bd9319271b8053f4c015caef699212 | subject-match
+never-test-a-pr-without-rebasing-first | parent | 0844c42edb12d258f56245f6a101447cd4ecb4bb | deliverable-marker,path-overlap:ai_docs/rebase-before-validate-admission-20260805.md
+oom-kill-lands-on-innocent-neighbour | parent | a673ffa39ea4040f958884ed9fac173cfaca7a9c | subject-match
+orc_hermit_msg_push | parent | 21467741288a3d43b4fef71275cf688b8caf9c66 | path-overlap:ai_docs/orc-coordinator-pane-detect-root-cause-20260806.md
+orphaned-hermit-processes-spin-forever-at-99-cpu-nothing-reaps-them | parent | 36949cde4accd7bb375328a3e30554375fa02130 | deliverable-marker,path-overlap:scripts/orphaned-hermit-reaper.py,subject-match
+p1_fleet_primary_hermit | parent | ab637c8a23d6dee43a864f05e3f1d24cc57b67ae | path-overlap:ai_docs/pending-hermit-readme-reverie-fork-link.patch
+per-platform-cpu-timeout-multipliers | parent | a726b8f55be71326eec3c2783b0d3520aac29904 | path-overlap:ai_docs/per-platform-cpu-timeout-multipliers-20260806.md,subject-match
+pmu-concurrency-cap-and-exhaustion-behaviour | parent | 50b098d07c98f7eb5ec4fa42263a80df3ba7e3d2 | deliverable-marker,subject-match
+pr-planning-process-consolidation-drain-as-testcase | parent | 61d144f346bc9c2cefd457a43c6456c403195e8e | deliverable-marker,path-overlap:ai_docs/pr-landing-consolidated-process.md
+queue-depth-1-on-dev-hermit-main-too | parent | 420bb363fff9d1bb869f44847a46d387c0a00572 | deliverable-marker,subject-match
+randomness-source-determinism-verify | parent | f31c6000cb455220f04ce03ad7258312dbebe98b | deliverable-marker,subject-match
+ratchet-sabre-strict-parity | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:ai_docs/sabre-strict-parity-reachability-wall-measured_20260806.md,subject-match
+rdrand_is_hidden_by | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+readdir-ordering-determinism | parent | 5f5050a56dbcb99bd6803b9c18224a673832fe8e | deliverable-marker
+register_file_hashing_verify | parent | 761183fdff6c0c86539f56b88cf36a4481302f82 | subject-match
+report-the-drain-as-two-pools-cleanup-backlog-vs-steady-state-flow | parent | 276f1a241b50e0694e7e2519419ba95a50b06159 | deliverable-marker,path-overlap:ai_docs/drain-two-pool-reporting-contract-20260805.md,subject-match
+retire_or_publish_agent | parent | 3af43cdfbab11dafb89e51f887cb75cf49064cb4 | path-overlap:ai_docs/retired-agent-utils-recovery-primary-mode-flip-20260806.md,subject-match
+reverie-gitmodules-still-has-shallow-skipping | reverie | 04a46b43930b918f6ff0f6b53644df732f908c46 | subject-match
+reverie_host_dependent_dependencies | reverie | 025d37800d347c32711038bd0a3889e8e4774c2b | path-overlap:.github/workflows/ci.yml
+rusage-resource-accounting-determinism | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea | deliverable-marker
+sabre-close-remaining-cells | parent | 8e6bcf39e94d627a213479eeb061b5194900dcf0 | subject-match
+sabre-detlog-heap-stack-parity | parent | acef8d2c5bda02ac5d2ad7353183e2a2c4a3bf3b | path-overlap:ai_docs/sabre-detlog-stack-nondeterministic-heap-deterministic_20260806.md,subject-match
+sabre-expand-reach-beyond-main-elf | parent | 5220310b835e9429fe862db2e247d1ae78a01b36 | path-overlap:ai_docs/sabre-strict-parity-reachability-wall-measured_20260806.md,subject-match
+scorecard-determinism-requires-double-run | parent | 8dddca884c04770da180f97176f64ba1cb4dd1f6 | path-overlap:experiments/strict_verify_holes_20260806/README.md,subject-match
+scorecard-parity-claims-verify-backed | parent | 1fd8443388bcfe6b6ef0ce55224a5ff69111c064 | subject-match
+shared_inguest_toolhost_family | reverie | 43dd1e1d3113ce9ede1c000766d2155667dcb48f | deliverable-marker
+staged-reverie-pin-bumps-r1-r2-not-always-straight-to-main | reverie | 04a46b43930b918f6ff0f6b53644df732f908c46 | subject-match
+staging-branch-merge-all-prs-test-once | parent | a305cecf201ba05b353812ce64366ecdcb42c3c1 | deliverable-marker,path-overlap:ai_docs/pr-landing-consolidated-process.md
+strict-verify-holes-audit | parent | 8dddca884c04770da180f97176f64ba1cb4dd1f6 | subject-match
+suspected_regression_kvm_livelock | hermit | 8b7345103a896072cf98ddad46dd4022035d852b | path-overlap:detcore/src/lib.rs
+sweep-for-work-stranded-uncommitted-by-the-commit-is-destructive-rule | parent | 6d12f300dbb1b66a097b93524c0dde4a037fee21 | deliverable-marker,path-overlap:ai_docs/stranded-work-sweep-three-tiers-and-precision_20260805.md,subject-match
+tasks-filed-without-a-verify-field-cannot-be-goal-checked | parent | a4182f985ce3d6d467e3c3623e909b84492cfc45 | deliverable-marker,path-overlap:experiments/task_verify_field_audit_20260806/offenders-actionable.csv,subject-match
+third-party-backends-move-downstream-of-the-first-party-build-in-the-dag | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef | deliverable-marker,path-overlap:ci/dag/portable.json,subject-match
+timeout-audit-at-port-time-to-real-boxing | parent | 37cfbcb96def372e1946352f16800b0e1851a313 | path-overlap:ai_docs/port-time-timeout-audit-checklist-and-half-ported-state_20260805.md,subject-match
+vacuous-test-audit-hermit-staging-candidates | parent | 6e5bb82ea405fefedb6997300b49e9f59145d51f | deliverable-marker,path-overlap:ai_docs/2026-08-05-vacuous-test-audit-hermit-staging-candidates.md,subject-match
+validate-484s-single-gate-dominates | parent | 1c27dfd4dc68fc1313da204720ea2138688329a3 | deliverable-marker,path-overlap:ai_docs/validate-portable-gate-critical-path-20260805.md
+verify-tightening-high-confidence-compat-scorecard | hermit | 9b642f6d3e1bf502ca7c6f7bf7507605792157e1 | path-overlap:detcore/src/logdiff.rs,subject-match
+wip-limit-open-prs-tracked-against-active-agent-count | parent | 3923eb6ee3df2943a08c4e2ae758d7529c1940d6 | deliverable-marker,path-overlap:ai_docs/active-agent-derived-open-pr-wip-limit-20260805.md,subject-match
+wire-inert-phase2-guards-into-consumers | hermit | cf1fe1babce00d037d381b2c3d1a7bcf244b8b06 | path-overlap:ci/test_harness.sh
+
+### DEMOTED to UNKNOWN -- landed SHA but NOT attributable (31)
+backends-md-ground-truth-audit-three-patching | reverie | d2fb9a055693bec30e8d48333c5694050b22e869
+compat-scorecard-refresh-post-wave | parent | bb00eaa5d4c37ef1e8a1921844b01f7e2a0670c4
+cut-demo-tag-20260804-verified | reverie | bbf6e2eff8bc2070353869bf7244641665b46fd2
+derive-cargo-build-parallelism-from-speedup-curve-not-a-picked-number | parent | d83a34b3c3e619a9778ad8a130c35afaf0116acc
+drain-blocked-no-green-exists-at-or-above-the-gate-floor | hermit | 2a01963e6121ea8aa19821c601a9359aed0955df
+execute-landing-cascade-via-herdr-run | parent | 209f7de99f0cf6f9f2c878512816dd0ed50dbf15
+fix-parent-gitlinks-reverie-agentutils | hermit | b4e94ce4455daef251e10af2174c6998c1ae1a4d
+fix_pr_1443_pin | reverie | 025d37800d347c32711038bd0a3889e8e4774c2b
+fork-exec-process-tree-determinism | reverie | 9470712afa9b421c72850ab7955fb335692e43a0
+globally-consistent-state-invariants | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea
+goal-repro-btrfs-f6a6c280 | hermit | 103657d48a991d556afe7e563537e000e74aef76
+herdr-run-cargo-for-cold-builds | reverie | 9470712afa9b421c72850ab7955fb335692e43a0
+herdr-run-utility-agent-utils | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea
+ioctl-tty-determinism | parent | b20010e34211d00a4c33173476d0e9efc2e55192
+kvm-close-remaining-cells | reverie | 9470712afa9b421c72850ab7955fb335692e43a0
+make_unsupported_syscall_panic | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef
+nightly-stress-tests-not-actually-running | hermit | 887a64b111111c8fc59eb4630dd3fa25a096de98
+no-worse-ratchet-during-sprint-no-new-stripped-greens | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef
+port_validate_sh_to | hermit | c1ff2e2fcefefb868ab50db066012989d2d8f5cf
+proc-sys-read-determinism | parent | 4c818cb04b5e741e3956ce60a1d127056d59e441
+prune-stale-local-backup-branches-blocking-pin-check | hermit | 851164890bc9365ff26779466856e5e8b82b34c7
+rebase-40-branches-onto-one-base | parent | bf017055596fce31750dac7ec62e9140adc7f41b
+reconcile-branch-population-40of53-vs-9of32 | hermit | 4c70658e785834737cbe1524f77330c781a6f5ea
+remove-deprecated-cgroups-flag-direct-to-main-now | parent | 9d46429d3e009ccc8d368ac24a1c07b24556821a
+reverie-portable-vs-privileged-split-audit | reverie | 025d37800d347c32711038bd0a3889e8e4774c2b
+reverie_clone_with_stack | reverie | 79517704b0d19eeb3c4c234d0bfbe9f0a17c1199
+sysinfo_2_writes_uninitialized | reverie | 9470712afa9b421c72850ab7955fb335692e43a0
+validate-defaults-to-a-profile-that-cannot-authorize-landing | hermit | e11175c9de88341e7137f544cb7dfb70502ddf72
+validate-sh-duplicates-product-functionality | hermit | b64d893ae9ea6404472eae9cb86102d91ec642ef
+validate-then-land-is-unsound-the-push-rewrites-the-head | hermit | 1b12bc1a9f2adc067334a2f3f20af1727ee9c498
+wire-cpu-timeout-enforcement-inert | parent | 427aa76f04db9dcc43426c06d6faabf3e31ee0b4

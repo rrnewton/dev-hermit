@@ -1,0 +1,12 @@
+guest,backend,Y_depth,Z_golden,emitted,rc,resources_match,cause
+true,ptrace,5,5,5,0,self,self-reference
+true,liteinst,2,5,31,0,NO,injected DSO libreverie_liteinst.so at turn 2; 24 of 31 records are /proc/self/maps
+true,kvm,2,5,5,0,YES,virtual time only; delta -34170ns at rec2, stable across runs
+echo,ptrace,6,6,6,0,self,self-reference
+echo,liteinst,2,6,32,0,NO,injected DSO; 24 of 32 are /proc/self/maps
+echo,kvm,2,6,6,0,YES,virtual time only; delta -34170ns at rec2
+wcsimple,ptrace,7,7,7,0,self,self-reference
+wcsimple,liteinst,2,7,33,0,NO,injected DSO; 24 of 33 are /proc/self/maps
+wcsimple,kvm,2,7,7,0,YES,virtual time only; delta -34270ns at rec2
+pipeline,ptrace,26,26,26,0,self,self-reference
+pipeline,liteinst,2,26,37,1,NO,GUEST FAILED rc=1; not a clean measurement

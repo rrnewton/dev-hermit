@@ -3,7 +3,7 @@
   "date": "2026-07-25",
   "owner": "hermit-178 (resumed from hermit-165 after OOMD kill)",
   "host": {
-    "fqdn": "devbig030.atn3.facebook.com",
+    "fqdn": "devbig030",
     "kernel": "6.17.13-0_fbk0_crackerjackhost",
     "cpu": "AMD EPYC 9D85 158-Core Processor",
     "logical_cpus": 316,

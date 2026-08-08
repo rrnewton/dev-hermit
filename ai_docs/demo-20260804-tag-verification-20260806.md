@@ -1,7 +1,7 @@
 # demo-20260804: the tag was already correct — and verifying it is what broke the primaries
 
 **Task:** `cut-demo-tag-20260804-verified` (P1) · **Date:** 2026-08-06 · **Author:** hermit-design
-**Host:** devbig014.atn7.facebook.com (316 cores) · **Local only**, egress 403 throughout.
+**Host:** devbig014 (316 cores) · **Local only**, egress 403 throughout.
 
 ---
 

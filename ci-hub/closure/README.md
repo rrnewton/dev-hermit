@@ -90,6 +90,37 @@ published content commit.
 Absolute paths outside the workspace are refused before any git call; use a
 full `https://` URL for anything genuinely external.
 
+## `--observation-command`: re-observe a machine-local repair
+
+An operational repair has no commit, published artifact, or hosted run. Close
+it with a read-only postcondition command and the output observed when the
+repair was verified:
+
+```bash
+./ci-hub/bin/close-task TASK \
+  --observation-command '["git","-C","hermit","rev-list","--left-right","--count","HEAD...origin/main"]' \
+  --observation-output $'0\t0'
+```
+
+The gateway decodes a JSON argv array, refuses shells, interpreters, `tg`, Git
+mutation subcommands, and every unclassified executable, then re-runs the
+command directly without a shell. It closes only when the fresh command exits
+zero and its non-empty canonical output exactly matches the quoted output.
+The executable is resolved to a binary that the caller cannot rewrite or
+replace through a writable parent directory before it runs; the
+`CLOSURE-VERIFIED` note carries that exact resolved JSON argv, return code, and
+output.
+A mismatch, nonzero command, empty output, malformed argv, or non-read-only
+command is `REFUSED` before any TaskGraph mutation.
+
+Record a postcondition, not the mutating repair command: after
+`git -C hermit checkout main`, the example verifies that `HEAD` and
+`origin/main` have zero commits on either side.
+Like artifact closure, this proves the recorded authority (the postcondition is
+freshly reproducible); the coordinator still checks that the observation
+answers the task's stated operational goal. `--check-only` exercises the same
+verifier without recording or closing.
+
 ## `--code`: a bare PR number needs an explicit `--repo`
 
 `--repo` defaults to `rrnewton/hermit` and `--source` to `ROOT/hermit`, so a

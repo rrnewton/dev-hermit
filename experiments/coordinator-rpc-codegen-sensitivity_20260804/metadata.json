@@ -8,7 +8,7 @@
     "lto": "<=2% runtime, +35% thin / +164% full compile = net loss, 83% supervisor CPU is kernel -- experiments/ci-build-profile-lto_20260804"
   },
   "one_cpu_box_livelock": "K=1: sched_yield RPC hangs (rc=124, 45s, N=2000); native sched_yield 1e6 on same K=1 box = 0.16s; RPC completes at K=2. Minimum core count for RPC progress = 2.",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cores_total": 316,
   "hermit_sha": "c369be3ff8e2c751a313b27979fa8f470dafecf0",
   "reverie_sha": "04a46b43930b918f6ff0f6b53644df732f908c46",

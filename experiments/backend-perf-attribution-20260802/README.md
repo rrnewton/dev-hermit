@@ -8,7 +8,7 @@ gVisor reproduction getpid loop.
 
 ## Identity
 
-- Host: `devbig014.atn7.facebook.com`, AMD EPYC 9D85, 316 logical CPUs
+- Host: `devbig014`, AMD EPYC 9D85, 316 logical CPUs
 - Reverie framework source: `36ce950a5c4207046c62efbd2904d5c808a4238f`
 - Landed by: [rrnewton/reverie#331](https://github.com/rrnewton/reverie/pull/331), merge `a9f25aa7a19faeb716b69e463e92c7160ab48c03`
 - Framework run: `20260802T042358Z`, clean source, seed 1

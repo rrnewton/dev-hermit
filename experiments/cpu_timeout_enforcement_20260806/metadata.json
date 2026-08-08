@@ -1,7 +1,7 @@
 {
   "question": "Is cpu_timeout enforcement inert, and if not, why is no CPU bound in effect for hermit steps?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "runner": "safe-ci-dag-runner v0.11.0, engine=python, cgroup boxing ACTIVE",
   "hermit_agent_utils_pin": "a6f4232f849271af4c65585f9861769912411222 (SMALL caps OPT-IN, default OFF)",
   "parent_agent_utils_pin": "570e78655e4cbfd398748b278252bfbaf4cc5930 (SMALL caps ON by default; --small-default-cap demoted to a no-op)",

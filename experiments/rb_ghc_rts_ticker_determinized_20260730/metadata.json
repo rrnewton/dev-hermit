@@ -10,7 +10,7 @@
   "base_branch": "claude/fix-clock-getres-null-res",
   "base_sha": "32f004cd63f0942d05818d900af2ea5780b9f87d",
   "prereq_pr": "https://github.com/rrnewton/hermit/pull/1164",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "container": "ghcbw (haskell:9.8.4)",
   "ghc_version": "9.8.4",
