@@ -22,11 +22,12 @@
 //! ONE data artifact — `ci-hub/validate/qualifying-receipt.json` — colocated
 //! with `rebase-base-floors.json` / `gate_floors.py` so tightening the floor is
 //! ONE edit. All consumers READ it rather than restating its values inline.
-//! Admission provenance is additionally a single semantic implementation:
-//! `ci-hub/qualifying_receipt.py::admission_verdict`. Rust delegates that clause
-//! to the Python authority and the shell verifier reaches it through Rust's
-//! receipt-digest command. Canonical lock identity and owner ancestry therefore
-//! have one verifier, not parallel Rust/Python/Bash copies.
+//! Cross-field evidence semantics are additionally a single Python
+//! implementation: admission provenance and schema/coverage compatibility live
+//! in `ci-hub/qualifying_receipt.py`. Rust delegates those clauses to the Python
+//! authority and the shell verifier reaches it through Rust's receipt-digest
+//! command. Canonical lock identity, owner ancestry, and the coverage schema
+//! boundary therefore have one verifier, not parallel Rust/Python/Bash copies.
 //!
 //! # Resolution order (single source at run time)
 //!
@@ -427,6 +428,8 @@ struct AdmissionReport {
     admission_status: String,
     base_satisfied: Option<bool>,
     base_status: String,
+    coverage_schema_satisfied: Option<bool>,
+    coverage_schema_status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -487,12 +490,12 @@ pub fn shared_base_boundary_accepts(
     output.status.code() == Some(0) && report.accepted && status_matches
 }
 
-/// Delegate admission provenance to its ONE semantic implementation.
+/// Delegate cross-field evidence consistency to its ONE semantic implementation.
 ///
 /// Exit 0/1 is a typed accept/refuse verdict. Any launch, parse, or exit-code
 /// inconsistency is a deploy defect and fails closed; a missing verifier must
 /// never make a receipt more authoritative.
-fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> bool {
+fn shared_evidence_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> bool {
     let root = resolve_root();
     let verifier = root.join("ci-hub/qualifying_receipt.py");
     let request = serde_json::json!({
@@ -508,6 +511,10 @@ fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> boo
             "applies_at_schema_min": pred.base.applies_at_schema_min,
             "branch": pred.base.branch,
         },
+        "coverage": {
+            "applies_at_schema_min": pred.coverage.applies_at_schema_min,
+            "per_node": pred.coverage.per_node,
+        },
         "producer": {
             "required": pred.producer.required,
             "applies_from_finished_at": pred.producer.applies_from_finished_at,
@@ -516,7 +523,7 @@ fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> boo
     });
     let mut child = match Command::new("python3")
         .arg(verifier)
-        .arg("--admission-only")
+        .arg("--evidence-only")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -553,7 +560,16 @@ fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> boo
         "grandfathered-unknown" => report.base_satisfied.is_none(),
         _ => report.base_satisfied == Some(false),
     };
-    exit_matches && status_matches && base_status_matches && report.accepted
+    let coverage_schema_status_matches = match report.coverage_schema_status.as_str() {
+        "satisfied" => report.coverage_schema_satisfied == Some(true),
+        "grandfathered-unknown" => report.coverage_schema_satisfied.is_none(),
+        _ => report.coverage_schema_satisfied == Some(false),
+    };
+    exit_matches
+        && status_matches
+        && base_status_matches
+        && coverage_schema_status_matches
+        && report.accepted
 }
 
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
@@ -669,12 +685,13 @@ pub fn row_qualification(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate
             ProducerVerdict::Ok | ProducerVerdict::Grandfathered => {}
         }
     }
-    // Admission provenance is one cross-language authority, not a Rust copy of
-    // the Python comparisons. Schema-4 returns grandfathered-unknown and stays
-    // accepted; schema-5+ must carry canonical lock identity, zero concurrency,
-    // registered producer provenance, and the owner-ancestry proof.
-    if !shared_admission_accepts(row, pred) {
-        return Qualification::Refused("admission provenance not satisfied");
+    // Cross-field evidence semantics are one Python authority, not parallel
+    // Rust/Python comparisons. This includes the schema/coverage boundary:
+    // schema-4 stays grandfathered only with absent/null coverage, while a
+    // non-null coverage claim requires schema-5+. Admission and base evidence
+    // remain in the same delegated check.
+    if !shared_evidence_accepts(row, pred) {
+        return Qualification::Refused("shared evidence contract not satisfied");
     }
     // Green-class gate (from origin/main): a receipt passing every value clause
     // must ALSO be of a green class the predicate accepts. Expressed as a
@@ -884,6 +901,7 @@ mod tests {
         // both producer and admission fields.
         let mut old = row_with_producer(&sha, "2026-08-07T20:15:31Z", None);
         old.schema_version = Some(4);
+        old.coverage = None;
         let old_qualification = row_qualification(&old, &sha, &pred);
         assert!(
             old_qualification.accepted(),
@@ -924,11 +942,18 @@ mod tests {
             !row_qualifies(&row, &sha, &pred),
             "schema-5 admission must refuse a missing producer"
         );
+        let mut invalid_schema4 = row_with_producer(&sha, "2026-08-08T09:00:00Z", None);
+        invalid_schema4.schema_version = Some(4);
+        assert!(
+            !row_qualifies(&invalid_schema4, &sha, &pred),
+            "schema-4 carrying non-null coverage must be refused"
+        );
         let mut schema4 = row;
         schema4.schema_version = Some(4);
+        schema4.coverage = None;
         assert!(
             row_qualifies(&schema4, &sha, &pred),
-            "schema-4 must remain grandfathered"
+            "schema-4 with absent coverage must remain grandfathered"
         );
         assert!(
             shared_base_boundary_accepts(

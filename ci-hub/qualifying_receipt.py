@@ -174,6 +174,60 @@ def coverage_satisfied(cov: Any) -> bool:
     return coverage_verdict(cov) is CoverageVerdict.SATISFIED
 
 
+class CoverageSchemaVerdict(Enum):
+    """Whether a row claims coverage permitted by its schema.
+
+    Schema-4 and older rows predate per-node coverage. They remain
+    grandfathered only when coverage is absent or null; carrying a non-null
+    object is an internally contradictory claim and is refused. Schema-5+
+    activates the coverage contract, whose object contents are checked by
+    :func:`coverage_verdict`.
+    """
+
+    SATISFIED = "satisfied"
+    GRANDFATHERED_UNKNOWN = "grandfathered-unknown"
+    SCHEMA_UNAVAILABLE = "schema-unavailable"
+    POLICY_UNAVAILABLE = "policy-unavailable"
+    LEGACY_CLAIMS_COVERAGE = "legacy-schema-claims-coverage"
+
+
+def coverage_schema_verdict(
+    row: dict[str, Any], pred: dict[str, Any]
+) -> CoverageSchemaVerdict:
+    """Enforce the version boundary for a receipt-carried coverage claim."""
+    clause = pred.get("coverage")
+    if not isinstance(clause, dict):
+        return CoverageSchemaVerdict.POLICY_UNAVAILABLE
+    per_node = clause.get("per_node")
+    schema_min = clause.get("applies_at_schema_min")
+    if not isinstance(per_node, bool):
+        return CoverageSchemaVerdict.POLICY_UNAVAILABLE
+    if not per_node:
+        return CoverageSchemaVerdict.SATISFIED
+    if (
+        not isinstance(schema_min, int)
+        or isinstance(schema_min, bool)
+        or schema_min < 0
+    ):
+        return CoverageSchemaVerdict.POLICY_UNAVAILABLE
+    schema = row.get("schema_version")
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema < 0:
+        return CoverageSchemaVerdict.SCHEMA_UNAVAILABLE
+    if schema < schema_min:
+        if row.get("coverage") is not None:
+            return CoverageSchemaVerdict.LEGACY_CLAIMS_COVERAGE
+        return CoverageSchemaVerdict.GRANDFATHERED_UNKNOWN
+    return CoverageSchemaVerdict.SATISFIED
+
+
+def coverage_schema_accepted(verdict: CoverageSchemaVerdict) -> bool:
+    """Whether the schema/coverage combination is internally consistent."""
+    return verdict in (
+        CoverageSchemaVerdict.SATISFIED,
+        CoverageSchemaVerdict.GRANDFATHERED_UNKNOWN,
+    )
+
+
 class AdmissionVerdict(Enum):
     """Typed result from the one admission-provenance verifier.
 
@@ -340,7 +394,7 @@ def admission_verdict(row: dict[str, Any], pred: dict[str, Any]) -> AdmissionVer
     """Verify canonical admission, zero concurrency, and owner ancestry.
 
     This is the only semantic implementation of the admission clause. Rust
-    sends the row plus the two relevant predicate clauses to ``--admission-only``
+    sends the row plus the relevant predicate clauses to ``--evidence-only``
     and consumes this typed result; it does not restate these comparisons.
     """
     clause = pred.get("admission")
@@ -523,6 +577,9 @@ def _row_qualification_without_class(
     if pred.get("gate_filtered_tests") and row.get("filtered_tests") != 0:
         return False, "filtered_tests!=0"
     schema = row.get("schema_version") or 0
+    coverage_schema = coverage_schema_verdict(row, pred)
+    if not coverage_schema_accepted(coverage_schema):
+        return False, f"coverage schema {coverage_schema.value}"
     count_capable = schema >= pred["counts_schema"]
     counts_present = (
         row.get("executed_tests") is not None and row.get("filtered_tests") is not None
@@ -610,9 +667,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sha")
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
+        "--evidence-only",
         "--admission-only",
+        dest="evidence_only",
         action="store_true",
-        help="verify only admission provenance from a {row,admission,producer} request",
+        help="verify shared coverage-schema, admission, producer, and base evidence",
     )
     parser.add_argument(
         "--merge-boundary",
@@ -624,18 +683,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo-checkout")
     parser.add_argument("--reverie-checkout")
     args = parser.parse_args(argv)
-    if args.admission_only:
+    if args.evidence_only:
         try:
             request = json.load(sys.stdin)
             if not isinstance(request, dict) or not isinstance(request.get("row"), dict):
-                raise ValueError("admission request must contain an object-valued row")
+                raise ValueError("evidence request must contain an object-valued row")
             pred = {
                 "admission": request.get("admission"),
                 "producer": request.get("producer"),
                 "base": request.get("base"),
+                "coverage": request.get("coverage"),
             }
             verdict = admission_verdict(request["row"], pred)
             base = base_evidence_verdict(request["row"], pred)
+            coverage_schema = coverage_schema_verdict(request["row"], pred)
         except (ValueError, json.JSONDecodeError) as error:
             print(f"qualifying-receipt: {error}", file=sys.stderr)
             return 2
@@ -643,7 +704,11 @@ def main(argv: list[str] | None = None) -> int:
             True if verdict is AdmissionVerdict.SATISFIED else
             None if verdict is AdmissionVerdict.GRANDFATHERED_UNKNOWN else False
         )
-        accepted = admission_accepted(verdict) and base_accepted(base)
+        accepted = (
+            admission_accepted(verdict)
+            and base_accepted(base)
+            and coverage_schema_accepted(coverage_schema)
+        )
         print(json.dumps({
             "accepted": accepted,
             "admission_satisfied": satisfied,
@@ -653,6 +718,11 @@ def main(argv: list[str] | None = None) -> int:
                 None if base is BaseVerdict.GRANDFATHERED_UNKNOWN else False
             ),
             "base_status": base.value,
+            "coverage_schema_satisfied": (
+                True if coverage_schema is CoverageSchemaVerdict.SATISFIED else
+                None if coverage_schema is CoverageSchemaVerdict.GRANDFATHERED_UNKNOWN else False
+            ),
+            "coverage_schema_status": coverage_schema.value,
         }, sort_keys=True))
         return 0 if accepted else 1
     if args.merge_boundary:
@@ -695,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
         }, sort_keys=True))
         return 0 if accepted else 1
     if args.sha is None:
-        parser.error("--sha is required unless --admission-only is used")
+        parser.error("--sha is required unless --evidence-only is used")
     if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
         print("qualifying-receipt: --sha must be 40 lowercase hex", file=sys.stderr)
         return 2
@@ -712,6 +782,7 @@ def main(argv: list[str] | None = None) -> int:
     prod = producer_verdict(row, pred)
     admission = admission_verdict(row, pred)
     base = base_evidence_verdict(row, pred)
+    coverage_schema = coverage_schema_verdict(row, pred)
     report = {
         "schema_version": 1,
         "sha": args.sha,
@@ -737,6 +808,11 @@ def main(argv: list[str] | None = None) -> int:
             None if base is BaseVerdict.GRANDFATHERED_UNKNOWN else False
         ),
         "base_status": base.value,
+        "coverage_schema_satisfied": (
+            True if coverage_schema is CoverageSchemaVerdict.SATISFIED else
+            None if coverage_schema is CoverageSchemaVerdict.GRANDFATHERED_UNKNOWN else False
+        ),
+        "coverage_schema_status": coverage_schema.value,
     }
     if args.json:
         print(json.dumps(report, sort_keys=True))

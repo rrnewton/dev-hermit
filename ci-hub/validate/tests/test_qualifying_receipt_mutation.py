@@ -19,6 +19,9 @@ value across scenarios. For each scenario it asserts the whole panel agrees:
   * COVERAGE negative (live): the ee303899 shape (executed=427 but 15 absent
     nodes) is REFUSED by EVERY consumer -> the per-node coverage clause is
     present in all of them (the DRIFT-4 gap query.py used to have).
+  * COVERAGE-SCHEMA negative (live): a schema-4 row carrying a non-null
+    coverage object is REFUSED by EVERY consumer; grandfathering cannot launder
+    evidence its schema predates.
   * ZERO-exec negative (live): executed_tests==0 is refused by EVERY consumer.
 
 Consumers driven (seven certifier sites, six panel legs, three languages):
@@ -132,6 +135,13 @@ def _grandfathered_schema4_row(sha: str) -> dict:
     row.pop("admission")
     row.pop("concurrent_validates")
     row.pop("concurrency_proof")
+    return row
+
+
+def _schema4_with_coverage_row(sha: str) -> dict:
+    """Invalid cross-version claim: schema 4 carrying schema-5 coverage."""
+    row = _grandfathered_schema4_row(sha)
+    row["coverage"] = _green_row(sha)["coverage"]
     return row
 
 
@@ -476,6 +486,30 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             refused,
             len(panel),
             f"every consumer leg must refuse forged admission provenance: {panel}",
+        )
+
+    def test_schema4_with_nonnull_coverage_is_refused_per_leg(self) -> None:
+        """A grandfathered schema cannot claim evidence its version predates."""
+        row = _schema4_with_coverage_row(SHA)
+        panel = self._panel(row, predicate=None)
+        refused = sum(not accepted for accepted in panel.values())
+        verdict = qualifying_receipt.coverage_schema_verdict(
+            row, qualifying_receipt.active()
+        )
+        print(
+            "\nCOVERAGE SCHEMA NEGATIVE: "
+            f"refused={refused}/{len(panel)} legs certifier-sites="
+            f"{7 if refused == len(panel) else 0}/7 status={verdict.value} "
+            f"panel={panel}"
+        )
+        self.assertIs(
+            verdict,
+            qualifying_receipt.CoverageSchemaVerdict.LEGACY_CLAIMS_COVERAGE,
+        )
+        self.assertEqual(
+            refused,
+            len(panel),
+            f"schema-4 plus non-null coverage must be refused everywhere: {panel}",
         )
 
     def test_each_admission_condition_is_load_bearing_per_leg(self) -> None:
