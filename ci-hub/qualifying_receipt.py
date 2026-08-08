@@ -160,6 +160,89 @@ def coverage_satisfied(cov: Any) -> bool:
     return coverage_verdict(cov) is CoverageVerdict.SATISFIED
 
 
+class ProducerVerdict(Enum):
+    """Typed outcome of the `producer` provenance obligation.
+
+    `GRANDFATHERED` deliberately reuses the wording of the grandfathered
+    schema-4 coverage rule: the row does not CLAIM a writer and is not asked to,
+    so `producer_ok` is null rather than false. It is not a pass.
+    """
+
+    OK = "ok"
+    GRANDFATHERED = "grandfathered-unknown"
+    MISSING = "missing"
+    UNKNOWN_WRITER = "unknown-writer"
+
+
+#: Inert clause used when a predicate (e.g. an older mutation fixture) omits
+#: `producer` entirely. Mirrors the Rust `#[serde(default)]`; the canonical
+#: on-disk file is separately asserted to DECLARE the key, so the default can
+#: never silently disarm the live predicate.
+_PRODUCER_INERT: dict[str, Any] = {
+    "required": False,
+    "applies_from_finished_at": None,
+    "known": [],
+}
+
+#: `finished_at` is fixed-width RFC3339 UTC (`2026-08-07T20:15:31Z`), a format in
+#: which lexicographic order IS chronological order, so the epoch comparison needs
+#: no date parsing. Anything not of this exact shape is not ordered against the
+#: epoch by guesswork -- see `producer_verdict`.
+_RFC3339_Z = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+
+
+def producer_clause(pred: dict[str, Any]) -> dict[str, Any]:
+    """The `producer` clause, defaulted inert when the predicate omits it."""
+    raw = pred.get("producer")
+    if not isinstance(raw, dict):
+        return dict(_PRODUCER_INERT)
+    known = raw.get("known")
+    return {
+        "required": bool(raw.get("required", False)),
+        "applies_from_finished_at": raw.get("applies_from_finished_at"),
+        "known": [w for w in (known or []) if isinstance(w, str)],
+    }
+
+
+def producer_enforced_for(row: dict[str, Any], pred: dict[str, Any]) -> bool:
+    """Whether the provenance obligation is LIVE for this particular row.
+
+    Enforcement needs all three: the clause is required, an epoch is declared,
+    and the row is at/after it. A row whose `finished_at` is absent or malformed
+    while an epoch IS declared is enforced (fail-closed) -- otherwise dropping
+    the timestamp would be a trivial way to opt out of the check.
+    """
+    clause = producer_clause(pred)
+    if not clause["required"]:
+        return False
+    epoch = clause["applies_from_finished_at"]
+    if not isinstance(epoch, str) or not epoch:
+        return False
+    finished = row.get("finished_at")
+    if not isinstance(finished, str) or not _RFC3339_Z.fullmatch(finished):
+        return True
+    return finished >= epoch
+
+
+def producer_verdict(row: dict[str, Any], pred: dict[str, Any]) -> ProducerVerdict:
+    """Decide the provenance obligation from the row and the shared clause.
+
+    A row that NAMES a registered writer is `OK` whether or not the epoch has
+    been flipped -- crediting it early means rows written by already-deployed
+    writers stop being grandfathered the moment they exist, rather than at
+    activation. Mirrors the Rust `producer_verdict` authority.
+    """
+    clause = producer_clause(pred)
+    named = row.get("producer")
+    if isinstance(named, str) and named:
+        if not clause["known"] or named in clause["known"]:
+            return ProducerVerdict.OK
+        return ProducerVerdict.UNKNOWN_WRITER
+    if producer_enforced_for(row, pred):
+        return ProducerVerdict.MISSING
+    return ProducerVerdict.GRANDFATHERED
+
+
 def _row_qualification_without_class(
     row: dict[str, Any], sha: str, pred: dict[str, Any]
 ) -> tuple[bool, str]:
@@ -247,6 +330,15 @@ def row_qualification(
     value_ok, reason = _row_qualification_without_class(row, sha, pred)
     if not value_ok:
         return False, reason
+    # PROVENANCE, applied after the value clauses and before the class clause.
+    # Like the class clause it can only NARROW, and ordering it here keeps every
+    # existing refusal reason byte-identical: a row that already failed on value
+    # still reports its value reason, so turning this on cannot silently
+    # re-attribute an unrelated failure to a missing writer.
+    verdict = producer_verdict(row, pred)
+    if verdict in (ProducerVerdict.MISSING, ProducerVerdict.UNKNOWN_WRITER):
+        if producer_enforced_for(row, pred):
+            return False, f"producer {verdict.value}"
     green_class, class_reason = _green_class.derive_class(row)
     if green_class not in _green_class.accepted_classes(pred):
         return False, f"green_class={green_class!r}: {class_reason}"
@@ -277,6 +369,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"qualifying-receipt: {error}", file=sys.stderr)
         return 2
+    prod = producer_verdict(row, pred)
     report = {
         "schema_version": 1,
         "sha": args.sha,
@@ -284,6 +377,14 @@ def main(argv: list[str] | None = None) -> int:
         "green_class": green_class,
         "reason": reason,
         "accepts_green_class": _green_class.accepted_classes(pred),
+        # Reported as null rather than false when the row predates the
+        # obligation, so a grandfathered row never CLAIMS a provenance it does
+        # not carry -- the same discipline as coverage_satisfied.
+        "producer": row.get("producer"),
+        "producer_ok": True if prod is ProducerVerdict.OK else (
+            None if prod is ProducerVerdict.GRANDFATHERED else False
+        ),
+        "producer_status": prod.value,
     }
     if args.json:
         print(json.dumps(report, sort_keys=True))

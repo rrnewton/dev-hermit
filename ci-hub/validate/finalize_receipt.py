@@ -55,6 +55,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "remediation"))
 from nonzero_result import per_node_counts  # noqa: E402
 
 SCHEMA_VERSION = 5
+#: This writer's registered slug for the ledger `producer` column. Must appear in
+#: `producer.known` of ci-hub/validate/qualifying-receipt.json -- an unregistered
+#: slug is refused exactly like an absent one once the epoch is flipped.
+PRODUCER = "ci-hub-finalize-receipt"
 MANIFESTS = ("ci/dag/portable.json", "ci/dag/privileged.json")
 
 
@@ -199,6 +203,12 @@ def _clone_upgraded(base_row: dict, fields: dict) -> dict:
     satisfies `is_clean_full_coverage` on the consumer side."""
     row = dict(base_row)
     row.update(fields)
+    # Provenance names the writer of THIS row, so it is assigned last and
+    # unconditionally. A clone inherits every base field, including any
+    # `producer` the ORIGINAL writer stamped; leaving that in place would make a
+    # finalizer-minted row claim to have been produced by validate.sh, which is
+    # precisely the misattribution the column exists to prevent.
+    row["producer"] = PRODUCER
     return row
 
 

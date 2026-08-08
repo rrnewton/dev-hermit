@@ -80,6 +80,117 @@ pub struct CoverageClause {
     pub per_node: bool,
 }
 
+/// WHO WROTE THE ROW, and from when that must be declared.
+///
+/// The provenance twin of [`CoverageClause`]: same shape of obligation, but
+/// keyed on `finished_at` rather than `schema_version`, because 0 of the 729
+/// live rows carry `producer` while 729 of 729 carry `finished_at` -- and
+/// because `ci-hub.rs` branches on `schema_version == 4` by exact equality, so
+/// a writer version bump is independently unsafe. See the JSON's
+/// `_producer_names_the_writer_so_provenance_is_not_forensics` note.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ProducerClause {
+    /// Whether provenance is demanded at all. False disarms the clause wholly.
+    pub required: bool,
+    /// RFC3339 UTC instant at/after which a row MUST name its writer. `None`
+    /// means declared-but-inert: the column is recorded and credited, and
+    /// nothing is refused for lacking it. Flipped only once every writer ships.
+    #[serde(default)]
+    pub applies_from_finished_at: Option<String>,
+    /// The registered writer slugs. A row naming something outside this set is
+    /// refused under enforcement -- presence alone is not the bar, because a
+    /// typo'd or invented writer name is exactly as unattributable as none.
+    #[serde(default)]
+    pub known: Vec<String>,
+}
+
+impl Default for ProducerClause {
+    /// Inert. Used only when a predicate omits the key (older mutation
+    /// fixtures); the canonical file is separately asserted to DECLARE it, so
+    /// this default can never silently disarm the live predicate.
+    fn default() -> Self {
+        Self {
+            required: false,
+            applies_from_finished_at: None,
+            known: Vec::new(),
+        }
+    }
+}
+
+/// Typed outcome of the provenance obligation. `Grandfathered` deliberately
+/// reuses the grandfathered schema-4 coverage wording: the row does not CLAIM a
+/// writer and is not asked to, so its `producer_ok` is null, not false.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProducerVerdict {
+    Ok,
+    Grandfathered,
+    Missing,
+    UnknownWriter,
+}
+
+/// Whether the provenance obligation is LIVE for this particular row.
+///
+/// Needs all three: clause required, an epoch declared, and the row at/after
+/// it. A row whose `finished_at` is absent or malformed while an epoch IS
+/// declared is enforced (fail-closed) -- otherwise dropping the timestamp would
+/// be a trivial way to opt out of the check.
+pub fn producer_enforced_for(row: &HistoryRow, pred: &QualifyingPredicate) -> bool {
+    if !pred.producer.required {
+        return false;
+    }
+    let Some(epoch) = pred.producer.applies_from_finished_at.as_deref() else {
+        return false;
+    };
+    if epoch.is_empty() {
+        return false;
+    }
+    match row.finished_at.as_deref() {
+        // Fixed-width RFC3339 UTC sorts lexicographically == chronologically,
+        // so the epoch comparison needs no date parsing.
+        Some(ts) if is_rfc3339_z(ts) => ts >= epoch,
+        _ => true,
+    }
+}
+
+/// `2026-08-07T20:15:31Z` exactly -- the shape every ledger row uses.
+fn is_rfc3339_z(ts: &str) -> bool {
+    let b = ts.as_bytes();
+    b.len() == 20
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b[16] == b':'
+        && b[19] == b'Z'
+        && [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18]
+            .iter()
+            .all(|&i| b[i].is_ascii_digit())
+}
+
+/// Decide the provenance obligation. Mirrors the Python `producer_verdict`.
+///
+/// A row NAMING a registered writer is `Ok` whether or not the epoch has been
+/// flipped, so rows from already-deployed writers stop being grandfathered the
+/// moment they exist rather than at activation.
+pub fn producer_verdict(row: &HistoryRow, pred: &QualifyingPredicate) -> ProducerVerdict {
+    let named = row
+        .extra
+        .get("producer")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    if let Some(name) = named {
+        if pred.producer.known.is_empty() || pred.producer.known.iter().any(|k| k == name) {
+            return ProducerVerdict::Ok;
+        }
+        return ProducerVerdict::UnknownWriter;
+    }
+    if producer_enforced_for(row, pred) {
+        ProducerVerdict::Missing
+    } else {
+        ProducerVerdict::Grandfathered
+    }
+}
+
 /// The whole predicate, deserialized from the JSON. Unknown keys (e.g.
 /// `_comment`) are ignored on purpose so the file can carry documentation.
 #[derive(Clone, Debug, Deserialize)]
@@ -101,6 +212,10 @@ pub struct QualifyingPredicate {
     #[serde(default = "default_accepts_green_class")]
     pub accepts_green_class: Vec<String>,
     pub coverage: CoverageClause,
+    /// Provenance obligation. Defaulted inert so an older override fixture that
+    /// predates the key still parses; the live file declares it explicitly.
+    #[serde(default)]
+    pub producer: ProducerClause,
 }
 
 fn default_accepts_green_class() -> Vec<String> {
@@ -373,6 +488,22 @@ pub fn row_qualification(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate
     if !qualification.accepted() {
         return qualification;
     }
+    // PROVENANCE gate, ordered after the value clauses and before the class
+    // gate exactly as in the Python twin. Like the class gate it can only
+    // NARROW, and this position keeps every existing refusal reason
+    // byte-identical, so activating it cannot silently re-attribute an
+    // unrelated value failure to a missing writer.
+    if producer_enforced_for(row, pred) {
+        match producer_verdict(row, pred) {
+            ProducerVerdict::Missing => {
+                return Qualification::Refused("producer missing");
+            }
+            ProducerVerdict::UnknownWriter => {
+                return Qualification::Refused("producer unknown-writer");
+            }
+            ProducerVerdict::Ok | ProducerVerdict::Grandfathered => {}
+        }
+    }
     // Green-class gate (from origin/main): a receipt passing every value clause
     // must ALSO be of a green class the predicate accepts. Expressed as a
     // REFUSAL rather than a bare `false` so the reason survives into the typed
@@ -473,6 +604,99 @@ mod tests {
                 "executed_tests":427,"filtered_tests":0,"coverage":{coverage}}}"#
         ))
         .unwrap()
+    }
+
+    /// A schema-5 full green carrying `finished_at` and, optionally, a
+    /// `producer`, so provenance is the only clause any assertion turns on.
+    fn row_with_producer(sha: &str, finished_at: &str, producer: Option<&str>) -> HistoryRow {
+        let prod = match producer {
+            Some(p) => format!(r#","producer":"{p}""#),
+            None => String::new(),
+        };
+        serde_json::from_str(&format!(
+            r#"{{"schema_version":5,"profile":"full","selection_mode":"full","commit":"{sha}",
+                "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
+                "executed_tests":427,"filtered_tests":0,"finished_at":"{finished_at}",
+                "coverage":{{"planned_test_nodes":19,"executed_test_nodes":19,
+                "zero_executed_nodes":[],"absent_nodes":[]}}{prod}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// The shipped predicate with the provenance epoch FLIPPED ON. The live file
+    /// is deliberately inert until all four writers deploy, so every refusal
+    /// assertion must mutate it -- otherwise the test proves only that the gate
+    /// compiles, not that it fires.
+    fn enforcing() -> QualifyingPredicate {
+        let mut pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        pred.producer.applies_from_finished_at = Some("2026-08-08T00:00:00Z".to_string());
+        pred
+    }
+
+    /// BOTH DIRECTIONS of the provenance gate, in the engine that must agree
+    /// clause-for-clause with `qualifying_receipt.py`.
+    #[test]
+    fn producer_gate_refuses_unattributable_rows_and_accepts_registered_writers() {
+        let sha = "b".repeat(40);
+        let pred = enforcing();
+
+        // CONTROL: without this, every refusal below could be an unrelated clause.
+        assert!(
+            row_qualifies(
+                &row_with_producer(&sha, "2026-08-08T09:00:00Z", Some("hermit-validate-sh")),
+                &sha,
+                &pred
+            ),
+            "control row must qualify"
+        );
+
+        // NEGATIVE: no producer, and an unregistered one. Presence is not the
+        // bar -- an invented name is as unattributable as none.
+        for (label, producer) in [("absent", None), ("unregistered", Some("hermit-valrs"))] {
+            let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", producer);
+            assert!(
+                matches!(row_qualification(&row, &sha, &pred), Qualification::Refused(_)),
+                "{label} producer must be refused under enforcement"
+            );
+        }
+
+        // POSITIVE: every registered slug, so a typo is caught here rather than
+        // at activation, when it would refuse that writer's every row.
+        assert_eq!(pred.producer.known.len(), 4, "the four-writer census");
+        for slug in &pred.producer.known {
+            let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", Some(slug));
+            assert!(row_qualifies(&row, &sha, &pred), "{slug} must be accepted");
+        }
+
+        // GRANDFATHER: pre-epoch history keeps its authority. This is the
+        // property that stops activation from blocking every landing.
+        let old = row_with_producer(&sha, "2026-08-07T20:15:31Z", None);
+        assert!(row_qualifies(&old, &sha, &pred), "pre-epoch row must survive");
+        assert_eq!(producer_verdict(&old, &pred), ProducerVerdict::Grandfathered);
+
+        // FAIL-CLOSED: dropping the epoch key must not opt a row out.
+        let undated = row_with_producer(&sha, "not-a-timestamp", None);
+        assert!(producer_enforced_for(&undated, &pred));
+        assert!(!row_qualifies(&undated, &sha, &pred));
+    }
+
+    /// The SHIPPED file must refuse nothing yet -- staged deployment across
+    /// three repos. If someone flips the epoch without landing the writers,
+    /// this fails and names why.
+    #[test]
+    fn shipped_predicate_declares_producer_but_is_inert() {
+        let sha = "b".repeat(40);
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        assert!(pred.producer.required, "the live file must DECLARE the column");
+        assert!(
+            pred.producer.applies_from_finished_at.is_none(),
+            "flipping this epoch requires all four writers deployed first"
+        );
+        let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", None);
+        assert!(
+            row_qualifies(&row, &sha, &pred),
+            "shipped predicate must not refuse today's rows"
+        );
     }
 
     /// NEGATIVE (mutation): a coverage object that OMITS a failure list must be
