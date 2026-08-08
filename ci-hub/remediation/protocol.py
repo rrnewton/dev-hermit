@@ -3659,6 +3659,23 @@ def poll_obligation(obligation_id: str, store_path: Path) -> dict[str, Any]:
         and record.get("failure_source") == "verification_policy"
     ):
         return record
+    # A persisted exact-SHA hosted green is already sufficient authority.
+    # Evaluate it before trying to fill a supplemental local no_result;
+    # otherwise a burst of already-passing obligations needlessly launches
+    # local validation and can exhaust the one-shot watcher's wall budget
+    # before recording the satisfied transitions.  Keep polling the opposite
+    # orientation (local green / hosted no_result), because a late hosted red is
+    # an authoritative disagreement that must still be observed.  Active or
+    # stale producer-looking states also take the reconciliation path below.
+    if (
+        record["github"]["state"] == "green"
+        and record["local"]["state"] == "no_result"
+        and not _verification_in_flight(record)
+        and not _verification_state_needs_reconcile(record)
+    ):
+        record = evaluate_obligation(obligation_id, store_path=store_path)
+        if record["overall_state"] == "satisfied":
+            return record
     policy: dict[str, Any] | None = None
     try:
         record, policy = bind_verification_policy(obligation_id, store_path)

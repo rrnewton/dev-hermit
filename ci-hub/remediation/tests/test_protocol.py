@@ -3493,6 +3493,45 @@ class GithubStateClassificationTest(unittest.TestCase):
                 protocol.verification_policy_for_repo("rrnewton/hermit"),
             )
 
+    def test_persisted_github_green_short_circuits_supplemental_local_hole(
+        self,
+    ) -> None:
+        """A complete hosted answer must not launch an unnecessary local fill."""
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "store.jsonl"
+            obligations.create_obligation(
+                repo="rrnewton/hermit",
+                landed_sha=SHA,
+                land_mode="admin",
+                actor="tester",
+                obligation_id="ob-green-github-local-noresult",
+                path=store,
+            )
+            obligations.transition(
+                "ob-green-github-local-noresult",
+                "legs",
+                {
+                    "local": {
+                        "state": "no_result",
+                        "source": str(Path(tmp) / "hermit"),
+                        "redispatch_count": 0,
+                    },
+                    "github": {"state": "green"},
+                },
+                store,
+            )
+            with (
+                mock.patch.object(protocol, "github_runs") as github_runs,
+                mock.patch.object(protocol, "_spawn_detached") as spawn,
+            ):
+                record = protocol.poll_obligation(
+                    "ob-green-github-local-noresult", store
+                )
+            github_runs.assert_not_called()
+            spawn.assert_not_called()
+            self.assertEqual(record["overall_state"], "satisfied")
+            self.assertEqual(record["local"]["state"], "no_result")
+
 
 class LocalStateClassificationTest(unittest.TestCase):
     """A local validate exit code is not a truth value: OOM/SIGKILL != red."""
