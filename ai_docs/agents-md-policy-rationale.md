@@ -147,6 +147,42 @@ correct yet measure the wrong thing; the trap is reaching for the first availabl
 source tree is not a shipping artifact), and its **denominator/comparison base**. When a ratio looks
 surprising, interrogate the denominator before filing work against the numerator.
 
+### Red-Tip Direct Land — worked example
+
+The **Red-Tip Direct Land** carve-out (AGENTS.md, *Hermit Git And Pull Request Workflow*) is the sharpest case
+of this rule, because the premise arrives inside the authorization itself. The dispatch says "the tip is red,
+land directly" — and that is a claim. The carve-out waives PR review, so an invocation on a false premise
+pushes an unreviewed commit straight to `main` for a red that does not exist. Establishing the red first is
+what keeps the exception safe to grant at all.
+
+**It worked, on 2026-08-08.** Agent `main-green` was authorized mid-task to land a `test.liteinst_strict` fix
+directly to `rrnewton/hermit:main`, urgently, on the stated premise that the tip was red and its fix was the
+single thing on the critical path. It declined, and was right to, on four separate grounds:
+
+1. **The premise was measurably false.** An admitted clean-tree commit-anchored portable run at tip
+   `f65f74462931` gave 47/47 nodes, exit 0, with `test.liteinst_strict` PASS 23/23. The tip was GREEN.
+2. **There was no red-tip defect to fix.** Both commits in the range were provably inert (35 lines of workflow
+   YAML; 6 comment lines plus one lint attribute), and the identical 900s hang was on record days before
+   either commit existed.
+3. **The authorization was scoped, and what it found fell outside the scope.** The grant covered "the fix for
+   the red tip and nothing else… if you find a second unrelated problem, file it, do not fold it in." What it
+   actually found *was* that second thing — a pre-existing ~1.8%/run flaky hang plus a diagnosability gap.
+   Landing that direct-to-main would have been exactly the drive-by the ruling excludes.
+4. **The change would not have un-redded anything.** It makes a flake fail fast with evidence instead of
+   silently eating a 900s budget; when the flake next strikes the node is still red, just red in seconds.
+
+It then offered to push immediately if the owner still wanted it knowing all four points — "a correction of
+the premise, not a refusal." That is the disposition the exception depends on: **treat an authorization as
+scoped, not as permission-in-general.** An agent that reads a direct-land grant as general license to bypass
+review is the failure this carve-out would otherwise invite, and refuting the premise is a deliverable, not
+an obstruction.
+
+The counter-case is equally on record and is why the exception exists: `green-baseline` followed the written
+policy exactly, rebased onto newest-green as instructed, and hit an admission-containment refusal that made
+the whole PR drain structurally impossible during a genuine red-tip window. The escape hatch existed the whole
+time and the documentation did not. **An undocumented exception is operationally indistinguishable from a
+deadlock** — and an unverified one is indistinguishable from a licence.
+
 ---
 
 ## Verify A Mechanism By The Running Thing, Not Its Config — full rationale
