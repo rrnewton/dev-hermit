@@ -117,6 +117,19 @@ const SPECULATIVE_LAND_WAKE_SCRIPT_NAME = "hermitSpeculativeLandWakeSent";
 const SPECULATIVE_LAND_WAKE_COMMAND =
   'cd "' + SHELL_WORKSPACE_ROOT + '" && ' +
   './ci-hub/ci-hub record-obligation-wake --target "$1" --source orc';
+// MANDATORY before close+respawn. The mission mandate authorizes replacing a
+// broken agent with no permission, which pairs an UNVERIFIED alarm with an
+// IRREVERSIBLE action. This is the check that must sit between them, and it is
+// registered here for one reason: the coordinator HAS NO SHELL, so a safeguard
+// it cannot invoke is not a safeguard -- that is exactly how the
+// coordinator-only closure gateway became unsatisfiable. Reads /proc for
+// DG_AGENT_NAME, a source independent of every gate that can raise the alarm.
+// Never kills anything. rc 0 = verified dead (replace), 1 = alive (REFUSE),
+// 2 = unverifiable (REFUSE).
+const AGENT_LIVENESS_SCRIPT_NAME = "hermitVerifyAgentDeath";
+const AGENT_LIVENESS_COMMAND =
+  'cd "' + SHELL_WORKSPACE_ROOT + '" && ' +
+  'python3 ci-hub/health/agent_liveness_probe.py "$1" --json';
 const SPECULATIVE_LAND_INTERVAL_MS = 15 * 1000;
 // Measured 2026-08-06/07: live ticks 5.1-19.3s (n=8) and 5.55-5.85s (n=5 at
 // 03:03-03:05Z), out-of-band 5.1-16.8s (n=6); worst case a cold ci-hub rebuild
@@ -735,6 +748,14 @@ function registerPluginSurface(): void {
     timeoutSec: SPECULATIVE_LAND_TIMEOUT_SEC,
   });
 
+  orc.registerScript(AGENT_LIVENESS_SCRIPT_NAME, {
+    script: AGENT_LIVENESS_COMMAND,
+    description:
+      "REQUIRED before close+respawn: independently verify a named agent is " +
+      "genuinely dead (rc 0 dead / 1 alive / 2 unverifiable; refuse on 1 or 2)",
+    timeoutSec: 60,
+  });
+
   orc.registerScript(SPECULATIVE_LAND_WAKE_SCRIPT_NAME, {
     script: SPECULATIVE_LAND_WAKE_COMMAND,
     description: "Record an ORC wake as sent but not yet acknowledged",
@@ -816,6 +837,7 @@ function registerPluginSurface(): void {
         operationalTickIntervalMinutes: OPERATIONAL_TICK_INTERVAL_MS / 60000,
         speculativeLandCommand: SPECULATIVE_LAND_COMMAND,
         speculativeLandWakeCommand: SPECULATIVE_LAND_WAKE_COMMAND,
+        agentLivenessCommand: AGENT_LIVENESS_COMMAND,
         speculativeLandPollIntervalSeconds: SPECULATIVE_LAND_INTERVAL_MS / 1000,
         heartbeatRestartPolicy: HEARTBEAT_RESTARTABLE,
         maxParkedSlots: 5,

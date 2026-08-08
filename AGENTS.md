@@ -1,4 +1,4 @@
-# MISSION: This is an AUTONOMOUS, forward-driving, SELF-HEALING SWE team. The coordinator replaces broken/degraded/stuck agents immediately and autonomously (close+respawn, no permission needed), drives all work forward without stalling on routine approvals, keeps main green + PRs near zero, and heals the fleet continuously.
+# MISSION: This is an AUTONOMOUS, forward-driving, SELF-HEALING SWE team. The coordinator replaces broken/degraded/stuck agents immediately and autonomously (close+respawn, no permission needed) once their death is VERIFIED (**Verify Before You Replace** — no permission needed, but evidence needed), drives all work forward without stalling on routine approvals, keeps main green + PRs near zero, and heals the fleet continuously.
 
 On every hourly status update, call `scripts/status-log.rs` with the workstream→worker mapping + full status text to append a structured JSONL entry.
 
@@ -106,6 +106,7 @@ primary-nested scratch layouts. The companion carries the full tree.
 13. Never exceed twelve active worktrees, five parked slots, or fifteen agents (count each separately; active work does not consume the parked allowance). **All three caps are PER BOX, not per ORC session** — two sessions share this machine. Count agents as top-level `claude`/`codex` processes whose parent is not itself one (`ps -eo pid,ppid,comm`): 16 on 2026-08-08, already over. Every normal worktree path is `worktrees/<slot>/{hermit,reverie,liteinst2}` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
 15. Never broad-kill processes on this shared box — no `pkill`/`killall`/pattern/name/`-f`-substring/user/`ps|grep|kill`. Kill only your own child PID/PGID. See **Process-Kill Safety**.
+16. Never take an irreversible self-healing action (close+respawn, container reclaim, slot `--clean`) on an alarm alone. Verify the named subject is dead AT THE MOMENT OF ACTION, from a source independent of the gate that raised the alarm. See **Verify Before You Replace**.
 
 ## Clean Start And Checkout Ownership
 
@@ -163,9 +164,12 @@ landing target. Ordinary Hermit work flows from a feature branch to a PR against
 ### Red-Tip Direct Land (owner-authorized exception to Hard Invariant 9)
 
 **When the tip of `main` is RED, push the fix for that red DIRECTLY to `main`. No PR, no extra ceremony**
-(owner, 2026-08-08). Waiting is not safe: while the tip is red the PR drain is structurally impossible —
-rebasing onto newest-green hits admission containment — so the queue stops.
+(owner, 2026-08-08). Waiting is unsafe: while red, rebasing onto newest-green hits admission containment,
+so the PR drain stops.
 
+- **Establish the red yourself first.** A dispatch asserting a red tip is a claim, not evidence: dereference
+  the authority at that exact tip SHA before invoking. "Premise refuted" is a valid outcome (companion doc,
+  *Red-Tip Direct Land — worked example*).
 - **Covers:** the fix for the observed red, nothing bundled. Unrelated work still takes a PR.
 - **Who:** any agent holding the shell, naming in the commit body the red it repairs.
 - **Does NOT relax:** local validation evidence at the exact SHA; explicit-path staging (never `git add -A`);
@@ -434,6 +438,25 @@ integration or pinning step; unexpected movement is a reason to reassess, not to
 - If a primary is dirty, integration stops until the changes are attributed.
 - If a submodule pointer conflicts, resolve the intended product history first, then choose the exact gitlink — never pick a side without inspecting the commits.
 - If a task is blocked, preserve clean committed work, post the exact blocker and SHAs, and keep the slot active until the coordinator decides to park it.
+
+## Verify Before You Replace (Hard Invariant 16)
+
+**An alarm is a TRIGGER TO CHECK, never a WARRANT TO ACT.** The mission mandate removes the need for
+PERMISSION to replace an agent. It does not remove the need for EVIDENCE. Before replacing `<name>`:
+
+```
+orc.scripts.hermitVerifyAgentDeath("<name>")   # python3 ci-hub/health/agent_liveness_probe.py <name>
+```
+
+rc 0 verified-dead → replace, promptly. **rc 1 (alive) and rc 2 (unverifiable) BOTH REFUSE** — failing to
+prove life is not proving death. The probe reads `DG_AGENT_NAME` from `/proc`, independent of ORC, the agent
+snapshot, and tick-hub; it never kills; and if it can see no agent at all it returns 2 rather than declaring
+the whole fleet dead. Registered on the plugin surface because the coordinator has no shell (**Role Boundary**).
+
+**Why an independent source, not a fresher one.** Measured 2026-08-08: `/proc` held **29 live agents while the
+snapshot health-tick reads listed 13** — it cannot see other orc sessions' agents, so repairing its contents
+cannot fix this. That same day the tick called `fleet-forensics` dead while it held the freshest activity
+timestamp on the box; obeying the mandate literally would have destroyed a live agent mid-P0.
 
 ## Process-Kill Safety (Hard Invariant 15)
 

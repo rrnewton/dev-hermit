@@ -160,8 +160,25 @@ check-agent-utils-pin: ## Fetch and reject stale/diverged agent-utils state, plu
 # blocked a critical path. The 2026-08-08 contradiction sweep first paid for most of it by
 # DELETING superseded policy (coordinator-only closure, the "one agent in the parent" rule)
 # and moving merge-gate measurements to the companion doc; the raise covers only the residue.
+# 2026-08-08 (later, +206): 42600 -> 42800. ONE irreducible predicate added to that same
+# exception: ESTABLISH THE RED YOURSELF before invoking it. Without it the carve-out is
+# invocable on an unverified dispatch claim, which is the one way it can do harm — a PR
+# bypass fired at a tip that is actually green. The worked example that motivates it went to
+# the companion doc, per this file's own predicates-here/rationale-there split, so only the
+# predicate itself is charged to AGENTS.md.
+# 2026-08-08 (third, +1700): 42800 -> 44500. Hard Invariant 16, VERIFY BEFORE YOU REPLACE, plus
+# its section. This is the largest single raise and the one most worth the bytes: the mission
+# mandate authorizes close+respawn with no permission, so it paired an UNVERIFIED alarm with an
+# IRREVERSIBLE action and nothing sat between them. A /proc census the same day found 29 live
+# agents where the snapshot health-tick reads listed 13, i.e. 16 standing authorizations to
+# destroy a live agent. The rule needs the invocation, both refusal codes, and the measurement
+# that shows why a FRESHER signal would not have helped (only an INDEPENDENT one does) -- drop
+# any of those and it reads as advice. Rationale beyond that went to the companion doc.
+# NOTE FOR THE NEXT AUTHOR: three raises in one day is a smell, and the file is now dense
+# predicates with little fat left. Before raising a fourth time, look for a SECTION to retire
+# rather than sentences to shave.
 check-claude-md-size: ## Guard AGENTS.md against size regression + require the tail canary
-	@limit=42600; f=AGENTS.md; \
+	@limit=44500; f=AGENTS.md; \
 	test -f $$f || { echo "ERROR: $$f missing" >&2; exit 1; }; \
 	size=$$(wc -c < $$f); \
 	if [ $$size -gt $$limit ]; then \
