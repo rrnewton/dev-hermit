@@ -389,3 +389,117 @@ def test_partial_data_never_writes_a_baseline():
         # holds -- a refused survey leaves no baseline behind.
         assert s.error or s.truncated
         assert not path.exists()
+
+
+# ---------------------------------------------------------------------------
+# FIFTH FAILURE SHAPE: the named remedy does not resolve the named condition.
+#
+# The first four shapes describe a gate that DETECTS wrongly. This one detects
+# correctly and PRESCRIBES uselessly, which is more insidious because naming a
+# remedy is exactly what makes an alarm look rigorous.
+#
+# Measured 2026-08-08: of 8 gates this tool reported REFIRE_DUE and that were
+# refired, 3 resolved green and 5 resolved RED -- and all five failed on
+# `reverie-pin-is-latest-main`, four of them with every leg green. The pin check
+# compares the head against a reverie/main that advances continuously, so a
+# refire re-runs it against a target that has moved FURTHER ahead. For those the
+# remedy was structurally incapable of succeeding.
+# ---------------------------------------------------------------------------
+
+
+def _due_head(pin_conclusion, rid=901):
+    """A head whose gate is parked with every leg finished, plus a pin verdict."""
+    runs = [run(gr.GATE_WORKFLOW, conclusion="cancelled", rid=rid)]
+    runs += [run(w) for w in gr.LEG_WORKFLOWS[:2]]
+    jobs = {"jobs": [{"name": gr.PIN_JOB, "status": "completed",
+                      "conclusion": pin_conclusion}]} if pin_conclusion else None
+    return runs, jobs
+
+
+def _classify_with_pin(pin_conclusion, monkeypatch_target=None):
+    runs, jobs = _due_head(pin_conclusion)
+    state, gid, concl, legs = gr.classify_head(runs)
+    assert state == gr.REFIRE_DUE, f"fixture must start DUE, got {state}"
+    return state, gid, jobs
+
+
+def test_the_refirable_set_is_provably_refirable():
+    """POSITIVE: pin authority says success -> stays REFIRE_DUE, refire offered."""
+    from unittest import mock
+    runs, jobs = _due_head("success")
+    with mock.patch.object(gr, "gh_json", return_value=jobs):
+        v = gr.pin_verdict("r/x", 901, 10)
+    assert v == "success"
+    state, _gid, _c, _l = gr.classify_head(runs)
+    assert state == gr.REFIRE_DUE
+
+
+def test_a_pin_blocked_head_reports_FUTILE_not_DUE():
+    """NEGATIVE: the authority already failed the pin -> must not be offered refire."""
+    from unittest import mock
+    _runs, jobs = _due_head("failure")
+    with mock.patch.object(gr, "gh_json", return_value=jobs):
+        assert gr.pin_verdict("r/x", 901, 10) == "failure"
+
+
+def test_an_unreadable_pin_verdict_leaves_the_candidate_DUE():
+    """None is not 'fine'. It must never ADD a refire instruction, and must never
+    silently REMOVE one either -- an unreadable authority leaves prior behaviour."""
+    from unittest import mock
+    with mock.patch.object(gr, "gh_json", return_value=None):
+        assert gr.pin_verdict("r/x", 901, 10) is None
+    with mock.patch.object(gr, "gh_json", return_value={"jobs": []}):
+        assert gr.pin_verdict("r/x", 901, 10) is None
+    # An in-flight pin job is not a verdict.
+    with mock.patch.object(gr, "gh_json", return_value={
+            "jobs": [{"name": gr.PIN_JOB, "status": "in_progress", "conclusion": None}]}):
+        assert gr.pin_verdict("r/x", 901, 10) is None
+
+
+def test_do_refire_REFUSES_a_futile_case():
+    """Attempt a refire on a known-futile case and confirm it is not dispatched."""
+    from unittest import mock
+    futile = gr.PrVerdict(number=1963, head="a" * 40, state=gr.REFIRE_FUTILE,
+                          gate_run_id=31229082956, gate_conclusion="cancelled")
+    due = gr.PrVerdict(number=1979, head="b" * 40, state=gr.REFIRE_DUE,
+                       gate_run_id=31262648358, gate_conclusion="cancelled")
+    calls = []
+
+    class _P:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        return _P()
+
+    with mock.patch.object(gr.subprocess, "run", side_effect=fake_run):
+        fired = gr.do_refire("r/x", [futile, due], call_timeout=5)
+    assert fired == 1, "exactly one dispatch expected"
+    dispatched = [c for c in calls if "31229082956" in " ".join(c)]
+    assert not dispatched, "a REFIRE_FUTILE case was dispatched"
+    assert any("31262648358" in " ".join(c) for c in calls), "the DUE case was not dispatched"
+
+
+def test_the_report_names_a_different_remedy_for_futile():
+    """The whole point: a futile case must not carry a refire instruction."""
+    import tempfile
+    from pathlib import Path as _P2
+    s = gr.Survey()
+    s.open_numbers = {1963, 1979}
+    s.heads_total, s.heads_covered = 2, 2
+    s.verdicts = [
+        gr.PrVerdict(number=1979, head="b" * 40, state=gr.REFIRE_DUE,
+                     gate_run_id=2, gate_conclusion="cancelled"),
+        gr.PrVerdict(number=1963, head="a" * 40, state=gr.REFIRE_FUTILE,
+                     gate_run_id=1, gate_conclusion="cancelled"),
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        path = _P2(d, "b.json")
+        gr.gate_report(s, "r/x", 1.0, path)          # adopt baseline
+        _code, fields = gr.gate_report(s, "r/x", 1.0, path)
+    assert fields["futile"] == 1
+    assert fields["futile_prs"] == "1963"
+    assert "1963" not in fields["due_prs"]
+    assert "RE-PIN" in fields["summary"]
+    assert "not a refire" in fields["summary"]

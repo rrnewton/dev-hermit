@@ -59,7 +59,7 @@ Bold = removed 2026-08-08 (`119aa11`).
 
 ---
 
-## 2. Four failure shapes — a checklist for anyone adding a gate
+## 2. Five failure shapes — a checklist for anyone adding a gate
 
 **Every one of these looks correct in source and fails in operation.** That is the
 common thread, and it is why each must be checked by RUNNING the gate, not by
@@ -71,6 +71,31 @@ reading it. Reading the source is how all four survived.
 | 2 | **Alarms on a condition the recipient cannot clear** | Is the remedy available to whoever receives this page? | DELTA (page on newly-qualifying only); carry the standing set in fields |
 | 3 | **The process outlives its own report** | Can this gate's work continue after the tick records a verdict, and does it mutate? | Process-group teardown on timeout (already present); never hold a shared lock |
 | 4 | **The alarm text was never exercised** | Has anyone ever seen this gate's output *rendered*, not just its source? | Run it through `parse_kv_lines` + `render_emit`; assert `summary` captured and zero surviving `{placeholder}` |
+| 5 | **The named remedy does not resolve the named condition** | Follow up: after someone runs the remedy, did the condition actually clear? | Split the population by cause; give each cause its own remedy, or say "no known remedy" and why |
+
+**Shapes 1–4 describe a gate that DETECTS wrongly. Shape 5 describes one that
+detects correctly and PRESCRIBES uselessly**, and it is the most insidious of the
+five because *naming a remedy is exactly what makes an alarm look rigorous*. The
+gate cited two sections down as the model carried it: `merge_gate_refire_due`
+named `--refire` for every parked gate, and measured over 8 real refires, 3
+resolved green and 5 resolved RED — all five failing on
+`reverie-pin-is-latest-main`, four of them with **every leg green**. That pin
+check compares the head against a `reverie/main` that advances continuously, so a
+refire re-runs it against a target that has moved further ahead: for those PRs the
+remedy was *structurally incapable* of succeeding. Shape 5 is therefore often
+shape 1 wearing a remedy's clothes.
+
+Its detection cost is the thing to note: shapes 1–4 are visible by inspecting the
+gate, shape 5 is only visible by **following the remedy to its outcome**. Nobody
+had, because each individual refire looked reasonable. The fix was
+`REFIRE_FUTILE` — a separate class, reading the merge gate's own pin verdict
+rather than recomputing it, carrying a re-pin instruction and never a refire.
+
+It also settles a question that was live at the time: whether refire should be
+automatic, since the gate names its own fix. No — automating a remedy that fails
+5 times in 8 industrialises the error, unbounded, against a receding target, with
+each dispatch defensible in isolation. Revisit only once the refirable set is
+established.
 
 Shape 4's predicate is narrower than it first looks and the correction matters:
 the risk is **not** "a gate that has never fired". `validate_wall_series_readiness`
@@ -87,7 +112,7 @@ states its own coverage as *"70 of 143 heads, a floor not a census"* so the coun
 travels with its denominator. A gate that does those three things is hard to get
 wrong in operation.
 
-Three were known when this audit was commissioned; the fourth was found during it.
+Three were known when this audit was commissioned; the fourth was found during it, and the fifth by following a remedy to its outcome afterwards.
 Shape 3 as originally written here was **wrong and has been corrected** — see §3a.
 The genuinely damaging finding is §3b, which is independent of it.
 

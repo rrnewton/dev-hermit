@@ -60,6 +60,9 @@ LEG_WORKFLOWS = (
 )
 
 REFIRE_DUE = "REFIRE_DUE"
+# Gate parked with every leg finished, BUT the authority has already ruled the
+# head's Reverie pin stale. Refiring cannot clear it -- see `pin_verdict`.
+REFIRE_FUTILE = "REFIRE_FUTILE"
 PARKED_WAIT = "PARKED_WAIT"
 GATE_OK = "GATE_OK"
 NO_GATE = "NO_GATE"
@@ -83,6 +86,37 @@ def gh_json(args: Sequence[str], timeout: int):
         return json.loads(p.stdout)
     except ValueError:
         return None
+
+
+# The merge gate's own trusted pin checker, run on the gate runner from main's
+# code. Its verdict is what we READ; we do not recompute the comparison here.
+PIN_JOB = "reverie-pin-is-latest-main"
+
+
+def pin_verdict(repo: str, run_id: int, call_timeout: int):
+    """The authority's most recent verdict on this head's Reverie pin.
+
+    Returns "failure", "success", or None when it cannot be read.
+
+    WHY READ IT RATHER THAN COMPUTE IT. The comparison "does this head pin the
+    latest Reverie main" is already made by `ci/run-reverie-pin-check.sh`,
+    checked out from main and executed on the gate runner precisely so that
+    PR-controlled code never decides it. Re-deriving it here would create a
+    second verifier of one authority -- the defect this repo has spent the
+    session removing -- and mine would be the weaker copy, running against
+    whatever this box happens to have fetched.
+
+    None is NOT "fine". A verdict that cannot be read leaves the candidate
+    REFIRE_DUE, which is the pre-existing behaviour: this probe may only ever
+    REMOVE a refire instruction that would have been useless, never add one.
+    """
+    data = gh_json(["api", f"repos/{repo}/actions/runs/{run_id}/jobs"], call_timeout)
+    if not data:
+        return None
+    for job in data.get("jobs") or []:
+        if job.get("name") == PIN_JOB and job.get("status") == "completed":
+            return job.get("conclusion")
+    return None
 
 
 @dataclass
@@ -247,7 +281,17 @@ def survey(repo: str, limit: int, deadline_secs: float, call_timeout: int,
         v = PrVerdict(number=num, head=head, state=state,
                       gate_run_id=gid, gate_conclusion=concl, legs=legs)
         if state == REFIRE_DUE:
-            v.reason = "gate CANCELLED and every leg completed -> refire is safe"
+            # Only DUE candidates are probed, so this costs one call per
+            # candidate (a handful), not one per head (144).
+            if gid is not None and pin_verdict(repo, gid, call_timeout) == "failure":
+                v.state = state = REFIRE_FUTILE
+                v.reason = (
+                    f"gate CANCELLED and every leg completed, BUT {PIN_JOB} already "
+                    "FAILED for this head -> refiring re-runs the same check against a "
+                    "reverie/main that has only moved further ahead. Re-pin or rebase."
+                )
+            else:
+                v.reason = "gate CANCELLED and every leg completed -> refire is safe"
         elif state == PARKED_WAIT:
             v.reason = ("gate CANCELLED, leg(s) still running -> refiring would "
                         "re-dispatch and re-cancel (busy-loop)")
@@ -295,7 +339,12 @@ def render(s: "Survey", repo: str, elapsed: float) -> str:
 
 
 def do_refire(repo: str, verdicts: Sequence[PrVerdict], call_timeout: int = 180) -> int:
-    """Re-dispatch only the gates proven DUE. Never touches PARKED_WAIT."""
+    """Re-dispatch only the gates proven DUE.
+
+    Never touches PARKED_WAIT (a leg is still running; refiring busy-loops and
+    starves the runners it is waiting on) and never touches REFIRE_FUTILE (the
+    pin authority has already failed this head; refiring cannot clear it).
+    """
     fired = 0
     for v in verdicts:
         if v.state != REFIRE_DUE or not v.gate_run_id:
@@ -396,6 +445,7 @@ def gate_report(s: "Survey", repo: str, elapsed: float, state_path, dry_run: boo
     bounded scan finding 2 where the exhaustive `--per-pr` scan found 41.
     """
     due_now = {v.number for v in s.verdicts if v.state == REFIRE_DUE}
+    futile = {v.number for v in s.verdicts if v.state == REFIRE_FUTILE}
     covered = {v.number for v in s.verdicts}
     prior = read_baseline(state_path)
     # First run (prior is None) adopts the standing backlog WITHOUT paging: it did
@@ -428,6 +478,17 @@ def gate_report(s: "Survey", repo: str, elapsed: float, state_path, dry_run: boo
             f"--refire when runner capacity allows."
         )
         state = "ok"
+    if futile:
+        # A DIFFERENT remedy, never the refire one. Measured 2026-08-08: of 8
+        # gates refired, 5 came back red and ALL FIVE failed on the pin check --
+        # four of them with every leg green. Offering `--refire` for those was a
+        # rigorous-looking instruction that could not work.
+        summary += (
+            f" SEPARATELY, {len(futile)} parked gate(s) are NOT refirable "
+            f"({','.join(str(n) for n in sorted(futile))}): {PIN_JOB} has already "
+            "failed for those heads, so refiring only re-checks a reverie/main that "
+            "keeps moving. Remedy is a RE-PIN or rebase onto latest Reverie, not a refire."
+        )
 
     fields = {
         "state": state,
@@ -436,6 +497,8 @@ def gate_report(s: "Survey", repo: str, elapsed: float, state_path, dry_run: boo
         "due_standing": len(due_now),
         "due_new_prs": ",".join(str(n) for n in sorted(fresh)) or "-",
         "due_prs": ",".join(str(n) for n in sorted(due_now)) or "-",
+        "futile_prs": ",".join(str(n) for n in sorted(futile)) or "-",
+        "futile": len(futile),
         "heads_total": s.heads_total,
         "heads_covered": s.heads_covered,
         "elapsed_secs": round(elapsed, 2),
