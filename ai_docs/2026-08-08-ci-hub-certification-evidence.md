@@ -243,10 +243,40 @@ missing field. **104 of the 224 recorded `result=pass`.** It is not historical: 
 concurrent, `result=pass`, finished 05:42:25Z, i.e. a passing receipt at the current hermit
 main pin produced under 18-way concurrency.
 
-**Second defect, found in passing:** the field is recorded only in the **gitignored**
-`ignored/validate-run-ledger.jsonl`. In the git-**tracked** `ledger/hermit/devbig014/2026-08.jsonl`
-it is `None` on all 654 rows. A consumer reading the durable ledger cannot distinguish "no
-concurrency" from "not recorded" — an ambiguous zero in the permanent record.
+**~~Second defect, found in passing: the field is recorded only in the gitignored ledger and
+is `None` on all 654 tracked rows — an ambiguous zero in the permanent record.~~ RETRACTED
+2026-08-08** by `concurrent-validates-is-an-ambiguous-zero-in-the-durable-ledger`, which was
+filed on this claim and refuted it before implementing anything.
+
+The claim was a **top-level read of a wrapper envelope**. `ledger/hermit/devbig014/2026-08.jsonl`
+is not a validate ledger; it is `schema: validate-ledger/v1`, `event_type: run.result`,
+written by `ci-hub/ledger/migrate_legacy`, with the whole legacy row nested under
+**`legacy_row`**. Read nested, `concurrent_validates` is present on **178 of 654** rows, 165 of
+them ≥2, max 20. Read at top level — what the retracted claim did — it is present on 0.
+Same error class as "file existence is not landing" and "grep -c counted comments as
+deployment", both recorded above: query an object that cannot return the value being asked
+about, then report its answer.
+
+**Absent is already distinguishable from zero,** and more cleanly than the claim assumed:
+464 rows omit the key entirely, 12 carry explicit `null`, and **0 rows carry an explicit `0`**.
+No unknown is coerced to zero anywhere in the tracked record.
+
+**A consumer requiring the field already REFUSES.** `ci-hub/lib/validate_status.rs` computes
+`conditions_present = row.dag_jobs.is_some() && row.concurrent_validates.is_some() &&
+row.known_flaky_failure.is_some()` and returns `FailureDisposition::NeedsRerun` when it is
+false — absence is a refusal, never a zero. The exoneration path separately demands
+`== Some(0)`, an explicit zero, so `None` cannot buy a clean verdict there either.
+(`history_queries.rs:785`, which writes `json!(0)`, is inside `#[cfg(test)] mod tests` — a
+fixture builder, not production. Candidate refuted on inspection, like `pr_status.py:867`.)
+
+**What is genuinely wrong is a durability LAG, not an ambiguous zero.** Newest `finished_at`
+in the tracked ledger is `2026-08-07T02:35:46Z`; in the live gitignored writer it is
+`2026-08-08T06:56:30Z` — roughly 28 hours behind. On `(commit, finished_at)`: 605 keys shared,
+**80 rows live-only, 0 tracked-only**, so the tracked file is a lagging import rather than a
+second source. The sharp consequence for condition 4: **`f65f74462` at
+`concurrent_validates=18`, `result=pass`, is NOT in the tracked ledger.** Today's most
+damning evidence is currently gitignored-only. The remedy is running the importer, not
+changing a schema or a predicate.
 
 ### R/R lane bracket counts — now re-derived
 
