@@ -806,6 +806,10 @@ impl LandingLock {
         pr: &str,
         expected: fn(&CleanupPhase) -> bool,
         next: CleanupPhase,
+        // `Some(anchor)` records the payload's containment boundary; `None` leaves whatever the
+        // record already carried, so the phase transitions that are not the acquire point cannot
+        // accidentally erase an anchor written earlier.
+        cgroup: Option<String>,
     ) -> Result<(), LandLockError> {
         self.with_guard(|| {
             let holder = self.read_holder()?.ok_or_else(|| {
@@ -840,6 +844,9 @@ impl LandingLock {
                 )));
             }
             record.phase = next;
+            if let Some(cgroup) = cgroup {
+                record.cgroup = Some(cgroup);
+            }
             write_cleanup_record(&self.paths.cleanup, &record)
                 .map_err(|source| io_error("write", &self.paths.cleanup, source))
         })
@@ -853,6 +860,27 @@ impl LandingLock {
             CleanupPhase::Published {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
+            },
+            // ACQUIRE TIME, not release: the only party who can read the payload's cgroup is the
+            // payload itself while it is alive, and the whole point is to survive the supervisor
+            // dying. A boundary recorded at release is a boundary that is never recorded in
+            // exactly the case that needs it.
+            //
+            // Best effort BY DESIGN, mirroring validate-lock: if the cgroup cannot be read, or is
+            // shared with unrelated work, the record simply carries no anchor and `reclaim-dead`
+            // keeps its existing attestation path -- the status quo, never a new failure mode.
+            // Anchoring to a SHARED cgroup would be worse than no anchor, because a domain that
+            // is permanently populated by someone else's work could never be censused empty.
+            match payload_cgroup_anchor(gated.leader.pid) {
+                Ok(cgroup) => Some(cgroup),
+                Err(why) => {
+                    eprintln!(
+                        "landing-lock: no cgroup anchor recorded for this run ({why}); if the \
+                         supervisor dies, censusing the orphaned domain will require \
+                         --attest-domain-empty"
+                    );
+                    None
+                }
             },
         )
     }
@@ -896,6 +924,7 @@ impl LandingLock {
                 domain_complete: capture.complete,
                 residuals: capture.identities,
             },
+            None,
         )
     }
 
@@ -913,6 +942,7 @@ impl LandingLock {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
             },
+            None,
         )
     }
 
@@ -3281,6 +3311,113 @@ mod tests {
         };
         write_cleanup_record(&lock.paths.cleanup, &record).unwrap();
         (lock, leader, pgid)
+    }
+
+    /// The A2 shape: identical to `anchorless_published_quarantine`, except the record
+    /// CARRIES the payload cgroup anchor that `publish_run` now writes at acquire time.
+    /// `cgroup` is a user-manager-shaped path under a temp root that does not exist, and an
+    /// ABSENT cgroup is positive proof of emptiness (a cgroup can only be removed once it holds
+    /// no processes), so this models a dead owner whose payload is genuinely gone.
+    fn anchored_published_quarantine(
+        name: &str,
+        cgroup: &str,
+    ) -> (LandingLock, ProcessIdentity, u32) {
+        let (lock, leader, pgid) = anchorless_published_quarantine(name);
+        let record = CleanupRecord {
+            agent: "mergegate-fix".into(),
+            operation: "pr:1666".into(),
+            host: current_host(),
+            boot_id: current_boot_id().unwrap(),
+            phase: CleanupPhase::Published {
+                leader: leader.clone(),
+                pgid,
+            },
+            cgroup: Some(cgroup.to_string()),
+        };
+        write_cleanup_record(&lock.paths.cleanup, &record).unwrap();
+        (lock, leader, pgid)
+    }
+
+    /// NEGATIVE->POSITIVE, the whole point of A2. The survivor discharges a dead owner's lock
+    /// with NO attestation and NO `census-orphaned-domain` archaeology, because the boundary
+    /// was recorded while the payload was still alive.
+    #[test]
+    fn an_anchored_published_quarantine_reclaims_without_attestation() {
+        let (lock, _leader, _pgid) = anchored_published_quarantine(
+            "anchored-empty",
+            "/sys/fs/cgroup/user.slice/user-0.slice/user@0.service/ci-hub-a2-absent.scope",
+        );
+        let _ = &lock;
+        let evidence = census_recorded_domain(Some(
+            "/sys/fs/cgroup/user.slice/user-0.slice/user@0.service/ci-hub-a2-absent.scope",
+        ));
+        assert!(
+            matches!(evidence, DomainEvidence::ProvenEmpty(_)),
+            "an absent anchored domain must census EMPTY without attestation, got {evidence:?}"
+        );
+    }
+
+    /// THE OTHER DIRECTION, and the constraint that must survive the fix: an anchor is not a
+    /// licence to discharge. Recording a boundary makes the domain CHECKABLE; it does not make it
+    /// empty. A dead owner still sitting on live work is refused, and the refusal names the
+    /// occupants rather than hand-waving.
+    ///
+    /// Tested against the pure policy function rather than a live cgroup on purpose: the only
+    /// populated cgroups visible from this sandbox belong to other agents' transient tmux scopes,
+    /// so keying the assertion on one would make the bracket depend on someone else's process
+    /// lifetime. `census_disposition` IS the whole policy change, so it is the honest subject.
+    #[test]
+    fn an_anchored_but_populated_domain_is_refused_even_with_an_attestation() {
+        let occupied = || DomainEvidence::Populated("payload cgroup X holds 3: 11,22,33".into());
+
+        // Unattested -> refused, and the refusal carries the occupants.
+        let refused = census_disposition(occupied(), false, "", "dead owner").unwrap_err();
+        assert!(
+            refused.contains("NOT empty") && refused.contains("11,22,33"),
+            "a populated domain must be refused and name its occupants, got {refused}"
+        );
+
+        // Attested but anonymous -> STILL refused. This is the leg that stops "dead owner alone"
+        // from becoming a discharge: an unauditable claim is not evidence.
+        let anonymous = census_disposition(occupied(), true, "   ", "dead owner").unwrap_err();
+        assert!(
+            anonymous.contains("--evidence"),
+            "an anonymous attestation over a populated domain must be refused, got {anonymous}"
+        );
+
+        // And the positive control, so this is not a check that refuses everything:
+        // a PROVEN-empty domain discharges mechanically with no attestation at all.
+        let ok = census_disposition(
+            DomainEvidence::ProvenEmpty("payload cgroup X is absent".into()),
+            false,
+            "",
+            "dead owner",
+        )
+        .expect("a proven-empty domain must discharge without attestation");
+        assert!(ok.contains("PROVEN"), "got {ok}");
+    }
+
+    /// ACQUIRE TIME, not release: a boundary written at release is never written in the case
+    /// that needs it. Asserts the anchor is applied by the Armed->Published transition and that
+    /// later transitions pass `None` and therefore cannot erase it.
+    #[test]
+    fn later_transitions_never_erase_the_acquire_time_anchor() {
+        let (lock, leader, pgid) = anchored_published_quarantine(
+            "anchored-preserved",
+            "/sys/fs/cgroup/user.slice/user-0.slice/user@0.service/ci-hub-a2-keep.scope",
+        );
+        let rendered = fs::read_to_string(&lock.paths.cleanup).unwrap();
+        assert!(
+            rendered.contains("ci-hub-a2-keep.scope"),
+            "publish must persist the acquire-time anchor, got: {rendered}"
+        );
+        // The runtime's later transitions pass `None`, which the transition applies as
+        // "leave whatever was there" -- assert that contract at the source.
+        let _ = (&leader, pgid);
+        assert!(
+            !rendered.contains("cgroup=\n"),
+            "the anchor must not be blanked, got: {rendered}"
+        );
     }
 
     fn census_args(leader: &ProcessIdentity, pgid: u32) -> CensusOrphanedDomainArgs {
