@@ -408,6 +408,17 @@ fi
 # 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. A
 # local positive now additionally dereferences its immutable receipt comment;
 # a hosted positive remains independently sufficient. Any genuine red blocks.
+# Mutable-tip currency is asserted HERE, exactly once: refresh both authorities
+# immediately before dereferencing the receipt. A stale receipt costs this gate
+# rerun, never another full validation. No ancestry-distance budget exists.
+with-proxy git -C "$WT" fetch -q origin main \
+  || abandon "could not refresh Hermit main at the final receipt boundary" 5
+current_base=$(git -C "$WT" rev-parse --verify origin/main) \
+  || abandon "could not resolve Hermit main at the final receipt boundary" 5
+with-proxy git -C "$ROOT/reverie" fetch -q origin main \
+  || abandon "could not refresh Reverie main at the final receipt boundary" 5
+current_reverie_base=$(git -C "$ROOT/reverie" rev-parse --verify origin/main) \
+  || abandon "could not resolve Reverie main at the final receipt boundary" 5
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \
@@ -419,7 +430,10 @@ if ! with-proxy gh api --paginate --slurp \
   printf '[]\n' >"$receipt_comments"
 fi
 receipt_detail=$("$SCRIPT_DIR/exact-head-validation-authority.sh" \
-  --repo "$R" --sha "$HEAD" --comments "$receipt_comments" 2>&1)
+  --repo "$R" --sha "$HEAD" --comments "$receipt_comments" \
+  --current-base "$current_base" \
+  --current-reverie-base "$current_reverie_base" \
+  --repo-checkout "$WT" --reverie-checkout "$ROOT/reverie" 2>&1)
 receipt_rc=$?
 rm -f -- "$receipt_comments"
 if [ "$receipt_rc" -ne 0 ]; then
@@ -427,19 +441,17 @@ if [ "$receipt_rc" -ne 0 ]; then
 fi
 say "exact-head validation authority authorized: $receipt_detail"
 
-# 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
-# --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to
-# recompute mergeability, resolving a stuck UNKNOWN here. Treat "already merged"
-# as success; a genuine block surfaces as a persistent error after the budget.
-merged=""; out=""
-for mtries in $(seq 12); do
-  out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase \
-    --match-head-commit "$HEAD" 2>&1) && { merged=ok; break; }
-  grep -qi 'already merged' <<<"$out" && { say "already merged"; merged=ok; break; }
-  say "merge attempt $mtries not-ready: $(tr '\n' ' ' <<<"$out" | tail -c 160)"
-  sleep 15
-done
-[ "$merged" = ok ] || abandon "gh pr merge --rebase did not succeed after 12 tries (last: $(tr '\n' ' ' <<<"$out" | tail -c 160))" 6
+# 6. The merge command is the mergeability arbiter. Make exactly one attempt
+# under the final-boundary verdict above. Retrying here would let an authorization
+# age for minutes after the mutable tips were observed. A refusal reruns the gate,
+# which re-fetches both tips and re-verifies the receipt; it never revalidates.
+out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase \
+  --match-head-commit "$HEAD" 2>&1) && merged=ok || merged=
+if [ -z "$merged" ] && grep -qi 'already merged' <<<"$out"; then
+  say "already merged"
+  merged=ok
+fi
+[ "$merged" = ok ] || abandon "gh pr merge --rebase refused after the fresh final-boundary check; rerun the gate (last: $(tr '\n' ' ' <<<"$out" | tail -c 160))" 6
 
 # 7. ancestry-verify: a PR-head hash is NOT a landing. Confirm the merge commit is
 # reachable from origin/main before declaring success.

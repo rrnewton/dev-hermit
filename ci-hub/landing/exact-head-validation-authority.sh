@@ -11,12 +11,20 @@ receipt_verifier=${VERIFY_RECEIPT_BIN:-$root/ci-hub/validation/verify_receipt.sh
 repo=rrnewton/hermit
 sha=
 comments=
+current_base=
+current_reverie_base=
+repo_checkout=
+reverie_checkout=
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo) repo=${2:-}; shift 2 ;;
         --sha) sha=${2:-}; shift 2 ;;
         --comments) comments=${2:-}; shift 2 ;;
+        --current-base) current_base=${2:-}; shift 2 ;;
+        --current-reverie-base) current_reverie_base=${2:-}; shift 2 ;;
+        --repo-checkout) repo_checkout=${2:-}; shift 2 ;;
+        --reverie-checkout) reverie_checkout=${2:-}; shift 2 ;;
         -h|--help)
             echo "usage: exact-head-validation-authority.sh --repo OWNER/REPO --sha 40_HEX [--comments FILE]"
             exit 0
@@ -31,6 +39,21 @@ fi
 if [[ -n $comments && ! -r $comments ]]; then
     echo "exact-head authority comments file is unreadable: $comments" >&2
     exit 2
+fi
+boundary_args=()
+if [[ -n $current_base || -n $current_reverie_base || -n $repo_checkout || -n $reverie_checkout ]]; then
+    if [[ ! $current_base =~ ^[0-9a-f]{40}$ ]] || \
+       [[ ! $current_reverie_base =~ ^[0-9a-f]{40}$ ]] || \
+       [[ ! -d $repo_checkout ]] || [[ ! -d $reverie_checkout ]]; then
+        echo "exact-head authority requires complete, valid merge-boundary base arguments" >&2
+        exit 2
+    fi
+    boundary_args=(
+        --current-base "$current_base"
+        --current-reverie-base "$current_reverie_base"
+        --repo-checkout "$repo_checkout"
+        --reverie-checkout "$reverie_checkout"
+    )
 fi
 
 local_report=$(mktemp)
@@ -63,6 +86,7 @@ fi
 if [[ $local_state == green && -n $comments ]]; then
     receipt_rc=0
     "$receipt_verifier" --repo "$repo" --sha "$sha" --comments "$comments" \
+        "${boundary_args[@]}" \
         >/dev/null 2>&1 || receipt_rc=$?
     if [[ $receipt_rc -ne 0 ]]; then
         local_state=no_result

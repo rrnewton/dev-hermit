@@ -8,6 +8,7 @@ coverage{} would SATISFY or REFUSE per the consumer rule:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,12 @@ import finalize_receipt as fr
 
 HERE = Path(__file__).resolve().parent
 MODULE = HERE / "finalize_receipt.py"
+BASE_FIELDS = {
+    "base_sha": "1" * 40,
+    "base_tree": "2" * 40,
+    "reverie_base_sha": "3" * 40,
+    "reverie_base_tree": "4" * 40,
+}
 
 
 def _satisfied(cov: dict) -> bool:
@@ -152,6 +159,54 @@ def test_realistic_run_executed_positive():
     assert _satisfied(row["coverage"])
 
 
+def test_writer_records_exact_base_and_reverie_tree(tmp_path):
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e",
+    }
+
+    def git(repo: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, capture_output=True,
+            text=True, env=env,
+        ).stdout.strip()
+
+    reverie = tmp_path / "reverie"
+    reverie.mkdir()
+    git(reverie, "init", "-q")
+    (reverie / "reverie-dbi").mkdir()
+    (reverie / "reverie-dbi/lib.rs").write_text("pub fn dbi() {}\n")
+    git(reverie, "add", "-A")
+    git(reverie, "commit", "-qm", "reverie base")
+    reverie_sha = git(reverie, "rev-parse", "HEAD")
+
+    hermit = tmp_path / "hermit"
+    hermit.mkdir()
+    git(hermit, "init", "-q")
+    (hermit / "Cargo.lock").write_text(
+        f'source = "git+https://github.com/rrnewton/reverie.git?rev={reverie_sha}#{reverie_sha}"\n'
+    )
+    (hermit / "src").mkdir()
+    (hermit / "src/lib.rs").write_text("pub fn base() {}\n")
+    git(hermit, "add", "-A")
+    git(hermit, "commit", "-qm", "base")
+    base = git(hermit, "rev-parse", "HEAD")
+    git(hermit, "update-ref", "refs/remotes/origin/main", base)
+    (hermit / "src/lib.rs").write_text("pub fn branch() {}\n")
+    git(hermit, "add", "-A")
+    git(hermit, "commit", "-qm", "branch")
+    head = git(hermit, "rev-parse", "HEAD")
+
+    fields = fr.build_base_evidence(str(hermit), head, str(reverie))
+    assert fields["base_sha"] == base
+    assert fields["base_tree"] == git(hermit, "rev-parse", f"{base}^{{tree}}")
+    assert fields["reverie_base_sha"] == reverie_sha
+    assert fields["reverie_base_tree"] == git(
+        reverie, "rev-parse", f"{reverie_sha}^{{tree}}"
+    )
+
+
 # --- ledger upgrade path ----------------------------------------------------
 
 def test_ledger_upgrade_in_place(tmp_path):
@@ -194,7 +249,7 @@ def test_ledger_upgrade_missing_row_errors(tmp_path):
 
 # --- CLI emit-only ----------------------------------------------------------
 
-def test_cli_emit_only(tmp_path):
+def test_cli_emit_only_refuses_without_replayable_base(tmp_path):
     log = tmp_path / "dag.log"
     log.write_text(_passing_node("test.a", 3))
     proc = subprocess.run(
@@ -202,14 +257,8 @@ def test_cli_emit_only(tmp_path):
          "--sha", "e" * 40, "--hermit-checkout", str(tmp_path), "--emit-only"],
         capture_output=True, text=True,
     )
-    assert proc.returncode == 0
-    obj = json.loads(proc.stdout)
-    assert obj["commit"] == "e" * 40
-    assert obj["schema_version"] == 5
-    assert "coverage" in obj
-    # tmp_path is not a git repo -> planned set empty -> planned_test_nodes 0
-    # (an empty planned set NEVER satisfies; the finalizer never fabricates one).
-    assert obj["coverage"]["planned_test_nodes"] == 0
+    assert proc.returncode == 2
+    assert "cannot record base evidence" in proc.stderr
 
 
 # --- race-safe scan/append minting ------------------------------------------
@@ -221,6 +270,9 @@ def _countless_green_row(sha: str, log_path: str) -> dict:
         "selection_mode": "full", "profile": "full",
         "executed_tests": None, "filtered_tests": None,
         "log_file": log_path, "real_seconds": 900,
+        "admission": "ci-hub-validate-lock",
+        "concurrent_validates": 0,
+        "concurrency_proof": "validate_lock_owner_ancestry",
     }
 
 
@@ -236,6 +288,11 @@ def _qualifying_schema5_row(sha: str) -> dict:
             "zero_executed_nodes": [],
             "absent_nodes": [],
         },
+        **BASE_FIELDS,
+        producer="ci-hub-finalize-receipt",
+        admission="ci-hub-validate-lock",
+        concurrent_validates=0,
+        concurrency_proof="validate_lock_owner_ancestry",
     )
     return row
 
@@ -267,6 +324,7 @@ def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
     ledger.write_text("\n".join(original_lines) + "\n")
 
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
     results = fr.scan_and_finalize(str(ledger), str(tmp_path))
 
     assert len(results) == 1 and results[0]["satisfied"] and results[0]["sha"] == sha
@@ -294,6 +352,7 @@ def test_scan_is_idempotent(tmp_path, monkeypatch):
     ledger = tmp_path / "l.jsonl"
     ledger.write_text(json.dumps(_countless_green_row(sha, str(log))) + "\n")
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
 
     first = fr.scan_and_finalize(str(ledger), str(tmp_path))
     assert len([r for r in first if r["reason"] == "minted"]) == 1
@@ -313,6 +372,7 @@ def test_scan_dry_run_writes_nothing(tmp_path, monkeypatch):
     before = json.dumps(_countless_green_row(sha, str(log))) + "\n"
     ledger.write_text(before)
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
 
     results = fr.scan_and_finalize(str(ledger), str(tmp_path), dry_run=True)
     assert results[0]["satisfied"]

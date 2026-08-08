@@ -292,6 +292,16 @@ class ReceiptTests(unittest.TestCase):
             # behind, so this test had been erroring (not failing) ever since.
             # Read it from the one canonical source, as that refactor intended.
             row["schema_version"] = MODULE.qualifying_receipt.active()["counts_schema"]
+            row.update({
+                "base_sha": "1" * 40,
+                "base_tree": "2" * 40,
+                "reverie_base_sha": "3" * 40,
+                "reverie_base_tree": "4" * 40,
+                "producer": "hermit-validate-sh",
+                "admission": "ci-hub-validate-lock",
+                "concurrent_validates": 0,
+                "concurrency_proof": "validate_lock_owner_ancestry",
+            })
             canonical_row = self.canonical_row(row)
             with self.assertRaises(SystemExit):
                 MODULE.selected_record(

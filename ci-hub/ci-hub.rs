@@ -571,6 +571,18 @@ struct ReceiptDigestArgs {
     /// canonical digest in one authoritative process.
     #[arg(long)]
     require_qualifying: bool,
+    /// Fresh Hermit main tip for the optional final merge-boundary assertion.
+    #[arg(long, requires_all = ["current_reverie_base", "repo_checkout", "reverie_checkout"])]
+    current_base: Option<String>,
+    /// Fresh Reverie main tip at the same boundary.
+    #[arg(long)]
+    current_reverie_base: Option<String>,
+    /// Hermit object store containing `current_base`.
+    #[arg(long)]
+    repo_checkout: Option<PathBuf>,
+    /// Reverie object store containing `current_reverie_base`.
+    #[arg(long)]
+    reverie_checkout: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -3495,6 +3507,43 @@ fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
             "receipt-digest HistoryRow does not satisfy the shared qualifying predicate".into(),
         ));
     }
+    let boundary_count = [
+        args.current_base.is_some(),
+        args.current_reverie_base.is_some(),
+        args.repo_checkout.is_some(),
+        args.reverie_checkout.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if boundary_count != 0 && boundary_count != 4 {
+        return Err(CiHubError::ValidateStatus(
+            "receipt-digest final merge-boundary verification requires all four base/checkouts arguments".into(),
+        ));
+    }
+    if let (
+        Some(current_base),
+        Some(current_reverie_base),
+        Some(repo_checkout),
+        Some(reverie_checkout),
+    ) = (
+        args.current_base.as_deref(),
+        args.current_reverie_base.as_deref(),
+        args.repo_checkout.as_deref(),
+        args.reverie_checkout.as_deref(),
+    ) {
+        if !crate::qualifying_receipt::shared_base_boundary_accepts(
+            &row,
+            current_base,
+            current_reverie_base,
+            repo_checkout,
+            reverie_checkout,
+        ) {
+            return Err(CiHubError::ValidateStatus(
+                "receipt-digest HistoryRow failed final merge-boundary base verification".into(),
+            ));
+        }
+    }
     let (canonical_row, digest) = canonical_row_json_and_sha256(&row).ok_or_else(|| {
         CiHubError::ValidateStatus("cannot canonicalize receipt HistoryRow".into())
     })?;
@@ -3696,6 +3745,10 @@ fn describe_receipt(receipt: &QualifyingReceipt) -> serde_json::Value {
         "sha": row.commit,
         "commit": row.commit,
         "tree": tree,
+        "base_sha": extra_str(row, "base_sha"),
+        "base_tree": extra_str(row, "base_tree"),
+        "reverie_base_sha": extra_str(row, "reverie_base_sha"),
+        "reverie_base_tree": extra_str(row, "reverie_base_tree"),
         "commit_anchored": row.commit_anchored,
         "tree_dirty": row.tree_dirty,
         "finished_at": row.finished_at,

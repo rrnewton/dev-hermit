@@ -104,6 +104,10 @@ def _green_row(sha: str) -> dict:
         "admission": "ci-hub-validate-lock",
         "concurrent_validates": 0,
         "concurrency_proof": "validate_lock_owner_ancestry",
+        "base_sha": "1" * 40,
+        "base_tree": "2" * 40,
+        "reverie_base_sha": "3" * 40,
+        "reverie_base_tree": "4" * 40,
     }
 
 
@@ -481,6 +485,10 @@ class QualifyingReceiptMutationTest(unittest.TestCase):
             "canonical-admission": ("admission", "none"),
             "zero-concurrency": ("concurrent_validates", 1),
             "owner-ancestry": ("concurrency_proof", "self-declared"),
+            "recorded-base": ("base_sha", None),
+            "recorded-base-tree": ("base_tree", None),
+            "recorded-reverie-base": ("reverie_base_sha", None),
+            "recorded-reverie-tree": ("reverie_base_tree", None),
         }
         for condition, (field, value) in mutations.items():
             with self.subTest(condition=condition):

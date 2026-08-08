@@ -248,8 +248,9 @@ never wedges a land:
    `--gate-deadline` (default 1080s), then ABANDON with the last event, run ID,
    URL, and state.
 2. **The merge command is the mergeability arbiter** — do not gate on
-   `mergeStateStatus` (it sticks at `UNKNOWN`); attempt `gh pr merge --rebase` in
-   a bounded retry loop, which forces GitHub to recompute mergeability.
+   `mergeStateStatus` (it sticks at `UNKNOWN`). Attempt `gh pr merge --rebase`
+   once under the freshly evaluated final-boundary verdict. A refusal reruns the
+   gate so mutable-tip evidence cannot age inside a merge retry loop.
 3. **Treat the label only as a cache** —
    `exact-head-validation-authority.sh` independently queries the counted local
    receipt and the versioned hosted job set. Either qualifying exact-head green
@@ -264,7 +265,8 @@ never wedges a land:
    positive remains independently sufficient. Missing, forged, stale, tampered,
    zero-executed, partial, or contradictory evidence refuses the landing before
    any merge call. The merge itself uses `--match-head-commit` so a concurrent
-   push cannot inherit that authorization.
+   push cannot inherit that authorization. A failed merge call does not reuse
+   this verdict: the next attempt starts at the gate and re-fetches both bases.
 
 ### `--no-rebase`: a rebase can only downgrade an already-authorized head
 

@@ -82,6 +82,14 @@ pub struct CoverageClause {
     pub per_node: bool,
 }
 
+/// Receipt-carried base evidence. Semantics live in the same Python authority
+/// as admission provenance; Rust only transports this versioned policy.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BaseClause {
+    pub applies_at_schema_min: u32,
+    pub branch: String,
+}
+
 /// Data consumed by the one Python admission-provenance verifier.
 ///
 /// Rust intentionally carries no semantic methods for this clause: duplicating
@@ -228,6 +236,8 @@ pub struct QualifyingPredicate {
     #[serde(default = "default_accepts_green_class")]
     pub accepts_green_class: Vec<String>,
     pub coverage: CoverageClause,
+    /// Exact base/provenance evidence and its merge-boundary policy.
+    pub base: BaseClause,
     /// Canonical admission/owner-ancestry obligation. Semantics live only in
     /// `qualifying_receipt.py::admission_verdict`.
     pub admission: AdmissionClause,
@@ -415,6 +425,66 @@ struct AdmissionReport {
     accepted: bool,
     admission_satisfied: Option<bool>,
     admission_status: String,
+    base_satisfied: Option<bool>,
+    base_status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BaseBoundaryReport {
+    accepted: bool,
+    base_satisfied: Option<bool>,
+    base_status: String,
+}
+
+/// Delegate final mutable-tip currency to the same Python semantic authority.
+/// Shell reaches this through `receipt-digest`; it never invokes or restates
+/// the verifier itself.
+pub fn shared_base_boundary_accepts(
+    row: &HistoryRow,
+    current_base: &str,
+    current_reverie_base: &str,
+    repo_checkout: &Path,
+    reverie_checkout: &Path,
+) -> bool {
+    let verifier = resolve_root().join("ci-hub/qualifying_receipt.py");
+    let mut child = match Command::new("python3")
+        .arg(verifier)
+        .arg("--merge-boundary")
+        .arg("--current-base")
+        .arg(current_base)
+        .arg("--current-reverie-base")
+        .arg(current_reverie_base)
+        .arg("--repo-checkout")
+        .arg(repo_checkout)
+        .arg("--reverie-checkout")
+        .arg(reverie_checkout)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return false;
+    };
+    if serde_json::to_writer(&mut stdin, row).is_err() || stdin.flush().is_err() {
+        return false;
+    }
+    drop(stdin);
+    let Ok(output) = child.wait_with_output() else {
+        return false;
+    };
+    let Ok(report) = serde_json::from_slice::<BaseBoundaryReport>(&output.stdout) else {
+        return false;
+    };
+    let status_matches = match report.base_status.as_str() {
+        "satisfied" => report.base_satisfied == Some(true),
+        "grandfathered-unknown" => report.base_satisfied.is_none(),
+        _ => false,
+    };
+    output.status.code() == Some(0) && report.accepted && status_matches
 }
 
 /// Delegate admission provenance to its ONE semantic implementation.
@@ -433,6 +503,10 @@ fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> boo
             "required_concurrent_validates": pred.admission.required_concurrent_validates,
             "required_concurrency_proof": pred.admission.required_concurrency_proof,
             "require_registered_producer": pred.admission.require_registered_producer,
+        },
+        "base": {
+            "applies_at_schema_min": pred.base.applies_at_schema_min,
+            "branch": pred.base.branch,
         },
         "producer": {
             "required": pred.producer.required,
@@ -474,7 +548,12 @@ fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> boo
         "grandfathered-unknown" => report.admission_satisfied.is_none(),
         _ => report.admission_satisfied == Some(false),
     };
-    exit_matches && status_matches && report.accepted
+    let base_status_matches = match report.base_status.as_str() {
+        "satisfied" => report.base_satisfied == Some(true),
+        "grandfathered-unknown" => report.base_satisfied.is_none(),
+        _ => report.base_satisfied == Some(false),
+    };
+    exit_matches && status_matches && base_status_matches && report.accepted
 }
 
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
@@ -698,7 +777,11 @@ mod tests {
                 "executed_tests":427,"filtered_tests":0,"coverage":{coverage},
                 "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
                 "concurrent_validates":0,
-                "concurrency_proof":"validate_lock_owner_ancestry"}}"#
+                "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444"}}"#
         ))
         .unwrap()
     }
@@ -717,7 +800,11 @@ mod tests {
                 "coverage":{{"planned_test_nodes":19,"executed_test_nodes":19,
                 "zero_executed_nodes":[],"absent_nodes":[]}},
                 "admission":"ci-hub-validate-lock","concurrent_validates":0,
-                "concurrency_proof":"validate_lock_owner_ancestry"{prod}}}"#
+                "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444"{prod}}}"#
         ))
         .unwrap()
     }
@@ -842,6 +929,16 @@ mod tests {
         assert!(
             row_qualifies(&schema4, &sha, &pred),
             "schema-4 must remain grandfathered"
+        );
+        assert!(
+            shared_base_boundary_accepts(
+                &schema4,
+                &sha,
+                &sha,
+                Path::new("/nonexistent-hermit"),
+                Path::new("/nonexistent-reverie"),
+            ),
+            "the real Rust-to-Python merge-boundary bridge must preserve schema-4"
         );
     }
 
@@ -1011,7 +1108,11 @@ mod tests {
                     "zero_executed_nodes":[],"absent_nodes":[]}},
                 "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
                 "concurrent_validates":0,
-                "concurrency_proof":"validate_lock_owner_ancestry"}}"#
+                "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444"}}"#
         ))
         .unwrap();
         let live_pred =
@@ -1055,7 +1156,11 @@ mod tests {
             "producer": "hermit-validate-sh",
             "admission": "ci-hub-validate-lock",
             "concurrent_validates": 0,
-            "concurrency_proof": "validate_lock_owner_ancestry"
+            "concurrency_proof": "validate_lock_owner_ancestry",
+            "base_sha": "1111111111111111111111111111111111111111",
+            "base_tree": "2222222222222222222222222222222222222222",
+            "reverie_base_sha": "3333333333333333333333333333333333333333",
+            "reverie_base_tree": "4444444444444444444444444444444444444444"
         }))
         .unwrap();
         assert!(row_qualifies(&hard, &sha, &pred));

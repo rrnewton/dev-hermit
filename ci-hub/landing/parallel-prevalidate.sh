@@ -74,10 +74,10 @@ fi
 VALIDATE_CMD="${VALIDATE_CMD:-}"                          # per-PR validate; default below = real
 VALIDATE_STATUS_CMD="${VALIDATE_STATUS_CMD:-$ROOT/ci-hub/ci-hub validate-status}"
 LAND_CMD="${LAND_CMD:-$ROOT/ci-hub/landing/land-pr.sh}"
-# Refuse-before-start: the composite authority proves both that the producer can
-# emit a qualifying receipt (fixed floors) and that the head contains freshly
-# fetched origin/main (moving base). A stale-base green cannot land. Overridable
-# with a command stub for tests, but never disabled in production.
+# Refuse-before-start: the composite authority proves that the producer can emit
+# a qualifying receipt by checking immutable fixed floors. Mutable main currency
+# is checked once by land-pr immediately before merge. Overridable with a command
+# stub for tests, but never disabled in production.
 PREFLIGHT_CMD="${PREFLIGHT_CMD:-python3 $ROOT/ci-hub/validate/preflight_validate.py}"
 
 while [ $# -gt 0 ]; do

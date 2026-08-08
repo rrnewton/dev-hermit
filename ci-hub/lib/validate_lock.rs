@@ -62,14 +62,14 @@ const REFUSED_EXIT_CODE: i32 = 3;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
-/// Exit code reported when admission REFUSES a validate whose head predates a
-/// fixed floor or the freshly fetched origin/main tip. Same 3 as an ownership
-/// refusal: a refusal, not a crash.
+/// Exit code reported when admission REFUSES a validate whose head predates an
+/// immutable fixed floor. Same 3 as an ownership refusal: a refusal, not a
+/// crash. Mutable-tip currency belongs only at the final merge boundary.
 const STALE_BASE_EXIT_CODE: i32 = 3;
 /// TEST-BUILD-ONLY override of the composite validation-admission command
 /// (space-split argv). The target head is appended as `--head <sha>`.
 /// Production always runs the in-tree `ci-hub/validate/preflight_validate.py`,
-/// which checks both fixed floors and freshly fetched origin/main. See
+/// which checks the immutable producer and merge-gate floors. See
 /// [`test_only_override`] for why the name is compiled into BOTH builds while
 /// its effect exists only under `cfg(test)`.
 const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
@@ -480,10 +480,8 @@ pub enum ValidateLockError {
     UnboundedChildDeadline,
     #[error("validate-lock: --max must be 1; box-exclusive cap >1 is unproven (detcore_misc residual is monotonic in load, experiments/multisect_detcore_misc_20260803); raising N requires hermit-250 evidence")]
     BadMax,
-    /// Admission refused a validate whose head predates a fixed floor or the
-    /// freshly fetched origin/main tip. The message names the exact base and
-    /// remedy. This is mechanical REBASE-BEFORE-VALIDATE: a stale base never
-    /// gets a slot.
+    /// Admission refused a validate whose head predates an immutable producer
+    /// or merge-gate floor. Mutable-tip currency is enforced at merge time.
     #[error("{0}")]
     StaleBase(String),
     #[error(
@@ -653,11 +651,10 @@ fn is_full_sha(target: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` unless its
-/// exact head contains both every fixed floor and the freshly fetched
-/// origin/main tip. Thus every qualifying receipt describes a state that can
-/// land without another rebase. The refusal names the exact missing base and
-/// remedy — a bare "refused" gets a gate disabled.
+/// Refuse to admit a `Validate` unless its exact head contains every immutable
+/// producer and merge-gate floor. Mutable origin/main currency is intentionally
+/// absent here: the receipt records its exact base and the canonical verifier
+/// asserts currency once at the final merge boundary.
 ///
 /// Non-Validate kinds pass through. Validate targets that are not exact SHAs and
 /// the legacy `--skip-base-check` flag are refused: either would sever the
@@ -685,7 +682,7 @@ fn base_admission_check(
     if skip {
         return Err(ValidateLockError::StaleBase(format!(
             "REFUSE: --skip-base-check cannot authorize qualifying validation of \
-             {target}. Rebase onto freshly fetched origin/main before validating. \
+             {target}. The immutable validation floors must be checked. \
              Historical differential debugging is non-qualifying and must run \
              outside validate-run so it cannot mint landing evidence."
         )));
@@ -722,8 +719,7 @@ fn base_admission_check(
         Err(err) => {
             return Err(ValidateLockError::StaleBase(format!(
                 "validate-lock: validation admission check could not run \
-                 ({err}); base for {target} is UNRESOLVED. Rebase onto current \
-                 origin/main before validating."
+                 ({err}); fixed-floor ancestry for {target} is UNRESOLVED."
             )));
         }
     };
@@ -737,8 +733,8 @@ fn base_admission_check(
             // stdout; carry it verbatim so the operator sees the exact floor.
             let msg = if stdout.is_empty() {
                 format!(
-                    "REFUSE: base for {target} predates a rebase-base floor. \
-                     Rebase onto current origin/main before validating."
+                    "REFUSE: base for {target} predates an immutable \
+                     validation floor. Rebase onto the named floor before validating."
                 )
             } else {
                 stdout
@@ -757,8 +753,7 @@ fn base_admission_check(
             };
             Err(ValidateLockError::StaleBase(format!(
                 "validate-lock: validation admission check for {target} did not \
-                 resolve ({detail}); treating the base as STALE. Rebase onto \
-                 current origin/main before validating."
+                 resolve ({detail}); treating fixed-floor ancestry as STALE."
             )))
         }
     }
@@ -1624,8 +1619,7 @@ impl ValidateLock {
             io_error("enable child subreaper at", Path::new("/proc/self"), source)
         })?;
 
-        // MECHANICAL rebase-before-validate at the admission chokepoint: refuse a
-        // stale-base validate BEFORE spending a ~17-min box slot. Refuse cleanly
+        // Immutable producer-floor admission at the chokepoint. Refuse cleanly
         // with STALE_BASE_EXIT_CODE (mirroring the --no-wait Held refusal) so a
         // wrapper reads a distinct, non-crashing exit and can surface the remedy.
         if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check)
@@ -3712,7 +3706,10 @@ exit 0
         let after = test_only_override(ADMIT_PREFLIGHT_CMD_ENV);
         let _ = fs::remove_file(&stub);
         assert_eq!(observed.as_deref(), Some(stub.as_os_str()));
-        assert!(res.is_ok(), "the test-build override must fire, got {res:?}");
+        assert!(
+            res.is_ok(),
+            "the test-build override must fire, got {res:?}"
+        );
         assert!(after.is_none(), "an unset override must read as absent");
     }
 
@@ -3891,12 +3888,12 @@ exit 0
     // carries the NAMED remedy (not a bare "refused"). This is the mutation that
     // proves the gate fires — swap the stub to exit 0 and it must stop refusing.
     #[test]
-    fn base_admission_refuses_stale_and_names_remedy() {
+    fn base_admission_refuses_fixed_floor_and_names_remedy() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let stub = write_stub(
             "refuse",
             "#!/bin/sh\necho 'REFUSE: head 01234567 predates merge-gate floor \
-             c369be3f; Rebase onto current origin/main (>= c369be3f) before \
+             c369be3f; Rebase onto the named floor (>= c369be3f) before \
              validating/landing.'\nexit 2\n",
         );
         env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
@@ -3912,17 +3909,20 @@ exit 0
         }
     }
 
-    // POSITIVE direction: a current head is GRANTED. Required so the gate is not
+    // POSITIVE direction: a floor-containing head is GRANTED. Required so the gate is not
     // one that "refuses everything" — such a gate gets disabled.
     #[test]
-    fn base_admission_admits_current_head() {
+    fn base_admission_admits_floor_containing_head() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let stub = write_stub("ok", "#!/bin/sh\necho OK\nexit 0\n");
         env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
         let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
         env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
         let _ = fs::remove_file(&stub);
-        assert!(res.is_ok(), "a current head must be GRANTED, got {res:?}");
+        assert!(
+            res.is_ok(),
+            "a floor-containing head must be GRANTED, got {res:?}"
+        );
     }
 
     // FAIL-CLOSED: an ERROR (unresolvable base) is treated as stale, never waved
@@ -3980,10 +3980,11 @@ exit 0
         }
     }
 
-    // END-TO-END through run(): a stale base is refused with STALE_BASE_EXIT_CODE
+    // END-TO-END through run(): a fixed-floor violation is refused with
+    // STALE_BASE_EXIT_CODE
     // and NEVER consumes the box — a doomed ~17-min validate never starts.
     #[test]
-    fn run_refuses_stale_base_without_consuming_box() {
+    fn run_refuses_fixed_floor_without_consuming_box() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let paths = temp_paths("run-stale-base");
         let lock = ValidateLock {
@@ -3991,8 +3992,8 @@ exit 0
         };
         let stub = write_stub(
             "run-refuse",
-            "#!/bin/sh\necho 'REFUSE: predates floor; Rebase onto current \
-             origin/main before validating/landing.'\nexit 2\n",
+            "#!/bin/sh\necho 'REFUSE: predates immutable validation floor; \
+             rebase onto the named floor before validating.'\nexit 2\n",
         );
         env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
         let code = lock
@@ -4016,7 +4017,7 @@ exit 0
         env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
         assert_eq!(
             code, STALE_BASE_EXIT_CODE,
-            "stale base must refuse (not run the child to a 0 exit)"
+            "a fixed-floor violation must refuse (not run the child to a 0 exit)"
         );
         assert!(
             lock.read_holder().unwrap().is_none(),

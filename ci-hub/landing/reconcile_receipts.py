@@ -27,10 +27,11 @@ FRESHLY-FETCHED remote and FULL 40-hex SHAs:
   * FLOOR-BLOCKED -- matches an open head AND authoritatively certified, but the
                      head predates a rebase-base floor (merge-gate or producer
                      anchor). It validates GREEN yet landing is refused; the
-                     lever is REBASE onto current origin/main, not a new validate.
+                     lever is REBASE onto the named immutable floor.
   * VALID         -- matches an open head, authoritatively certified, AND clears
-                     every floor. Landable NOW with no new validate: apply the
-                     local label from the receipt and merge.
+                     every immutable floor. The final lander still checks the
+                     receipt's recorded base against freshly fetched main once,
+                     immediately before merge.
 
 STANDING, not one-shot: run it after every drain rebase wave. Each wave rewrites
 heads -- some receipts survive, some die -- and only a re-run answers today.
@@ -208,7 +209,7 @@ def render(report: dict) -> str:
         f"repo {report['repo']} | open PRs {report['open_prs']} | "
         f"distinct clean-full receipt commits {n}",
         "",
-        f"VALID (landable NOW, no new validate): {c['valid']} of {n}",
+        f"VALID (fixed floors; final base check required): {c['valid']} of {n}",
         f"FLOOR-BLOCKED (green, rebase needed):  {c['floor_blocked']} of {n}",
         f"NOT-CERTIFIED (matched head, cert refuses): {c['not_certified']} of {n}",
         f"ORPHANED (head moved/landed, receipt dead): {c['orphaned']} of {n} "
@@ -216,12 +217,12 @@ def render(report: dict) -> str:
     ]
     b = report["buckets"]
     if b["valid"]:
-        out += ["", "--- VALID: apply-local-label from the receipt + merge ---"]
+        out += ["", "--- VALID: fixed floors clear; lander rechecks recorded base ---"]
         for e in b["valid"]:
             prs = ",".join("#" + str(p) for p in e["prs"])
             out.append(f"  {e['commit']}  {prs}")
     if b["floor_blocked"]:
-        out += ["", "--- FLOOR-BLOCKED: rebase onto current origin/main, "
+        out += ["", "--- FLOOR-BLOCKED: rebase onto the named fixed floor, "
                 "then re-validate ---"]
         for e in b["floor_blocked"]:
             prs = ",".join("#" + str(p) for p in e["prs"])

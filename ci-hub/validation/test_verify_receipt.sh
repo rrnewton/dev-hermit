@@ -129,7 +129,7 @@ write_comments() {
 # normalized. So the anchor compares CANONICAL CONTENT (`jq -S -c`), which is
 # what "the mutation changed the receipt" actually means.
 mutation_anchor_failures=0
-mutation_anchors_total=10
+mutation_anchors_total=11
 assert_mutated() { # assert_mutated <base> <mutant> <label>
     local a b
     a=$(jq -S -c . "$1" 2>/dev/null) || a="<unparseable:$1>"
@@ -375,7 +375,11 @@ jq '.ledger_record.schema_version = 5
     | .ledger_record.producer = "hermit-validate-sh"
     | .ledger_record.admission = "ci-hub-validate-lock"
     | .ledger_record.concurrent_validates = 0
-    | .ledger_record.concurrency_proof = "validate_lock_owner_ancestry"' \
+    | .ledger_record.concurrency_proof = "validate_lock_owner_ancestry"
+    | .ledger_record.base_sha = ("1" * 40)
+    | .ledger_record.base_tree = ("2" * 40)
+    | .ledger_record.reverie_base_sha = ("3" * 40)
+    | .ledger_record.reverie_base_tree = ("4" * 40)' \
     "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
 assert_mutated "$tmp/schema5-base.json" "$tmp/schema5-missing-raw.json" "COVERAGE schema5 missing coverage block"
 refresh_selected_identity "$tmp/schema5-missing-raw.json" "$tmp/schema5-missing.json"
@@ -423,6 +427,12 @@ jq '.ledger_record.coverage = {
 assert_mutated "$tmp/schema5-missing.json" "$tmp/schema5-valid-raw.json" "COVERAGE schema5 complete coverage (positive)"
 refresh_selected_identity "$tmp/schema5-valid-raw.json" "$tmp/schema5-valid.json"
 verify_file "$tmp/schema5-valid.json" pass "schema5 complete coverage"
+jq 'del(.ledger_record.base_sha)' \
+    "$tmp/schema5-valid.json" >"$tmp/schema5-no-base-raw.json"
+assert_mutated "$tmp/schema5-valid.json" "$tmp/schema5-no-base-raw.json" \
+    "BASE schema5 missing recorded base"
+refresh_selected_identity "$tmp/schema5-no-base-raw.json" "$tmp/schema5-no-base.json"
+verify_file "$tmp/schema5-no-base.json" fail "schema5 missing recorded base"
 
 plant_root=$tmp
 rm -rf -- "$plant_root"
@@ -443,4 +453,4 @@ if [[ $mutation_anchor_failures -ne 0 ]]; then
     exit 1
 fi
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and five incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, five incomplete schema5 coverage controls and 1/1 missing-base control refused; fixture plant deleted cleanly"

@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
@@ -81,7 +82,7 @@ def load() -> dict[str, Any]:
         raise RuntimeError(f"{path}: malformed qualifying predicate: {error}")
     # Fail loud if a required key is missing -- a partial predicate would let a
     # consumer become quietly more lenient than its peers.
-    for key in ("counts_schema", "require", "coverage", "admission"):
+    for key in ("counts_schema", "require", "coverage", "base", "admission"):
         if key not in pred:
             raise RuntimeError(f"{path}: qualifying predicate missing key '{key}'")
     for key in (
@@ -98,6 +99,9 @@ def load() -> dict[str, Any]:
     for key in ("applies_at_schema_min", "per_node"):
         if key not in pred["coverage"]:
             raise RuntimeError(f"{path}: qualifying predicate missing coverage.{key}")
+    for key in ("applies_at_schema_min", "branch"):
+        if key not in pred["base"]:
+            raise RuntimeError(f"{path}: qualifying predicate missing base.{key}")
     for key in (
         "applies_at_schema_min",
         "required_admission",
@@ -190,6 +194,146 @@ class AdmissionVerdict(Enum):
     OWNER_ANCESTRY_MISSING = "owner-ancestry-missing"
     OWNER_ANCESTRY_UNPROVEN = "owner-ancestry-unproven"
     POLICY_UNAVAILABLE = "policy-unavailable"
+
+
+class BaseVerdict(Enum):
+    """Typed outcome of recorded base evidence and final-boundary currency."""
+
+    SATISFIED = "satisfied"
+    GRANDFATHERED_UNKNOWN = "grandfathered-unknown"
+    SCHEMA_UNAVAILABLE = "schema-unavailable"
+    BASE_SHA_MISSING = "base-sha-missing"
+    BASE_SHA_INVALID = "base-sha-invalid"
+    BASE_TREE_MISSING = "base-tree-missing"
+    BASE_TREE_INVALID = "base-tree-invalid"
+    REVERIE_BASE_MISSING = "reverie-base-sha-missing"
+    REVERIE_BASE_INVALID = "reverie-base-sha-invalid"
+    REVERIE_TREE_MISSING = "reverie-base-tree-missing"
+    REVERIE_TREE_INVALID = "reverie-base-tree-invalid"
+    BASE_NOT_CURRENT = "base-not-current"
+    BASE_NOT_CONTAINED = "base-not-contained"
+    BASE_TREE_MISMATCH = "base-tree-mismatch"
+    REVERIE_BASE_NOT_CURRENT = "reverie-base-not-current"
+    REVERIE_TREE_MISMATCH = "reverie-base-tree-mismatch"
+    POLICY_UNAVAILABLE = "policy-unavailable"
+
+
+_SHA40 = re.compile(r"[0-9a-f]{40}")
+def base_evidence_verdict(row: dict[str, Any], pred: dict[str, Any]) -> BaseVerdict:
+    """Require exact Hermit and Reverie base identities on schema-5+ rows.
+
+    This is deliberately separate from the moving-tip comparison: qualification
+    proves the receipt *carries* the evidence, while :func:`base_boundary_verdict`
+    dereferences it once at the final merge boundary.
+    """
+    clause = pred.get("base")
+    if not isinstance(clause, dict):
+        return BaseVerdict.POLICY_UNAVAILABLE
+    schema_min = clause.get("applies_at_schema_min")
+    if not isinstance(schema_min, int) or isinstance(schema_min, bool) or schema_min < 0:
+        return BaseVerdict.POLICY_UNAVAILABLE
+    schema = row.get("schema_version")
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema < 0:
+        return BaseVerdict.SCHEMA_UNAVAILABLE
+    if schema < schema_min:
+        return BaseVerdict.GRANDFATHERED_UNKNOWN
+
+    base_sha = row.get("base_sha")
+    if not isinstance(base_sha, str) or not base_sha:
+        return BaseVerdict.BASE_SHA_MISSING
+    if _SHA40.fullmatch(base_sha) is None:
+        return BaseVerdict.BASE_SHA_INVALID
+    base_tree = row.get("base_tree")
+    if not isinstance(base_tree, str) or not base_tree:
+        return BaseVerdict.BASE_TREE_MISSING
+    if _SHA40.fullmatch(base_tree) is None:
+        return BaseVerdict.BASE_TREE_INVALID
+    reverie_base = row.get("reverie_base_sha")
+    if not isinstance(reverie_base, str) or not reverie_base:
+        return BaseVerdict.REVERIE_BASE_MISSING
+    if _SHA40.fullmatch(reverie_base) is None:
+        return BaseVerdict.REVERIE_BASE_INVALID
+    reverie_tree = row.get("reverie_base_tree")
+    if not isinstance(reverie_tree, str) or not reverie_tree:
+        return BaseVerdict.REVERIE_TREE_MISSING
+    if _SHA40.fullmatch(reverie_tree) is None:
+        return BaseVerdict.REVERIE_TREE_INVALID
+    return BaseVerdict.SATISFIED
+
+
+def base_accepted(verdict: BaseVerdict) -> bool:
+    return verdict in (BaseVerdict.SATISFIED, BaseVerdict.GRANDFATHERED_UNKNOWN)
+
+
+def _git_output(checkout: str, *args: str) -> bytes:
+    result = subprocess.run(
+        ["git", "-C", checkout, *args], capture_output=True, check=False
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors="replace").strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"git -C {checkout} {' '.join(args)}: {detail}")
+    return result.stdout
+
+
+def git_tree(checkout: str, sha: str) -> str:
+    value = _git_output(checkout, "rev-parse", "--verify", f"{sha}^{{tree}}").decode().strip()
+    if _SHA40.fullmatch(value) is None:
+        raise RuntimeError(f"{checkout}: {sha} has no exact tree identity")
+    return value
+
+
+def git_is_ancestor(checkout: str, ancestor: str, descendant: str) -> bool:
+    result = subprocess.run(
+        ["git", "-C", checkout, "merge-base", "--is-ancestor", ancestor, descendant],
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = result.stderr.decode(errors="replace").strip() or f"exit {result.returncode}"
+    raise RuntimeError(
+        f"git -C {checkout} merge-base --is-ancestor {ancestor} {descendant}: {detail}"
+    )
+
+
+def base_boundary_verdict(
+    row: dict[str, Any],
+    pred: dict[str, Any],
+    *,
+    current_base: str,
+    current_reverie_base: str,
+    repo_checkout: str,
+    reverie_checkout: str,
+) -> BaseVerdict:
+    """Assert strict mutable-tip currency exactly once before merge."""
+    static = base_evidence_verdict(row, pred)
+    if static is not BaseVerdict.SATISFIED:
+        return static
+    if _SHA40.fullmatch(current_base) is None or _SHA40.fullmatch(current_reverie_base) is None:
+        return BaseVerdict.POLICY_UNAVAILABLE
+    if row["base_sha"] != current_base:
+        return BaseVerdict.BASE_NOT_CURRENT
+    try:
+        if row["base_tree"] != git_tree(repo_checkout, current_base):
+            return BaseVerdict.BASE_TREE_MISMATCH
+        receipt_commit = row.get("commit")
+        if not isinstance(receipt_commit, str) or _SHA40.fullmatch(receipt_commit) is None:
+            return BaseVerdict.BASE_NOT_CONTAINED
+        if not git_is_ancestor(repo_checkout, current_base, receipt_commit):
+            return BaseVerdict.BASE_NOT_CONTAINED
+    except RuntimeError:
+        return BaseVerdict.POLICY_UNAVAILABLE
+    if row["reverie_base_sha"] != current_reverie_base:
+        return BaseVerdict.REVERIE_BASE_NOT_CURRENT
+    try:
+        current_reverie_tree = git_tree(reverie_checkout, current_reverie_base)
+    except RuntimeError:
+        return BaseVerdict.POLICY_UNAVAILABLE
+    if row["reverie_base_tree"] != current_reverie_tree:
+        return BaseVerdict.REVERIE_TREE_MISMATCH
+    return BaseVerdict.SATISFIED
 
 
 def admission_verdict(row: dict[str, Any], pred: dict[str, Any]) -> AdmissionVerdict:
@@ -443,6 +587,9 @@ def row_qualification(
     if verdict in (ProducerVerdict.MISSING, ProducerVerdict.UNKNOWN_WRITER):
         if producer_enforced_for(row, pred):
             return False, f"producer {verdict.value}"
+    base = base_evidence_verdict(row, pred)
+    if not base_accepted(base):
+        return False, f"base {base.value}"
     admission = admission_verdict(row, pred)
     if not admission_accepted(admission):
         return False, f"admission {admission.value}"
@@ -467,6 +614,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="verify only admission provenance from a {row,admission,producer} request",
     )
+    parser.add_argument(
+        "--merge-boundary",
+        action="store_true",
+        help="verify recorded base evidence against freshly resolved merge-boundary tips",
+    )
+    parser.add_argument("--current-base")
+    parser.add_argument("--current-reverie-base")
+    parser.add_argument("--repo-checkout")
+    parser.add_argument("--reverie-checkout")
     args = parser.parse_args(argv)
     if args.admission_only:
         try:
@@ -476,8 +632,10 @@ def main(argv: list[str] | None = None) -> int:
             pred = {
                 "admission": request.get("admission"),
                 "producer": request.get("producer"),
+                "base": request.get("base"),
             }
             verdict = admission_verdict(request["row"], pred)
+            base = base_evidence_verdict(request["row"], pred)
         except (ValueError, json.JSONDecodeError) as error:
             print(f"qualifying-receipt: {error}", file=sys.stderr)
             return 2
@@ -485,12 +643,57 @@ def main(argv: list[str] | None = None) -> int:
             True if verdict is AdmissionVerdict.SATISFIED else
             None if verdict is AdmissionVerdict.GRANDFATHERED_UNKNOWN else False
         )
+        accepted = admission_accepted(verdict) and base_accepted(base)
         print(json.dumps({
-            "accepted": admission_accepted(verdict),
+            "accepted": accepted,
             "admission_satisfied": satisfied,
             "admission_status": verdict.value,
+            "base_satisfied": (
+                True if base is BaseVerdict.SATISFIED else
+                None if base is BaseVerdict.GRANDFATHERED_UNKNOWN else False
+            ),
+            "base_status": base.value,
         }, sort_keys=True))
-        return 0 if admission_accepted(verdict) else 1
+        return 0 if accepted else 1
+    if args.merge_boundary:
+        required = {
+            "--current-base": args.current_base,
+            "--current-reverie-base": args.current_reverie_base,
+            "--repo-checkout": args.repo_checkout,
+            "--reverie-checkout": args.reverie_checkout,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            parser.error(f"--merge-boundary requires {', '.join(missing)}")
+        try:
+            row = json.load(sys.stdin)
+            if not isinstance(row, dict):
+                raise ValueError("ledger row is not an object")
+            verdict = base_boundary_verdict(
+                row,
+                active(),
+                current_base=args.current_base,
+                current_reverie_base=args.current_reverie_base,
+                repo_checkout=args.repo_checkout,
+                reverie_checkout=args.reverie_checkout,
+            )
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+            print(f"qualifying-receipt: {error}", file=sys.stderr)
+            return 2
+        accepted = base_accepted(verdict)
+        print(json.dumps({
+            "accepted": accepted,
+            "base_satisfied": (
+                True if verdict is BaseVerdict.SATISFIED else
+                None if verdict is BaseVerdict.GRANDFATHERED_UNKNOWN else False
+            ),
+            "base_status": verdict.value,
+            "recorded_base": row.get("base_sha"),
+            "current_base": args.current_base,
+            "recorded_reverie_base": row.get("reverie_base_sha"),
+            "current_reverie_base": args.current_reverie_base,
+        }, sort_keys=True))
+        return 0 if accepted else 1
     if args.sha is None:
         parser.error("--sha is required unless --admission-only is used")
     if not re.fullmatch(r"[0-9a-f]{40}", args.sha):
@@ -508,6 +711,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     prod = producer_verdict(row, pred)
     admission = admission_verdict(row, pred)
+    base = base_evidence_verdict(row, pred)
     report = {
         "schema_version": 1,
         "sha": args.sha,
@@ -528,6 +732,11 @@ def main(argv: list[str] | None = None) -> int:
             None if admission is AdmissionVerdict.GRANDFATHERED_UNKNOWN else False
         ),
         "admission_status": admission.value,
+        "base_satisfied": (
+            True if base is BaseVerdict.SATISFIED else
+            None if base is BaseVerdict.GRANDFATHERED_UNKNOWN else False
+        ),
+        "base_status": base.value,
     }
     if args.json:
         print(json.dumps(report, sort_keys=True))

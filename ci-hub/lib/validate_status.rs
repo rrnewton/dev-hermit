@@ -608,6 +608,10 @@ mod tests {
                 "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
                 "concurrent_validates":0,
                 "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444",
                 "checks":36,"failures":0,"real_seconds":528,"user_seconds":1300,"sys_seconds":90}}"#
         ))
     }

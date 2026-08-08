@@ -829,6 +829,16 @@ mod tests {
             "concurrency_proof".into(),
             serde_json::json!("validate_lock_owner_ancestry"),
         );
+        row.extra
+            .insert("base_sha".into(), serde_json::json!("1".repeat(40)));
+        row.extra
+            .insert("base_tree".into(), serde_json::json!("2".repeat(40)));
+        row.extra
+            .insert("reverie_base_sha".into(), serde_json::json!("3".repeat(40)));
+        row.extra.insert(
+            "reverie_base_tree".into(),
+            serde_json::json!("4".repeat(40)),
+        );
         row
     }
 

@@ -20,6 +20,11 @@
     "applies_at_schema_min": 5,
     "per_node": true
   },
+  "_base_evidence_is_load_bearing": "Schema-5+ receipts carry the exact Hermit main base they contain, that base's tree, and the exact pinned Reverie SHA and tree. Mutable-tip currency and actual Hermit containment are asserted once by this same semantic authority at the final merge boundary. Schema-4 remains grandfathered-unknown; ancestry-within-a-budget is deliberately unsupported. Build-subtree reuse is deliberately absent: review measured only 1/48 landed pin transitions reusable, while sound guards would require tracing arbitrary build-script filesystem access.",
+  "base": {
+    "applies_at_schema_min": 5,
+    "branch": "main"
+  },
   "_admission_provenance_is_load_bearing": "Schema-5+ receipts must prove that the run was admitted by the canonical ci-hub validate lock, that its producer verified live owner ancestry, and that zero competing validates were observed. These are exact receipt conditions, not labels inferred from profile/selection. Schema-4 remains grandfathered-unknown and is not newly rejected. The semantic implementation lives only in ci-hub/qualifying_receipt.py::admission_verdict; Rust delegates this clause to that function and verify_receipt.sh reaches it through the Rust receipt-digest consumer.",
   "admission": {
     "applies_at_schema_min": 5,

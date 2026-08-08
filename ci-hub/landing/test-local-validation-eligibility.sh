@@ -63,6 +63,10 @@ pass_row() {
     admission: "ci-hub-validate-lock",
     concurrent_validates: 0,
     concurrency_proof: "validate_lock_owner_ancestry",
+    base_sha: ("1" * 40),
+    base_tree: ("2" * 40),
+    reverie_base_sha: ("3" * 40),
+    reverie_base_tree: ("4" * 40),
     coverage: {planned_test_nodes: 1, executed_test_nodes: 1,
                zero_executed_nodes: [], absent_nodes: []},
     started_at: "2026-08-03T23:59:59Z", finished_at: "2026-08-04T00:00:00Z",
@@ -171,6 +175,7 @@ coverage.zero_executed_nodes|.coverage.zero_executed_nodes = ["detcore"]
 coverage.absent_nodes|.coverage.absent_nodes = ["detcore"]
 coverage.planned_test_nodes=0|.coverage.planned_test_nodes = 0
 failures=1|.failures = 1
+base_sha absent|del(.base_sha)
 schema 3, counts stripped|.schema_version = 3 | del(.executed_tests) | del(.filtered_tests)
 CASES
 
@@ -250,6 +255,23 @@ elif grep -Fq 'validate-status' "$authority" && grep -Fq 'hosted-status' "$autho
   audit "exact-head authority dereferences both semantic status verifiers" ok
 else
   audit "exact-head authority lost a semantic status verifier" bad
+fi
+
+if grep -Fq -- '--current-base "$current_base"' "$lander" &&
+   grep -Fq -- '--current-reverie-base "$current_reverie_base"' "$lander" &&
+   grep -Fq -- '--repo-checkout "$WT" --reverie-checkout "$ROOT/reverie"' "$lander"; then
+  audit "final authority call carries both freshly resolved bases into the shared verifier" ok
+else
+  audit "final authority call lost merge-boundary base evidence" bad
+fi
+
+merge_prefix='gh pr '
+merge_suffix='merge "$PR"'
+if [ "$(grep -Fc "${merge_prefix}${merge_suffix}" "$lander")" -eq 1 ] &&
+   ! grep -Fq 'for mtries' "$lander"; then
+  audit "one merge attempt consumes each freshly evaluated boundary verdict" ok
+else
+  audit "a merge retry can outlive its freshly evaluated boundary verdict" bad
 fi
 
 # 2. The lander refuses on each non-zero code rather than only on rc 3/4.

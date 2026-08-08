@@ -1,28 +1,16 @@
 #!/usr/bin/env python3
-"""Fail-closed admission for a receipt-producing Hermit validation.
+"""Fail-closed fixed-floor admission for a receipt-producing validation.
 
-A qualifying validation head must satisfy two independent ancestry authorities:
-
-1. it contains every fixed producer/merge-gate floor in
-   ``rebase-base-floors.json``; and
-2. it contains the freshly fetched tip of ``origin/main``.
-
-The first predicate proves that the checked-out producer can emit a qualifying
-receipt.  The second proves that the receipt would describe a state that can
-actually land without another rebase.  A green for a head based on yesterday's
-main is not portable landing evidence, even when it clears every fixed floor.
-
-The moving-base predicate is exactly::
-
-    git merge-base --is-ancestor <fresh origin/main tip> <head>
-
-The script refreshes ``origin/main`` itself immediately before evaluating that
-predicate.  An unresolvable fetch/head/base is an ERROR and fails closed at all
-callers; it is never treated as permission to validate.
+Admission proves that the head contains every immutable producer/merge-gate
+floor in ``rebase-base-floors.json``. Mutable-tip currency is deliberately not
+asked here: schema-5 receipts record their exact base evidence, and the single
+receipt authority compares that evidence with freshly fetched main once,
+immediately before the merge it authorizes. Losing that race costs a gate rerun,
+not a full validation.
 
 Exit codes:
-  0  OK       -- both ancestry authorities pass
-  2  REFUSED  -- head is stale against a fixed floor or fresh origin/main
+  0  OK       -- every immutable ancestry authority passes
+  2  REFUSED  -- head is stale against a fixed floor
   3  ERROR    -- the authority could not be resolved
 
 Historical differential debugging after a rebased head fails is not a
@@ -36,9 +24,7 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
-from pathlib import Path
 
 import preflight_anchor
 
@@ -47,8 +33,6 @@ DEFAULT_REPO = preflight_anchor.DEFAULT_REPO
 DEFAULT_CHECKOUT = preflight_anchor.DEFAULT_CHECKOUT
 DEFAULT_ANCHORS = preflight_anchor.DEFAULT_ANCHORS
 DEFAULT_BASE_BRANCH = "main"
-NETWORK_TIMEOUT = preflight_anchor.NETWORK_TIMEOUT
-LOCAL_TIMEOUT = preflight_anchor.LOCAL_TIMEOUT
 
 EXIT_OK = 0
 EXIT_REFUSED = 2
@@ -61,18 +45,8 @@ class AdmissionError(Exception):
     """A required identity or ancestry authority could not be resolved."""
 
 
-def _run(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command, capture_output=True, text=True, timeout=timeout
-    )
-
-
 def _short(sha: str) -> str:
     return sha[:12] if sha else "?"
-
-
-def _detail(result: subprocess.CompletedProcess[str]) -> str:
-    return (result.stderr or result.stdout).strip() or f"exit {result.returncode}"
 
 
 def _validate_sha(value: str, *, field: str) -> str:
@@ -80,80 +54,6 @@ def _validate_sha(value: str, *, field: str) -> str:
     if not SHA_RE.fullmatch(value):
         raise AdmissionError(f"{field} is not an exact lowercase 40-hex commit: {value!r}")
     return value
-
-
-def _herdr_run_binary() -> str | None:
-    """Path to the tracked ``herdr-run`` entrypoint, if it is present."""
-    candidate = (
-        Path(__file__).resolve().parents[2] / "agent-utils" / "py" / "bin" / "herdr-run"
-    )
-    return str(candidate) if candidate.exists() else None
-
-
-def _fetch_base(checkout: str, refspec: str) -> subprocess.CompletedProcess[str]:
-    """Fetch the base ref, falling back to the herdr-run egress path.
-
-    An agent sandbox has no route to github.com: the direct ``with-proxy git
-    fetch`` returns ``CONNECT tunnel failed, response 403``. ``herdr-run``
-    executes the same command outside the sandbox, where the route exists, and
-    ``git`` is on its allowlist.
-
-    This changes only the TRANSPORT. The admission predicate is untouched: a
-    real fetch must still succeed and the resulting tip is still resolved from
-    the refspec below, so there is no path here that treats an unreachable
-    remote as permission to validate. If both transports fail, the caller
-    raises and admission fails closed exactly as before.
-    """
-    direct = _run(
-        ["with-proxy", "git", "-C", checkout, "fetch", "--quiet", "origin", refspec],
-        timeout=NETWORK_TIMEOUT,
-    )
-    if direct.returncode == 0:
-        return direct
-
-    herdr = _herdr_run_binary()
-    if herdr is None:
-        return direct
-
-    relayed = _run(
-        [
-            herdr,
-            "--agent",
-            os.environ.get("CI_HUB_AGENT", "ci-hub-preflight"),
-            # herdr-run takes ONE quoted positional and executes it in the
-            # parent repo, so the checkout must be named explicitly with -C.
-            f"with-proxy git -C {checkout} fetch --quiet origin {refspec}",
-        ],
-        timeout=NETWORK_TIMEOUT,
-    )
-    if relayed.returncode == 0:
-        return relayed
-    # Report the direct failure: it is the one that names the real cause.
-    return direct
-
-
-def resolve_current_base(checkout: str, branch: str) -> str:
-    """Refresh and return the exact current ``origin/<branch>`` commit."""
-    if not BRANCH_RE.fullmatch(branch) or ".." in branch or "@{" in branch:
-        raise AdmissionError(f"unsafe base branch name {branch!r}")
-
-    remote_ref = f"refs/remotes/origin/{branch}"
-    refspec = f"refs/heads/{branch}:{remote_ref}"
-    fetched = _fetch_base(checkout, refspec)
-    if fetched.returncode != 0:
-        raise AdmissionError(
-            f"cannot refresh origin/{branch} in {checkout}: {_detail(fetched)}"
-        )
-
-    resolved = _run(
-        ["git", "-C", checkout, "rev-parse", "--verify", f"{remote_ref}^{{commit}}"],
-        timeout=LOCAL_TIMEOUT,
-    )
-    if resolved.returncode != 0:
-        raise AdmissionError(
-            f"cannot resolve refreshed origin/{branch} in {checkout}: {_detail(resolved)}"
-        )
-    return _validate_sha(resolved.stdout, field=f"origin/{branch} tip")
 
 
 def admission(
@@ -164,8 +64,10 @@ def admission(
     anchors_path: str,
     base_branch: str,
 ) -> dict:
-    """Return one record carrying both fixed-floor and moving-base verdicts."""
+    """Return one record carrying the immutable fixed-floor verdict."""
     head = _validate_sha(head, field="validation head")
+    if not BRANCH_RE.fullmatch(base_branch) or ".." in base_branch or "@{" in base_branch:
+        raise AdmissionError(f"unsafe base branch name {base_branch!r}")
     try:
         floors = preflight_anchor.preflight(
             head, checkout=checkout, repo=repo, anchors_path=anchors_path
@@ -173,28 +75,16 @@ def admission(
     except preflight_anchor.PreflightError as error:
         raise AdmissionError(str(error)) from error
 
-    base_sha = resolve_current_base(checkout, base_branch)
-    try:
-        contains_base, checked_via = preflight_anchor.head_contains(
-            checkout, repo, base_sha, head
-        )
-    except preflight_anchor.PreflightError as error:
-        raise AdmissionError(str(error)) from error
-
-    moving_base = {
-        "remote": "origin",
-        "branch": base_branch,
-        "sha": base_sha,
-        "contained": contains_base,
-        "checked_via": checked_via,
-    }
     return {
         "schema_version": 1,
         "repo": repo,
         "head": head,
         "fixed_floors": floors,
-        "moving_base": moving_base,
-        "ok": floors["ok"] and contains_base,
+        "moving_base": {
+            "branch": base_branch,
+            "status": "deferred-to-merge-boundary",
+        },
+        "ok": floors["ok"],
     }
 
 
@@ -204,23 +94,12 @@ def render(result: dict) -> str:
     if not floors["ok"]:
         lines.append(preflight_anchor.render(floors))
 
-    base = result["moving_base"]
-    if not base["contained"]:
-        lines.append(
-            f"REFUSE: head {_short(result['head'])} does not contain freshly fetched "
-            f"origin/{base['branch']} {_short(base['sha'])}; validating this SHA "
-            "would certify a state that cannot land without another rebase. "
-            f"Rebase onto origin/{base['branch']} at {base['sha']} before validating. "
-            "Historical differential debugging is non-qualifying and must not mint "
-            "landing evidence."
-        )
-
     if lines:
         return "\n".join(lines)
     return (
-        f"OK: head {_short(result['head'])} contains freshly fetched "
-        f"origin/{base['branch']} {_short(base['sha'])} and all "
-        f"{floors['n_anchors']} fixed validation floors."
+        f"OK: head {_short(result['head'])} contains all "
+        f"{floors['n_anchors']} fixed validation floors; mutable origin/"
+        f"{result['moving_base']['branch']} currency is deferred to the merge boundary."
     )
 
 

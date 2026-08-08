@@ -40,8 +40,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 # The finalizer is a Python consumer of the same semantic receipt authority as
 # history, publishing, and anchor selection. Do not restate schema-5 success.
@@ -60,6 +62,60 @@ SCHEMA_VERSION = 5
 #: slug is refused exactly like an absent one once the epoch is flipped.
 PRODUCER = "ci-hub-finalize-receipt"
 MANIFESTS = ("ci/dag/portable.json", "ci/dag/privileged.json")
+REVERIE_SOURCE_RE = re.compile(
+    r"git\+https://github\.com/(?:rrnewton|facebookexperimental)/reverie\.git"
+    r"\?rev=([0-9a-f]{40})(?:#[0-9a-f]{40})?"
+)
+
+
+def _git(checkout: str, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", checkout, *args], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr.strip() or f"git -C {checkout} {' '.join(args)} exited {result.returncode}"
+        )
+    return result.stdout.strip()
+
+
+def build_base_evidence(
+    hermit_checkout: str, sha: str, reverie_checkout: str
+) -> dict:
+    """Record exact Hermit and Reverie base SHAs and trees.
+
+    `base_sha` is the actual merge-base of the validated head and the locally
+    fetched Hermit origin/main. It is historical evidence, not a mutable
+    `current=true` assertion. Currency is checked only at the merge boundary.
+    """
+    base_sha = _git(
+        hermit_checkout, "merge-base", sha, "refs/remotes/origin/main"
+    )
+    if re.fullmatch(r"[0-9a-f]{40}", base_sha) is None:
+        raise RuntimeError("Hermit merge-base is not an exact lowercase 40-hex SHA")
+    ancestor = subprocess.run(
+        ["git", "-C", hermit_checkout, "merge-base", "--is-ancestor", base_sha, sha]
+    )
+    if ancestor.returncode != 0:
+        raise RuntimeError(f"recorded Hermit base {base_sha} is not contained by {sha}")
+    base_tree = qualifying_receipt.git_tree(hermit_checkout, base_sha)
+
+    cargo_lock = _git(hermit_checkout, "show", f"{sha}:Cargo.lock")
+    reverie_pins = set(REVERIE_SOURCE_RE.findall(cargo_lock))
+    if len(reverie_pins) != 1:
+        raise RuntimeError(
+            f"expected exactly one Reverie pin in {sha}:Cargo.lock, found {sorted(reverie_pins)}"
+        )
+    reverie_base_sha = next(iter(reverie_pins))
+    reverie_base_tree = qualifying_receipt.git_tree(
+        reverie_checkout, reverie_base_sha
+    )
+    return {
+        "base_sha": base_sha,
+        "base_tree": base_tree,
+        "reverie_base_sha": reverie_base_sha,
+        "reverie_base_tree": reverie_base_tree,
+    }
 
 
 def planned_test_nodes(hermit_checkout: str, sha: str) -> set[str]:
@@ -239,7 +295,7 @@ def _has_satisfied_schema5(rec: dict) -> bool:
     )
 
 
-def scan_and_finalize(ledger_path: str, hermit_checkout: str,
+def scan_and_finalize(ledger_path: str, hermit_checkout: str, reverie_checkout: str | None = None,
                       dry_run: bool = False) -> list[dict]:
     """Mint count-backed schema-5 rows for every count-less clean/full/pass row
     whose recorded `log_file` still exists and whose planned set is derivable at
@@ -252,6 +308,11 @@ def scan_and_finalize(ledger_path: str, hermit_checkout: str,
     appended; "no-manifest" (planned set empty -> cannot judge from this
     checkout) and "no-log" are reported but NEVER fabricated.
     """
+    if reverie_checkout is None:
+        reverie_checkout = str(
+            Path(os.environ.get("DEV_HERMIT_PARENT", Path(__file__).resolve().parents[2]))
+            / "reverie"
+        )
     with open(ledger_path, errors="replace") as fh:
         recs = [json.loads(l) for l in fh if l.strip()]
 
@@ -283,6 +344,11 @@ def scan_and_finalize(ledger_path: str, hermit_checkout: str,
             continue
 
         fields = build_coverage(log_text, planned)
+        try:
+            fields.update(build_base_evidence(hermit_checkout, sha, reverie_checkout))
+        except RuntimeError:
+            results.append({"sha": sha, "satisfied": False, "reason": "no-base"})
+            continue
         cov = fields["coverage"]
         satisfied = qualifying_receipt.coverage_satisfied(cov)
         results.append({
@@ -309,6 +375,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sha", help="the exact 40-hex Hermit commit validated")
     ap.add_argument("--hermit-checkout", required=True,
                     help="hermit checkout to read ci/dag/*.json at --sha via git show")
+    ap.add_argument(
+        "--reverie-checkout",
+        default=str(Path(os.environ.get("DEV_HERMIT_PARENT", Path(__file__).resolve().parents[2])) / "reverie"),
+        help="Reverie checkout/object store used to bind the pinned commit tree",
+    )
     ap.add_argument("--ledger", help="ledger JSONL to upgrade the row for --sha in place")
     ap.add_argument("--emit-only", action="store_true",
                     help="print the schema-5 fields to stdout; do NOT touch a ledger")
@@ -326,15 +397,19 @@ def main(argv: list[str] | None = None) -> int:
         if not os.path.isfile(args.ledger):
             print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
             return 2
-        results = scan_and_finalize(args.ledger, args.hermit_checkout, dry_run=args.dry_run)
+        results = scan_and_finalize(
+            args.ledger, args.hermit_checkout, args.reverie_checkout, dry_run=args.dry_run
+        )
         minted = [r for r in results if r["reason"] == "minted" and r["satisfied"]]
         unsat = [r for r in results if r["reason"] == "minted" and not r["satisfied"]]
         no_log = [r for r in results if r["reason"] == "no-log"]
         no_man = [r for r in results if r["reason"] == "no-manifest"]
+        no_base = [r for r in results if r["reason"] == "no-base"]
         verb = "would mint" if args.dry_run else "minted"
         print(f"finalize_receipt: scan {verb} {len(minted)} satisfied schema-{SCHEMA_VERSION} "
               f"row(s); {len(unsat)} unsatisfied-coverage; "
               f"{len(no_log)} no-log; {len(no_man)} no-manifest "
+              f"{len(no_base)} no-base; "
               f"(candidates={len(results)})")
         for r in minted:
             print(f"  + {r['sha'][:12]} executed={r['executed_tests']} "
@@ -353,16 +428,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"finalize_receipt: cannot read log {args.log!r}: {exc}", file=sys.stderr)
         return 2
 
+    if args.ledger and not args.emit_only:
+        if not os.path.isfile(args.ledger):
+            print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
+            return 2
+        with open(args.ledger, errors="replace") as fh:
+            if not any(
+                json.loads(line).get("commit") == args.sha
+                for line in fh if line.strip()
+            ):
+                print(f"finalize_receipt: no ledger row for sha {args.sha} in {args.ledger}",
+                      file=sys.stderr)
+                return 2
+
     planned = planned_test_nodes(args.hermit_checkout, args.sha)
     fields = build_coverage(log_text, planned)
+    try:
+        fields.update(build_base_evidence(
+            args.hermit_checkout, args.sha, args.reverie_checkout
+        ))
+    except RuntimeError as exc:
+        print(f"finalize_receipt: cannot record base evidence: {exc}", file=sys.stderr)
+        return 2
 
     if args.emit_only or not args.ledger:
         print(json.dumps({"commit": args.sha, **fields}, indent=2))
         return 0
 
-    if not os.path.isfile(args.ledger):
-        print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
-        return 2
     upgraded = upgrade_ledger(args.ledger, args.sha, fields)
     if upgraded == 0:
         print(f"finalize_receipt: no ledger row for sha {args.sha} in {args.ledger}",
