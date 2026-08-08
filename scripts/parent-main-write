@@ -171,11 +171,89 @@ verify_push() {
   fi
 }
 
+# Refuse a publication that would drop a line main already has, from a region the
+# author never touched.
+#
+# THE FAILURE THIS EXISTS FOR (near-miss, 2026-08-08): an agent read a shared file,
+# edited one field, and its content was later committed onto a NEWER base. The
+# commit then carried two hunks -- the authored one, and a silent reversion of
+# everything that landed in that file meanwhile. The second hunk is invisible in a
+# diff against the base the author read, which is the diff every review habit
+# looks at; it only appears against origin/main. Nobody was careless.
+#
+# MEASURED, so the guard fires on the right thing: committing on a stale base and
+# REBASING is safe -- git replays only the authored diff, and the colleague's line
+# survives. The dangerous move is committing stale CONTENT onto a current BASE
+# (transplanting a file between trees, or regenerating one from a stale read).
+# So this must key on content lineage, not on tree staleness; keying on staleness
+# would cry wolf on the safe-and-common case and be ignored within a day.
+#
+# THE TEST: for each changed file, replay main's own A..tip changes into the
+# SUBMITTED content using an older main version A as base. A CLEAN merge that
+# still changes the submission means the submission is missing work that landed
+# and that the author never touched -- an unauthored reversion. A CONFLICTING
+# merge means the author did edit that region, which is a real edit and is
+# allowed through.
+REVERT_SCAN_DEPTH=${HERMIT_PARENT_MAIN_REVERT_SCAN_DEPTH:-20}
+refuse_unauthored_reverts() {
+  local root=$1 expected=$2 source=$3
+  # NB: written as `if`, not `[ ... ] && ...`. Under `set -e` a false `[ ]` in an
+  # && list aborts the whole script, which would make this guard fail SILENTLY --
+  # the exact failure mode it exists to prevent.
+  if [ "${HERMIT_PARENT_MAIN_ALLOW_REVERT:-0}" = 1 ]; then
+    echo "parent-main-write: reversion guard DISABLED by HERMIT_PARENT_MAIN_ALLOW_REVERT=1" >&2
+    return 0
+  fi
+  local tmp file base scanned truncated=0 findings=0 report=""
+  tmp=$(mktemp -d) || die "cannot create a scratch directory for the reversion scan"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    git -C "$root" show "$expected:$file" >"$tmp/ours" 2>/dev/null || continue
+    git -C "$root" show "$source:$file"  >"$tmp/theirs" 2>/dev/null || continue
+    if cmp -s "$tmp/ours" "$tmp/theirs"; then continue; fi
+    scanned=0
+    while IFS= read -r base; do
+      scanned=$((scanned + 1))
+      git -C "$root" show "$base:$file" >"$tmp/base" 2>/dev/null || continue
+      # Main did not move this file between A and tip: nothing could be dropped.
+      if cmp -s "$tmp/base" "$tmp/ours"; then continue; fi
+      cp "$tmp/theirs" "$tmp/probe"
+      if git merge-file -q -p "$tmp/probe" "$tmp/base" "$tmp/ours" >"$tmp/merged" 2>/dev/null; then
+        if ! cmp -s "$tmp/merged" "$tmp/theirs"; then
+          findings=$((findings + 1))
+          report+="  $file: would drop content that landed on main after ${base:0:12}"$'\n'
+          # `diff` exits 1 when files differ, which is the ONLY case we reach.
+          # Under `set -e -o pipefail` that failure would abort the script while
+          # building the very message that explains the refusal.
+          report+=$( { diff "$tmp/theirs" "$tmp/merged" 2>/dev/null || true; } \
+            | sed -n 's/^> /      LOST: /p' | head -6)$'\n'
+          break
+        fi
+      fi
+    done < <(git -C "$root" rev-list --max-count="$REVERT_SCAN_DEPTH" "$expected" -- "$file")
+    if [ "$scanned" -ge "$REVERT_SCAN_DEPTH" ]; then truncated=1; fi
+  done < <(git -C "$root" diff --name-only "$expected" "$source" -- 2>/dev/null)
+  rm -rf "$tmp"
+  # No silent caps: say so when the scan window bounded the search.
+  if [ "$truncated" = 1 ]; then
+    echo "parent-main-write: note: reversion scan bounded to $REVERT_SCAN_DEPTH commits per file" >&2
+  fi
+  if [ "$findings" -gt 0 ]; then
+    printf '%s\n' "$report" >&2
+    die "publication would revert landed work in $findings file(s) that the author did not edit.
+  Your own diff will look correct -- this hunk is only visible against origin/main.
+  Fix by REBASING rather than transplanting content: re-read the file from
+  origin/main, re-apply your change, and publish that.
+  If the reversion is deliberate, re-run with HERMIT_PARENT_MAIN_ALLOW_REVERT=1."
+  fi
+}
+
 publish_sha() {
   local root=$1 source=$2 expected published
   expected=$HERMIT_PARENT_MAIN_EXPECT
   git -C "$root" merge-base --is-ancestor "$expected" "$source" ||
     die "source $source is not based on fetched origin/main $expected"
+  refuse_unauthored_reverts "$root" "$expected" "$source"
   if range_has_sensitive_path "$root" "$expected" "$source"; then
     verify_audit_receipt "$root" "$expected" "$source"
   fi
