@@ -228,6 +228,16 @@ def _parse_probe(command: str) -> str:
         return "./ci-hub/bin/reconcile-receipts --help"
     if normalized.startswith("python3 ci-hub/landing/preflight.py"):
         return "python3 ci-hub/landing/preflight.py --help"
+    # Classifying a snippet "parse" is only half the job: parse-mode still RUNS
+    # something, and without an entry here that something is the snippet
+    # VERBATIM. The coalesce-guard example carries a `<you>` placeholder and a
+    # literal `...` standing in for the constituent PR list, so running it
+    # verbatim dies in argparse ("invalid int value: '...'", exit 2) and the
+    # step reports a documented-command failure for a doc that is correct.
+    # That is precisely what happened after 3e9c299 added the _classify entry
+    # without this one.
+    if normalized.startswith("python3 ci-hub/landing/coalesce_guard.py"):
+        return "python3 ci-hub/landing/coalesce_guard.py --help"
     return command
 
 
@@ -298,7 +308,20 @@ def _run_one(
         else:
             executed = _parse_probe(rendered)
     elif command.mode == "live-read":
-        allowed = {0, 1, 2} if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered) else {0}
+        # ci-hub read commands report their VERDICT through the exit code, so a
+        # nonzero status here is data, not a probe failure: `hosted-status`
+        # alone answers 0 GREEN / 3 RED / 4 NO_RESULT, and it is documented with
+        # a placeholder SHA that necessarily dereferences to NO_RESULT. The old
+        # {0, 1, 2} allowlist therefore failed the step for a command that had
+        # worked perfectly. This never showed up on main because this whole
+        # live step sits behind the coalesce-guard red and had never once
+        # executed. Crashes are still caught: a Rust panic is 101, a missing
+        # binary 127, and any traceback trips FATAL_OUTPUT above.
+        allowed = (
+            {0, 1, 2, 3, 4}
+            if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered)
+            else {0}
+        )
 
     timeout = 120 if live else 45
     before = _workspace_state(root, include_ignored=True) if verify_purity else ""

@@ -594,6 +594,7 @@ fn resolve_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     /// Build a schema-5 full-green row whose `coverage` object is supplied
     /// verbatim, so a test can OMIT a field rather than set it empty.
@@ -655,14 +656,40 @@ mod tests {
         for (label, producer) in [("absent", None), ("unregistered", Some("hermit-valrs"))] {
             let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", producer);
             assert!(
-                matches!(row_qualification(&row, &sha, &pred), Qualification::Refused(_)),
+                matches!(
+                    row_qualification(&row, &sha, &pred),
+                    Qualification::Refused(_)
+                ),
                 "{label} producer must be refused under enforcement"
             );
         }
 
         // POSITIVE: every registered slug, so a typo is caught here rather than
         // at activation, when it would refuse that writer's every row.
-        assert_eq!(pred.producer.known.len(), 4, "the four-writer census");
+        //
+        // Census the exact SET, not its length. A bare `len() == 4` says
+        // nothing about WHICH slugs are registered -- a rename plus an
+        // addition cancel out and it still passes -- and it read as a defect
+        // the moment the registry legitimately grew a fifth entry. It did:
+        // `validate.rs` is the legacy bare slug hermit/scripts/validate.rs
+        // still emits, kept registered so rows already written under it keep
+        // verifying (see the note in qualifying-receipt.json). Naming the set
+        // makes any registry change fail HERE, where the diff states what
+        // changed, instead of at activation.
+        let census: BTreeSet<&str> = pred.producer.known.iter().map(String::as_str).collect();
+        assert_eq!(
+            census,
+            BTreeSet::from([
+                "hermit-validate-sh",
+                "hermit-validate-rs",
+                "ci-hub-finalize-receipt",
+                "reverie-validate-sh",
+                // Legacy; drop once no live ledger row carries it.
+                "validate.rs",
+            ]),
+            "registered-writer census changed -- update the writers, the \
+             registry, and this list together"
+        );
         for slug in &pred.producer.known {
             let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", Some(slug));
             assert!(row_qualifies(&row, &sha, &pred), "{slug} must be accepted");
@@ -671,8 +698,14 @@ mod tests {
         // GRANDFATHER: pre-epoch history keeps its authority. This is the
         // property that stops activation from blocking every landing.
         let old = row_with_producer(&sha, "2026-08-07T20:15:31Z", None);
-        assert!(row_qualifies(&old, &sha, &pred), "pre-epoch row must survive");
-        assert_eq!(producer_verdict(&old, &pred), ProducerVerdict::Grandfathered);
+        assert!(
+            row_qualifies(&old, &sha, &pred),
+            "pre-epoch row must survive"
+        );
+        assert_eq!(
+            producer_verdict(&old, &pred),
+            ProducerVerdict::Grandfathered
+        );
 
         // FAIL-CLOSED: dropping the epoch key must not opt a row out.
         let undated = row_with_producer(&sha, "not-a-timestamp", None);
@@ -687,7 +720,10 @@ mod tests {
     fn shipped_predicate_declares_producer_but_is_inert() {
         let sha = "b".repeat(40);
         let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
-        assert!(pred.producer.required, "the live file must DECLARE the column");
+        assert!(
+            pred.producer.required,
+            "the live file must DECLARE the column"
+        );
         assert!(
             pred.producer.applies_from_finished_at.is_none(),
             "flipping this epoch requires all four writers deployed first"

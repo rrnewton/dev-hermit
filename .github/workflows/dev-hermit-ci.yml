@@ -38,16 +38,27 @@ jobs:
           set -euo pipefail
           ulimit -t 300
           timeout --signal=KILL 1m python3 -m py_compile scripts/*.py
-          timeout --signal=KILL 3m python3 -m unittest discover -s scripts -p "test_*.py"
+          # The submodules MUST be materialized BEFORE the unit tests, not
+          # after. scripts/test_release_0_3_acceptance.py drives
+          # scripts/release-0.3-acceptance.py, whose validate_contract() probes
+          # every runner/signer `probe_paths` entry with (repo_root/path).
+          # exists() -- and two of those live inside hermit/
+          # (hermit/validate.sh, hermit/.github/workflows/ci-portable.yml).
+          # With hermit/ still an empty dir the contract reports 2 deployment
+          # errors, the report short-circuits to exit_code 2
+          # DEPLOYMENT_DEFECT with an EMPTY results list, and all 15 of that
+          # file's cases collapse into 37 StopIteration errors + 2 verdict
+          # failures. That is what made this shard red from 62bfc534 onward
+          # while the same file was 15/15 green locally.
           git -c submodule.agent-utils.update=none submodule update --init --depth 1 -- hermit reverie liteinst2
+          timeout --signal=KILL 3m python3 -m unittest discover -s scripts -p "test_*.py"
           timeout --signal=KILL 2m scripts/lint-rust-error-string-proxies.py . hermit reverie liteinst2
 
-      # `if: always()` because this shard's first step is independently red
-      # (scripts/test_primary_checkout.py, 6 `git commit` exit-128 fixture
-      # errors) and a default step ordering would SKIP the checks below --
-      # observed on 0b8939cd, where they never executed. The job still fails on
-      # the earlier step; this only stops one red from silently disabling an
-      # unrelated gate.
+      # `if: always()` on every step below, so that ONE red cannot silently
+      # disable an unrelated gate by skipping it. A skipped check is not a
+      # passing check: it produces no evidence at all, and the job still fails
+      # on whichever step actually failed. Observed on 0b8939cd, where the
+      # checks below never executed.
       - name: Install rust-script
         if: always()
         shell: bash
@@ -70,19 +81,39 @@ jobs:
   ci-hub:
     name: ci-hub bounded operations shard
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 was sized for a job that stopped at its first red. With `if: always()`
+    # below, every step runs every time, and the six steps that used to be
+    # SKIPPED now cost real wall time. Measured basis: steps 1-9 took 4m42s on
+    # the runner (job 31239162298, the furthest any run got); the remainder,
+    # timed locally, adds release-worktree 147s + agent-utils materialize ~60s
+    # + codex-setup 8s + harness-help 1s + live-health 18s + documented --live
+    # 124s. That is ~10m40s of measured work, so 15 left no margin on a slower
+    # runner and a job timeout would itself have been a new red.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
+      # `if: always()` on EVERY step below, for the same reason the parent
+      # shard carries it. Without it this job stops at its first red and every
+      # later step is UNRUN -- which reads like a green, is not one, and
+      # serializes remediation at one CI round-trip per cause. Measured at
+      # 90a2beb: four independent causes were stacked in this one job and it
+      # reported exactly one at a time, its "failing step" appearing to wander
+      # (`Run deterministic ci-hub suites` -> `Exercise documented ci-hub
+      # commands` -> `Compile the typed front door`) across 80+ consecutive red
+      # main commits. The job still fails whenever any step fails; this only
+      # makes it report all of them in one run.
       - name: Install rust-script
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           command -v rust-script >/dev/null 2>&1 || cargo install rust-script
 
       - name: Install the pinned Python test runner
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -90,12 +121,14 @@ jobs:
             --requirement ci-hub/tests/requirements-workflow.txt
 
       - name: Materialize the pinned Hermit test dependency
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           git submodule update --init --checkout -- hermit
 
       - name: Preserve frozen append-only history prefixes
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -104,6 +137,7 @@ jobs:
             ai_docs/status-log/status-log.jsonl worktrees/ARCHIVED.md
 
       - name: Compile the typed front door
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -112,6 +146,7 @@ jobs:
           timeout --signal=KILL 2m rust-script --test ci-hub/ci-hub.rs
 
       - name: Run deterministic ci-hub suites
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -123,6 +158,7 @@ jobs:
             python3 ci-hub/tests/run_python_suites.py
 
       - name: Exercise documented ci-hub commands without side effects
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -130,6 +166,7 @@ jobs:
           timeout --signal=KILL 4m python3 ci-hub/tests/documented_commands.py
 
       - name: Prove worktree release is target-scoped
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -137,6 +174,7 @@ jobs:
           timeout --signal=KILL 4m scripts/release-worktree-target-scope-test.sh
 
       - name: Materialize the pinned live-query and topology dependency
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -150,6 +188,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
 
       - name: Verify the live Claude and Codex skill topology
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -157,6 +196,7 @@ jobs:
           timeout --signal=KILL 4m python3 scripts/check-codex-setup.py
 
       - name: Assert harness help probes are pure
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -164,6 +204,7 @@ jobs:
           timeout --signal=KILL 4m python3 scripts/check-harness-help.py
 
       - name: Classify bounded live GitHub health
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           CI_HUB_MAIN_HEALTH_TIMEOUT: "4"
@@ -180,6 +221,7 @@ jobs:
             --log "$RUNNER_TEMP/ci-hub-live-health.log"
 
       - name: Exercise networked documented commands
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

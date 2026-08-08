@@ -184,23 +184,75 @@ class AcceptanceDirectionTest(unittest.TestCase):
 
         hermit/ and reverie/ are submodules: assert when materialized, skip that
         writer (named) when not, and never silently count it as checked.
+
+        THREE states per writer, not two. Deployment of the column is staged
+        across three repositories, so "the file is here but stamps nothing yet"
+        is a real and expected state that is NOT drift:
+
+          absent      -- submodule not materialized. Skip, named.
+          undeployed  -- present, emits no producer field AT ALL. Tolerated
+                         only while the predicate is inert; a hard failure the
+                         moment the epoch is set, because from then on this
+                         writer's every row is refused.
+          deployed    -- emits a producer field. Its slug MUST parse and MUST
+                         be registered, else the predicate would refuse it.
+
+        Collapsing `undeployed` into `deployed` is what made this test red on
+        main from 9bf1143: it asserted deployment completeness before the
+        hermit-side writer had landed. Collapsing it into `absent` would be
+        worse -- it would hide a writer that stamps a field in a shape the
+        registry cannot read, which is exactly the drift this test exists to
+        catch. So `deployed_marker` is deliberately weaker than `slug_pattern`:
+        marker-present-but-slug-unparseable is a FAILURE, not a skip.
         """
         root = CI_HUB.parent
+        # rel -> (deployed_marker, slug_pattern)
         writers = {
-            "ci-hub/validate/finalize_receipt.py": r'^PRODUCER\s*=\s*"([^"]+)"',
-            "hermit/validate.sh": r'schema_version\\":4,\\"producer\\":\\"([^\\"]+)',
-            "hermit/scripts/validate.rs": r'LEDGER_PRODUCER:\s*&str\s*=\s*"([^"]+)"',
-            "reverie/validate.sh": r'\\"producer\\":\\"([^\\"]+)',
+            "ci-hub/validate/finalize_receipt.py": (
+                r"^PRODUCER\s*=",
+                r'^PRODUCER\s*=\s*"([^"]+)"',
+            ),
+            "hermit/validate.sh": (
+                r'\\"producer\\"',
+                r'schema_version\\":4,\\"producer\\":\\"([^\\"]+)',
+            ),
+            "hermit/scripts/validate.rs": (
+                r"LEDGER_PRODUCER",
+                r'LEDGER_PRODUCER:\s*&str\s*=\s*"([^"]+)"',
+            ),
+            "reverie/validate.sh": (
+                r'\\"producer\\"',
+                r'\\"producer\\":\\"([^\\"]+)',
+            ),
         }
-        known = set(live_predicate()["producer"]["known"])
-        checked, skipped = [], []
-        for rel, pattern in writers.items():
+        producer = live_predicate()["producer"]
+        known = set(producer["known"])
+        enforced = producer.get("applies_from_finished_at") is not None
+        checked, skipped, undeployed = [], [], []
+        for rel, (marker, pattern) in writers.items():
             path = root / rel
             if not path.is_file():
                 skipped.append(rel)
                 continue
-            found = re.search(pattern, path.read_text(), re.MULTILINE)
-            self.assertIsNotNone(found, f"{rel}: no producer stamp found")
+            source = path.read_text()
+            if re.search(marker, source, re.MULTILINE) is None:
+                # No producer field emitted anywhere in this writer.
+                self.assertFalse(
+                    enforced,
+                    f"{rel}: stamps no producer, but the predicate is ENFORCING "
+                    f"(applies_from_finished_at="
+                    f"{producer['applies_from_finished_at']!r}) -- every row this "
+                    f"writer produces would be REFUSED. Land the writer or unset "
+                    f"the epoch.",
+                )
+                undeployed.append(rel)
+                continue
+            found = re.search(pattern, source, re.MULTILINE)
+            self.assertIsNotNone(
+                found,
+                f"{rel}: emits a producer field but this test cannot parse its "
+                f"slug -- the writer and the registry have DRIFTED apart",
+            )
             slug = found.group(1)
             self.assertIn(
                 slug,
@@ -209,8 +261,9 @@ class AcceptanceDirectionTest(unittest.TestCase):
             )
             checked.append(f"{rel}={slug}")
         print(
-            f"\nWRITER<->REGISTRY BINDING: checked={len(checked)}/4 "
-            f"[{', '.join(checked)}]"
+            f"\nWRITER<->REGISTRY BINDING: checked={len(checked)}/{len(writers)} "
+            f"[{', '.join(checked)}] enforcing={enforced}"
+            + (f" undeployed(inert, must land)={undeployed}" if undeployed else "")
             + (f" skipped(not materialized)={skipped}" if skipped else "")
         )
         self.assertTrue(checked, "no writer source was reachable to check")
