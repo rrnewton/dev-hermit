@@ -5,6 +5,7 @@
 //! recorded observations for the newest PASS -> FAIL transition. Keeping the
 //! commit ordering and evidence rules here prevents the two answers drifting.
 
+use crate::qualifying_receipt::{self, CoverageVerdict};
 use crate::records::{GateHistoryRow, HistoryRow};
 use crate::validate_status::{assess, newest, Verdict};
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,12 @@ pub struct ValidationEvidence {
     pub finished_at: Option<String>,
     pub profile: String,
     pub selection_mode: String,
-    pub coverage: CoverageStrength,
+    /// Scope strength is reported only when this receipt actually carries a
+    /// satisfied per-node coverage obligation. `None` is serialized as JSON
+    /// null so a grandfathered schema-4 receipt cannot masquerade as full.
+    pub coverage: Option<CoverageStrength>,
+    pub coverage_satisfied: Option<bool>,
+    pub coverage_status: String,
     pub result: String,
     pub log_file: Option<String>,
 }
@@ -226,7 +232,7 @@ impl HistoryQueryEngine {
                 .filter(|commit| !self.rows_by_commit.contains_key(*commit))
                 .count();
             let report = NewestGreenReport {
-                schema_version: 3,
+                schema_version: 4,
                 branch: branch.to_string(),
                 branch_ref: branch_ref.to_string(),
                 branch_tip,
@@ -379,7 +385,7 @@ impl HistoryQueryEngine {
     }
 }
 
-fn coverage(row: &HistoryRow) -> CoverageStrength {
+fn scope_strength(row: &HistoryRow) -> CoverageStrength {
     match (row.profile.as_deref(), row.selection_mode.as_deref()) {
         (Some("full"), Some("full")) => CoverageStrength::Full,
         (Some("full"), _) => CoverageStrength::SmartSelection,
@@ -387,7 +393,28 @@ fn coverage(row: &HistoryRow) -> CoverageStrength {
     }
 }
 
+/// Report only coverage the receipt itself carries. The schema boundary and
+/// per-node verdict come from the one shared qualifying-receipt authority;
+/// profile/selection labels alone never manufacture coverage.
+fn coverage(row: &HistoryRow) -> (Option<CoverageStrength>, Option<bool>, &'static str) {
+    let predicate = qualifying_receipt::active();
+    let schema = row.schema_version.unwrap_or(0);
+    if !predicate.coverage.per_node || schema < predicate.coverage.applies_at_schema_min {
+        return (None, None, "grandfathered-unknown");
+    }
+    match row
+        .coverage
+        .as_ref()
+        .map(qualifying_receipt::coverage_verdict)
+    {
+        Some(CoverageVerdict::Satisfied) => (Some(scope_strength(row)), Some(true), "satisfied"),
+        Some(CoverageVerdict::Unsatisfied) => (None, Some(false), "unsatisfied"),
+        Some(CoverageVerdict::Unavailable(_)) | None => (None, None, "unavailable"),
+    }
+}
+
 fn evidence(sha: &str, row: &HistoryRow) -> ValidationEvidence {
+    let (coverage, coverage_satisfied, coverage_status) = coverage(row);
     ValidationEvidence {
         sha: sha.to_string(),
         finished_at: row.finished_at.clone(),
@@ -396,7 +423,9 @@ fn evidence(sha: &str, row: &HistoryRow) -> ValidationEvidence {
             .selection_mode
             .clone()
             .unwrap_or_else(|| "unknown".into()),
-        coverage: coverage(row),
+        coverage,
+        coverage_satisfied,
+        coverage_status: coverage_status.into(),
         result: row.result.clone().unwrap_or_else(|| "unknown".into()),
         log_file: row.log_file.clone(),
     }
@@ -701,7 +730,7 @@ pub fn cache_matches(
     ledger_len: u64,
     ledger_modified_ns: u128,
 ) -> bool {
-    cache.schema_version == 4
+    cache.schema_version == 5
         && cache.branch == branch
         && cache.branch_ref == branch_ref
         && cache.branch_tip == branch_tip
@@ -727,7 +756,7 @@ mod tests {
 
     fn row(sha: &str, at: &str, profile: &str, selection: &str, result: &str) -> HistoryRow {
         let mut value = serde_json::json!({
-            "schema_version": 3,
+            "schema_version": 4,
             "finished_at": at,
             "profile": profile,
             "selection_mode": selection,
@@ -781,6 +810,17 @@ mod tests {
         row
     }
 
+    fn with_satisfied_coverage(mut row: HistoryRow) -> HistoryRow {
+        row.schema_version = Some(5);
+        row.coverage = Some(crate::records::CoverageRow {
+            planned_test_nodes: 2,
+            executed_test_nodes: 2,
+            zero_executed_nodes: Some(Vec::new()),
+            absent_nodes: Some(Vec::new()),
+        });
+        row
+    }
+
     fn newest_green(engine: HistoryQueryEngine) -> NewestGreenOutcome {
         engine.newest_green("main", "origin/main", "merge-gate-v2", "floor")
     }
@@ -805,7 +845,13 @@ mod tests {
             panic!("expected green")
         };
         assert_eq!(report.green.sha, "full");
-        assert_eq!(report.green.coverage, CoverageStrength::Full);
+        assert_eq!(report.green.coverage, None);
+        assert_eq!(report.green.coverage_satisfied, None);
+        assert_eq!(report.green.coverage_status, "grandfathered-unknown");
+        let rendered = serde_json::to_value(&report.green).unwrap();
+        assert_eq!(rendered["coverage"], serde_json::Value::Null);
+        assert_eq!(rendered["coverage_satisfied"], serde_json::Value::Null);
+        assert_eq!(rendered["coverage_status"], "grandfathered-unknown");
         assert_eq!(report.gate_schema, "merge-gate-v2");
         assert_eq!(report.gate_schema_floor, "floor");
         assert_eq!(report.commits_after_green, 3);
@@ -839,7 +885,7 @@ mod tests {
     fn newest_green_selects_newest_of_three_clean_full_passes() {
         let commits = vec!["tip".into(), "middle".into(), "oldest".into()];
         let rows = vec![
-            row("tip", "2026-08-03T03:00:00Z", "full", "full", "pass"),
+            with_satisfied_coverage(row("tip", "2026-08-03T03:00:00Z", "full", "full", "pass")),
             row("middle", "2026-08-03T02:00:00Z", "full", "full", "pass"),
             row("oldest", "2026-08-03T01:00:00Z", "full", "full", "pass"),
         ];
@@ -850,7 +896,13 @@ mod tests {
         };
 
         assert_eq!(report.green.sha, "tip");
-        assert_eq!(report.green.coverage, CoverageStrength::Full);
+        assert_eq!(report.green.coverage, Some(CoverageStrength::Full));
+        assert_eq!(report.green.coverage_satisfied, Some(true));
+        assert_eq!(report.green.coverage_status, "satisfied");
+        let rendered = serde_json::to_value(&report.green).unwrap();
+        assert_eq!(rendered["coverage"], "full");
+        assert_eq!(rendered["coverage_satisfied"], true);
+        assert_eq!(rendered["coverage_status"], "satisfied");
         assert_eq!(report.commits_after_green, 0);
         assert_eq!(report.branch_commits_in_range, 3);
         assert_eq!(report.trustworthy_recorded_commits_in_range, 3);
@@ -1022,7 +1074,7 @@ mod tests {
     #[test]
     fn cache_invalidates_on_branch_tip_or_ledger_change() {
         let report = NewestGreenReport {
-            schema_version: 3,
+            schema_version: 4,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),
@@ -1041,7 +1093,7 @@ mod tests {
             commits_with_records: 0,
         };
         let cache = NewestGreenCache {
-            schema_version: 4,
+            schema_version: 5,
             branch: "main".into(),
             branch_ref: "origin/main".into(),
             branch_tip: "tip-a".into(),

@@ -4105,12 +4105,23 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
         return;
     }
     println!(
-        "NEWEST-GREEN {} validated={} profile={} selection={} guarantee={}",
+        "NEWEST-GREEN {} validated={} profile={} selection={} coverage={} coverage_satisfied={} coverage_status={}",
         report.green.sha,
         report.green.finished_at.as_deref().unwrap_or("unknown"),
         report.green.profile,
         report.green.selection_mode,
-        report.green.coverage.as_str(),
+        report
+            .green
+            .coverage
+            .as_ref()
+            .map(history_queries::CoverageStrength::as_str)
+            .unwrap_or("unknown"),
+        report
+            .green
+            .coverage_satisfied
+            .map(|satisfied| if satisfied { "true" } else { "false" })
+            .unwrap_or("null"),
+        report.green.coverage_status,
     );
     println!(
         "GATE-SCHEMA {} floor={} eligibility=at-or-after",
@@ -4208,7 +4219,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     ) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 4,
+                schema_version: 5,
                 branch: report.branch.clone(),
                 branch_ref: report.branch_ref.clone(),
                 branch_tip: report.branch_tip.clone(),
