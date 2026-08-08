@@ -503,3 +503,36 @@ def test_the_report_names_a_different_remedy_for_futile():
     assert "1963" not in fields["due_prs"]
     assert "RE-PIN" in fields["summary"]
     assert "not a refire" in fields["summary"]
+
+
+def test_refire_is_a_FULL_rerun_never_partial(monkeypatch):
+    """`--failed` must never appear in the re-run command.
+
+    ci-portable.yml is the only hermit workflow that downloads a cross-job
+    artifact, and its `cleanup` job deletes the three build trees its test jobs
+    consume at the end of EVERY run (`if: always()`). A partial re-run therefore
+    cannot re-create them and fails with
+
+        Unable to download artifact(s): Artifact not found for name: hermit-release-...
+
+    across the matrix. Because the artifact names are keyed on `run_id` and not
+    `run_attempt`, the consumer asks for exactly the right name -- so the failure
+    reads as a product regression rather than as a re-run mistake, and the next
+    person hunts a phantom in product code.
+
+    This tool is the safe path only for as long as it stays a FULL re-run, so the
+    property is pinned here rather than left to a comment.
+    """
+
+    calls = []
+    monkeypatch.setattr(
+        gr.subprocess,
+        "run",
+        lambda *a, **k: calls.append(a[0]) or type("R", (), {"returncode": 0, "stderr": ""})(),
+    )
+    due = gr.PrVerdict(number=7, head="c", state=gr.REFIRE_DUE, gate_run_id=99)
+    assert gr.do_refire("r/x", [due]) == 1
+    assert len(calls) == 1
+    command = calls[0]
+    assert "--failed" not in command, f"partial re-run is unsound on ci-portable: {command}"
+    assert command[:5] == ["with-proxy", "gh", "run", "rerun", "99"]

@@ -37,6 +37,39 @@ already proven are in the DUE state. The distinction that matters:
 That asymmetry is the whole design: refiring early is not merely useless, it is
 actively harmful, so the incomplete-leg case is a hard refusal rather than a
 best-effort skip.
+
+NEVER USE `gh run rerun --failed` ON `ci-portable.yml`. USE A FULL `gh run rerun`.
+
+This tool always issues a FULL re-run (see `do_refire`), so following it is safe.
+The hazard is hand-invocation, which is why the rule is stated here rather than in
+a workflow comment: `--failed` appears nowhere in hermit's workflows, ci/ or
+scripts/, so nothing automated can hit it and only a person can.
+
+WHY, precisely. `ci-portable.yml` is the ONLY hermit workflow that consumes a
+cross-job artifact -- it holds all 7 `download-artifact` steps in the repository;
+the other eight workflows have zero and are immune by construction. Do not read
+this as "portable is bad, privileged is fine": privileged is simply one of the
+eight, and a third workflow growing a download step would join portable, not the
+other group.
+
+It is worse than "the build job is not re-run". `ci-portable.yml` has a `cleanup`
+job (`if: always()`, needs every consumer) that calls the Actions API and DELETES
+`hermit-debug-<runId>`, `hermit-release-dbt-<runId>` and `hermit-release-<runId>`
+at the end of EVERY run, including a failed one. So the inputs a partial re-run
+would need were deliberately destroyed: the failure is guaranteed and
+deterministic, not a race. A full re-run works because it re-runs build-debug and
+build-release, which re-upload them.
+
+AND THE FAILURE IMPERSONATES A PRODUCT DEFECT, which is the actual cost. The
+artifact names are keyed on `run_id` only, never `run_attempt`, so the consumer
+asks for exactly the right name and is told it does not exist:
+
+    Unable to download artifact(s): Artifact not found for name: hermit-release-...
+
+No name mismatch, no version skew, no hint of re-run mechanics -- and six matrix
+jobs say it at once. It reads as a regression, and the next person goes hunting in
+product code for a phantom. Measured 2026-08-08: run 31264302510 retains 32
+artifacts and none of the three build trees.
 """
 
 from __future__ import annotations
@@ -344,6 +377,11 @@ def do_refire(repo: str, verdicts: Sequence[PrVerdict], call_timeout: int = 180)
     Never touches PARKED_WAIT (a leg is still running; refiring busy-loops and
     starves the runners it is waiting on) and never touches REFIRE_FUTILE (the
     pin authority has already failed this head; refiring cannot clear it).
+
+    The re-run is deliberately FULL and must stay that way: `--failed` is unsound
+    on ci-portable.yml, whose cleanup job deletes the build artifacts its test
+    jobs download, so a partial re-run fails with a missing-artifact error that
+    impersonates a product regression. See the module docstring.
     """
     fired = 0
     for v in verdicts:
