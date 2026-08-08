@@ -311,14 +311,23 @@ fi
 # authority. A rebase that changed the SHA cannot inherit the old authorization.
 # Only the ledger-guarded applier may materialize the optional local cache label.
 #
-# 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
-# ledger. hermit's validate.sh writes a count-less schema-3 receipt when it can't
-# reach the parent count helper; with the uncounted-receipt grandfather removed,
-# such a genuine green would be NotValidated. The scan (append-safe, idempotent)
-# upgrades HEAD's row from its own log so a real green is not stranded by a
-# producer that failed to inline its counts. Best-effort: never aborts landing —
-# eligibility below remains the authoritative fail-closed gate.
-"$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" || true
+# 4a. Re-mint one exact count-backed schema-5 row from its durable log BEFORE
+# reading the ledger. hermit's validate.sh writes a count-less schema-3 receipt
+# when it can't reach the parent count helper; with the uncounted-receipt
+# grandfather removed, such a genuine green would be NotValidated. Select one
+# exact HEAD row by its Rust-canonical digest, then pass both identities into the
+# append-safe finalizer so a real green is not stranded by a producer that
+# failed to inline its counts. Best-effort: never aborts landing — eligibility
+# below remains the authoritative fail-closed gate.
+selected_row_sha256=$("$ROOT/ci-hub/validate/scan-finalize.sh" \
+  --select-candidate-sha256 --sha "$HEAD" --hermit-checkout "$WT" \
+  2>/dev/null) || selected_row_sha256=
+if [[ $selected_row_sha256 =~ ^[0-9a-f]{64}$ ]]; then
+  "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" \
+    --sha "$HEAD" --selected-row-sha256 "$selected_row_sha256" || true
+else
+  say "scan-finalize: no unique exact source row selected for $HEAD (best-effort)"
+fi
 # Capture the VERBATIM first_error_line of every surviving red log into the
 # durable append-only sidecar (ignored/validate-red-attribution.jsonl) BEFORE the
 # /tmp log is evicted. Append-only + idempotent, so it races no appender and never

@@ -571,6 +571,11 @@ struct ReceiptDigestArgs {
     /// canonical digest in one authoritative process.
     #[arg(long)]
     require_qualifying: bool,
+    /// Refuse unless the row satisfies the complete canonical local-receipt
+    /// predicate used by validate-status (including shared policy, typed gate
+    /// completeness, raw result, tree, repository, and run identity).
+    #[arg(long, conflicts_with = "require_qualifying")]
+    require_canonical_qualifying: bool,
     /// Fresh Hermit main tip for the optional final merge-boundary assertion.
     #[arg(long, requires_all = ["current_reverie_base", "repo_checkout", "reverie_checkout"])]
     current_base: Option<String>,
@@ -3496,7 +3501,14 @@ fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
             "receipt-digest HistoryRow is not bound to --sha".into(),
         ));
     }
-    if args.require_qualifying
+    if args.require_canonical_qualifying {
+        if qualify_canonical_receipt(&row, &args.sha).is_none() {
+            return Err(CiHubError::ValidateStatus(
+                "receipt-digest HistoryRow does not satisfy the complete canonical qualifying predicate"
+                    .into(),
+            ));
+        }
+    } else if args.require_qualifying
         && !crate::qualifying_receipt::row_qualifies(
             &row,
             &args.sha,

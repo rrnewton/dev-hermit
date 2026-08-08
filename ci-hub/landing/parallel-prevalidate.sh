@@ -163,13 +163,25 @@ run_one(){
         && ./validate.sh ) >"$ROOT/ignored/ci-hub/prevalidate-pr${pr}.log" 2>&1
   fi
 
-  # Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
-  # ledger: validate.sh writes a count-less schema-3 receipt when it can't reach
-  # the parent count helper, and with the uncounted-receipt grandfather removed
-  # that would read NotValidated. The scan (append-safe, idempotent) upgrades the
-  # just-validated head's row from its own log. Best-effort; validate-status below
-  # stays the authoritative fail-closed gate. The slot worktree holds the head.
-  "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$wt" || true
+  # Re-mint one exact count-backed schema-5 row from its durable log BEFORE
+  # reading the ledger. validate.sh writes a count-less schema-3 receipt when it
+  # can't reach the parent count helper, and with the uncounted-receipt
+  # grandfather removed that would read NotValidated. Resolve the just-validated
+  # head and select one source row by its Rust-canonical digest before invoking
+  # the append-safe finalizer. Best-effort; validate-status below stays the
+  # authoritative fail-closed gate. The slot worktree holds the head.
+  local exact_head selected_row_sha256
+  exact_head=$(git -C "$wt" rev-parse --verify "HEAD^{commit}" 2>/dev/null) \
+    || { say "pr#$pr cannot resolve exact validated head for finalization"; return 1; }
+  selected_row_sha256=$("$ROOT/ci-hub/validate/scan-finalize.sh" \
+    --select-candidate-sha256 --sha "$exact_head" --hermit-checkout "$wt" \
+    2>/dev/null) || selected_row_sha256=
+  if [[ $selected_row_sha256 =~ ^[0-9a-f]{64}$ ]]; then
+    "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$wt" \
+      --sha "$exact_head" --selected-row-sha256 "$selected_row_sha256" || true
+  else
+    say "pr#$pr scan-finalize: no unique exact source row selected for $exact_head (best-effort)"
+  fi
 
   # Capture the VERBATIM first_error_line of every surviving red log into the
   # durable append-only sidecar BEFORE its /tmp log is evicted (append-only +

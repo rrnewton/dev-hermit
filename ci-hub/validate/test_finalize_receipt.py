@@ -207,44 +207,19 @@ def test_writer_records_exact_base_and_reverie_tree(tmp_path):
     )
 
 
-# --- ledger upgrade path ----------------------------------------------------
+# --- in-place mutation is gone ---------------------------------------------
 
-def test_ledger_upgrade_in_place(tmp_path):
-    sha = "a" * 40
-    ledger = tmp_path / "validate-run-ledger.jsonl"
-    rows = [
-        {"schema_version": 3, "commit": "b" * 40, "result": "pass", "keep": 1},
-        {"schema_version": 3, "commit": sha, "result": "pass", "keep": 2, "profile": "full"},
-    ]
-    ledger.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
-
-    log = _passing_node("test.only", 5)
-    fields = fr.build_coverage(log, {"test.only"})
-    upgraded = fr.upgrade_ledger(str(ledger), sha, fields)
-    assert upgraded == 1
-
-    out = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
-    # Untouched row preserved verbatim.
-    assert out[0] == rows[0]
-    # Target row upgraded, other fields preserved.
-    assert out[1]["schema_version"] == 5
-    assert out[1]["keep"] == 2
-    assert out[1]["profile"] == "full"
-    assert out[1]["coverage"]["planned_test_nodes"] == 1
-    assert out[1]["executed_tests"] == 5
-
-
-def test_ledger_upgrade_missing_row_errors(tmp_path):
+def test_in_place_ledger_rewrite_is_refused(tmp_path):
     ledger = tmp_path / "l.jsonl"
-    ledger.write_text(json.dumps({"schema_version": 3, "commit": "c" * 40}) + "\n")
+    ledger.write_text(json.dumps({"commit": "c" * 40}) + "\n")
     proc = subprocess.run(
         [sys.executable, str(MODULE), "--log", "/dev/null",
-         "--sha", "d" * 40, "--hermit-checkout", str(tmp_path),
+         "--sha", "c" * 40, "--hermit-checkout", str(tmp_path),
          "--ledger", str(ledger)],
         capture_output=True, text=True,
     )
     assert proc.returncode == 2
-    assert "no ledger row" in proc.stderr
+    assert "in-place ledger rewrites are disabled" in proc.stderr
 
 
 # --- CLI emit-only ----------------------------------------------------------
@@ -261,15 +236,26 @@ def test_cli_emit_only_refuses_without_replayable_base(tmp_path):
     assert "cannot record base evidence" in proc.stderr
 
 
-# --- race-safe scan/append minting ------------------------------------------
+# --- race-safe exact-row append minting -------------------------------------
 
 def _countless_green_row(sha: str, log_path: str) -> dict:
     return {
-        "schema_version": 3, "commit": sha, "result": "pass",
+        "schema_version": 4, "repo": "hermit", "commit": sha,
+        "tree": "5" * 40, "result": "pass", "raw_result": "pass",
         "commit_anchored": True, "tree_dirty": False,
         "selection_mode": "full", "profile": "full",
         "executed_tests": None, "filtered_tests": None,
+        "exit_code": 0, "checks": 2, "failures": 0,
+        "gates_run": 2, "gates_expected": 2,
+        "gates": [
+            {"name": "portable CI DAG lane", "result": "pass", "exit_code": 0},
+            {"name": "privileged CI DAG lane", "result": "pass", "exit_code": 0},
+        ],
+        "started_at": "2026-08-08T00:00:00Z",
+        "finished_at": "2026-08-08T00:10:00Z",
+        "host": "fixture-host", "slot": "fixture-slot",
         "log_file": log_path, "real_seconds": 900,
+        "producer": "hermit-validate-sh",
         "admission": "ci-hub-validate-lock",
         "concurrent_validates": 0,
         "concurrency_proof": "validate_lock_owner_ancestry",
@@ -311,90 +297,382 @@ def test_schema5_idempotency_guard_uses_canonical_coverage_authority():
     assert fr._has_satisfied_schema5(tampered) is False
 
 
-def test_scan_mints_and_is_append_only(tmp_path, monkeypatch):
-    """Scan appends a satisfied schema-5 clone WITHOUT rewriting existing rows
-    (race-safe), and leaves the original count-less row byte-for-byte intact."""
+def test_exact_row_only_mints_one_and_preserves_every_other_byte(tmp_path, monkeypatch):
+    """Two same-SHA sources and a foreign sentinel bracket exact selection."""
     sha = "a" * 40
-    log = tmp_path / "run.log"
-    log.write_text(_passing_node("test.only", 6))
+    selected_log = tmp_path / "selected.log"
+    selected_log.write_text(_passing_node("test.only", 6))
+    other_log = tmp_path / "other.log"
+    other_log.write_text(_passing_node("test.only", 99))
     ledger = tmp_path / "validate-run-ledger.jsonl"
-    other = {"schema_version": 3, "commit": "b" * 40, "result": "fail"}
-    green = _countless_green_row(sha, str(log))
-    original_lines = [json.dumps(other), json.dumps(green)]
+    foreign = {"schema_version": 3, "commit": "b" * 40, "result": "fail"}
+    unselected = _countless_green_row(sha, str(other_log))
+    unselected["source_marker"] = "must-not-clone"
+    unselected["finished_at"] = "2026-08-08T00:09:00Z"
+    selected = _countless_green_row(sha, str(selected_log))
+    selected["source_marker"] = "selected"
+    original_lines = [
+        json.dumps(foreign, separators=(", ", ": ")),
+        json.dumps(unselected, sort_keys=True),
+        json.dumps(selected, separators=(",", ":")),
+    ]
     ledger.write_text("\n".join(original_lines) + "\n")
 
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
     monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
+    selected_digest = fr.canonical_row_sha256(selected, sha)
+    assert fr.select_candidate_sha256(str(ledger), sha) == selected_digest
+    result = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), sha, selected_digest
+    )
 
-    assert len(results) == 1 and results[0]["satisfied"] and results[0]["sha"] == sha
+    assert result["satisfied"] and result["sha"] == sha
+    assert result["reason"] == "minted" and result["appended"] == 1
     out_lines = [l for l in ledger.read_text().splitlines() if l.strip()]
-    # The two original lines are untouched (append-only); one new line added.
-    assert out_lines[0] == original_lines[0]
-    assert out_lines[1] == original_lines[1]
-    assert len(out_lines) == 3
-    minted = json.loads(out_lines[2])
+    assert out_lines[:3] == original_lines
+    assert len(out_lines) == 4
+    minted = json.loads(out_lines[3])
     assert minted["schema_version"] == 5
     assert minted["commit"] == sha
+    assert minted["source_marker"] == "selected"
     assert minted["executed_tests"] == 6
     assert minted["coverage"]["planned_test_nodes"] == 1
     assert minted["coverage"]["zero_executed_nodes"] == []
     assert minted["coverage"]["absent_nodes"] == []
-    # Base fields carried so is_clean_full_coverage still holds.
+    assert minted["producer"] == "ci-hub-finalize-receipt"
+    assert minted["finalized_from"] == {
+        "digest_algorithm": "sha256",
+        "canonicalization": fr.RECEIPT_CANONICALIZATION,
+        "digest": selected_digest,
+        "producer": "hermit-validate-sh",
+    }
     assert minted["commit_anchored"] is True and minted["profile"] == "full"
 
 
-def test_scan_is_idempotent(tmp_path, monkeypatch):
-    """A second scan appends nothing: the sha now carries a satisfied schema-5."""
+def test_exact_row_finalization_is_idempotent(tmp_path, monkeypatch):
     sha = "c" * 40
     log = tmp_path / "run.log"
     log.write_text(_passing_node("test.only", 4))
     ledger = tmp_path / "l.jsonl"
-    ledger.write_text(json.dumps(_countless_green_row(sha, str(log))) + "\n")
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
     monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
+    source = _countless_green_row(sha, str(log))
+    ledger.write_text(json.dumps(source) + "\n")
+    digest = fr.canonical_row_sha256(source, sha)
 
-    first = fr.scan_and_finalize(str(ledger), str(tmp_path))
-    assert len([r for r in first if r["reason"] == "minted"]) == 1
+    first = fr.scan_and_finalize(str(ledger), str(tmp_path), sha, digest)
+    assert first["reason"] == "minted"
     n_after_first = len([l for l in ledger.read_text().splitlines() if l.strip()])
 
-    second = fr.scan_and_finalize(str(ledger), str(tmp_path))
-    assert second == []  # already satisfied -> not a candidate
+    second = fr.scan_and_finalize(str(ledger), str(tmp_path), sha, digest)
+    assert second["reason"] == "already-finalized"
     n_after_second = len([l for l in ledger.read_text().splitlines() if l.strip()])
-    assert n_after_second == n_after_first  # nothing appended
+    assert n_after_second == n_after_first
 
 
-def test_scan_dry_run_writes_nothing(tmp_path, monkeypatch):
+def test_exact_row_dry_run_writes_nothing(tmp_path, monkeypatch):
     sha = "d" * 40
     log = tmp_path / "run.log"
     log.write_text(_passing_node("test.only", 8))
     ledger = tmp_path / "l.jsonl"
-    before = json.dumps(_countless_green_row(sha, str(log))) + "\n"
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
+    source = _countless_green_row(sha, str(log))
+    before = json.dumps(source) + "\n"
+    ledger.write_text(before)
+    digest = fr.canonical_row_sha256(source, sha)
+
+    result = fr.scan_and_finalize(
+        str(ledger), str(tmp_path), sha, digest, dry_run=True
+    )
+    assert result["reason"] == "would-mint" and result["satisfied"]
+    assert ledger.read_text() == before
+
+
+def test_exact_row_missing_log_or_manifest_never_appends(tmp_path, monkeypatch):
+    missing_log_sha = "1" * 40
+    missing_log = _countless_green_row(
+        missing_log_sha, str(tmp_path / "missing.log")
+    )
+    missing_log_ledger = tmp_path / "missing-log.jsonl"
+    missing_log_before = json.dumps(missing_log) + "\n"
+    missing_log_ledger.write_text(missing_log_before)
+    missing_log_digest = fr.canonical_row_sha256(missing_log, missing_log_sha)
+    result = fr.scan_and_finalize(
+        str(missing_log_ledger), str(tmp_path), missing_log_sha, missing_log_digest
+    )
+    assert result["reason"] == "no-log" and result["exit_code"] != 0
+    assert result["appended"] == 0
+    assert missing_log_ledger.read_text() == missing_log_before
+
+    no_manifest_sha = "2" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 3))
+    no_manifest = _countless_green_row(no_manifest_sha, str(log))
+    no_manifest_ledger = tmp_path / "no-manifest.jsonl"
+    no_manifest_before = json.dumps(no_manifest) + "\n"
+    no_manifest_ledger.write_text(no_manifest_before)
+    no_manifest_digest = fr.canonical_row_sha256(no_manifest, no_manifest_sha)
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: set())
+    result = fr.scan_and_finalize(
+        str(no_manifest_ledger), str(tmp_path), no_manifest_sha, no_manifest_digest
+    )
+    assert result["reason"] == "no-manifest" and result["exit_code"] != 0
+    assert result["appended"] == 0
+    assert no_manifest_ledger.read_text() == no_manifest_before
+
+
+def test_exact_row_identity_negatives_append_nothing(tmp_path):
+    sha = "e" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    source = _countless_green_row(sha, str(log))
+    ledger = tmp_path / "l.jsonl"
+    before = json.dumps(source) + "\n"
+    ledger.write_text(before)
+    digest = fr.canonical_row_sha256(source, sha)
+
+    for wrong_sha, wrong_digest, reason in (
+        (sha, "0" * 64, "selected-row-missing"),
+        ("f" * 40, digest, "selected-row-missing"),
+    ):
+        try:
+            fr.scan_and_finalize(
+                str(ledger), str(tmp_path), wrong_sha, wrong_digest
+            )
+        except fr.SelectedRowError as error:
+            assert error.reason == reason
+        else:
+            raise AssertionError("identity mismatch was accepted")
+        assert ledger.read_text() == before
+
+    missing = tmp_path / "missing.jsonl"
+    missing.write_text(json.dumps({"commit": "f" * 40}) + "\n")
+    try:
+        fr.scan_and_finalize(str(missing), str(tmp_path), sha, digest)
+    except fr.SelectedRowError as error:
+        assert error.reason == "selected-row-missing"
+    else:
+        raise AssertionError("missing selected row was accepted")
+    assert len(missing.read_text().splitlines()) == 1
+
+
+def test_ambiguous_duplicate_selected_row_refuses_without_append(tmp_path):
+    sha = "6" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    source = _countless_green_row(sha, str(log))
+    line = json.dumps(source)
+    ledger = tmp_path / "l.jsonl"
+    before = f"{line}\n{line}\n"
+    ledger.write_text(before)
+    digest = fr.canonical_row_sha256(source, sha)
+    try:
+        fr.select_candidate_sha256(str(ledger), sha)
+    except fr.SelectedRowError as error:
+        assert error.reason == "ambiguous-selected-row"
+    else:
+        raise AssertionError("selector accepted duplicate exact source rows")
+    try:
+        fr.scan_and_finalize(str(ledger), str(tmp_path), sha, digest)
+    except fr.SelectedRowError as error:
+        assert error.reason == "ambiguous-selected-row"
+    else:
+        raise AssertionError("duplicate exact selected rows were accepted")
+    assert ledger.read_text() == before
+
+
+def test_insufficient_old_source_row_never_appends_or_claims_satisfied(
+    tmp_path, monkeypatch
+):
+    """Coverage cannot repair absent tree/raw_result/gates/admission evidence."""
+    sha = "7" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    old = {
+        "schema_version": 3, "commit": sha, "result": "pass",
+        "commit_anchored": True, "tree_dirty": False,
+        "selection_mode": "full", "profile": "full",
+        "executed_tests": None, "filtered_tests": None,
+        "log_file": str(log),
+    }
+    ledger = tmp_path / "l.jsonl"
+    before = json.dumps(old) + "\n"
+    ledger.write_text(before)
+    digest = fr.canonical_row_sha256(old, sha)
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
+
+    result = fr.scan_and_finalize(str(ledger), str(tmp_path), sha, digest)
+    assert result["exit_code"] != 0
+    assert result["reason"] == "insufficient-source-row"
+    assert result["satisfied"] is False and result["appended"] == 0
+    assert ledger.read_text() == before
+
+
+def test_complete_preflight_rejects_each_missing_load_bearing_condition(
+    tmp_path, monkeypatch
+):
+    """Schema promotion cannot manufacture tree/result/gate/admission proof."""
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
+    monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
+
+    for index, missing in enumerate(
+        ("tree", "raw_result", "gates", "admission", "concurrency")
+    ):
+        sha = f"{index + 9:x}" * 40
+        source = _countless_green_row(sha, str(log))
+        if missing == "concurrency":
+            source.pop("concurrent_validates")
+            source.pop("concurrency_proof")
+        else:
+            source.pop(missing)
+        ledger = tmp_path / f"missing-{missing}.jsonl"
+        before = json.dumps(source) + "\n"
+        ledger.write_text(before)
+        digest = fr.canonical_row_sha256(source, sha)
+
+        result = fr.scan_and_finalize(str(ledger), str(tmp_path), sha, digest)
+        assert result["reason"] == "insufficient-source-row", missing
+        assert result["exit_code"] != 0 and result["appended"] == 0
+        assert result["satisfied"] is False
+        assert ledger.read_text() == before
+
+
+def test_existing_clone_cannot_launder_incomplete_selected_source(
+    tmp_path, monkeypatch
+):
+    """Already-finalized handling must follow the complete source preflight."""
+    sha = "4" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 5))
+    old = {
+        "schema_version": 3, "commit": sha, "result": "pass",
+        "commit_anchored": True, "tree_dirty": False,
+        "selection_mode": "full", "profile": "full",
+        "executed_tests": None, "filtered_tests": None,
+        "log_file": str(log),
+    }
+    digest = fr.canonical_row_sha256(old, sha)
+    claimed_clone = _qualifying_schema5_row(sha)
+    claimed_clone["finalized_from"] = {
+        "digest_algorithm": "sha256",
+        "canonicalization": fr.RECEIPT_CANONICALIZATION,
+        "digest": digest,
+    }
+    ledger = tmp_path / "l.jsonl"
+    before = json.dumps(old) + "\n" + json.dumps(claimed_clone) + "\n"
     ledger.write_text(before)
     monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: {"test.only"})
     monkeypatch.setattr(fr, "build_base_evidence", lambda *a: dict(BASE_FIELDS))
 
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path), dry_run=True)
-    assert results[0]["satisfied"]
-    assert ledger.read_text() == before  # untouched
+    result = fr.scan_and_finalize(str(ledger), str(tmp_path), sha, digest)
+    assert result["reason"] == "insufficient-source-row"
+    assert result["exit_code"] != 0 and result["appended"] == 0
+    assert result["satisfied"] is False
+    assert ledger.read_text() == before
 
 
-def test_scan_skips_missing_log_and_absent_manifest(tmp_path, monkeypatch):
-    gone = _countless_green_row("e" * 40, str(tmp_path / "nope.log"))
-    log = tmp_path / "run.log"
-    log.write_text(_passing_node("test.only", 5))
-    no_manifest = _countless_green_row("f" * 40, str(log))
+def test_scan_cli_requires_both_exact_identities(tmp_path, capsys):
     ledger = tmp_path / "l.jsonl"
-    ledger.write_text("\n".join(json.dumps(r) for r in (gone, no_manifest)) + "\n")
-    monkeypatch.setattr(fr, "planned_test_nodes", lambda c, s: set())  # empty planned
+    ledger.write_text("")
+    rc = fr.main([
+        "--scan", "--ledger", str(ledger),
+        "--hermit-checkout", str(tmp_path), "--sha", "a" * 40,
+    ])
+    assert rc != 0
+    assert "--selected-row-sha256" in capsys.readouterr().err
 
-    results = fr.scan_and_finalize(str(ledger), str(tmp_path))
-    reasons = {r["sha"][:1]: r["reason"] for r in results}
-    assert reasons["e"] == "no-log"
-    assert reasons["f"] == "no-manifest"
-    # Neither fabricated: no schema-5 line appended.
-    assert all(json.loads(l).get("schema_version") == 3
-               for l in ledger.read_text().splitlines() if l.strip())
+
+def test_scan_cli_identity_refusals_are_nonzero_and_append_nothing(
+    tmp_path, capsys
+):
+    sha = "8" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 2))
+    source = _countless_green_row(sha, str(log))
+    digest = fr.canonical_row_sha256(source, sha)
+
+    cases = (
+        ([source], sha, "0" * 64, "selected-row-missing"),
+        ([source], "9" * 40, digest, "selected-row-missing"),
+        ([{"commit": "9" * 40}], sha, digest, "selected-row-missing"),
+        ([source, source], sha, digest, "ambiguous-selected-row"),
+    )
+    for index, (rows, selected_sha, selected_digest, reason) in enumerate(cases):
+        ledger = tmp_path / f"case-{index}.jsonl"
+        before = "".join(json.dumps(row) + "\n" for row in rows)
+        ledger.write_text(before)
+        rc = fr.main([
+            "--scan", "--ledger", str(ledger),
+            "--hermit-checkout", str(tmp_path), "--sha", selected_sha,
+            "--selected-row-sha256", selected_digest,
+        ])
+        assert rc != 0
+        assert reason in capsys.readouterr().err
+        assert ledger.read_text() == before
+
+
+def test_landing_callers_pass_both_exact_identities():
+    root = HERE.parents[1]
+    lander = (root / "ci-hub/landing/land-pr.sh").read_text()
+    prevalidate = (root / "ci-hub/landing/parallel-prevalidate.sh").read_text()
+    wrapper = (root / "ci-hub/validate/scan-finalize.sh").read_text()
+    assert "--select-candidate-sha256" in lander
+    assert "--select-candidate-sha256" in prevalidate
+    assert '--sha "$HEAD" --selected-row-sha256 "$selected_row_sha256"' in lander
+    assert '--sha "$exact_head" --selected-row-sha256 "$selected_row_sha256"' in prevalidate
+    assert '--sha "$sha"' in wrapper
+    assert '--selected-row-sha256 "$selected_row_sha256"' in wrapper
+
+
+def test_scan_wrapper_selects_exact_digest_and_propagates_refusals(tmp_path):
+    sha = "3" * 40
+    log = tmp_path / "run.log"
+    log.write_text(_passing_node("test.only", 2))
+    source = _countless_green_row(sha, str(log))
+    ledger = tmp_path / "ledger.jsonl"
+    before = json.dumps(source) + "\n"
+    ledger.write_text(before)
+    checkout = tmp_path / "hermit"
+    checkout.mkdir()
+    (checkout / ".git").write_text("gitdir: unused\n")
+    wrapper = HERE / "scan-finalize.sh"
+
+    selected = subprocess.run(
+        [
+            str(wrapper), "--hermit-checkout", str(checkout),
+            "--ledger", str(ledger), "--sha", sha,
+            "--select-candidate-sha256",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert selected.returncode == 0, selected.stderr
+    assert selected.stdout.strip() == fr.canonical_row_sha256(source, sha)
+
+    missing = subprocess.run(
+        [
+            str(wrapper), "--hermit-checkout", str(checkout),
+            "--ledger", str(ledger), "--sha", sha,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert missing.returncode != 0
+    wrong = subprocess.run(
+        [
+            str(wrapper), "--hermit-checkout", str(checkout),
+            "--ledger", str(ledger), "--sha", sha,
+            "--selected-row-sha256", "0" * 64,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert wrong.returncode != 0
+    assert ledger.read_text() == before
 
 
 # --- planned_test_nodes reads real manifests at a real SHA ------------------

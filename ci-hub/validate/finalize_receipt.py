@@ -33,11 +33,14 @@ value) so the Rust consumer can re-derive the verdict from receipt fields alone.
 
 Usage:
   finalize_receipt.py --log LOG --sha SHA --hermit-checkout DIR --emit-only
-  finalize_receipt.py --log LOG --sha SHA --hermit-checkout DIR --ledger LEDGER
+  finalize_receipt.py --scan --ledger LEDGER --sha SHA \
+    --selected-row-sha256 DIGEST --hermit-checkout DIR
 """
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import re
@@ -57,6 +60,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "remediation"))
 from nonzero_result import per_node_counts  # noqa: E402
 
 SCHEMA_VERSION = 5
+RECEIPT_CANONICALIZATION = "serde_json::to_vec(HistoryRow)-v1"
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 #: This writer's registered slug for the ledger `producer` column. Must appear in
 #: `producer.known` of ci-hub/validate/qualifying-receipt.json -- an unregistered
 #: slug is refused exactly like an absent one once the epoch is flipped.
@@ -68,6 +74,14 @@ REVERIE_SOURCE_RE = re.compile(
 )
 
 
+class SelectedRowError(RuntimeError):
+    """An exact-row identity could not be resolved safely."""
+
+    def __init__(self, reason: str, detail: str):
+        super().__init__(detail)
+        self.reason = reason
+
+
 def _git(checkout: str, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", checkout, *args], capture_output=True, text=True
@@ -77,6 +91,103 @@ def _git(checkout: str, *args: str) -> str:
             result.stderr.strip() or f"git -C {checkout} {' '.join(args)} exited {result.returncode}"
         )
     return result.stdout.strip()
+
+
+def canonical_row_sha256(
+    row: dict, sha: str, *, require_canonical_qualifying: bool = False
+) -> str:
+    """Return the Rust ``HistoryRow`` canonical digest for exactly ``row``.
+
+    JSON key sorting is not this authority: Rust serializes typed ``HistoryRow``
+    fields in struct order and flattened extension fields in ``BTreeMap`` order.
+    Route both identity verification and the post-clone qualification preflight
+    through that one canonical implementation.
+    """
+    ci_hub = str(Path(__file__).resolve().parents[1] / "ci-hub")
+    command = [ci_hub, "receipt-digest", "--sha", sha]
+    if require_canonical_qualifying:
+        command.append("--require-canonical-qualifying")
+    result = subprocess.run(
+        command,
+        input=json.dumps(row, separators=(",", ":")),
+        capture_output=True,
+        text=True,
+    )
+    digest = result.stdout.strip()
+    if result.returncode != 0 or DIGEST_RE.fullmatch(digest) is None:
+        detail = result.stderr.strip() or result.stdout.strip() or (
+            f"{' '.join(command)} exited {result.returncode}"
+        )
+        raise RuntimeError(detail)
+    return digest
+
+
+def _load_rows(handle) -> list[dict]:
+    """Read object-valued JSONL rows; malformed lines remain untouched."""
+    handle.seek(0)
+    rows: list[dict] = []
+    for line in handle:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            rows.append(value)
+    return rows
+
+
+@contextmanager
+def _locked_ledger(ledger_path: str, *, exclusive: bool):
+    """Lock the ledger inode using the same ``flock`` domain as validate.sh."""
+    mode = "a+" if exclusive else "r"
+    with open(ledger_path, mode, errors="replace") as handle:
+        fcntl.flock(
+            handle.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        )
+        try:
+            yield handle
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _resolve_selected_row(
+    rows: list[dict], sha: str, selected_row_sha256: str
+) -> dict:
+    """Resolve one exact base row, filtering by SHA before any status logic."""
+    if SHA_RE.fullmatch(sha) is None:
+        raise SelectedRowError("invalid-sha", "--sha must be exactly 40 lowercase hex")
+    if DIGEST_RE.fullmatch(selected_row_sha256) is None:
+        raise SelectedRowError(
+            "invalid-selected-row-sha256",
+            "--selected-row-sha256 must be exactly 64 lowercase hex",
+        )
+
+    # Proxy binding: rows for every other SHA are outside the decision before
+    # idempotency, eligibility, or any other handled/already logic can run.
+    exact_sha_rows = [row for row in rows if row.get("commit") == sha]
+    matches: list[dict] = []
+    for row in exact_sha_rows:
+        try:
+            digest = canonical_row_sha256(row, sha)
+        except RuntimeError:
+            # A value that Rust cannot parse as HistoryRow has no canonical row
+            # identity and therefore cannot be the caller's selected row.
+            continue
+        if digest == selected_row_sha256:
+            matches.append(row)
+    if not matches:
+        raise SelectedRowError(
+            "selected-row-missing",
+            f"no canonical row for {sha} has digest {selected_row_sha256}",
+        )
+    if len(matches) != 1:
+        raise SelectedRowError(
+            "ambiguous-selected-row",
+            f"{len(matches)} rows for {sha} have digest {selected_row_sha256}",
+        )
+    return matches[0]
 
 
 def build_base_evidence(
@@ -204,61 +315,33 @@ def build_coverage(log_text: str, planned: set[str]) -> dict:
     }
 
 
-def upgrade_ledger(ledger_path: str, sha: str, fields: dict) -> int:
-    """Upgrade the in-place ledger row(s) for `sha` with the schema-5 fields.
-
-    Preserves every other field on the row, adds `executed_tests`,
-    `filtered_tests`, and `coverage`, and sets `schema_version = 5`. Returns the
-    number of rows upgraded; 0 means no row matched `sha` (caller errors out --
-    the finalizer NEVER fabricates a row).
-    """
-    with open(ledger_path, errors="replace") as fh:
-        lines = fh.readlines()
-
-    upgraded = 0
-    out: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            out.append(line)
-            continue
-        try:
-            rec = json.loads(stripped)
-        except json.JSONDecodeError:
-            out.append(line)
-            continue
-        if rec.get("commit") == sha:
-            rec.update(fields)
-            out.append(json.dumps(rec) + "\n")
-            upgraded += 1
-        else:
-            out.append(line)
-
-    if upgraded:
-        with open(ledger_path, "w") as fh:
-            fh.writelines(out)
-    return upgraded
-
-
-# --- race-safe scan/append minting (the auto-wired path) --------------------
+# --- race-safe exact-row append minting (the auto-wired path) ---------------
 #
-# `upgrade_ledger` (above) does a full-file read-then-`"w"`-rewrite: correct for
-# a one-shot single-SHA CLI against a private copy, but it RACES a concurrent
-# `validate.sh` (which appends with O_APPEND) -- an append landing between the
-# read and the rewrite is silently lost. The consumer-wired minting path below
-# NEVER rewrites: it derives the schema-5 fields for each count-less green from
-# that row's own recorded `log_file` and APPENDS a schema-5 clone. `assess()`
-# validates a commit if ANY row qualifies, so an appended satisfied row mints the
-# count-backed green without touching -- or losing -- any concurrent write.
+# The finalizer NEVER rewrites: it derives schema-5 fields from one caller-bound
+# source row and appends at most one clone while holding the ledger's flock. The
+# original row and every unrelated row therefore remain byte-for-byte intact.
 
 
-def _clone_upgraded(base_row: dict, fields: dict) -> dict:
+def _clone_upgraded(
+    base_row: dict, fields: dict, selected_row_sha256: str
+) -> dict:
     """A schema-5 clone of `base_row` with the derived count/coverage `fields`
     merged in. Every base field (commit, anchoring, cleanliness, profile,
     selection, result, log_file, ...) is preserved so the appended row still
     satisfies `is_clean_full_coverage` on the consumer side."""
     row = dict(base_row)
     row.update(fields)
+    # Carry the source identity and claimed writer into the clone. The clone's
+    # own producer must truthfully name this finalizer, while ``finalized_from``
+    # preserves which exact producer row supplied every inherited condition.
+    finalized_from = {
+        "digest_algorithm": "sha256",
+        "canonicalization": RECEIPT_CANONICALIZATION,
+        "digest": selected_row_sha256,
+    }
+    if "producer" in base_row:
+        finalized_from["producer"] = base_row.get("producer")
+    row["finalized_from"] = finalized_from
     # Provenance names the writer of THIS row, so it is assigned last and
     # unconditionally. A clone inherits every base field, including any
     # `producer` the ORIGINAL writer stamped; leaving that in place would make a
@@ -295,76 +378,247 @@ def _has_satisfied_schema5(rec: dict) -> bool:
     )
 
 
-def scan_and_finalize(ledger_path: str, hermit_checkout: str, reverie_checkout: str | None = None,
-                      dry_run: bool = False) -> list[dict]:
-    """Mint count-backed schema-5 rows for every count-less clean/full/pass row
-    whose recorded `log_file` still exists and whose planned set is derivable at
-    its sha. APPEND-ONLY (race-safe). Idempotent: a sha already carrying a
-    satisfied schema-5 row, or a sha already handled this pass, is skipped.
+def _existing_finalization(
+    rows: list[dict], sha: str, selected_row_sha256: str
+) -> dict | None:
+    """Return one already-qualified clone of this exact source, or refuse."""
+    matches = [
+        row
+        for row in rows
+        if row.get("commit") == sha
+        and isinstance(row.get("finalized_from"), dict)
+        and row["finalized_from"].get("digest_algorithm") == "sha256"
+        and row["finalized_from"].get("digest") == selected_row_sha256
+        and row["finalized_from"].get("canonicalization")
+        == RECEIPT_CANONICALIZATION
+    ]
+    if len(matches) > 1:
+        raise SelectedRowError(
+            "ambiguous-finalization",
+            f"{len(matches)} finalized rows claim source {selected_row_sha256}",
+        )
+    if not matches:
+        return None
+    try:
+        canonical_row_sha256(
+            matches[0], sha, require_canonical_qualifying=True
+        )
+    except RuntimeError as error:
+        raise SelectedRowError(
+            "invalid-existing-finalization",
+            f"existing clone of {selected_row_sha256} is not canonical: {error}",
+        ) from error
+    return matches[0]
 
-    Returns one result dict per handled sha:
-      {sha, satisfied, reason, executed_tests, planned_test_nodes}
-    reason in {"minted", "no-log", "no-manifest"}. Only "minted" rows are
-    appended; "no-manifest" (planned set empty -> cannot judge from this
-    checkout) and "no-log" are reported but NEVER fabricated.
+
+def select_candidate_sha256(ledger_path: str, sha: str) -> str:
+    """Select the newest exact-SHA count-less source and return its canonical ID.
+
+    This is a read-only convenience for trusted callers. Mutation still requires
+    passing the returned digest back explicitly, and the mutating path re-resolves
+    it under an exclusive lock.
+    """
+    if SHA_RE.fullmatch(sha) is None:
+        raise SelectedRowError("invalid-sha", "--sha must be exactly 40 lowercase hex")
+    with _locked_ledger(ledger_path, exclusive=False) as handle:
+        rows = _load_rows(handle)
+    candidates = [
+        row
+        for row in rows
+        if row.get("commit") == sha and _is_countless_clean_full_pass(row)
+    ]
+    if not candidates:
+        raise SelectedRowError(
+            "selected-row-missing", f"no count-less clean/full/pass row for {sha}"
+        )
+    canonical_candidates: list[tuple[dict, str]] = []
+    for row in candidates:
+        try:
+            canonical_candidates.append((row, canonical_row_sha256(row, sha)))
+        except RuntimeError:
+            continue
+    if not canonical_candidates:
+        raise SelectedRowError(
+            "selected-row-missing", f"no canonical source row for {sha}"
+        )
+    # Event time is the semantic order; the remaining recorded run-identity
+    # fields make a stable tie-breaker without consulting append position.
+    _selected, digest = max(
+        canonical_candidates,
+        key=lambda item: (
+            str(item[0].get("finished_at") or ""),
+            str(item[0].get("started_at") or ""),
+            str(item[0].get("host") or ""),
+            str(item[0].get("slot") or ""),
+            str(item[0].get("log_file") or ""),
+        ),
+    )
+    duplicate_count = sum(
+        1
+        for _row, candidate_digest in canonical_candidates
+        if candidate_digest == digest
+    )
+    if duplicate_count != 1:
+        raise SelectedRowError(
+            "ambiguous-selected-row",
+            f"{duplicate_count} candidate rows for {sha} have digest {digest}",
+        )
+    return digest
+
+
+def scan_and_finalize(
+    ledger_path: str,
+    hermit_checkout: str,
+    sha: str,
+    selected_row_sha256: str,
+    reverie_checkout: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Append one complete canonical clone of one exact selected source row.
+
+    Identity failures raise :class:`SelectedRowError`. Evidence failures return
+    a nonzero ``exit_code`` and append nothing. Success appends at most one row;
+    a repeated request for the same source is idempotent through the carried
+    ``finalized_from`` identity.
     """
     if reverie_checkout is None:
         reverie_checkout = str(
             Path(os.environ.get("DEV_HERMIT_PARENT", Path(__file__).resolve().parents[2]))
             / "reverie"
         )
-    with open(ledger_path, errors="replace") as fh:
-        recs = [json.loads(l) for l in fh if l.strip()]
+    with _locked_ledger(ledger_path, exclusive=True) as handle:
+        rows = _load_rows(handle)
+        selected = dict(_resolve_selected_row(rows, sha, selected_row_sha256))
 
-    already = {r.get("commit") for r in recs if _has_satisfied_schema5(r)}
-    handled: set[str] = set()
-    results: list[dict] = []
-    to_append: list[dict] = []
-
-    for rec in recs:
-        sha = rec.get("commit")
-        if not sha or not _is_countless_clean_full_pass(rec):
-            continue
-        if sha in already or sha in handled:
-            continue
-        handled.add(sha)
-
-        log = rec.get("log_file")
-        if not log or not os.path.isfile(log):
-            results.append({"sha": sha, "satisfied": False, "reason": "no-log"})
-            continue
-
-        with open(log, errors="replace") as lf:
-            log_text = lf.read()
-        planned = planned_test_nodes(hermit_checkout, sha)
-        if not planned:
-            # Manifests not derivable at this sha from this checkout -> we cannot
-            # honestly judge coverage. Do NOT fabricate a planned set of 0.
-            results.append({"sha": sha, "satisfied": False, "reason": "no-manifest"})
-            continue
-
-        fields = build_coverage(log_text, planned)
-        try:
-            fields.update(build_base_evidence(hermit_checkout, sha, reverie_checkout))
-        except RuntimeError:
-            results.append({"sha": sha, "satisfied": False, "reason": "no-base"})
-            continue
-        cov = fields["coverage"]
-        satisfied = qualifying_receipt.coverage_satisfied(cov)
-        results.append({
+    if not _is_countless_clean_full_pass(selected):
+        return {
             "sha": sha,
-            "satisfied": satisfied,
-            "reason": "minted",
-            "executed_tests": fields["executed_tests"],
-            "planned_test_nodes": cov["planned_test_nodes"],
-        })
-        to_append.append(_clone_upgraded(rec, fields))
+            "satisfied": False,
+            "reason": "insufficient-source-row",
+            "detail": "selected row is not a count-less clean/full/pass source",
+            "exit_code": 1,
+            "appended": 0,
+        }
+    if selected.get("repo") not in (None, "hermit", "rrnewton/hermit"):
+        return {
+            "sha": sha,
+            "satisfied": False,
+            "reason": "insufficient-source-row",
+            "detail": f"selected row names non-Hermit repo {selected.get('repo')!r}",
+            "exit_code": 1,
+            "appended": 0,
+        }
 
-    if to_append and not dry_run:
-        with open(ledger_path, "a") as fh:
-            for row in to_append:
-                fh.write(json.dumps(row) + "\n")
-    return results
+    log = selected.get("log_file")
+    if not isinstance(log, str) or not os.path.isfile(log):
+        return {
+            "sha": sha,
+            "satisfied": False,
+            "reason": "no-log",
+            "exit_code": 1,
+            "appended": 0,
+        }
+    with open(log, errors="replace") as log_handle:
+        log_text = log_handle.read()
+    planned = planned_test_nodes(hermit_checkout, sha)
+    if not planned:
+        return {
+            "sha": sha,
+            "satisfied": False,
+            "reason": "no-manifest",
+            "exit_code": 1,
+            "appended": 0,
+        }
+
+    fields = build_coverage(log_text, planned)
+    # This finalizer is Hermit-specific (Hermit manifests, Hermit commit, Hermit
+    # Cargo.lock). Older Hermit rows predate the repo column, so carry that
+    # already-bound scope into the schema-5 clone rather than manufacturing it
+    # from an unchecked self-declaration.
+    fields["repo"] = "hermit"
+    try:
+        fields.update(build_base_evidence(hermit_checkout, sha, reverie_checkout))
+    except RuntimeError as error:
+        return {
+            "sha": sha,
+            "satisfied": False,
+            "reason": "no-base",
+            "detail": str(error),
+            "exit_code": 1,
+            "appended": 0,
+        }
+    coverage = fields["coverage"]
+    if not qualifying_receipt.coverage_satisfied(coverage):
+        return {
+            "sha": sha,
+            "satisfied": False,
+            "reason": "unsatisfied-coverage",
+            "executed_tests": fields["executed_tests"],
+            "planned_test_nodes": coverage["planned_test_nodes"],
+            "exit_code": 1,
+            "appended": 0,
+        }
+
+    clone = _clone_upgraded(selected, fields, selected_row_sha256)
+    try:
+        # This invokes the COMPLETE Rust canonical receipt predicate, which in
+        # turn invokes the shared policy. Coverage alone cannot mint authority:
+        # tree/raw_result/gates/admission/concurrency and every other canonical
+        # condition must already be carried by the selected source or derived
+        # exactly above.
+        canonical_row_sha256(clone, sha, require_canonical_qualifying=True)
+    except RuntimeError as error:
+        return {
+            "sha": sha,
+            "satisfied": False,
+            "reason": "insufficient-source-row",
+            "detail": str(error),
+            "executed_tests": fields["executed_tests"],
+            "planned_test_nodes": coverage["planned_test_nodes"],
+            "exit_code": 1,
+            "appended": 0,
+        }
+
+    # Re-resolve the caller's identity and idempotency state at the exact
+    # decision/append boundary. Existing-finalization handling deliberately
+    # follows the complete source-row preflight above: a qualifying row that
+    # merely claims an incomplete source can never launder that source into an
+    # `already-finalized` success. A concurrent append can neither redirect the
+    # request to another same-SHA row nor create a second clone of this source.
+    with _locked_ledger(ledger_path, exclusive=True) as handle:
+        rows = _load_rows(handle)
+        _resolve_selected_row(rows, sha, selected_row_sha256)
+        if _existing_finalization(rows, sha, selected_row_sha256) is not None:
+            return {
+                "sha": sha,
+                "satisfied": True,
+                "reason": "already-finalized",
+                "exit_code": 0,
+                "appended": 0,
+            }
+        if dry_run:
+            return {
+                "sha": sha,
+                "satisfied": True,
+                "reason": "would-mint",
+                "executed_tests": fields["executed_tests"],
+                "planned_test_nodes": coverage["planned_test_nodes"],
+                "exit_code": 0,
+                "appended": 0,
+            }
+        handle.seek(0, os.SEEK_END)
+        handle.write(json.dumps(clone, separators=(",", ":")) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return {
+        "sha": sha,
+        "satisfied": True,
+        "reason": "minted",
+        "executed_tests": fields["executed_tests"],
+        "planned_test_nodes": coverage["planned_test_nodes"],
+        "exit_code": 0,
+        "appended": 1,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -380,41 +634,88 @@ def main(argv: list[str] | None = None) -> int:
         default=str(Path(os.environ.get("DEV_HERMIT_PARENT", Path(__file__).resolve().parents[2])) / "reverie"),
         help="Reverie checkout/object store used to bind the pinned commit tree",
     )
-    ap.add_argument("--ledger", help="ledger JSONL to upgrade the row for --sha in place")
+    ap.add_argument("--ledger", help="append-only validation ledger JSONL")
+    ap.add_argument(
+        "--selected-row-sha256",
+        help="Rust-canonical SHA-256 identity of the one source row to finalize",
+    )
+    ap.add_argument(
+        "--select-candidate-sha256",
+        action="store_true",
+        help="read-only: print the newest exact-SHA count-less source-row digest",
+    )
     ap.add_argument("--emit-only", action="store_true",
                     help="print the schema-5 fields to stdout; do NOT touch a ledger")
     ap.add_argument("--scan", action="store_true",
-                    help="APPEND-safe mint: upgrade every count-less clean/full/pass "
-                         "row in --ledger from its own recorded log_file")
+                    help="APPEND-safe mint of one --sha/--selected-row-sha256 source")
     ap.add_argument("--dry-run", action="store_true",
                     help="with --scan: report what would be minted; do NOT write")
     args = ap.parse_args(argv)
 
-    if args.scan:
-        if not args.ledger:
-            print("finalize_receipt: --scan requires --ledger", file=sys.stderr)
+    if args.select_candidate_sha256:
+        if args.scan or not args.ledger or not args.sha:
+            print(
+                "finalize_receipt: --select-candidate-sha256 requires --ledger and --sha, not --scan",
+                file=sys.stderr,
+            )
             return 2
         if not os.path.isfile(args.ledger):
             print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
             return 2
-        results = scan_and_finalize(
-            args.ledger, args.hermit_checkout, args.reverie_checkout, dry_run=args.dry_run
-        )
-        minted = [r for r in results if r["reason"] == "minted" and r["satisfied"]]
-        unsat = [r for r in results if r["reason"] == "minted" and not r["satisfied"]]
-        no_log = [r for r in results if r["reason"] == "no-log"]
-        no_man = [r for r in results if r["reason"] == "no-manifest"]
-        no_base = [r for r in results if r["reason"] == "no-base"]
-        verb = "would mint" if args.dry_run else "minted"
-        print(f"finalize_receipt: scan {verb} {len(minted)} satisfied schema-{SCHEMA_VERSION} "
-              f"row(s); {len(unsat)} unsatisfied-coverage; "
-              f"{len(no_log)} no-log; {len(no_man)} no-manifest "
-              f"{len(no_base)} no-base; "
-              f"(candidates={len(results)})")
-        for r in minted:
-            print(f"  + {r['sha'][:12]} executed={r['executed_tests']} "
-                  f"planned={r['planned_test_nodes']}")
+        try:
+            print(select_candidate_sha256(args.ledger, args.sha))
+        except SelectedRowError as error:
+            print(f"finalize_receipt: {error.reason}: {error}", file=sys.stderr)
+            return 2
         return 0
+
+    if args.scan:
+        missing = [
+            name
+            for name, value in (
+                ("--ledger", args.ledger),
+                ("--sha", args.sha),
+                ("--selected-row-sha256", args.selected_row_sha256),
+            )
+            if not value
+        ]
+        if missing:
+            print(
+                f"finalize_receipt: --scan requires {', '.join(missing)}",
+                file=sys.stderr,
+            )
+            return 2
+        if not os.path.isfile(args.ledger):
+            print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
+            return 2
+        try:
+            result = scan_and_finalize(
+                args.ledger,
+                args.hermit_checkout,
+                args.sha,
+                args.selected_row_sha256,
+                args.reverie_checkout,
+                dry_run=args.dry_run,
+            )
+        except SelectedRowError as error:
+            print(f"finalize_receipt: {error.reason}: {error}", file=sys.stderr)
+            return 2
+        detail = f" detail={result['detail']}" if result.get("detail") else ""
+        print(
+            f"finalize_receipt: {result['reason']} sha={args.sha} "
+            f"selected_row_sha256={args.selected_row_sha256} "
+            f"appended={result['appended']} satisfied={str(result['satisfied']).lower()}"
+            f"{detail}"
+        )
+        return int(result["exit_code"])
+
+    if args.ledger and not args.emit_only:
+        print(
+            "finalize_receipt: in-place ledger rewrites are disabled; use --scan with "
+            "--sha and --selected-row-sha256",
+            file=sys.stderr,
+        )
+        return 2
 
     if not (args.log and args.sha):
         print("finalize_receipt: --log and --sha are required (or use --scan)",
@@ -428,19 +729,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"finalize_receipt: cannot read log {args.log!r}: {exc}", file=sys.stderr)
         return 2
 
-    if args.ledger and not args.emit_only:
-        if not os.path.isfile(args.ledger):
-            print(f"finalize_receipt: ledger not found: {args.ledger}", file=sys.stderr)
-            return 2
-        with open(args.ledger, errors="replace") as fh:
-            if not any(
-                json.loads(line).get("commit") == args.sha
-                for line in fh if line.strip()
-            ):
-                print(f"finalize_receipt: no ledger row for sha {args.sha} in {args.ledger}",
-                      file=sys.stderr)
-                return 2
-
     planned = planned_test_nodes(args.hermit_checkout, args.sha)
     fields = build_coverage(log_text, planned)
     try:
@@ -451,16 +739,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"finalize_receipt: cannot record base evidence: {exc}", file=sys.stderr)
         return 2
 
-    if args.emit_only or not args.ledger:
-        print(json.dumps({"commit": args.sha, **fields}, indent=2))
-        return 0
-
-    upgraded = upgrade_ledger(args.ledger, args.sha, fields)
-    if upgraded == 0:
-        print(f"finalize_receipt: no ledger row for sha {args.sha} in {args.ledger}",
-              file=sys.stderr)
-        return 2
-    print(f"finalize_receipt: upgraded {upgraded} row(s) for {args.sha} to schema {SCHEMA_VERSION}")
+    print(json.dumps({"commit": args.sha, **fields}, indent=2))
     return 0
 
 
