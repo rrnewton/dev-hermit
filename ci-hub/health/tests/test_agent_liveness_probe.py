@@ -150,6 +150,15 @@ class SyntheticProcTest(unittest.TestCase):
         self.assertEqual("unverifiable", probe.verify("victim", root=self.root).state)
 
 
+
+def _reap(process) -> None:
+    """Kill one of OUR OWN children by exact pid. Never a pattern, never a name."""
+    try:
+        process.kill()
+        process.wait(timeout=10)
+    except Exception:
+        pass
+
 class LiveProcessBracketTest(unittest.TestCase):
     """The real bracket: one throwaway name, two liveness states, same code path.
 
@@ -161,6 +170,23 @@ class LiveProcessBracketTest(unittest.TestCase):
 
     def test_live_then_dead_flips_the_verdict(self) -> None:
         name = f"probe-fixture-{os.getpid()}"
+        canary = f"probe-canary-{os.getpid()}"
+
+        # A CANARY carrying a DIFFERENT agent identity, alive for the whole
+        # bracket. It supplies the precondition the self-check above demands:
+        # with at least one agent visible, "no process carries <name>" means the
+        # subject is dead rather than that the probe is blind. Without it this
+        # test asserted `verified-dead` in an environment where the probe is
+        # CORRECT to refuse, so it failed on every runner that hosts no agents.
+        # This adds a precondition; it does not relax the assertion, which is
+        # still exactly `verified-dead`.
+        watcher = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(120)"],
+            env={**os.environ, probe.IDENTITY_VAR: canary},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(_reap, watcher)
 
         # A real process that merely sleeps, carrying the throwaway identity.
         child = subprocess.Popen(
