@@ -450,7 +450,25 @@ class OperationalHealthTest(unittest.TestCase):
 (1 rows)
 """
         completed = SimpleNamespace(returncode=0, stdout=output, stderr="")
+        # The resolver must be stubbed as well as subprocess.run. `resolve()` is
+        # called while BUILDING run's `env=` argument, so it executes even though
+        # run itself is mocked -- and with no TG_DB_PATH bound it raises
+        # TaskGraphUnavailable before the parser under test is ever reached. That
+        # is why this passed on an agent box, where a graph is always bound, and
+        # failed on hosted CI, where none is. Verified by bracketing rather than
+        # inferred from the message: bound it passes, `env -u TG_DB_PATH`
+        # reproduces CI's exact RuntimeError.
+        #
+        # This is a PARSER test. Binding a real graph would make it depend on that
+        # graph's contents; stubbing the resolver keeps it testing exactly what it
+        # names. The resolver's own refusal is not weakened here -- it keeps its
+        # coverage in ci-hub/health/tests/test_orphaned_task_detector_fails_closed.py,
+        # where an unresolvable graph must be COULD NOT MEASURE and never a clean zero.
         with mock.patch.object(
+            operational_health.taskgraph_db, "resolve", return_value=None
+        ), mock.patch.object(
+            operational_health.taskgraph_db, "child_env", return_value={}
+        ), mock.patch.object(
             operational_health.subprocess,
             "run",
             return_value=completed,
