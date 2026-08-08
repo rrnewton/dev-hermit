@@ -33,40 +33,66 @@ cache, so this is the canonical 3pai/BpfJailer entrypoint. The typed
 `./ci-hub/ci-hub load-probe` alias is also available outside that restriction.
 
 The hub checks GitHub current-main health and open-PR red counts every 15
-minutes. Every five minutes it checks the live ORC agent snapshot and runs the
-same gentle primary-refresh routine as `make checkout-fresh`. Clean product
-checkouts fast-forward to `main`; a globally consistent Hermit/Reverie/LiteInst2
-gitlink snapshot is committed and pushed to parent `main`. A dirty checkout,
-detached or stale branch, Hermit/Reverie pin mismatch, or parent-main race is
-preserved and hard-warned instead. An agent is reported stuck when ORC marks it
-broken, or when an active agent has no activity for at least 60 minutes. Green
-ticks stay quiet; an `ACTION:` or `ERROR:` wakes the coordinator with a
-`HARD WARNING`.
+minutes. Every five minutes it runs the same gentle primary-refresh routine as
+`make checkout-fresh`. Clean product checkouts fast-forward to `main`; a
+globally consistent Hermit/Reverie/LiteInst2 gitlink snapshot is committed and
+pushed to parent `main`. A dirty checkout, detached or stale branch,
+Hermit/Reverie pin mismatch, or parent-main race is preserved and hard-warned
+instead. Green ticks stay quiet; an `ACTION:` or `ERROR:` wakes the coordinator
+with a `HARD WARNING`.
 
-The same five-minute tick reconciles TaskGraph state, TaskGraph ownership, and
-the live `orc.listAgents()` snapshot. `./ci-hub/ci-hub active-work` reports:
+### Scope: what the hub may and may not watch
 
-- `ORPHANED`: non-implemented in-progress task owned by a dead/retired agent;
-- `STALE`: non-implemented in-progress task with no owner;
-- `AWAITING-LAND`: in-progress task tagged `implemented`, counted separately
-  from active work and not treated as a warning by itself;
-- `OFF-BOOK`: busy live agent with no `current_task`; and
-- `MISROUTED`: task owner and the agent's actual `current_task` disagree.
+Owner directive, 2026-08-08: *"tick hub should not be used for interfering with
+these orc internal matters"*, and *"I never was involved with ANY of those tick
+hub creations ... They are trying to rigidly remind the agent of things it may
+not notice. This is good for external systems like github but it seems dangerous
+in other cases."*
 
-The tick atomically retains its latest agent snapshot under
-`ignored/ci-hub/agent-snapshot.json`, so the manual command uses the same ORC
-view for at most ten minutes. It fails unknown rather than classifying against
-a missing or stale snapshot. Use `--json` for the versioned full report and
-`--gate` for tick-hub key/value output.
+The admission test for any reminder is **can ORC observe this directly?** If yes,
+it does not belong here: ORC is the authority on agents, panes, tasks and
+ownership, so a second observer of the same fact cannot be more right, only
+differently wrong — and its disagreement arrives as an instruction to a
+coordinator mandated to close and respawn agents without asking. If no — GitHub,
+hosted CI queues, runner lanes, merge gates, local disk, local git — reminding
+the coordinator is the entire point.
 
-An hourly `unowned_residue` reminder catches the complementary case where a
-correct refusal or recycle leaves no active owner and therefore emits no normal
-failure. `residue_sweep.py` combines the canonical orphan-task detector, exact
-declined-action note markers, and a two-signal held-slot predicate (dead
-registered owner **and** no live process cwd under the slot). The gate only
-reports and wakes the coordinator; `--route` records typed TaskGraph
-dispositions, while task reassignment and slot lifecycle remain coordinator
-operations.
+Weigh a proposal by what its alarm **causes**, not only by whether it is
+accurate. A false alarm about GitHub costs a wasted check; a false alarm about
+ORC-internal state costs an agent.
+
+Four reminders were removed on 2026-08-08 under that test: `stuck_agents`,
+`active_work_reconciliation`, `unowned_high_priority_backlog`, and
+`unowned_residue`. `agent_container_lifecycle` was kept but downgraded to
+report-only. `worktree_new_dead_owner` was replaced by `worktree_disk_residue`
+(below). The full removal record is inline in `tick-hub.yaml`.
+
+`./ci-hub/ci-hub active-work`, `residue_sweep.py`, `unowned_backlog.py`, and
+`operational_health.py agents` all still work and are still useful **on
+request**, when a coordinator or agent is actually asking that question. What
+was withdrawn is their standing authority to interrupt and instruct.
+
+### Worktree disk residue
+
+`slot_disk_residue.py` keeps the one genuine, non-ORC need that the removed
+liveness gate was carrying: huge slots accumulate under `worktrees/` long after
+anything was working in them, and nothing reclaims them. Its predecessor asked
+*"is the owning agent dead?"* and, on 2026-08-08, answered wrongly for the agent
+holding the freshest activity timestamp on the box.
+
+The replacement asks only the disk question — **on disk, consuming space, and no
+live process inside** — and reads no agent name, no ORC fleet, no TaskGraph
+owner, and not even the `worktree-state.json` status field. Occupancy comes from
+`/proc/<pid>/cwd`, which cannot go stale and cannot be forged by editing a file.
+Idleness must be sustained (default 24h) and size material (default 1 GiB), so
+the ~0.6% unreadable-cwd blind spot cannot survive to a finding. Sizes are
+actual disk blocks and are reported as an upper bound, because reflink-seeded
+slots share extents and removing one frees less than its measured size.
+
+It pages on the **delta** — a slot that newly qualifies — and carries the
+standing backlog in captured fields, so it cannot become the permanently-on gate
+that gets muted within a day. It is DETECT ONLY: reclaim needs a recovery SHA
+and remains a coordinator decision.
 
 ## What this hub structurally cannot see: its own host dying
 
