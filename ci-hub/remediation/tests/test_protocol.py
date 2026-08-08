@@ -2332,19 +2332,169 @@ class ProtocolTest(unittest.TestCase):
         repo_source.assert_not_called()
         self.assertEqual(self.store.read_text(), before)
 
-    def test_resolve_refuses_kind_that_contradicts_durable_recommendation(
+    def test_resolve_records_a_kind_that_differs_from_the_recommendation(
         self,
     ) -> None:
+        """A recommendation is a prediction; the resolution is what was DONE.
+
+        This used to raise 'contradicts durable recommendation', which left a
+        genuinely discharged obligation with no honest resolution: refuse and
+        corrupt the ledger by omission, or claim the recommended repair and
+        corrupt it by commission. The disagreement is now RECORDED, not refused.
+        """
         self.create()
         self.require_remediation("revert")
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=self.root),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+            mock.patch.object(protocol, "_resolve_raw_sha", side_effect=lambda _s, r: r),
+            mock.patch.object(protocol, "_is_target_ancestor", return_value=True),
+            redirect_stderr(io.StringIO()) as captured,
+        ):
+            # kind=fix-forward against a revert recommendation.
+            self.assertEqual(protocol.resolve_obligation(self.resolve_args()), 0)
+        record = obligations.get_record("test-obligation", self.store)
+        self.assertEqual(record["overall_state"], "remediated")
+        self.assertEqual(record["remediation"]["kind"], "fix-forward")
+        verification = record["remediation"]["landing_verification"]["kind_verification"]
+        # Both sides are on the record, and the disagreement is explicit rather
+        # than something a reader has to infer.
+        self.assertEqual(verification["kind"], "fix-forward")
+        self.assertEqual(verification["recommended_kind"], "revert")
+        self.assertFalse(verification["durable_recommendation_matches"])
+        self.assertIn("differs from durable recommendation", captured.getvalue())
+
+    def test_resolve_records_a_matching_kind_as_matching(self) -> None:
+        """The unchanged path: prediction and reality agree, recorded as agreeing."""
+        self.create()
+        self.require_remediation("fix-forward")
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=self.root),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+            mock.patch.object(protocol, "_resolve_raw_sha", side_effect=lambda _s, r: r),
+            mock.patch.object(protocol, "_is_target_ancestor", return_value=True),
+        ):
+            self.assertEqual(protocol.resolve_obligation(self.resolve_args()), 0)
+        record = obligations.get_record("test-obligation", self.store)
+        verification = record["remediation"]["landing_verification"]["kind_verification"]
+        self.assertEqual(verification["kind"], "fix-forward")
+        self.assertEqual(verification["recommended_kind"], "fix-forward")
+        self.assertTrue(verification["durable_recommendation_matches"])
+
+    def test_resolve_refuses_an_unevidenced_revert_claim_on_the_new_path(
+        self,
+    ) -> None:
+        """The door did NOT open: evidence keys on the CLAIM, not the guess.
+
+        This is the newly-REACHABLE combination — claiming `revert` when
+        `fix-forward` was recommended. The old code refused it for merely
+        disagreeing with the recommendation and never looked at the trees; now
+        that disagreement is allowed, so the tree proof is the ONLY thing
+        standing between a `revert` claim and the ledger. Here the repair is an
+        ordinary forward commit, so the claim must be refused on EVIDENCE.
+
+        (The recommended-revert variant of this is already covered by
+        `test_revert_resolution_requires_exact_failed_tree_restoration`.)
+        """
+        source = self.root / "unevidenced-revert"
+        failed_land, repair = self._linear_repair_history(source)
+        args = argparse.Namespace(
+            id="unevidenced-revert",
+            kind="revert",
+            ref=repair,
+            started_at=None,
+            source=source,
+            store=self.store,
+        )
+        self._arm(source, "unevidenced-revert", failed_land, recommended="fix-forward")
         before = self.store.read_text()
         with (
-            mock.patch.object(protocol, "resolve_repo_source") as repo_source,
-            self.assertRaisesRegex(protocol.ProtocolError, "contradicts durable"),
+            mock.patch.object(protocol, "resolve_repo_source", return_value=source),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+            self.assertRaisesRegex(protocol.ProtocolError, "does not restore"),
         ):
-            protocol.resolve_obligation(self.resolve_args())
-        repo_source.assert_not_called()
+            protocol.resolve_obligation(args)
         self.assertEqual(self.store.read_text(), before)
+
+    def test_resolve_refuses_an_unevidenced_fix_forward_claim(self) -> None:
+        """The other half: a fix-forward whose ref is not a real repair.
+
+        A commit that predates the failed land cannot be its repair, whatever
+        kind is claimed and whatever was recommended.
+        """
+        source = self.root / "unevidenced-fixforward"
+        failed_land, _repair = self._linear_repair_history(source)
+        pre_failure = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD~2"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        args = argparse.Namespace(
+            id="unevidenced-fixforward",
+            kind="fix-forward",
+            ref=pre_failure,
+            started_at=None,
+            source=source,
+            store=self.store,
+        )
+        self._arm(source, "unevidenced-fixforward", failed_land, recommended="revert")
+        before = self.store.read_text()
+        with (
+            mock.patch.object(protocol, "resolve_repo_source", return_value=source),
+            mock.patch.object(protocol, "_fetch_target", return_value="main"),
+            self.assertRaisesRegex(protocol.ProtocolError, "does not descend"),
+        ):
+            protocol.resolve_obligation(args)
+        self.assertEqual(self.store.read_text(), before)
+
+    def _linear_repair_history(self, source: Path) -> tuple[str, str]:
+        """base -> failed_land -> repair, where repair is NOT a revert."""
+        subprocess.run(["git", "init", "-q", "-b", "main", str(source)], check=True)
+        for key, value in (("user.email", "test@example.com"), ("user.name", "Test")):
+            subprocess.run(
+                ["git", "-C", str(source), "config", key, value], check=True
+            )
+
+        def commit(name: str) -> str:
+            (source / name).write_text(name)
+            subprocess.run(["git", "-C", str(source), "add", name], check=True)
+            subprocess.run(
+                ["git", "-C", str(source), "commit", "-q", "-m", name], check=True
+            )
+            return subprocess.run(
+                ["git", "-C", str(source), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        commit("base")
+        failed_land = commit("failed")
+        repair = commit("repair")
+        return failed_land, repair
+
+    def _arm(
+        self, source: Path, obligation_id: str, landed_sha: str, *, recommended: str
+    ) -> None:
+        obligations.create_obligation(
+            repo="rrnewton/hermit",
+            landed_sha=landed_sha,
+            land_mode="speculative",
+            actor="test",
+            obligation_id=obligation_id,
+            path=self.store,
+        )
+        obligations.transition(
+            obligation_id,
+            "remediation-triggered",
+            {
+                "overall_state": "remediation_required",
+                "recommendation": {"action": recommended},
+                "remediation": {"state": "triggered", "kind": recommended},
+            },
+            self.store,
+        )
 
     def test_resolve_refuses_nonexistent_repair(self) -> None:
         self.create()
@@ -2433,6 +2583,9 @@ class ProtocolTest(unittest.TestCase):
             proof["kind_verification"],
             {
                 "kind": "fix-forward",
+                # Recorded alongside the actual kind so a reader can see whether
+                # the prediction held, instead of inferring it from its absence.
+                "recommended_kind": "fix-forward",
                 "durable_recommendation_matches": True,
             },
         )
