@@ -29,9 +29,38 @@ class FakeRun:
         self.dirty = ""
         self.admission_rc = 0
         self.herdr_status_rc = 0
+        # Fresh-checkout controls: `fresh` is what `mktemp -d` hands back,
+        # `fresh_complete` decides whether the tree carries what validate needs,
+        # and `ledger_rows` is what the canonical reader returns.
+        self.fresh: Path | None = None
+        self.fresh_complete = True
+        self.ledger_rows: list[str] | None = None
+        self.removed: list[str] = []
 
     def __call__(self, command: list[str], **_kwargs: object):
         self.commands.append(command)
+        if command[:2] == ["mktemp", "-d"]:
+            self.fresh = Path(command[2].replace("XXXXXXXX", "abcd1234"))
+            self.fresh.mkdir(parents=True, exist_ok=True)
+            (self.fresh / "validate.sh").write_text("#!/bin/sh\n")
+            if self.fresh_complete:
+                dep = self.fresh / "agent-utils/rs/safe-ci-dag-runner"
+                dep.mkdir(parents=True, exist_ok=True)
+                (dep / "Cargo.toml").write_text("[package]\n")
+            return completed(command, stdout=f"{self.fresh}\n")
+        if self.fresh is not None and command[:4] == ["git", "-C", str(self.fresh), "rev-parse"]:
+            return completed(command, stdout=f"{SHA}\n")
+        if command[:3] == ["git", "-C", str(self.checkout)] and command[3] in {"worktree", "submodule"}:
+            if command[3:5] == ["worktree", "remove"]:
+                self.removed.append(command[-1])
+            return completed(command)
+        if self.fresh is not None and command[:4] == ["git", "-C", str(self.fresh), "submodule"]:
+            return completed(command)
+        if command[0].endswith("ci-hub") and command[1:3] == ["ledger", "qualified-rows"]:
+            rows = self.ledger_rows
+            if rows is None:
+                rows = [f'{{"commit": "{SHA}", "cwd": "{self.fresh}"}}']
+            return completed(command, stdout="\n".join(rows) + ("\n" if rows else ""))
         if command[:4] == ["git", "-C", str(self.checkout), "rev-parse"]:
             if command[-1] == "--show-toplevel":
                 return completed(command, stdout=f"{self.checkout}\n")
@@ -244,6 +273,111 @@ class StartUnitTest(unittest.TestCase):
         self.assertIn("FINISHED", out.getvalue())
         self.assertFalse(any(command[0] == "systemd-run" for command in self.fake.commands))
 
+    # ---- fresh temp-dir checkout is the DEFAULT (owner directive #3) --------
+
+    def _working_directory(self) -> str:
+        systemd = next(
+            command
+            for command in self.fake.commands
+            if command[0] == "systemd-run" and "validate-lock" in command
+        )
+        return systemd[systemd.index("--working-directory") + 1]
+
+    def test_default_validates_a_fresh_checkout_not_the_slot_tree(self) -> None:
+        """The DEFAULT must validate the commit, not the tree that claims to be at it.
+
+        `validate_checkout` already refuses a dirty tree, so this is not about
+        uncommitted files. It is about the 5.1 GB of IGNORED state (build output,
+        caches, materialized submodules) that `git status --porcelain=v1` cannot
+        see and that has twice been measured deciding a verdict.
+        """
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(0, rc, error)
+        self.assertIsNotNone(self.fake.fresh)
+        self.assertEqual(str(self.fake.fresh), self._working_directory())
+        self.assertNotEqual(str(self.checkout), self._working_directory())
+
+    def test_in_place_opt_out_still_validates_the_slot_tree(self) -> None:
+        rc, _output, error = self.invoke(["--in-place", "--", "full"])
+
+        self.assertEqual(0, rc, error)
+        self.assertEqual(str(self.checkout), self._working_directory())
+        self.assertFalse(
+            any(command[:2] == ["mktemp", "-d"] for command in self.fake.commands),
+            "opt-out must not build a temp checkout at all",
+        )
+
+    def test_incomplete_fresh_checkout_refuses_before_admission(self) -> None:
+        """A fresh worktree starts with EMPTY submodules, agent-utils among them.
+
+        Launching anyway reproduces the measured 0.045s exit that reads like a
+        fast pass. The tree must be PROVEN usable, and an unusable one must abort
+        the launch rather than becoming a quick green.
+        """
+        self.fake.fresh_complete = False
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("safe-ci-dag-runner", error)
+        self.assertFalse(
+            any(
+                command[0] == "systemd-run" and "validate-lock" in command
+                for command in self.fake.commands
+            ),
+            "nothing may be admitted from an unusable tree",
+        )
+
+    # ---- REQUIREMENT (a): the row must be canonically readable BEFORE delete --
+
+    def test_receipt_is_reread_from_the_canonical_ledger_before_cleanup(self) -> None:
+        rc, output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(0, rc, error)
+        self.assertIn("RECEIPT-CANONICAL", output)
+        # The read must happen BEFORE the removal, or a missing row would be
+        # indistinguishable from a deleted one.
+        kinds = [
+            "read" if command[1:3] == ["ledger", "qualified-rows"] else "remove"
+            for command in self.fake.commands
+            if command[1:3] == ["ledger", "qualified-rows"]
+            or command[3:5] == ["worktree", "remove"]
+        ]
+        self.assertEqual(["read", "remove"], kinds)
+        self.assertEqual([str(self.fake.fresh)], self.fake.removed)
+
+    def test_uncanonical_receipt_refuses_and_RETAINS_the_temp_checkout(self) -> None:
+        """The negative that matters: an invisible green must be impossible.
+
+        A temp-dir validate whose receipt lands only in the temp checkout's own
+        ledger, followed by deletion, manufactures a green nobody can dereference
+        — strictly worse than validating in place. The audit measured this exact
+        shape: 111 validate.rs fallback rows in two per-checkout ledgers that
+        default consumers discover ZERO of.
+        """
+        self.fake.ledger_rows = []
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("RECEIPT-NOT-CANONICAL", error)
+        self.assertEqual([], self.fake.removed, "evidence must not be destroyed")
+
+    def test_a_row_for_the_same_sha_from_a_DIFFERENT_run_does_not_satisfy_it(self) -> None:
+        """Identity binding, not a correlated proxy.
+
+        Matching on the commit alone would accept some other run of the same SHA
+        — including an in-place run, or a stale row from hours earlier. The row
+        must carry this exact temp checkout's cwd.
+        """
+        self.fake.ledger_rows = [f'{{"commit": "{SHA}", "cwd": "/some/other/checkout"}}']
+
+        rc, _output, error = self.invoke(["--", "full"])
+
+        self.assertEqual(2, rc)
+        self.assertIn("RECEIPT-NOT-CANONICAL", error)
+        self.assertEqual([], self.fake.removed)
 
 
 class LibunwindEnvTest(unittest.TestCase):

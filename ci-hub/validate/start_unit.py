@@ -57,6 +57,130 @@ def default_unit(agent: str, target: str) -> str:
     return sanitize_unit(f"validate-{safe_agent}-{target[:12]}-{int(time.time())}")
 
 
+# Relative path of the canonical ledger, restated here ONLY as a comment so this
+# file stays a non-reader for the ledger-reader allowlist: the row lookup below
+# goes through `ci-hub ledger qualified-rows`-adjacent tooling, never by opening
+# `ignored/validate-run-ledger.jsonl` directly.
+
+
+def prepare_fresh_checkout(
+    source: Path, target: str, *, run: Runner, parent: Path
+) -> Path:
+    """Materialize `target` into a private temp worktree and PROVE it is usable.
+
+    WHY THIS IS THE DEFAULT. `validate_checkout` below refuses a dirty tree, so
+    "no uncommitted changes" is already guaranteed — but `git status
+    --porcelain=v1` says NOTHING ABOUT IGNORED FILES, and that is where the
+    divergence lives. Measured 2026-08-08 on a slot at 393c6a765: `git status
+    --porcelain=v1` reported 0 paths while the tree carried 5.1 GB of ignored
+    build output, caches and materialized dependencies. A validate of that tree
+    is a validate of the commit PLUS 5.1 GB of unrecorded local history, so the
+    40-hex SHA on the receipt does not describe what actually ran.
+
+    Two measured cases from the same day where ignored state DECIDED a verdict:
+    an empty (gitignored) `hermit/agent-utils` made `scripts/validate.rs` die in
+    0.045s in a way that reads like a fast pass; and a stale (gitignored)
+    rust-script binary cache made a tree whose `git status` was empty fail
+    `--self-test` on a mutation that had already been reverted.
+
+    THE SECOND CASE IS ALSO THIS FUNCTION'S OWN FAILURE MODE. A fresh worktree
+    starts with EMPTY submodules, `agent-utils` among them — so materializing
+    the tree and launching without initializing them reproduces the 0.045s
+    fake-pass BY CONSTRUCTION. That is why this returns only after proving the
+    tree is usable, and raises otherwise: an unusable temp checkout must abort
+    the launch, never quietly become a fast green.
+    """
+    fresh = Path(
+        checked_output(
+            ["mktemp", "-d", str(parent / "validate-fresh-XXXXXXXX")],
+            run=run,
+            purpose="cannot create temp checkout directory",
+        )
+    ).resolve()
+    # A worktree, not a clone: it shares the source object store, so this costs
+    # no object copy. It does register in the source repo, which is why the
+    # caller removes it explicitly rather than just unlinking the directory.
+    run(
+        ["git", "-C", str(source), "worktree", "add", "--detach", str(fresh), target],
+        check=True,
+    )
+    head = checked_output(
+        ["git", "-C", str(fresh), "rev-parse", "HEAD^{commit}"],
+        run=run,
+        purpose="cannot resolve fresh checkout HEAD",
+    )
+    if head != target:
+        raise RuntimeError(f"fresh checkout resolved to {head}, not requested target {target}")
+    run(
+        ["git", "-C", str(fresh), "submodule", "update", "--init", "--recursive"],
+        check=False,
+    )
+    # PROVE usable, do not assume. Each of these is a thing whose absence has
+    # produced a misleading fast exit rather than an honest failure.
+    missing = [
+        rel
+        for rel in ("validate.sh", "agent-utils/rs/safe-ci-dag-runner/Cargo.toml")
+        if not (fresh / rel).exists()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"fresh checkout {fresh} is missing {', '.join(missing)}; refusing to launch a run "
+            "that would exit fast for an environmental reason and read like a pass "
+            "(retained for inspection)"
+        )
+    return fresh
+
+
+def remove_fresh_checkout(source: Path, fresh: Path, *, run: Runner) -> None:
+    """Remove the temp worktree AND deregister it. Best-effort, never fatal."""
+    run(["git", "-C", str(source), "worktree", "remove", "--force", str(fresh)], check=False)
+    run(["git", "-C", str(source), "worktree", "prune"], check=False)
+
+
+def assert_row_readable_from_canonical_ledger(
+    root: Path, target: str, cwd: Path, *, run: Runner
+) -> str:
+    """REQUIREMENT (a). Fail unless this run's exact row is readable canonically.
+
+    A temp-dir validate that writes its receipt into the temp checkout's own
+    ledger and then deletes the directory MANUFACTURES INVISIBLE GREENS, and
+    would be strictly worse than validating the slot in place. This is not a
+    hypothetical failure mode — it is the measured one. The admission audit
+    (`ci-hub-admission-control-audit`) reproduced exactly 111 `validate.rs`
+    fallback rows sitting in two per-checkout ledgers that default consumers
+    discover ZERO of, and a full green at PR #1635 head 291a2fd6 (862 executed,
+    0 failed) read as NOT-VALIDATED because its record went to a per-checkout
+    shard. A field recorded only where it does not survive the checkout is not
+    recorded at all.
+
+    So the row is re-read THROUGH THE CANONICAL READER, BEFORE the temp
+    directory is removed, and the binding is by IDENTITY rather than by a
+    correlated proxy: the row must carry this exact 40-hex commit AND the `cwd`
+    of this exact temp checkout. A row matching on commit alone could be some
+    other run of the same SHA.
+    """
+    result = run(
+        [str(root / "ci-hub/ci-hub"), "ledger", "qualified-rows"],
+        cwd=root,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise RuntimeError(f"canonical ledger unreadable ({detail})")
+    matched = [
+        line
+        for line in result.stdout.splitlines()
+        if target in line and str(cwd) in line
+    ]
+    if not matched:
+        raise RuntimeError(
+            f"no row for commit {target} with cwd {cwd} is readable from the canonical "
+            "ledger; the receipt exists nowhere a consumer will look. Temp checkout "
+            "RETAINED for inspection"
+        )
+    return matched[0]
+
+
 def validate_checkout(checkout: Path, target: str, *, run: Runner) -> Path:
     checkout = checkout.resolve()
     if not SHA_RE.fullmatch(target):
@@ -435,6 +559,17 @@ def parser() -> argparse.ArgumentParser:
         )
     )
     result.add_argument("--checkout", type=Path)
+    result.add_argument(
+        "--in-place",
+        action="store_true",
+        help=(
+            "OPT-OUT: validate the --checkout working tree itself instead of a fresh "
+            "temp-dir checkout of --target. The tree must still be clean and at the "
+            "exact target, but its ignored state (build output, caches, materialized "
+            "submodules) participates in the run, so the receipt's SHA describes the "
+            "commit PLUS that unrecorded local state."
+        ),
+    )
     result.add_argument("--agent")
     result.add_argument("--target")
     result.add_argument("--pr", type=int)
@@ -511,8 +646,21 @@ def main(
         print("validate-run: REFUSED: wait/hold/child-deadline must be positive", file=sys.stderr)
         return 2
 
+    fresh_checkout: Path | None = None
+    source_checkout: Path | None = None
     try:
-        checkout = validate_checkout(args.checkout, args.target, run=run)
+        source_checkout = validate_checkout(args.checkout, args.target, run=run)
+        if args.in_place:
+            checkout = source_checkout
+        else:
+            # DEFAULT: validate the COMMIT, not the tree that claims to be at it.
+            fresh_checkout = prepare_fresh_checkout(
+                source_checkout,
+                args.target,
+                run=run,
+                parent=(root / "ignored").resolve(),
+            )
+            checkout = fresh_checkout
         preflight(root, checkout, args.target, run=run)
         unit = sanitize_unit(args.unit) if args.unit else default_unit(args.agent, args.target)
         log = (args.log or root / "ignored/validate" / f"{unit}.log").resolve()
@@ -587,10 +735,15 @@ def main(
                 raise RuntimeError(f"systemd-run refused service: {detail}")
             run_registry.update_record(record_path, state="running")
     except (RuntimeError, ValueError) as error:
+        # Nothing was admitted, so the temp checkout holds no evidence and is
+        # removed. Failures AFTER launch are handled below and RETAIN it.
+        if fresh_checkout is not None and source_checkout is not None:
+            remove_fresh_checkout(source_checkout, fresh_checkout, run=run)
         print(f"validate-run: REFUSED: {error}", file=sys.stderr)
         return 2
 
     report = {
+
         "schema_version": 1,
         "event": "would-start" if args.dry_run else "handle",
         "state": "planned" if args.dry_run else "running",
@@ -612,6 +765,8 @@ def main(
         if not args.json:
             print(f"PANE-PLAN workspace={pane_owner.WORKSPACE_LABEL} role=observer-only")
             print(f"COMMAND {shlex.join(command)}")
+        if fresh_checkout is not None and source_checkout is not None:
+            remove_fresh_checkout(source_checkout, fresh_checkout, run=run)
         return 0
 
     try:
@@ -624,11 +779,39 @@ def main(
         )
         updated = run_registry.update_record(record_path, **final)
     except RuntimeError as error:
+        # The run OUTLIVES this waiter by design, so its temp checkout must too:
+        # removing it here would delete the tree out from under a live validate.
+        if fresh_checkout is not None:
+            print(
+                f"validate-run: temp checkout RETAINED at {fresh_checkout} (run continues)",
+                file=sys.stderr,
+            )
         print(
             f"validate-run: WAIT-INTERRUPTED {unit}.service; RUN CONTINUES independently: {error}",
             file=sys.stderr,
         )
         return 2
+
+    # REQUIREMENT (a), and the ORDER IS THE WHOLE POINT: re-read this run's exact
+    # row from the canonical ledger BEFORE the temp directory is removed. Deleting
+    # first and checking afterwards would still find the row when it landed
+    # canonically, and would find nothing to say when it did not — which is the
+    # invisible-green failure this gate exists to make impossible.
+    if fresh_checkout is not None and source_checkout is not None:
+        try:
+            row = assert_row_readable_from_canonical_ledger(
+                root.resolve(), args.target, fresh_checkout, run=run
+            )
+        except RuntimeError as error:
+            print(f"validate-run: RECEIPT-NOT-CANONICAL: {error}", file=sys.stderr)
+            # Deliberately NOT removed: the temp tree is now the only place the
+            # evidence exists, so destroying it would destroy the only record of
+            # a run that really happened.
+            return 2
+        if not args.json:
+            print(f"RECEIPT-CANONICAL commit={args.target} cwd={fresh_checkout}")
+            print(f"  {row[:160]}")
+        remove_fresh_checkout(source_checkout, fresh_checkout, run=run)
     emit_report(
         {**updated, "event": "finished", "unit": f"{unit}.service"},
         json_output=args.json,
