@@ -29,11 +29,12 @@ gate: [post-facto-review](../post-facto-review/SKILL.md); policy in `AGENTS.md`.
 - Merged to main + `hermit run --backend X` works = DONE.
 - Never close a backend milestone task for work on an unlanded branch.
 - At implementation handoff, post the PR and exact SHA, add the `implemented`
-  tag, leave status `in_progress`, and stop. The coordinator closes only after
-  proving the commit is on `main` through `./ci-hub/bin/close-task <task>
-  --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>`; never use a
-  raw terminal-status update. Closing sooner hides the unlanded backend from the
-  active drain and makes implementation look delivered.
+  tag, then close your own task (`tg update <task> --status closed`). The
+  `implemented` tag — not a nonterminal status — is what keeps the unlanded
+  backend visible in the drain. Once the commit is on `main`, close through
+  `./ci-hub/bin/close-task <task> --code <PR-or-full-SHA> --repo <owner/repo>
+  --source <checkout>` so the `CLOSURE-VERIFIED` note discharges the landing
+  debt. A closed task still tagged `implemented` is NOT a delivered backend.
 
 ## Deep Code-Path Audit
 

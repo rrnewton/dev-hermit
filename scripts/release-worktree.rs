@@ -1826,13 +1826,25 @@ fn linked_worktree_admin(target: &CleanTarget) -> Result<PathBuf, String> {
     Ok(git_dir)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SubmoduleAdminPaths {
     modules: PathBuf,
     quarantine: PathBuf,
     force_fence_quarantine: PathBuf,
     in_progress: PathBuf,
     path_fence: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PathFenceMethod {
+    GitWorktreeMove,
+    AtomicRenameRepair,
+}
+
+#[derive(Debug)]
+struct PathFenceResult {
+    paths: SubmoduleAdminPaths,
+    deinitialized_submodule_fallback: bool,
 }
 
 fn submodule_admin_paths(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
@@ -1844,6 +1856,287 @@ fn submodule_admin_paths(target: &CleanTarget) -> Result<SubmoduleAdminPaths, St
         in_progress: git_dir.join("release-worktree.in-progress"),
         path_fence: git_dir.join("release-worktree.path-fence.json"),
     })
+}
+
+fn tracked_gitlink_paths(target: &Path) -> Result<Vec<PathBuf>, String> {
+    let output = git_output(target, &["ls-files", "--stage", "-z"])?;
+    if !output.status.success() {
+        return Err(format!(
+            "could not enumerate tracked gitlinks below {} (exit {}): {}",
+            target.display(),
+            output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let mut paths = Vec::new();
+    for record in output.stdout.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+            return Err(format!(
+                "malformed index record while enumerating gitlinks below {}",
+                target.display()
+            ));
+        };
+        let header = std::str::from_utf8(&record[..tab]).map_err(|_| {
+            format!(
+                "non-UTF8 index metadata while enumerating gitlinks below {}",
+                target.display()
+            )
+        })?;
+        let fields: Vec<&str> = header.split_ascii_whitespace().collect();
+        if fields.len() != 3 {
+            return Err(format!(
+                "malformed index metadata while enumerating gitlinks below {}",
+                target.display()
+            ));
+        }
+        if fields[0] != "160000" {
+            continue;
+        }
+        if fields[2] != "0" {
+            return Err(format!(
+                "unmerged gitlink stage {} below {}; refusing fallback",
+                fields[2],
+                target.display()
+            ));
+        }
+        let path = std::str::from_utf8(&record[tab + 1..]).map_err(|_| {
+            format!(
+                "tracked gitlink below {} has a non-UTF8 path",
+                target.display()
+            )
+        })?;
+        let relative = PathBuf::from(path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(format!(
+                "tracked gitlink path {path:?} below {} is not normalized",
+                target.display()
+            ));
+        }
+        paths.push(relative);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// Prove the narrow state for which Git's linked-worktree move restriction is
+/// an implementation obstacle rather than evidence of live nested work.
+fn verify_fully_deinitialized_submodules(
+    target: &CleanTarget,
+    paths: &SubmoduleAdminPaths,
+) -> Result<(), String> {
+    let repositories = initialized_repositories(&target.path)?;
+    if repositories.len() != 1 || repositories[0] != target.path {
+        return Err(format!(
+            "submodule move fallback requires every nested repository to be deinitialized; found {} initialized repository path(s)",
+            repositories.len().saturating_sub(1)
+        ));
+    }
+    let status = git_inspect(
+        &target.path,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    )?;
+    if !status.is_empty() {
+        return Err(format!(
+            "submodule move fallback requires a clean outer worktree: {}",
+            status.replace('\n', "; ")
+        ));
+    }
+    let gitlinks = tracked_gitlink_paths(&target.path)?;
+    if gitlinks.is_empty() {
+        return Err(format!(
+            "Git reported a submodule move refusal for {}, but its index has no gitlinks",
+            target.path.display()
+        ));
+    }
+    let submodule_status = git_inspect(&target.path, &["submodule", "status", "--recursive"])?;
+    let status_lines: Vec<&str> = submodule_status.lines().collect();
+    if status_lines.len() != gitlinks.len()
+        || status_lines
+            .iter()
+            .any(|line| !line.as_bytes().first().is_some_and(|byte| *byte == b'-'))
+    {
+        return Err(format!(
+            "submodule move fallback requires {} fully deinitialized gitlink(s); observed status {:?}",
+            gitlinks.len(),
+            status_lines
+        ));
+    }
+    for relative in gitlinks {
+        let path = target.path.join(&relative);
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                let mut entries = fs::read_dir(&path).map_err(|error| {
+                    format!(
+                        "could not inspect deinitialized submodule path {}: {error}",
+                        path.display()
+                    )
+                })?;
+                if entries
+                    .next()
+                    .transpose()
+                    .map_err(|error| {
+                        format!(
+                            "could not inspect deinitialized submodule path {}: {error}",
+                            path.display()
+                        )
+                    })?
+                    .is_some()
+                {
+                    return Err(format!(
+                        "deinitialized submodule path {} is not empty; refusing fallback",
+                        path.display()
+                    ));
+                }
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "deinitialized submodule path {} is not an exact empty directory",
+                    path.display()
+                ))
+            }
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect deinitialized submodule path {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    match fs::symlink_metadata(&paths.modules) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
+            return Err(format!(
+                "deinitialized submodule admin {} is not an exact directory",
+                paths.modules.display()
+            ))
+        }
+        Err(error) => {
+            return Err(format!(
+                "deinitialized submodule admin {} is unavailable: {error}",
+                paths.modules.display()
+            ))
+        }
+    }
+    for path in [
+        &paths.in_progress,
+        &paths.quarantine,
+        &paths.force_fence_quarantine,
+    ] {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(format!(
+                    "deinitialized submodule admin conflicts with transaction artifact {}",
+                    path.display()
+                ))
+            }
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect deinitialized submodule admin artifact {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn worktree_registration_counts(
+    primary: &Path,
+    original: &Path,
+    fenced: &Path,
+) -> Result<(usize, usize), String> {
+    let listing = git_inspect(primary, &["worktree", "list", "--porcelain"])?;
+    let mut original_count = 0;
+    let mut fenced_count = 0;
+    for candidate in listing
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+    {
+        let candidate = Path::new(candidate);
+        if candidate == original {
+            original_count += 1;
+        }
+        if candidate == fenced {
+            fenced_count += 1;
+        }
+    }
+    Ok((original_count, fenced_count))
+}
+
+fn require_worktree_registrations(
+    target: &CleanTarget,
+    fenced: &Path,
+    expected: (usize, usize),
+    boundary: &str,
+) -> Result<(), String> {
+    let observed = worktree_registration_counts(&target.primary, &target.path, fenced)?;
+    if observed != expected {
+        return Err(format!(
+            "{boundary} worktree registration mismatch for {}: original={} fenced={} expected={}/{}",
+            target.label, observed.0, observed.1, expected.0, expected.1
+        ));
+    }
+    Ok(())
+}
+
+fn require_same_device_for_rename(from: &Path, to: &Path) -> Result<(), String> {
+    let source = fs::symlink_metadata(from)
+        .map_err(|error| format!("inspect rename source {}: {error}", from.display()))?;
+    if !source.is_dir() || source.file_type().is_symlink() {
+        return Err(format!(
+            "atomic path fence source {} is not an exact directory",
+            from.display()
+        ));
+    }
+    let parent = to.parent().ok_or_else(|| {
+        format!(
+            "atomic path fence destination {} has no parent",
+            to.display()
+        )
+    })?;
+    let destination_parent = fs::symlink_metadata(parent).map_err(|error| {
+        format!(
+            "inspect atomic path fence destination parent {}: {error}",
+            parent.display()
+        )
+    })?;
+    if source.dev() != destination_parent.dev() {
+        return Err(format!(
+            "atomic path fence refuses cross-device rename {} -> {} (device {} != {})",
+            from.display(),
+            to.display(),
+            source.dev(),
+            destination_parent.dev()
+        ));
+    }
+    Ok(())
+}
+
+fn verify_fenced_path(path: &Path) -> Result<(), String> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("canonicalize fenced target {}: {error}", path.display()))?;
+    if canonical != path {
+        return Err(format!(
+            "fenced target {} resolves to unexpected {}",
+            path.display(),
+            canonical.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Atomically rename without replacing any concurrently created destination.
@@ -2016,9 +2309,7 @@ fn recover_submodule_cleanup(target: &CleanTarget) -> Result<bool, String> {
 
 /// Mark the transaction before deinitialization changes what the next process
 /// can enumerate. Any later error intentionally leaves this marker in place.
-fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
-    ensure_no_submodule_cleanup_artifacts(target)?;
-    let paths = submodule_admin_paths(target)?;
+fn create_submodule_cleanup_marker(paths: &SubmoduleAdminPaths) -> Result<(), String> {
     let mut marker = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -2038,7 +2329,62 @@ fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, 
                 paths.in_progress.display()
             )
         })?;
+    fs::File::open(
+        paths
+            .in_progress
+            .parent()
+            .expect("submodule-cleanup marker has an admin parent"),
+    )
+    .and_then(|directory| directory.sync_all())
+    .map_err(|error| {
+        format!(
+            "could not persist submodule-cleanup directory entry {}: {error}; retain slot for recovery",
+            paths.in_progress.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn begin_submodule_cleanup(target: &CleanTarget) -> Result<SubmoduleAdminPaths, String> {
+    ensure_no_submodule_cleanup_artifacts(target)?;
+    let paths = submodule_admin_paths(target)?;
+    create_submodule_cleanup_marker(&paths)?;
     Ok(paths)
+}
+
+/// The atomic path-fence fallback is entered only after Git itself reports its
+/// exact "contains submodules" move refusal. At that point the target has
+/// already been proved fully deinitialized and repaired at the fenced path.
+/// Create the same crash-recoverable admin transaction as the initialized
+/// path, while permitting the path-fence marker that causally authorized it.
+fn begin_deinitialized_submodule_cleanup(
+    paths: &SubmoduleAdminPaths,
+    original: &Path,
+    fenced: &Path,
+) -> Result<(), String> {
+    for path in [
+        &paths.in_progress,
+        &paths.quarantine,
+        &paths.force_fence_quarantine,
+    ] {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(format!(
+                    "deinitialized-submodule fallback found conflicting admin artifact {}",
+                    path.display()
+                ))
+            }
+            Err(error) => {
+                return Err(format!(
+                    "could not inspect deinitialized-submodule admin artifact {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    validate_path_fence_marker(paths, original, fenced)?;
+    create_submodule_cleanup_marker(paths)
 }
 
 fn maybe_inject_fixture_crash(marker: Option<&Path>, evidence: &str) -> Result<(), String> {
@@ -2283,7 +2629,7 @@ fn validate_path_fence_marker(
     paths: &SubmoduleAdminPaths,
     original: &Path,
     fenced: &Path,
-) -> Result<(), String> {
+) -> Result<PathFenceMethod, String> {
     let raw = fs::read_to_string(&paths.path_fence).map_err(|error| {
         format!(
             "read path-fence marker {}: {error}",
@@ -2292,8 +2638,7 @@ fn validate_path_fence_marker(
     })?;
     let marker: Value =
         serde_json::from_str(&raw).map_err(|error| format!("parse path-fence marker: {error}"))?;
-    if marker["schema_version"].as_u64() != Some(1)
-        || marker["original"].as_str() != original.to_str()
+    if marker["original"].as_str() != original.to_str()
         || marker["fenced"].as_str() != fenced.to_str()
     {
         return Err(format!(
@@ -2301,10 +2646,147 @@ fn validate_path_fence_marker(
             paths.path_fence.display()
         ));
     }
+    match marker["schema_version"].as_u64() {
+        Some(1) => Ok(PathFenceMethod::GitWorktreeMove),
+        Some(2)
+            if marker["method"].as_str() == Some("atomic-rename-repair")
+                && matches!(
+                    marker["phase"].as_str(),
+                    Some("prepared" | "renamed" | "repaired")
+                )
+                && marker["admin"].as_str() == paths.path_fence.parent().and_then(Path::to_str) =>
+        {
+            Ok(PathFenceMethod::AtomicRenameRepair)
+        }
+        _ => Err(format!(
+            "path-fence marker {} has unsupported schema/method/phase/admin binding",
+            paths.path_fence.display()
+        )),
+    }
+}
+
+fn persist_atomic_path_fence_marker(
+    paths: &SubmoduleAdminPaths,
+    original: &Path,
+    fenced: &Path,
+    phase: &str,
+) -> Result<(), String> {
+    let marker = json!({
+        "schema_version": 2,
+        "original": original.to_string_lossy(),
+        "fenced": fenced.to_string_lossy(),
+        "method": "atomic-rename-repair",
+        "phase": phase,
+        "admin": paths
+            .path_fence
+            .parent()
+            .expect("path-fence marker has an admin parent")
+            .to_string_lossy(),
+    });
+    let mut bytes = serde_json::to_vec(&marker)
+        .map_err(|error| format!("serialize atomic path-fence marker: {error}"))?;
+    bytes.push(b'\n');
+    durable_replace(&paths.path_fence, &bytes)
+        .map_err(|error| format!("persist atomic path-fence marker: {error}"))
+}
+
+fn git_failure_message(dir: &Path, args: &[&str], output: &Output) -> String {
+    format!(
+        "git -C {} {} failed (exit {}): {}",
+        dir.display(),
+        args.join(" "),
+        output
+            .status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "signal".to_string()),
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
+}
+
+fn is_exact_submodule_move_refusal(output: &Output) -> bool {
+    !output.status.success()
+        && String::from_utf8_lossy(&output.stderr).lines().any(|line| {
+            line.trim() == "fatal: working trees containing submodules cannot be moved or removed"
+        })
+}
+
+fn begin_atomic_path_fence(
+    target: &CleanTarget,
+    fenced: &Path,
+    paths: &SubmoduleAdminPaths,
+    crash_after_rename: Option<&Path>,
+) -> Result<(), String> {
+    verify_fully_deinitialized_submodules(target, paths)?;
+    require_worktree_registrations(target, fenced, (1, 0), "pre-fallback")?;
+    let expected_admin = linked_worktree_admin(target)?;
+    if expected_admin != paths.path_fence.parent().unwrap() {
+        return Err(format!(
+            "atomic path fence admin mismatch for {}: {} != {}",
+            target.path.display(),
+            expected_admin.display(),
+            paths.path_fence.parent().unwrap().display()
+        ));
+    }
+    require_same_device_for_rename(&target.path, fenced)?;
+    persist_atomic_path_fence_marker(paths, &target.path, fenced, "prepared")?;
+    rename_no_replace(&target.path, fenced).map_err(|error| {
+        format!(
+            "atomic path fence rename {} -> {} failed: {error}",
+            target.path.display(),
+            fenced.display()
+        )
+    })?;
+    persist_atomic_path_fence_marker(paths, &target.path, fenced, "renamed")?;
+    if exact_path_present(&target.path)? || !exact_path_present(fenced)? {
+        return Err(format!(
+            "atomic path fence did not establish exact original/fenced presence for {}",
+            target.label
+        ));
+    }
+    verify_fenced_path(fenced)?;
+    require_worktree_registrations(target, fenced, (1, 0), "post-rename/pre-repair")?;
+    let moved_target = CleanTarget {
+        path: fenced.to_path_buf(),
+        ..target.clone()
+    };
+    let observed_admin = linked_worktree_admin(&moved_target)?;
+    if observed_admin != expected_admin {
+        return Err(format!(
+            "atomic path fence changed linked-worktree admin identity: {} != {}",
+            observed_admin.display(),
+            expected_admin.display()
+        ));
+    }
+    maybe_inject_fixture_crash(
+        crash_after_rename,
+        "post-atomic-path-fence-rename crash injected",
+    )?;
+    let fenced_text = fenced.to_string_lossy().into_owned();
+    git_inspect(&target.primary, &["worktree", "repair", &fenced_text])?;
+    require_worktree_registrations(target, fenced, (0, 1), "post-repair")?;
+    let repaired_admin = linked_worktree_admin(&moved_target)?;
+    if repaired_admin != expected_admin {
+        return Err(format!(
+            "git worktree repair rebound unexpected admin: {} != {}",
+            repaired_admin.display(),
+            expected_admin.display()
+        ));
+    }
+    persist_atomic_path_fence_marker(paths, &target.path, fenced, "repaired")?;
+    eprintln!(
+        "✓ fenced {} through exact submodule-refusal atomic rename + verified git worktree repair",
+        target.path.display()
+    );
     Ok(())
 }
 
-fn begin_path_fence(target: &CleanTarget, fenced: &Path) -> Result<SubmoduleAdminPaths, String> {
+fn begin_path_fence(
+    target: &CleanTarget,
+    fenced: &Path,
+    allow_deinitialized_fallback: bool,
+    crash_after_fallback_rename: Option<&Path>,
+) -> Result<PathFenceResult, String> {
     match fs::symlink_metadata(fenced) {
         Err(error) if error.kind() == ErrorKind::NotFound => {}
         Ok(_) => {
@@ -2355,27 +2837,130 @@ fn begin_path_fence(target: &CleanTarget, fenced: &Path) -> Result<SubmoduleAdmi
 
     let original = target.path.to_string_lossy().into_owned();
     let fenced_text = fenced.to_string_lossy().into_owned();
-    git_inspect(
-        &target.primary,
-        &["worktree", "move", &original, &fenced_text],
-    )?;
+    let args = ["worktree", "move", &original, &fenced_text];
+    let output = git_output(&target.primary, &args)?;
+    let deinitialized_submodule_fallback = if output.status.success() {
+        false
+    } else if allow_deinitialized_fallback && is_exact_submodule_move_refusal(&output) {
+        begin_atomic_path_fence(target, fenced, &paths, crash_after_fallback_rename)?;
+        true
+    } else {
+        return Err(git_failure_message(&target.primary, &args, &output));
+    };
     if target.path.exists() {
         return Err(format!(
             "canonical target {} still exists after path fence",
             target.path.display()
         ));
     }
-    let canonical_fenced = fs::canonicalize(fenced)
-        .map_err(|error| format!("canonicalize fenced target {}: {error}", fenced.display()))?;
-    if canonical_fenced != fenced {
+    verify_fenced_path(fenced)?;
+    validate_path_fence_marker(&paths, &target.path, fenced)?;
+    Ok(PathFenceResult {
+        paths,
+        deinitialized_submodule_fallback,
+    })
+}
+
+fn restore_atomic_path_fence(
+    target: &CleanTarget,
+    fenced: &Path,
+    paths: &SubmoduleAdminPaths,
+) -> Result<(), String> {
+    if validate_path_fence_marker(paths, &target.path, fenced)?
+        != PathFenceMethod::AtomicRenameRepair
+    {
+        return Err("atomic path-fence recovery received a non-atomic marker".to_string());
+    }
+    let expected_admin = paths
+        .path_fence
+        .parent()
+        .expect("path-fence marker has an admin parent")
+        .to_path_buf();
+    let original_present = exact_path_present(&target.path)?;
+    let fenced_present = exact_path_present(fenced)?;
+    let registrations = worktree_registration_counts(&target.primary, &target.path, fenced)?;
+    match (original_present, fenced_present) {
+        (false, true) => {
+            if registrations != (1, 0) && registrations != (0, 1) {
+                return Err(format!(
+                    "atomic path-fence recovery registration mismatch before restore: original={} fenced={}",
+                    registrations.0, registrations.1
+                ));
+            }
+            let fenced_target = CleanTarget {
+                path: fenced.to_path_buf(),
+                ..target.clone()
+            };
+            let observed_admin = linked_worktree_admin(&fenced_target)?;
+            if observed_admin != expected_admin {
+                return Err(format!(
+                    "atomic path-fence recovery admin mismatch: {} != {}",
+                    observed_admin.display(),
+                    expected_admin.display()
+                ));
+            }
+            require_same_device_for_rename(fenced, &target.path)?;
+            rename_no_replace(fenced, &target.path).map_err(|error| {
+                format!(
+                    "atomic path-fence restore {} -> {} failed: {error}",
+                    fenced.display(),
+                    target.path.display()
+                )
+            })?;
+            if registrations == (0, 1) {
+                let original = target.path.to_string_lossy().into_owned();
+                git_inspect(&target.primary, &["worktree", "repair", &original])?;
+            }
+        }
+        (true, false) => {
+            if registrations == (0, 1) {
+                let original = target.path.to_string_lossy().into_owned();
+                git_inspect(&target.primary, &["worktree", "repair", &original])?;
+            } else if registrations != (1, 0) {
+                return Err(format!(
+                    "atomic path-fence recovery registration mismatch at canonical path: original={} fenced={}",
+                    registrations.0, registrations.1
+                ));
+            }
+        }
+        (true, true) => {
+            return Err(format!(
+                "both canonical and fenced targets exist during atomic recovery: {}, {}",
+                target.path.display(),
+                fenced.display()
+            ))
+        }
+        (false, false) => {
+            return Err(format!(
+                "both canonical and fenced targets are absent during atomic recovery: {}, {}",
+                target.path.display(),
+                fenced.display()
+            ))
+        }
+    }
+    if !exact_path_present(&target.path)? || exact_path_present(fenced)? {
+        return Err("atomic path-fence recovery did not restore exact path presence".to_string());
+    }
+    verify_fenced_path(&target.path)?;
+    require_worktree_registrations(target, fenced, (1, 0), "post-restore")?;
+    let observed_admin = linked_worktree_admin(target)?;
+    if observed_admin != expected_admin {
         return Err(format!(
-            "fenced target {} resolves to unexpected {}",
-            fenced.display(),
-            canonical_fenced.display()
+            "atomic path-fence recovery rebound unexpected admin: {} != {}",
+            observed_admin.display(),
+            expected_admin.display()
         ));
     }
-    validate_path_fence_marker(&paths, &target.path, fenced)?;
-    Ok(paths)
+    fs::remove_file(&paths.path_fence).map_err(|error| {
+        format!(
+            "clear rolled-back path-fence marker {}: {error}",
+            paths.path_fence.display()
+        )
+    })?;
+    fs::File::open(&expected_admin)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("persist atomic path-fence marker removal: {error}"))?;
+    Ok(())
 }
 
 fn rollback_path_fence(
@@ -2383,19 +2968,24 @@ fn rollback_path_fence(
     fenced: &Path,
     paths: &SubmoduleAdminPaths,
 ) -> Result<(), String> {
-    let fenced_text = fenced.to_string_lossy().into_owned();
-    let original = target.path.to_string_lossy().into_owned();
-    git_inspect(
-        &target.primary,
-        &["worktree", "move", &fenced_text, &original],
-    )?;
-    fs::remove_file(&paths.path_fence).map_err(|error| {
-        format!(
-            "clear rolled-back path-fence marker {}: {error}",
-            paths.path_fence.display()
-        )
-    })?;
-    Ok(())
+    match validate_path_fence_marker(paths, &target.path, fenced)? {
+        PathFenceMethod::GitWorktreeMove => {
+            let fenced_text = fenced.to_string_lossy().into_owned();
+            let original = target.path.to_string_lossy().into_owned();
+            git_inspect(
+                &target.primary,
+                &["worktree", "move", &fenced_text, &original],
+            )?;
+            fs::remove_file(&paths.path_fence).map_err(|error| {
+                format!(
+                    "clear rolled-back path-fence marker {}: {error}",
+                    paths.path_fence.display()
+                )
+            })?;
+            Ok(())
+        }
+        PathFenceMethod::AtomicRenameRepair => restore_atomic_path_fence(target, fenced, paths),
+    }
 }
 
 fn journal_target(
@@ -3881,11 +4471,16 @@ fn recover_path_fence(root: &Path, state: &Value, slot: &str) -> Result<PathFenc
         (true, false) => {
             let paths = submodule_admin_paths(&target)?;
             match fs::symlink_metadata(&paths.path_fence) {
-                Ok(_) => {
-                    validate_path_fence_marker(&paths, &target.path, &fenced)?;
-                    fs::remove_file(&paths.path_fence)
-                        .map_err(|error| format!("clear recovered path-fence marker: {error}"))?;
-                }
+                Ok(_) => match validate_path_fence_marker(&paths, &target.path, &fenced)? {
+                    PathFenceMethod::GitWorktreeMove => {
+                        fs::remove_file(&paths.path_fence).map_err(|error| {
+                            format!("clear recovered path-fence marker: {error}")
+                        })?;
+                    }
+                    PathFenceMethod::AtomicRenameRepair => {
+                        restore_atomic_path_fence(&target, &fenced, &paths)?;
+                    }
+                },
                 Err(error) if error.kind() == ErrorKind::NotFound => {}
                 Err(error) => return Err(format!("inspect path-fence marker: {error}")),
             }
@@ -3897,15 +4492,21 @@ fn recover_path_fence(root: &Path, state: &Value, slot: &str) -> Result<PathFenc
                 ..target.clone()
             };
             let paths = submodule_admin_paths(&fenced_target)?;
-            validate_path_fence_marker(&paths, &target.path, &fenced)?;
-            let fenced_text = fenced.to_string_lossy().into_owned();
-            let original = target.path.to_string_lossy().into_owned();
-            git_inspect(
-                &target.primary,
-                &["worktree", "move", &fenced_text, &original],
-            )?;
-            fs::remove_file(&paths.path_fence)
-                .map_err(|error| format!("clear recovered path-fence marker: {error}"))?;
+            match validate_path_fence_marker(&paths, &target.path, &fenced)? {
+                PathFenceMethod::GitWorktreeMove => {
+                    let fenced_text = fenced.to_string_lossy().into_owned();
+                    let original = target.path.to_string_lossy().into_owned();
+                    git_inspect(
+                        &target.primary,
+                        &["worktree", "move", &fenced_text, &original],
+                    )?;
+                    fs::remove_file(&paths.path_fence)
+                        .map_err(|error| format!("clear recovered path-fence marker: {error}"))?;
+                }
+                PathFenceMethod::AtomicRenameRepair => {
+                    restore_atomic_path_fence(&target, &fenced, &paths)?;
+                }
+            }
             paths
         }
         (true, true) => {
@@ -3982,8 +4583,10 @@ fn remove_target(
     let crash_marker = restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_DEINIT")?;
     let fence_crash_marker =
         restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_PATH_FENCE")?;
+    let fallback_rename_crash_marker =
+        restricted_fixture_path(root, "HERMIT_RELEASE_TEST_CRASH_AFTER_FALLBACK_RENAME")?;
     ensure_no_submodule_cleanup_artifacts(target)?;
-    let submodule_cleanup = if !allow_dirty && repositories.len() > 1 {
+    let mut submodule_cleanup = if !allow_dirty && repositories.len() > 1 {
         let paths = begin_submodule_cleanup(target)?;
         git_inspect(&target.path, &["submodule", "deinit", "--all"])?;
         Some(paths)
@@ -4033,7 +4636,25 @@ fn remove_target(
     // moved inode and is visible below; a later canonical acquisition receives
     // ENOENT. The lifecycle lock separately excludes supported container
     // creation across this interval.
-    let fence_paths = begin_path_fence(target, fenced)?;
+    let fence_result = begin_path_fence(
+        target,
+        fenced,
+        !allow_dirty,
+        fallback_rename_crash_marker.as_deref(),
+    )?;
+    let fence_paths = fence_result.paths;
+    if fence_result.deinitialized_submodule_fallback {
+        if submodule_cleanup.is_some() || force_fence_admin {
+            return Err(
+                "deinitialized-submodule path fallback conflicted with initialized/force admin state"
+                    .to_string(),
+            );
+        }
+        begin_deinitialized_submodule_cleanup(&fence_paths, &target.path, fenced)?;
+        quarantine_submodule_admin(&fence_paths)?;
+        maybe_inject_fixture_crash(crash_marker.as_deref(), "post-deinit crash injected")?;
+        submodule_cleanup = Some(fence_paths.clone());
+    }
     maybe_inject_fixture_crash(
         fence_crash_marker.as_deref(),
         "post-path-fence crash injected",

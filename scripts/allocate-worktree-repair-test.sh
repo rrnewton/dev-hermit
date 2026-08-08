@@ -264,4 +264,86 @@ grep -Fq 'slot ok71 has an unfinished release transaction' "$root/releasing-adop
 [[ $(sha256sum "$root/worktree-state.json") == "$journal_hash" ]] \
   || { echo 'FAIL: refused re-adoption mutated the release journal' >&2; exit 1; }
 
-echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved and parent-ascent/path-alias residue skipped/refused; CONTROL: 1/1 correct row untouched; release journal isolated from repair/re-adoption; human content preserved; idempotent)"
+
+# --- COORDINATOR-LEASE-REVOCATION PHASE GATE -------------------------------
+# A revocation journal is an IN-FLIGHT TRANSACTION marker, not an audit record:
+# its siblings (release_journal, orphan_residue_journal) delete themselves on
+# completion, and arm_coordinator_lease_revocation moves no file, so a revocation
+# can never create the fenced-checkout hazard this guard exists for. Blocking on
+# the journal's mere PRESENCE made every completed revocation a permanent,
+# undischargeable veto over repair for the WHOLE registry. Bracket all three ways.
+# First retire the ok71 release journal so it is not the thing refusing below.
+mv "$fenced" "$root/worktrees/ok71/hermit"
+python3 - "$root/worktree-state.json" <<'RETIRE_OK71'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+record = state["slots"]["ok71"]
+record.pop("release_journal", None)
+record["status"] = "active"
+path.write_text(json.dumps(state, indent=2) + "\n")
+RETIRE_OK71
+
+plant_revocation() {  # $1 = journal phase
+  python3 - "$root/worktree-state.json" "$1" <<'PLANT_REVOCATION'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+state = json.loads(path.read_text())
+state["slots"]["drift70"]["coordinator_lease_revocation"] = {
+    "schema_version": 1,
+    "source": "codex-systemd-sentinel-v1",
+    "phase": sys.argv[2],
+    "lease": {"slot": "drift70", "unit": "fixture.service"},
+}
+path.write_text(json.dumps(state, indent=2) + "\n")
+PLANT_REVOCATION
+}
+
+# NEGATIVE 1/2 -- an UNFINISHED revocation must still refuse.
+plant_revocation stop-authorized
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair) \
+    >"$root/revoke-unfinished.out" 2>&1; then
+  echo 'FAIL: repair ran despite an unfinished coordinator lease revocation' >&2; exit 1
+fi
+grep -Fq 'require guarded recovery: drift70' "$root/revoke-unfinished.out" \
+  || { echo 'FAIL: repair did not name the unfinished revocation slot' >&2; \
+       cat "$root/revoke-unfinished.out" >&2; exit 1; }
+
+# POSITIVE -- a FINISHED revocation on a clean slot is skipped; repair completes.
+plant_revocation revoked
+if ! (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair) \
+    >"$root/revoke-finished.out" 2>&1; then
+  echo 'FAIL: repair still refused a completed (phase=revoked) revocation' >&2
+  cat "$root/revoke-finished.out" >&2; exit 1
+fi
+python3 - "$root/worktree-state.json" <<'ASSERT_PRESERVED'
+import json
+import pathlib
+import sys
+
+state = json.loads(pathlib.Path(sys.argv[1]).read_text())
+journal = state["slots"]["drift70"].get("coordinator_lease_revocation")
+if journal is None:
+    raise SystemExit("FAIL: repair ERASED the revocation journal; it must only skip it")
+if journal.get("phase") != "revoked":
+    raise SystemExit("FAIL: repair mutated the revocation journal phase")
+ASSERT_PRESERVED
+
+# NEGATIVE 2/2 -- finished, but the slot holds uncommitted work: still refused.
+echo dirty >"$root/worktrees/drift70/hermit/uncommitted-file"
+if (cd "$root" && "$root/scripts/allocate-worktree.rs" --repair) \
+    >"$root/revoke-dirty.out" 2>&1; then
+  echo 'FAIL: repair skipped a revoked journal whose slot has uncommitted work' >&2; exit 1
+fi
+grep -Fq 'require guarded recovery: drift70' "$root/revoke-dirty.out" \
+  || { echo 'FAIL: dirty-slot refusal did not name the slot' >&2; \
+       cat "$root/revoke-dirty.out" >&2; exit 1; }
+rm -f "$root/worktrees/drift70/hermit/uncommitted-file"
+
+echo "allocate-worktree-repair-test: PASS (POSITIVE: 1 planted drift reconciled -> 0 drift; NEGATIVE: unpushed branch ref preserved and parent-ascent/path-alias residue skipped/refused; CONTROL: 1/1 correct row untouched; release journal isolated from repair/re-adoption; revocation phase gate bracketed 3 ways [unfinished REFUSED, finished+clean SKIPPED with journal preserved, finished+dirty REFUSED]; human content preserved; idempotent)"

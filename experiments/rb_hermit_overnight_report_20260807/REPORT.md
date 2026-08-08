@@ -45,6 +45,9 @@ and blocked on a fleet-wide CI outage, not on our work.
 - **Nix real nixpkgs: N=0** of 13 measurable. Not a determinization failure — a compatibility one.
   With two of three blockers fixed, `lensfun` now clears cmake configure, build **and** install and
   hangs in `fixupPhase`. **The remaining distance is one bug, not a category.**
+  *(Corrected 2026-08-08 — see the second postscript. That bug is smaller in surface
+  and harder in kind than this line implies: its real blocker is scheduler fairness,
+  not syscall coverage.)*
 - **buck2: 0 of 8** fleet-flagged targets reproduced their nondeterminism locally, over 3,287
   executed actions per round. This is the **expected** outcome, not a null one: a same-host A/B
   cannot reproduce cross-environment nondeterminism by construction. It narrows what the fleet's
@@ -91,6 +94,32 @@ ESPIPE while `read` returns data — `/proc/net/*` are single-release seq_files.
 own first framing of the bug**, which called it "ESPIPE on a seekable file"; I had not tested the
 seek natively. *A stable main-red is more dangerous than a flaky one: every subsequent commit
 inherits it, and each draws a revert recommendation that reverting cannot fix.*
+
+**Second postscript, 2026-08-08 — one headline claim corrected, one measurement authority corrected.**
+
+*The Nix blocker is not "one bug" in the sense that line implies.* I attacked the write side
+of the `openat`-on-FIFO deadlock (defect-class instance 3) and both obstacles the design note
+named dissolved: `handle_openat` can call the retry helper directly and bypass the fd-keyed
+dispatch, and `syscall_would_have_blocked` is an overridable trait method, so recognising
+`ENXIO` is a three-line `impl`. The resulting patch compiles, is confirmed live
+(`arg2: 2049` = `O_WRONLY|O_NONBLOCK`), and **still deadlocks** — because the retrying writer
+takes **309,428** scheduler turns while the peer that would unblock it takes **3**.
+Yield-and-retry is only sound if yielding lets the peer run; here it is a busy-wait that
+guarantees its own precondition can never be met. So the original DECLINE was right for a
+reason it never stated: the blocker is **scheduler fairness**, and the waiter must be
+*descheduled until the peer acts*, not polled. Full record and a 10-line reproducer that
+deadlocks in one second — replacing the nixpkgs `fixupPhase` build as the way to exercise
+this — in `openat-fifo-write-side-retry_20260808` (`2ec5eec7`).
+
+*Correction to §5.9's disk guidance.* The advice to prefer `btrfs filesystem du -s` over `du`
+stands, but it is incomplete in a way that misled me repeatedly: **btrfs releases extents
+asynchronously over minutes**, so free space measured immediately after a delete understates
+recovery badly. One truncation pass read `+2 GB`, then `+7 GB`, then **`+135 GB`** once it
+settled. I twice concluded from the early reading that `Exclusive` "over-predicts" freed
+space. It does not — the number was right and my *timing* was wrong. Wait minutes and
+re-measure. Separately, for compressed files **both** `du` and `btrfs du` report *logical*
+size: two log files showed 1.1 TB each on a 952 GB filesystem. Where compression is in play the
+only trustworthy signal is the observed `df` trend, cross-checked against `iotop` attribution.
 
 **The methodological through-line.** Nearly every significant finding tonight came from refusing to
 let a status word stand in for the thing it claimed: `UNIONED` that preserved nothing, a scorecard

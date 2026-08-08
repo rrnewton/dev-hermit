@@ -57,7 +57,12 @@ run_case() {
   shift || true
 
   local repo="$TMPROOT/repo.$$.$RANDOM"; mkdir -p "$repo/.githooks"
-  git -C "$repo" init -q 2>/dev/null
+  # NOT on `main`. The hook's first gate is the parent-main serialization check,
+  # which refuses when scripts/parent-main-write is absent -- so in a fixture on
+  # `main` EVERY case refuses. That silently inerted all ten `allow` cases here,
+  # including both escape hatches, leaving the refusals unfalsifiable. Measured
+  # 2026-08-08: 8 passed / 10 failed both before and after an unrelated change.
+  git -C "$repo" init -q -b probe 2>/dev/null
   git -C "$repo" config user.email w10@test.local
   git -C "$repo" config user.name  "binary guard bracket"
   git -C "$repo" config core.hooksPath .githooks

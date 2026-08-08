@@ -64,6 +64,55 @@ Runtime state (all machine-local, gitignored):
 `validate-lock` uses the identical cleanup-authority suffixes beside
 `.validate-lock`; all four cleanup files are root-anchored in `.gitignore`.
 
+## Before staging a coalesce wave: screen the constituents
+
+A wave is selected by "ready and conflict-free". Neither property says whether a
+change was **deliberately refused**, and the constituent list is written by hand
+into the wave body, so a closed-on-the-merits change folded into a staging branch
+lands under the wave's single approval. Run this **before** building the staging
+branch, while dropping a constituent is still free:
+
+```bash
+python3 ci-hub/landing/coalesce_guard.py --repo rrnewton/hermit \
+    --gh-cmd "with-proxy gh" --wrap "agent-utils/bin/herdr-run --agent <you>" \
+    1622 1549 1470 ...          # the exact constituent list
+# exit 0 = every constituent may be folded
+# exit 3 = REFUSED; the output names each refused PR and why
+```
+
+`--wrap` is needed only on the sandbox egress path; plain `--gh-cmd "with-proxy gh"`
+works where `gh` can reach GitHub directly.
+
+**It is fail-closed, and that is the point.** Three outcomes:
+
+| verdict | meaning | what to do |
+| --- | --- | --- |
+| `ALLOW_SUPERSEDED` | the close names a successor that carries the work | fold it |
+| `REFUSE_MERITS` | an owner decided it must not land | **drop it from the wave** |
+| `REFUSE_UNKNOWN` | the close is unannotated | read the close, annotate, re-run |
+
+**A `REFUSE_UNKNOWN` is not a bug and not a reason to disable the guard.** It
+means nobody has yet recorded whether that close was a supersession or a
+rejection. The fix is one row in
+[`closed_pr_dispositions.tsv`](closed_pr_dispositions.tsv) naming the successor
+or the reason — then re-run. The 45 unannotated closes outstanding on 2026-08-07
+have already been classified, so a 46th appearing is the *normal* steady-state
+cost of a new close, not an outage. Disabling the guard to get past one converts
+a one-line annotation into a silent re-land.
+
+Why fail closed at all: wrongly refusing costs a sentence naming the successor;
+wrongly allowing re-lands work an owner spent review effort rejecting, inside a
+batch whose single approval hides it.
+
+**This is prevention, not remediation.** PR #1633 was cited as an occurrence and
+is **not** one — all 23 of its constituents were closed 3–5 minutes *after* it
+merged, each with "LANDED via coalesce batch-2". The exposure is real; there is
+no confirmed instance of it firing.
+
+Scope: the guard proves *an owner pointed somewhere else*, **not** *the work is
+on main*. Ancestry verification owns that second claim; do not read an
+`ALLOW_SUPERSEDED` as proof the successor landed.
+
 ## Usage
 
 ```bash
@@ -199,8 +248,9 @@ never wedges a land:
    `--gate-deadline` (default 1080s), then ABANDON with the last event, run ID,
    URL, and state.
 2. **The merge command is the mergeability arbiter** — do not gate on
-   `mergeStateStatus` (it sticks at `UNKNOWN`); attempt `gh pr merge --rebase` in
-   a bounded retry loop, which forces GitHub to recompute mergeability.
+   `mergeStateStatus` (it sticks at `UNKNOWN`). Attempt `gh pr merge --rebase`
+   once under the freshly evaluated final-boundary verdict. A refusal reruns the
+   gate so mutable-tip evidence cannot age inside a merge retry loop.
 3. **Treat the label only as a cache** —
    `exact-head-validation-authority.sh` independently queries the counted local
    receipt and the versioned hosted job set. Either qualifying exact-head green
@@ -215,7 +265,8 @@ never wedges a land:
    positive remains independently sufficient. Missing, forged, stale, tampered,
    zero-executed, partial, or contradictory evidence refuses the landing before
    any merge call. The merge itself uses `--match-head-commit` so a concurrent
-   push cannot inherit that authorization.
+   push cannot inherit that authorization. A failed merge call does not reuse
+   this verdict: the next attempt starts at the gate and re-fetches both bases.
 
 ### `--no-rebase`: a rebase can only downgrade an already-authorized head
 

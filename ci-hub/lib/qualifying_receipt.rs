@@ -22,11 +22,11 @@
 //! ONE data artifact — `ci-hub/validate/qualifying-receipt.json` — colocated
 //! with `rebase-base-floors.json` / `gate_floors.py` so tightening the floor is
 //! ONE edit. All consumers READ it rather than restating its values inline.
-//! Because the consumers span Rust, Python, and jq, the shared thing cannot be a
-//! single function; it is a single DATUM that each language loads. A mutation of
-//! the datum (e.g. `counts_schema` 5 -> 6, or `executed_tests_min` 1 -> huge)
-//! must move every consumer's answer; any consumer whose answer does not move is
-//! still bypassing the registry.
+//! Admission provenance is additionally a single semantic implementation:
+//! `ci-hub/qualifying_receipt.py::admission_verdict`. Rust delegates that clause
+//! to the Python authority and the shell verifier reaches it through Rust's
+//! receipt-digest command. Canonical lock identity and owner ancestry therefore
+//! have one verifier, not parallel Rust/Python/Bash copies.
 //!
 //! # Resolution order (single source at run time)
 //!
@@ -46,7 +46,9 @@
 
 use crate::records::{CoverageRow, HistoryRow};
 use serde::Deserialize;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 /// Repo-relative path of the canonical predicate. The literal lives ONLY here.
@@ -80,6 +82,139 @@ pub struct CoverageClause {
     pub per_node: bool,
 }
 
+/// Receipt-carried base evidence. Semantics live in the same Python authority
+/// as admission provenance; Rust only transports this versioned policy.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BaseClause {
+    pub applies_at_schema_min: u32,
+    pub branch: String,
+}
+
+/// Data consumed by the one Python admission-provenance verifier.
+///
+/// Rust intentionally carries no semantic methods for this clause: duplicating
+/// its exact comparisons here would recreate the split authority this task
+/// removes.
+#[derive(Clone, Debug, Deserialize)]
+pub struct AdmissionClause {
+    pub applies_at_schema_min: u32,
+    pub required_admission: String,
+    pub required_concurrent_validates: u64,
+    pub required_concurrency_proof: String,
+    pub require_registered_producer: bool,
+}
+
+/// WHO WROTE THE ROW, and from when that must be declared.
+///
+/// The provenance twin of [`CoverageClause`]: same shape of obligation, but
+/// keyed on `finished_at` rather than `schema_version`, because 0 of the 729
+/// live rows carry `producer` while 729 of 729 carry `finished_at` -- and
+/// because `ci-hub.rs` branches on `schema_version == 4` by exact equality, so
+/// a writer version bump is independently unsafe. See the JSON's
+/// `_producer_names_the_writer_so_provenance_is_not_forensics` note.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ProducerClause {
+    /// Whether provenance is demanded at all. False disarms the clause wholly.
+    pub required: bool,
+    /// RFC3339 UTC instant at/after which a row MUST name its writer. `None`
+    /// means declared-but-inert: the column is recorded and credited, and
+    /// nothing is refused for lacking it. Flipped only once every writer ships.
+    #[serde(default)]
+    pub applies_from_finished_at: Option<String>,
+    /// The registered writer slugs. A row naming something outside this set is
+    /// refused under enforcement -- presence alone is not the bar, because a
+    /// typo'd or invented writer name is exactly as unattributable as none.
+    #[serde(default)]
+    pub known: Vec<String>,
+}
+
+impl Default for ProducerClause {
+    /// Inert. Used only when a predicate omits the key (older mutation
+    /// fixtures); the canonical file is separately asserted to DECLARE it, so
+    /// this default can never silently disarm the live predicate.
+    fn default() -> Self {
+        Self {
+            required: false,
+            applies_from_finished_at: None,
+            known: Vec::new(),
+        }
+    }
+}
+
+/// Typed outcome of the provenance obligation. `Grandfathered` deliberately
+/// reuses the grandfathered schema-4 coverage wording: the row does not CLAIM a
+/// writer and is not asked to, so its `producer_ok` is null, not false.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProducerVerdict {
+    Ok,
+    Grandfathered,
+    Missing,
+    UnknownWriter,
+}
+
+/// Whether the provenance obligation is LIVE for this particular row.
+///
+/// Needs all three: clause required, an epoch declared, and the row at/after
+/// it. A row whose `finished_at` is absent or malformed while an epoch IS
+/// declared is enforced (fail-closed) -- otherwise dropping the timestamp would
+/// be a trivial way to opt out of the check.
+pub fn producer_enforced_for(row: &HistoryRow, pred: &QualifyingPredicate) -> bool {
+    if !pred.producer.required {
+        return false;
+    }
+    let Some(epoch) = pred.producer.applies_from_finished_at.as_deref() else {
+        return false;
+    };
+    if epoch.is_empty() {
+        return false;
+    }
+    match row.finished_at.as_deref() {
+        // Fixed-width RFC3339 UTC sorts lexicographically == chronologically,
+        // so the epoch comparison needs no date parsing.
+        Some(ts) if is_rfc3339_z(ts) => ts >= epoch,
+        _ => true,
+    }
+}
+
+/// `2026-08-07T20:15:31Z` exactly -- the shape every ledger row uses.
+fn is_rfc3339_z(ts: &str) -> bool {
+    let b = ts.as_bytes();
+    b.len() == 20
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b[16] == b':'
+        && b[19] == b'Z'
+        && [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18]
+            .iter()
+            .all(|&i| b[i].is_ascii_digit())
+}
+
+/// Decide the provenance obligation. Mirrors the Python `producer_verdict`.
+///
+/// A row NAMING a registered writer is `Ok` whether or not the epoch has been
+/// flipped, so rows from already-deployed writers stop being grandfathered the
+/// moment they exist rather than at activation.
+pub fn producer_verdict(row: &HistoryRow, pred: &QualifyingPredicate) -> ProducerVerdict {
+    let named = row
+        .extra
+        .get("producer")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    if let Some(name) = named {
+        if pred.producer.known.is_empty() || pred.producer.known.iter().any(|k| k == name) {
+            return ProducerVerdict::Ok;
+        }
+        return ProducerVerdict::UnknownWriter;
+    }
+    if producer_enforced_for(row, pred) {
+        ProducerVerdict::Missing
+    } else {
+        ProducerVerdict::Grandfathered
+    }
+}
+
 /// The whole predicate, deserialized from the JSON. Unknown keys (e.g.
 /// `_comment`) are ignored on purpose so the file can carry documentation.
 #[derive(Clone, Debug, Deserialize)]
@@ -101,6 +236,15 @@ pub struct QualifyingPredicate {
     #[serde(default = "default_accepts_green_class")]
     pub accepts_green_class: Vec<String>,
     pub coverage: CoverageClause,
+    /// Exact base/provenance evidence and its merge-boundary policy.
+    pub base: BaseClause,
+    /// Canonical admission/owner-ancestry obligation. Semantics live only in
+    /// `qualifying_receipt.py::admission_verdict`.
+    pub admission: AdmissionClause,
+    /// Provenance obligation. Defaulted inert so an older override fixture that
+    /// predates the key still parses; the live file declares it explicitly.
+    #[serde(default)]
+    pub producer: ProducerClause,
 }
 
 fn default_accepts_green_class() -> Vec<String> {
@@ -276,6 +420,142 @@ fn derived_green_class(row: &HistoryRow) -> Option<&'static str> {
     Some(derived)
 }
 
+#[derive(Debug, Deserialize)]
+struct AdmissionReport {
+    accepted: bool,
+    admission_satisfied: Option<bool>,
+    admission_status: String,
+    base_satisfied: Option<bool>,
+    base_status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BaseBoundaryReport {
+    accepted: bool,
+    base_satisfied: Option<bool>,
+    base_status: String,
+}
+
+/// Delegate final mutable-tip currency to the same Python semantic authority.
+/// Shell reaches this through `receipt-digest`; it never invokes or restates
+/// the verifier itself.
+pub fn shared_base_boundary_accepts(
+    row: &HistoryRow,
+    current_base: &str,
+    current_reverie_base: &str,
+    repo_checkout: &Path,
+    reverie_checkout: &Path,
+) -> bool {
+    let verifier = resolve_root().join("ci-hub/qualifying_receipt.py");
+    let mut child = match Command::new("python3")
+        .arg(verifier)
+        .arg("--merge-boundary")
+        .arg("--current-base")
+        .arg(current_base)
+        .arg("--current-reverie-base")
+        .arg(current_reverie_base)
+        .arg("--repo-checkout")
+        .arg(repo_checkout)
+        .arg("--reverie-checkout")
+        .arg(reverie_checkout)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return false;
+    };
+    if serde_json::to_writer(&mut stdin, row).is_err() || stdin.flush().is_err() {
+        return false;
+    }
+    drop(stdin);
+    let Ok(output) = child.wait_with_output() else {
+        return false;
+    };
+    let Ok(report) = serde_json::from_slice::<BaseBoundaryReport>(&output.stdout) else {
+        return false;
+    };
+    let status_matches = match report.base_status.as_str() {
+        "satisfied" => report.base_satisfied == Some(true),
+        "grandfathered-unknown" => report.base_satisfied.is_none(),
+        _ => false,
+    };
+    output.status.code() == Some(0) && report.accepted && status_matches
+}
+
+/// Delegate admission provenance to its ONE semantic implementation.
+///
+/// Exit 0/1 is a typed accept/refuse verdict. Any launch, parse, or exit-code
+/// inconsistency is a deploy defect and fails closed; a missing verifier must
+/// never make a receipt more authoritative.
+fn shared_admission_accepts(row: &HistoryRow, pred: &QualifyingPredicate) -> bool {
+    let root = resolve_root();
+    let verifier = root.join("ci-hub/qualifying_receipt.py");
+    let request = serde_json::json!({
+        "row": row,
+        "admission": {
+            "applies_at_schema_min": pred.admission.applies_at_schema_min,
+            "required_admission": pred.admission.required_admission,
+            "required_concurrent_validates": pred.admission.required_concurrent_validates,
+            "required_concurrency_proof": pred.admission.required_concurrency_proof,
+            "require_registered_producer": pred.admission.require_registered_producer,
+        },
+        "base": {
+            "applies_at_schema_min": pred.base.applies_at_schema_min,
+            "branch": pred.base.branch,
+        },
+        "producer": {
+            "required": pred.producer.required,
+            "applies_from_finished_at": pred.producer.applies_from_finished_at,
+            "known": pred.producer.known,
+        },
+    });
+    let mut child = match Command::new("python3")
+        .arg(verifier)
+        .arg("--admission-only")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return false;
+    };
+    if serde_json::to_writer(&mut stdin, &request).is_err() || stdin.flush().is_err() {
+        return false;
+    }
+    drop(stdin);
+    let Ok(output) = child.wait_with_output() else {
+        return false;
+    };
+    let Ok(report) = serde_json::from_slice::<AdmissionReport>(&output.stdout) else {
+        return false;
+    };
+    let exit_matches = match output.status.code() {
+        Some(0) => report.accepted,
+        Some(1) => !report.accepted,
+        _ => false,
+    };
+    let status_matches = match report.admission_status.as_str() {
+        "satisfied" => report.admission_satisfied == Some(true),
+        "grandfathered-unknown" => report.admission_satisfied.is_none(),
+        _ => report.admission_satisfied == Some(false),
+    };
+    let base_status_matches = match report.base_status.as_str() {
+        "satisfied" => report.base_satisfied == Some(true),
+        "grandfathered-unknown" => report.base_satisfied.is_none(),
+        _ => report.base_satisfied == Some(false),
+    };
+    exit_matches && status_matches && base_status_matches && report.accepted
+}
+
 /// THE qualifying-receipt predicate. Every Rust consumer routes here; the
 /// control flow mirrors what the inline certifiers did, but every constant and
 /// flag is sourced from `pred` so there is one place to tighten.
@@ -373,6 +653,29 @@ pub fn row_qualification(row: &HistoryRow, sha: &str, pred: &QualifyingPredicate
     if !qualification.accepted() {
         return qualification;
     }
+    // PROVENANCE gate, ordered after the value clauses and before the class
+    // gate exactly as in the Python twin. Like the class gate it can only
+    // NARROW, and this position keeps every existing refusal reason
+    // byte-identical, so activating it cannot silently re-attribute an
+    // unrelated value failure to a missing writer.
+    if producer_enforced_for(row, pred) {
+        match producer_verdict(row, pred) {
+            ProducerVerdict::Missing => {
+                return Qualification::Refused("producer missing");
+            }
+            ProducerVerdict::UnknownWriter => {
+                return Qualification::Refused("producer unknown-writer");
+            }
+            ProducerVerdict::Ok | ProducerVerdict::Grandfathered => {}
+        }
+    }
+    // Admission provenance is one cross-language authority, not a Rust copy of
+    // the Python comparisons. Schema-4 returns grandfathered-unknown and stays
+    // accepted; schema-5+ must carry canonical lock identity, zero concurrency,
+    // registered producer provenance, and the owner-ancestry proof.
+    if !shared_admission_accepts(row, pred) {
+        return Qualification::Refused("admission provenance not satisfied");
+    }
     // Green-class gate (from origin/main): a receipt passing every value clause
     // must ALSO be of a green class the predicate accepts. Expressed as a
     // REFUSAL rather than a bare `false` so the reason survives into the typed
@@ -463,6 +766,7 @@ fn resolve_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     /// Build a schema-5 full-green row whose `coverage` object is supplied
     /// verbatim, so a test can OMIT a field rather than set it empty.
@@ -470,9 +774,172 @@ mod tests {
         serde_json::from_str(&format!(
             r#"{{"schema_version":5,"profile":"full","selection_mode":"full","commit":"{sha}",
                 "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
-                "executed_tests":427,"filtered_tests":0,"coverage":{coverage}}}"#
+                "executed_tests":427,"filtered_tests":0,"coverage":{coverage},
+                "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
+                "concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444"}}"#
         ))
         .unwrap()
+    }
+
+    /// A schema-5 full green carrying `finished_at` and, optionally, a
+    /// `producer`, so provenance is the only clause any assertion turns on.
+    fn row_with_producer(sha: &str, finished_at: &str, producer: Option<&str>) -> HistoryRow {
+        let prod = match producer {
+            Some(p) => format!(r#","producer":"{p}""#),
+            None => String::new(),
+        };
+        serde_json::from_str(&format!(
+            r#"{{"schema_version":5,"profile":"full","selection_mode":"full","commit":"{sha}",
+                "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
+                "executed_tests":427,"filtered_tests":0,"finished_at":"{finished_at}",
+                "coverage":{{"planned_test_nodes":19,"executed_test_nodes":19,
+                "zero_executed_nodes":[],"absent_nodes":[]}},
+                "admission":"ci-hub-validate-lock","concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444"{prod}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// The shipped predicate with the provenance epoch FLIPPED ON. The live file
+    /// is deliberately inert until all four writers deploy, so every refusal
+    /// assertion must mutate it -- otherwise the test proves only that the gate
+    /// compiles, not that it fires.
+    fn enforcing() -> QualifyingPredicate {
+        let mut pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        pred.producer.applies_from_finished_at = Some("2026-08-08T00:00:00Z".to_string());
+        pred
+    }
+
+    /// BOTH DIRECTIONS of the provenance gate, in the engine that must agree
+    /// clause-for-clause with `qualifying_receipt.py`.
+    #[test]
+    fn producer_gate_refuses_unattributable_rows_and_accepts_registered_writers() {
+        let sha = "b".repeat(40);
+        let pred = enforcing();
+
+        // CONTROL: without this, every refusal below could be an unrelated clause.
+        assert!(
+            row_qualifies(
+                &row_with_producer(&sha, "2026-08-08T09:00:00Z", Some("hermit-validate-sh")),
+                &sha,
+                &pred
+            ),
+            "control row must qualify"
+        );
+
+        // NEGATIVE: no producer, and an unregistered one. Presence is not the
+        // bar -- an invented name is as unattributable as none.
+        for (label, producer) in [("absent", None), ("unregistered", Some("hermit-valrs"))] {
+            let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", producer);
+            assert!(
+                matches!(
+                    row_qualification(&row, &sha, &pred),
+                    Qualification::Refused(_)
+                ),
+                "{label} producer must be refused under enforcement"
+            );
+        }
+
+        // POSITIVE: every registered slug, so a typo is caught here rather than
+        // at activation, when it would refuse that writer's every row.
+        //
+        // Census the exact SET, not its length. A bare `len() == 4` says
+        // nothing about WHICH slugs are registered -- a rename plus an
+        // addition cancel out and it still passes -- and it read as a defect
+        // the moment the registry legitimately grew a fifth entry. It did:
+        // `validate.rs` is the legacy bare slug hermit/scripts/validate.rs
+        // still emits, kept registered so rows already written under it keep
+        // verifying (see the note in qualifying-receipt.json). Naming the set
+        // makes any registry change fail HERE, where the diff states what
+        // changed, instead of at activation.
+        let census: BTreeSet<&str> = pred.producer.known.iter().map(String::as_str).collect();
+        assert_eq!(
+            census,
+            BTreeSet::from([
+                "hermit-validate-sh",
+                "hermit-validate-rs",
+                "ci-hub-finalize-receipt",
+                "reverie-validate-sh",
+                // Legacy; drop once no live ledger row carries it.
+                "validate.rs",
+            ]),
+            "registered-writer census changed -- update the writers, the \
+             registry, and this list together"
+        );
+        for slug in &pred.producer.known {
+            let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", Some(slug));
+            assert!(row_qualifies(&row, &sha, &pred), "{slug} must be accepted");
+        }
+
+        // GRANDFATHER: schema-4 history keeps its authority even when it lacks
+        // both producer and admission fields.
+        let mut old = row_with_producer(&sha, "2026-08-07T20:15:31Z", None);
+        old.schema_version = Some(4);
+        let old_qualification = row_qualification(&old, &sha, &pred);
+        assert!(
+            old_qualification.accepted(),
+            "schema-4 row must survive: {old_qualification:?}"
+        );
+        assert_eq!(
+            producer_verdict(&old, &pred),
+            ProducerVerdict::Grandfathered
+        );
+
+        // FAIL-CLOSED: dropping the epoch key must not opt a row out.
+        let undated = row_with_producer(&sha, "not-a-timestamp", None);
+        assert!(producer_enforced_for(&undated, &pred));
+        assert!(!row_qualifies(&undated, &sha, &pred));
+    }
+
+    /// The legacy producer epoch remains inert, but schema-5 admission now
+    /// requires a registered producer. Schema-4 remains grandfathered.
+    #[test]
+    fn shipped_predicate_requires_admission_and_grandfathers_schema4() {
+        let sha = "b".repeat(40);
+        let pred = QualifyingPredicate::parse(EMBEDDED, "embedded").unwrap();
+        assert!(
+            pred.producer.required,
+            "the live file must DECLARE the column"
+        );
+        assert!(
+            pred.producer.applies_from_finished_at.is_none(),
+            "flipping this epoch requires all four writers deployed first"
+        );
+        let row = row_with_producer(&sha, "2026-08-08T09:00:00Z", None);
+        assert_eq!(
+            producer_verdict(&row, &pred),
+            ProducerVerdict::Grandfathered,
+            "the old timestamp-based producer gate remains staged"
+        );
+        assert!(
+            !row_qualifies(&row, &sha, &pred),
+            "schema-5 admission must refuse a missing producer"
+        );
+        let mut schema4 = row;
+        schema4.schema_version = Some(4);
+        assert!(
+            row_qualifies(&schema4, &sha, &pred),
+            "schema-4 must remain grandfathered"
+        );
+        assert!(
+            shared_base_boundary_accepts(
+                &schema4,
+                &sha,
+                &sha,
+                Path::new("/nonexistent-hermit"),
+                Path::new("/nonexistent-reverie"),
+            ),
+            "the real Rust-to-Python merge-boundary bridge must preserve schema-4"
+        );
     }
 
     /// NEGATIVE (mutation): a coverage object that OMITS a failure list must be
@@ -638,7 +1105,14 @@ mod tests {
                 "commit_anchored":true,"tree_dirty":false,"result":"pass","failures":0,
                 "executed_tests":740,"filtered_tests":3,
                 "coverage":{{"planned_test_nodes":4,"executed_test_nodes":4,
-                    "zero_executed_nodes":[],"absent_nodes":[]}}}}"#
+                    "zero_executed_nodes":[],"absent_nodes":[]}},
+                "producer":"hermit-validate-sh","admission":"ci-hub-validate-lock",
+                "concurrent_validates":0,
+                "concurrency_proof":"validate_lock_owner_ancestry",
+                "base_sha":"1111111111111111111111111111111111111111",
+                "base_tree":"2222222222222222222222222222222222222222",
+                "reverie_base_sha":"3333333333333333333333333333333333333333",
+                "reverie_base_tree":"4444444444444444444444444444444444444444"}}"#
         ))
         .unwrap();
         let live_pred =
@@ -678,7 +1152,15 @@ mod tests {
                 "executed_test_nodes": 4,
                 "zero_executed_nodes": [],
                 "absent_nodes": []
-            }
+            },
+            "producer": "hermit-validate-sh",
+            "admission": "ci-hub-validate-lock",
+            "concurrent_validates": 0,
+            "concurrency_proof": "validate_lock_owner_ancestry",
+            "base_sha": "1111111111111111111111111111111111111111",
+            "base_tree": "2222222222222222222222222222222222222222",
+            "reverie_base_sha": "3333333333333333333333333333333333333333",
+            "reverie_base_tree": "4444444444444444444444444444444444444444"
         }))
         .unwrap();
         assert!(row_qualifies(&hard, &sha, &pred));

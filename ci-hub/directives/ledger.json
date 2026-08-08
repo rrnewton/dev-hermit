@@ -140,7 +140,10 @@
       "owner": "hermit-243",
       "source_row": "6",
       "parent_id": "green-time-percentage",
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "2e9d93fdfb9dd5d655b21f43fb3418615060587e"
+      }
     },
     {
       "id": "newest-green",
@@ -176,17 +179,17 @@
     },
     {
       "id": "dbi-to-dbt-rename",
-      "summary": "Rename DBI to DBT and factor the install path after the PR-count gate",
+      "summary": "Rename DBI to DBT and factor the install path after the PR queue drains",
       "requested_at": "2026-07-30",
       "repository": "rrnewton/hermit",
       "checkout": "hermit",
       "target": "main",
-      "task": "dbi-to-dbt-rename-and-install-path-factoring",
+      "task": "defer-dbi-to-dbt-rename-until-pr-queue-drains",
       "owner": "hermit-dbi",
       "source_row": "9",
       "parent_id": null,
       "implementation": null,
-      "gate": "zero open Hermit PRs: a repo-wide dbi->dbt rename conflicts with every in-flight feature branch, so it is deliberately deferred until the PR queue drains"
+      "gate": "Hermit PR queue has drained: a repo-wide dbi->dbt rename conflicts with every in-flight feature branch, so it is deliberately deferred until that condition holds"
     },
     {
       "id": "irq-aware-core-allocator",
@@ -215,7 +218,10 @@
       "owner": "hermit-220",
       "source_row": "10",
       "parent_id": "irq-aware-core-allocator",
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "d1f7fd393975be05342b7a75b946f8a9925ff48b"
+      }
     },
     {
       "id": "unsupported-syscalls-fail-closed-default",
@@ -258,7 +264,10 @@
       "owner": "hermit-ptw",
       "source_row": "13",
       "parent_id": "agent-utils-direct-main-policy",
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "9fa4fdf48169eaf20a9db0b731cd0e4a87426d56"
+      }
     },
     {
       "id": "rebase-aware-landing-verifier",

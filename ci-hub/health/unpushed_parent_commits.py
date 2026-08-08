@@ -25,6 +25,26 @@ points at them.
 DETECT AND PUBLISH ONLY. This never merges, resets, rewrites, gcs, prunes,
 expires a reflog, repacks or cleans. Its only mutation is creating new remote
 refs under ``rescue/``, which cannot destroy anything.
+
+OBSERVATION AND RESCUE ARE SEPARATE, AND THE ORDER IS LOAD-BEARING (2026-08-08).
+Measured on this repo: the scan takes **0.40s**; a single ``herdr-run`` rescue
+round-trip took **65.8s and 74.8s** (both failing, rc=69), and rescue makes TWO
+per commit. Under the tick's 30s budget the gate had therefore NEVER emitted a
+measurement -- not because it could not measure, but because ``main`` computed
+the correct answer in 0.4s, then handed control to rescue, and printed only
+afterwards. The timeout killed a process that was already holding a complete
+result. **So the report is emitted BEFORE rescue is attempted.** A rescue that
+hangs, fails, or is killed can no longer discard a measurement that succeeded.
+
+Corollaries, each measured rather than assumed:
+
+*   Cost does NOT scale with worktree count. 47 worktrees: ``rev-list --all``
+    0.13s versus ``--single-worktree`` 0.12s. Narrowing scope would buy 10ms and
+    lose the coverage that is the whole point -- head-scoped read 0 while
+    all-refs read 1.
+*   The rescue transport can be broken while egress is fine: the same ls-remote
+    took 0.32s through ``with-proxy`` directly and timed out twice through
+    ``herdr-run``. Rescue therefore bounds itself and reports what it skipped.
 """
 
 from __future__ import annotations
@@ -33,10 +53,21 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PARENT = str(Path(__file__).resolve().parents[2])
 HERDR = f"{PARENT}/agent-utils/bin/herdr-run"
+
+# Per-call ceilings for the two remote legs. The old 600s/300s could not be
+# reached by any caller with a budget, and one stuck call ate more than the
+# whole tick. Measured: a healthy round-trip is sub-second (0.32s direct); a
+# broken one runs ~70s. 45s is far above healthy and well below two-stuck-calls.
+PUSH_TIMEOUT_SECS = 45
+VERIFY_TIMEOUT_SECS = 45
+# Total wall ceiling for the whole rescue phase. Rescue is remote mutation, not
+# observation, so it gets its OWN budget and must never borrow the scan's.
+RESCUE_DEADLINE_SECS = 120
 
 
 def git(*args: str, cwd: str = PARENT) -> str:
@@ -56,23 +87,101 @@ def local_only(scope: str) -> list[dict[str, str]]:
     return rows
 
 
-def rescue(rows: list[dict[str, str]], agent: str, dry: bool) -> list[dict[str, str]]:
+PUBLISH_TARGET = "origin/main"
+
+
+def classify_publication(rows: list[dict[str, str]], target: str = PUBLISH_TARGET) -> None:
+    """Split local-only commits by CONTENT into `unpublished` and `superseded`.
+
+    A commit reachable from no remote ref is NOT the same fact as unpublished
+    WORK. Rebase-then-force-update -- the normal landing path on this fleet --
+    orphans the pre-rebase object every single time while its content lands
+    perfectly well. This gate's first successful run flagged exactly one of
+    those (`ef7cd9b`, whose change was already on main as `f37bd1c8`), and it
+    was reported upward as a real catch before anyone checked it.
+
+    A gate whose alarms are usually wrong is worse than no gate: it spends the
+    attention a real alarm needs, and it will not be believed on the day it is
+    right. The failure this gate exists for -- a 20-commit stack in zero origin
+    refs -- is unrecoverable; the failure it produced here costs one check.
+    Those are not symmetric, so BOTH tests below are biased toward reporting.
+
+      1. `git cherry` -- patch-id equivalence. Survives rebase and reword, which
+         plain blob comparison does not.
+      2. Blob identity for every touched path, which catches a change that
+         landed folded into some other commit, where no patch id matches.
+
+    Anything else stays `unpublished` and still pages. A conflict resolved
+    during a rebase changes the patch and can defeat both tests; that direction
+    is deliberate -- it re-reports a superseded commit rather than silencing a
+    real one.
+    """
+    for row in rows:
+        sha = row["sha"]
+        row["disposition"] = "unpublished"
+        row["evidence"] = f"no equivalent patch, and content differs at {target}"
+        first = (git("cherry", target, sha).split("\n", 1)[0] or "").strip()
+        if first.startswith("-"):
+            row["disposition"] = "superseded"
+            row["evidence"] = f"equivalent patch already on {target} (git cherry)"
+            continue
+        paths = [q for q in git("diff", "--name-only", f"{sha}^", sha).splitlines() if q]
+        if not paths:
+            continue
+
+        def blob(rev: str, path: str) -> str:
+            return git("rev-parse", "--verify", "--quiet", f"{rev}:{path}") or "absent"
+
+        if all(blob(sha, q) == blob(target, q) for q in paths):
+            row["disposition"] = "superseded"
+            row["evidence"] = (
+                f"all {len(paths)} touched path(s) byte-identical at {target}"
+            )
+
+
+def rescue(
+    rows: list[dict[str, str]],
+    agent: str,
+    dry: bool,
+    deadline_secs: float = RESCUE_DEADLINE_SECS,
+) -> list[dict[str, str]]:
     """Push each local-only commit to its own rescue ref, then VERIFY at the
-    remote. A push exit code is not evidence; the ls-remote re-read is."""
-    done = []
-    for r in rows:
+    remote. A push exit code is not evidence; the ls-remote re-read is.
+
+    Bounded, and every commit gets an explicit disposition. A commit the budget
+    never reached is `skipped-deadline` -- NOT absent, and NOT `verified`. The
+    caller can then say what it did and did not publish instead of implying
+    coverage it never attempted.
+    """
+    done: list[dict[str, str]] = []
+    started = time.monotonic()
+    for index, r in enumerate(rows):
         ref = f"rescue/auto-{r['short']}"
         if dry:
             done.append({**r, "ref": ref, "published": "dry-run"})
             continue
-        subprocess.run(
-            [HERDR, "--agent", agent,
-             f"with-proxy git -C {PARENT} push origin {r['sha']}:refs/heads/{ref}"],
-            capture_output=True, text=True, timeout=600)
-        seen = subprocess.run(
-            [HERDR, "--agent", agent,
-             f"with-proxy git -C {PARENT} ls-remote --heads origin refs/heads/{ref}"],
-            capture_output=True, text=True, timeout=300).stdout
+        if time.monotonic() - started >= deadline_secs:
+            # Do not start work that cannot finish, and do not pretend the
+            # remaining rows were examined.
+            done.extend(
+                {**row, "ref": f"rescue/auto-{row['short']}",
+                 "published": "skipped-deadline"}
+                for row in rows[index:]
+            )
+            break
+        try:
+            subprocess.run(
+                [HERDR, "--agent", agent,
+                 f"with-proxy git -C {PARENT} push origin {r['sha']}:refs/heads/{ref}"],
+                capture_output=True, text=True, timeout=PUSH_TIMEOUT_SECS)
+            seen = subprocess.run(
+                [HERDR, "--agent", agent,
+                 f"with-proxy git -C {PARENT} ls-remote --heads origin refs/heads/{ref}"],
+                capture_output=True, text=True, timeout=VERIFY_TIMEOUT_SECS).stdout
+        except subprocess.TimeoutExpired:
+            # A stuck transport is a FAILED publish, never a silent success.
+            done.append({**r, "ref": ref, "published": "FAILED-timeout"})
+            continue
         ok = r["sha"] in seen
         done.append({**r, "ref": ref, "published": "verified" if ok else "FAILED"})
     return done
@@ -88,32 +197,97 @@ def main() -> int:
                     help="publish each local-only commit to rescue/auto-<sha> and "
                          "verify at the remote. A report needs a reader; this does not")
     ap.add_argument("--dry-run", action="store_true", help="with --rescue, do not push")
+    ap.add_argument("--rescue-deadline", type=float, default=RESCUE_DEADLINE_SECS,
+                    help="wall ceiling for the whole rescue phase; commits the "
+                         "budget never reaches are reported skipped-deadline, "
+                         "never verified")
     ap.add_argument("--agent", default="hermit-det2")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
 
+    scan_started = time.monotonic()
     rows = local_only(a.scope)
     head_n = len(local_only("head")) if a.scope == "all" else len(rows)
-    published = rescue(rows, a.agent, a.dry_run) if a.rescue else []
+    classify_publication(rows)
+    # `rows` stays the FULL census: rescue and --json must still see every
+    # local-only object. Only the ALARM narrows to genuinely unpublished work.
+    unpublished = [r for r in rows if r["disposition"] == "unpublished"]
+    superseded = [r for r in rows if r["disposition"] == "superseded"]
+    scan_secs = time.monotonic() - scan_started
 
-    if a.json:
-        print(json.dumps({"scope": a.scope, "count": len(rows),
-                          "head_scoped_count": head_n,
-                          "commits": published or rows}, indent=2))
-    else:
+    def emit(published: list[dict[str, str]]) -> None:
+        if a.json:
+            print(json.dumps({"scope": a.scope, "count": len(rows),
+                              "unpublished_count": len(unpublished),
+                              "superseded_count": len(superseded),
+                              "head_scoped_count": head_n,
+                              "scan_seconds": round(scan_secs, 3),
+                              "rescued": bool(published),
+                              "commits": published or rows}, indent=2), flush=True)
+            return
         # COUNT AND SUBJECTS, never a bare boolean.
         print(f"unpushed-parent-commits scope={a.scope} count={len(rows)} "
-              f"head_scoped_count={head_n}")
-        for r in (published or rows):
+              f"unpublished={len(unpublished)} superseded={len(superseded)} "
+              f"head_scoped_count={head_n} scan_seconds={scan_secs:.2f}", flush=True)
+        for r in (published or unpublished):
             extra = f"  -> {r['ref']} [{r['published']}]" if "ref" in r else ""
             print(f"  {r['short']}  {r['date']}  {r['author']:<14.14}  "
-                  f"{r['subject'][:72]}{extra}")
+                  f"{r['subject'][:72]}{extra}", flush=True)
+        # Listed, never hidden: a superseded object is prune-able, not lost,
+        # and naming it is what stops the next reader re-deriving it by hand.
+        for r in superseded:
+            print(f"  [superseded, content published] {r['short']}  "
+                  f"{r['subject'][:56]}  ({r['evidence']})", flush=True)
         if not rows:
-            print("  (none: every local commit is reachable from a remote ref)")
+            print("  (none: every local commit is reachable from a remote ref)",
+                  flush=True)
+        elif not unpublished:
+            print("  (no unpublished work: every local-only commit's content is "
+                  "already on the publication target)", flush=True)
         if head_n != len(rows) and a.scope == "all":
             print(f"  NOTE: a HEAD-scoped probe would report {head_n}, missing "
-                  f"{len(rows) - head_n}. Scope to --all.")
-    return 1 if rows else 0
+                  f"{len(rows) - head_n}. Scope to --all.", flush=True)
+        # tick-hub resolves `{summary}` from `key=value` stdout lines
+        # (parse_kv_lines). Without this the emitted warning renders the LITERAL
+        # string `{summary}` -- the same unactionable alarm the worktree-liveness
+        # gate shipped. It stayed invisible here only because the gate never
+        # completed, so it never emitted anything at all. Name the subjects: an
+        # alarm that omits its own subject cannot be verified.
+        subjects = ", ".join(
+            f"{r['short']} {r['subject'][:40]}" for r in unpublished[:3])
+        residue = f" (+{len(unpublished) - 3} more)" if len(unpublished) > 3 else ""
+        if unpublished:
+            summary = (f"{len(unpublished)} parent commit(s) hold UNPUBLISHED "
+                       f"work: {subjects}{residue}")
+        elif superseded:
+            summary = (f"no unpublished work; {len(superseded)} superseded local "
+                       f"object(s) are prune-able")
+        else:
+            summary = "no local-only commits"
+        print(f"summary={summary}", flush=True)
+
+    # EMIT THE MEASUREMENT FIRST. Rescue is slower than the scan by two orders
+    # of magnitude and can hang on a broken transport; printing afterwards is
+    # how a completed 0.4s measurement got discarded by a 30s timeout on every
+    # tick for a full day. A rescue failure must cost the rescue, not the
+    # observation.
+    emit([])
+    if not a.rescue:
+        return 1 if unpublished else 0
+
+    published = rescue(rows, a.agent, a.dry_run, a.rescue_deadline)
+    verified = sum(1 for r in published if r.get("published") == "verified")
+    skipped = sum(1 for r in published if r.get("published") == "skipped-deadline")
+    failed = len(published) - verified - skipped
+    if not a.json:
+        for r in published:
+            print(f"  rescue {r['short']} -> {r['ref']} [{r['published']}]", flush=True)
+    print(f"unpushed-parent-commits rescue attempted={len(published) - skipped} "
+          f"verified={verified} failed={failed} skipped_deadline={skipped}",
+          flush=True)
+    # Partial coverage is NOT success. Anything unpublished keeps the nonzero
+    # exit, so a deadline or a broken transport can never read as "all clear".
+    return 1 if unpublished else 0
 
 
 if __name__ == "__main__":

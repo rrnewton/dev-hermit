@@ -8,6 +8,10 @@ repo=rrnewton/hermit
 sha=
 comments_file=
 fixture_root=
+current_base=
+current_reverie_base=
+repo_checkout=
+reverie_checkout=
 
 usage() {
     cat >&2 <<'EOF'
@@ -16,6 +20,10 @@ Usage: verify-local-validation-receipt.sh --sha SHA --comments FILE [options]
 Options:
   --repo OWNER/REPO       PR repository (default: rrnewton/hermit)
   --fixture-receipts DIR  Read DIR/<receipt-commit>/<receipt-path> instead of GitHub
+  --current-base SHA      Fresh Hermit main tip at the final merge boundary
+  --current-reverie-base SHA  Fresh Reverie main tip at that same boundary
+  --repo-checkout DIR     Hermit object store containing --current-base
+  --reverie-checkout DIR  Reverie object store containing --current-reverie-base
 EOF
 }
 
@@ -25,6 +33,10 @@ while [[ $# -gt 0 ]]; do
         --comments) comments_file=${2:-}; shift 2 ;;
         --repo) repo=${2:-}; shift 2 ;;
         --fixture-receipts) fixture_root=${2:-}; shift 2 ;;
+        --current-base) current_base=${2:-}; shift 2 ;;
+        --current-reverie-base) current_reverie_base=${2:-}; shift 2 ;;
+        --repo-checkout) repo_checkout=${2:-}; shift 2 ;;
+        --reverie-checkout) reverie_checkout=${2:-}; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'unknown argument: %s\n' "$1" >&2; usage; exit 2 ;;
     esac
@@ -33,6 +45,30 @@ done
 if [[ ! $sha =~ ^[0-9a-f]{40}$ ]] || [[ -z $comments_file || ! -r $comments_file ]]; then
     usage
     exit 2
+fi
+
+boundary_values=("$current_base" "$current_reverie_base" "$repo_checkout" "$reverie_checkout")
+boundary_count=0
+for value in "${boundary_values[@]}"; do [[ -n $value ]] && ((boundary_count+=1)); done
+if ((boundary_count != 0 && boundary_count != 4)); then
+    printf 'merge-boundary verification requires all four base/checkouts arguments\n' >&2
+    exit 2
+fi
+if ((boundary_count == 4)) && \
+   { [[ ! $current_base =~ ^[0-9a-f]{40}$ ]] || \
+     [[ ! $current_reverie_base =~ ^[0-9a-f]{40}$ ]] || \
+     [[ ! -d $repo_checkout ]] || [[ ! -d $reverie_checkout ]]; }; then
+    printf 'merge-boundary base/checkouts are malformed or unavailable\n' >&2
+    exit 2
+fi
+boundary_digest_args=()
+if ((boundary_count == 4)); then
+    boundary_digest_args=(
+        --current-base "$current_base"
+        --current-reverie-base "$current_reverie_base"
+        --repo-checkout "$repo_checkout"
+        --reverie-checkout "$reverie_checkout"
+    )
 fi
 
 owner=${repo%%/*}
@@ -176,7 +212,8 @@ for candidate in "${candidates[@]}"; do
         continue
     fi
     computed_digest=$("$script_dir/../ci-hub" receipt-digest --sha "$sha" \
-        --require-qualifying <"$row_file" 2>/dev/null) || computed_digest=
+        --require-qualifying "${boundary_digest_args[@]}" \
+        <"$row_file" 2>/dev/null) || computed_digest=
     if [[ ! $computed_digest =~ ^[0-9a-f]{64}$ ]]; then
         rm -f -- "$row_file" "$receipt_file"
         continue

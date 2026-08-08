@@ -3,6 +3,30 @@ description: |-
   workflow runs one tick every five minutes; this config owns each check's
   cadence and only emits actions when a hard warning is required.
 
+  ADMISSION TEST FOR ANY NEW REMINDER (owner directive, 2026-08-08).
+  Ask: CAN ORC OBSERVE THIS DIRECTLY?
+    YES -> it does not belong here. ORC holds the authoritative view of agents,
+           panes, tasks and ownership; a second observer of the same fact cannot
+           be more right, only differently wrong, and its disagreement arrives
+           as an instruction to a coordinator mandated to close and respawn
+           agents without asking. Agent liveness, task ownership, and TaskGraph
+           census are permanently out of scope.
+    NO  -> it belongs here. GitHub, hosted CI queues, runner lanes, merge gates,
+           local disk consumption and local git state are exactly the things the
+           coordinator genuinely cannot see, and reminding it is the whole point.
+
+  Weight proposals by what the alarm CAUSES, not only by whether it is accurate.
+  A false alarm about GitHub costs a wasted check; a false alarm about
+  orc-internal state costs an agent. Prefer DETECT-ONLY: a gate that reports a
+  fact leaves the decision where the authority is.
+
+  Current roster: 12 active reminders, all passing the test above -- 8 external
+  (merge gates, GitHub main, PRs, CI queue, CI lanes, validate wall time x2,
+  owner directives), 3 local-but-ORC-invisible (unpushed parent commits, primary
+  checkout snapshot, worktree disk residue), 1 report-only resource audit
+  (agent containers). Four ORC-internal gates were removed on 2026-08-08; the
+  removal record is inline below, above `agent_container_lifecycle`.
+
 reminders:
   # merge-gate-v4 is fail-closed: on a queued leg it records NO_RESULT, RE-DISPATCHES
   # the leg and CANCELS ITSELF, leaving `refire-on-ci-completion` to restart it. That
@@ -10,14 +34,31 @@ reminders:
   # GH_TOKEN=github.token, so the runs carry triggering_actor=github-actions[bot], and
   # GitHub suppresses workflow_run events for GITHUB_TOKEN-triggered runs. Measured on
   # hermit#1750 (both legs completed SUCCESS, no refire ever came) and again at its
-  # rebased head. Census 2026-08-07: 41 of 121 open PRs sit in this state.
-  # PAGES, DOES NOT AUTO-FIRE: re-running 41 gates at once is a mass dispatch that would
-  # starve the very runners the legs need. `gate_refire.py --refire` performs the action
-  # under a human decision; this reminder only makes the state impossible to miss.
+  # rebased head. This is genuinely external state ORC cannot see, so the reminder
+  # EARNS its place -- a PR sits BLOCKED with 30/30 green and every count-based view
+  # renders it identically to a PR that is merely waiting.
+  #
+  # STILL DOES NOT AUTO-FIRE: re-running dozens of gates at once is a mass dispatch
+  # that would starve the very runners the legs need. `gate_refire.py --refire`
+  # performs the action under a human decision.
+  #
+  # RE-SCOPED 2026-08-08 under the satisfiability test above. It was
+  # `--fail-on-due`, i.e. `return 1 if due else 0`: pure standing state, paging every
+  # 30 min for a backlog no tick may drain, which is shape (b) and trains the
+  # recipient to ignore the channel. Worse, `render()` emitted prose with no
+  # key=value lines, so `capture: true` found nothing and the action went out with a
+  # LITERAL `{summary}` naming ZERO PRs -- firing constantly AND naming nothing.
+  # `--gate` pages on the DELTA (a PR NEWLY refire-due), names each PR with its gate
+  # run id and the exact remedy command, and carries the standing set plus
+  # heads_covered/heads_total in the fields. That denominator is load-bearing: the
+  # bounded scan covered 70 of 139 heads when measured, so "10 due" is a floor, not
+  # a census (the tool's own docstring records the bounded scan finding 2 where the
+  # exhaustive --per-pr scan found 41). A PR merely outside the sampling window is
+  # never retired from the delta baseline, so window drift cannot forge new pages.
   - name: merge_gate_refire_due
     cadence_secs: 1800
     gate:
-      cmd: python3 ci-hub/health/gate_refire.py --repo rrnewton/hermit --fail-on-due
+      cmd: python3 ci-hub/health/gate_refire.py --repo rrnewton/hermit --gate
       when: failure
       capture: true
     emit:
@@ -25,27 +66,39 @@ reminders:
       skill: hard-warn-coordinator
       fields:
         component: merge-gate-refire
-      title: "merge gates parked with all legs finished; refire is due: {summary}"
+      title: "a merge gate newly parked with all legs finished; refire is due: {summary}"
 
-  # DELTA, not standing state. 70 slots are dead-owner RIGHT NOW and none may be
-  # reclaimed (they hold unprotected work), so `--fail-on-dead` would fire on every
-  # tick forever and be muted within a day -- the permanently-on failure this repo
-  # already hit with the fired-state staleness alarm. The alarmable event is a slot
-  # that was LIVE last tick and is DEAD now: that fires at the tick that caused it.
-  # Liveness is derived from /proc cwd, so it cannot go stale. DETECT ONLY -- this
-  # never reclaims, resets or cleans anything.
-  - name: worktree_new_dead_owner
+  # DISK RECLAMATION. Huge slots sit under worktrees/ long after anything was
+  # working in them; that is the real, durable problem and it stays monitored.
+  #
+  # This REPLACES `worktree_new_dead_owner`, which asked the same question the
+  # wrong way: "is the owning AGENT dead?" ORC owns the fleet and answers that
+  # authoritatively, so a second guess derived from a registry file could only
+  # manufacture disagreement -- and on 2026-08-08 it did, alarming that an agent
+  # had died while that agent held the freshest activity timestamp on the box.
+  # Under the autonomous-replacement mandate, obeying it would have destroyed a
+  # live agent mid-P0. The replacement asks only what tick-hub can legitimately
+  # observe and ORC cannot: is a directory on disk consuming space with no live
+  # process inside it? No agent name, no fleet census, no TaskGraph owner.
+  #
+  # Occupancy is /proc cwd (unforgeable, cannot go stale). Idleness must be
+  # SUSTAINED >= 24h, which is what makes the ~0.6% unreadable-cwd blind spot
+  # tolerable. DELTA, not standing state: it pages only when a slot NEWLY
+  # qualifies, and carries the standing backlog in captured fields so a
+  # permanently-on gate never gets muted. DETECT ONLY -- reclaim needs a
+  # recovery SHA and stays a coordinator decision.
+  - name: worktree_disk_residue
     cadence_secs: 900
     gate:
-      cmd: python3 scripts/worktree_liveness.py report --fail-on-new-dead
+      cmd: python3 ci-hub/health/slot_disk_residue.py --gate
       when: failure
       capture: true
     emit:
       kind: action
       skill: hard-warn-coordinator
       fields:
-        component: worktree-liveness
-      title: "a worktree slot's owner died since the last tick: {summary}"
+        component: worktree-disk-residue
+      title: "worktree slots are idle on disk and reclaimable: {summary}"
 
   # Emits ONLY a supportable verdict. Today the series cannot support one
   # (retention 3.91d < 90d; conditioning 4/26 = 15% < 90%), so this HOLDS at rc=0
@@ -94,15 +147,55 @@ reminders:
         component: owner-tooling-directives
       title: "owner tooling directives need action: {summary}"
 
+  # THE TICK POLICES ITS OWN CODE. It executes from the shared parent WORKING
+  # TREE (hermitOperationalTick does `cd <parent> && ./ci-hub/bin/health-tick`),
+  # and the parent is chronically behind origin/main because it cannot
+  # fast-forward while other agents hold dirty paths. A behind-checkout displays
+  # LANDED content as modified, so `git restore` -- an entirely ordinary cleanup
+  # command -- silently rewinds live tick code. That happened TWICE to
+  # unpushed_parent_commits on 2026-08-08; the second time the whole tick went
+  # 4s -> 36s and the detector for unpushed work went blind, with `git status`
+  # reporting the file CLEAN throughout.
+  #
+  # This does not prevent the restore -- nothing can, and nobody has to be
+  # careless for it to happen. It removes the SILENCE: drift pages on the next
+  # tick, by path. It pages only on STALE (clean at HEAD, behind origin/main),
+  # never on work-in-progress edits, because a gate that fires during ordinary
+  # editing gets ignored and is then worth nothing when the real thing happens.
+  # Detect-only; repairing drift means syncing or landing, both owned decisions.
+  - name: tick_code_currency
+    cadence_secs: 900
+    gate:
+      cmd: ./ci-hub/health/tick_code_currency.py --gate
+      when: failure
+      capture: true
+    emit:
+      kind: action
+      skill: hard-warn-coordinator
+      fields:
+        component: tick-code-currency
+      title: "the tick is running code that is not what landed: {summary}"
+
   # Local-only parent commits are the state that got 45 commits orphaned on
-  # 2026-08-06. They emit no error and no failing check, so this runs on a
-  # timer and PUBLISHES them rather than reporting: a report needs a reader.
+  # 2026-08-06. They emit no error and no failing check, so this runs on a timer.
   # --scope all is load-bearing -- a HEAD-scoped probe read 0 while 24 commits
   # sat unpublished.
+  #
+  # OBSERVATION ONLY ON THE TICK -- `--rescue` was REMOVED 2026-08-08. Measured:
+  # the scan is 0.40s, while ONE herdr-run rescue round-trip took 65.8s and
+  # 74.8s (both failing rc=69) and rescue makes two per commit. Sharing the 30s
+  # budget meant this gate reported `could not run ... timed out` on EVERY cycle
+  # for a full day and therefore never emitted a measurement -- while a 20-commit
+  # stack sat in zero origin refs and had to be found by hand. Observation is
+  # read-only and cheap; rescue is remote mutation and slow. They do not belong
+  # on one budget. Run the rescue deliberately, off the tick:
+  #   ./ci-hub/health/unpushed_parent_commits.py --scope all --rescue
+  # (it bounds itself with --rescue-deadline and reports skipped-deadline rather
+  # than implying coverage it never attempted).
   - name: unpushed_parent_commits
     cadence_secs: 900
     gate:
-      cmd: ./ci-hub/health/unpushed_parent_commits.py --scope all --rescue
+      cmd: ./ci-hub/health/unpushed_parent_commits.py --scope all
       when: failure
       capture: true
     emit:
@@ -110,7 +203,7 @@ reminders:
       skill: hard-warn-coordinator
       fields:
         component: unpushed-parent-commits
-      title: "parent commits existed only locally (now published to rescue/): {summary}"
+      title: "parent commits exist ONLY locally (not yet published): {summary}"
 
   - name: speculative_land_obligations
     cadence_secs: 300
@@ -125,6 +218,32 @@ reminders:
         component: speculative-land-obligation
       title: "speculative land requires immediate attention: {summary}"
 
+  # SECOND ADMISSION TEST, added 2026-08-08 after this gate and the validate
+  # admission gate were both found bound to a moving reference:
+  #
+  #   IS THIS ALARM SATISFIABLE BY THE ACTOR IT INSTRUCTS?
+  #
+  # An alarm nobody can clear is worse than no alarm: it is either obeyed in a
+  # loop (an agent dispatched at this gate nearly looped forever chasing a parent
+  # main that thirteen agents keep advancing) or muted, which silently disarms it.
+  # Three ways a gate becomes unsatisfiable, all seen in this file:
+  #   (a) MOVING REFERENCE  -- the target moves while you satisfy it. This gate.
+  #   (b) STANDING BACKLOG  -- one tick cannot drain it, yet it pages every tick.
+  #   (c) INSTANTANEOUS DIP -- fires on a transient sample.
+  # The three antidotes, all already present in this repo: DELTA (page only on
+  # newly-qualifying members -- worktree_disk_residue), SUSTAINED-ACROSS-N (page
+  # after N consecutive confirmations -- ci_lane_saturation), and TIME-BUDGETED
+  # DEFERRAL (separate "cannot right now" from "is wrong", and time it -- below).
+  #
+  # This gate demanded the parent exactly equal a live-queried origin/main, which
+  # is true only momentarily; worse, it asked "may I publish?" BEFORE "is there
+  # anything to publish?", so a parent merely a commit or two behind hard-warned
+  # even when the published gitlinks were already correct. Currency is now judged
+  # once, by its real authority (scripts/parent-main-write, under an exclusive
+  # lock with CAS and ancestry verification), and a lost race reports DEFERRED.
+  # Incoherence that retrying cannot fix -- dirty primary, primary off main,
+  # inconsistent Reverie pin -- still hard-warns immediately. A deferral escalates
+  # only after 60 min (12 consecutive ticks) of never publishing.
   - name: primary_checkout_snapshot
     cadence_secs: 300
     gate:
@@ -198,76 +317,57 @@ reminders:
         component: ci-lane-saturation
       title: "CI PMU lane {state}: {summary}"
 
-  - name: stuck_agents
-    cadence_secs: 300
-    gate:
-      cmd: ./ci-hub/health/operational_health.py agents
-      when: failure
-      capture: true
-    emit:
-      kind: action
-      skill: hard-warn-coordinator
-      fields:
-        component: agents
-      title: "agent fleet needs attention: {summary}"
-
-  - name: active_work_reconciliation
-    cadence_secs: 300
-    gate:
-      cmd: ./ci-hub/ci-hub active-work --gate
-      when: failure
-      capture: true
-    emit:
-      kind: action
-      skill: hard-warn-coordinator
-      fields:
-        component: active-work-reconciliation
-      title: "task/owner/agent reality diverged: {summary}"
-
-  # BACKLOG is intentionally absent from the routine mission/claim views.  A
-  # complete no-LIMIT census is therefore required to keep unowned P0/P1 work
-  # from becoming invisible.  Counts carry the live population denominator;
-  # missing durable drain classifications alert instead of being inferred.
-  - name: unowned_high_priority_backlog
-    cadence_secs: 300
-    gate:
-      cmd: ./ci-hub/taskgraph/unowned_backlog.py --gate
-      when: failure
-      capture: true
-    emit:
-      kind: action
-      skill: hard-warn-coordinator
-      fields:
-        component: unowned-high-priority-backlog
-      title: "unowned P0/P1 BACKLOG census is {state}: {summary}"
-
-  # Refusals and agent recycling can be locally correct while leaving work
-  # ownerless.  This combines three authorities: TaskGraph owner vs live ORC
-  # fleet, exact refusal-note markers, and slot owner absence AND no process cwd
-  # under the slot.  It only reports/wakes; slot cleanup and task reassignment
-  # remain coordinator decisions.
-  - name: unowned_residue
-    cadence_secs: 3600
-    gate:
-      cmd: ./ci-hub/health/residue_sweep.py --gate
-      when: failure
-      capture: true
-    emit:
-      kind: action
-      skill: hard-warn-coordinator
-      fields:
-        component: unowned-residue
-      title: "unowned residue needs routing: {summary}"
-
-  # Podman containers run in libpod scopes outside the launching agent's process
-  # cgroup, so ordinary process teardown cannot reclaim them. This gate acts only
-  # on containers created through scripts/agent-podman.rs: agent-lifetime
-  # containers are gracefully removed when the exact creator invocation is gone;
-  # task-retained, owner-unknown, and legacy unlabelled containers are warnings.
+  # ---------------------------------------------------------------------------
+  # REMOVED 2026-08-08 -- owner directive (web): "tick hub should not be used for
+  # interfering with these orc internal matters", and: "I never was involved with
+  # ANY of those tick hub creations ... They are trying to rigidly remind the
+  # agent of things it may not notice. This is good for external systems like
+  # github but it seems dangerous in other cases."
+  #
+  # THE TEST EVERY GATE MUST NOW PASS: can ORC observe this directly? If YES,
+  # tick-hub must not police it -- ORC holds the authoritative view and a second
+  # observer can only manufacture disagreement. If NO (GitHub, hosted CI queues,
+  # runner lanes, local disk, local git), tick-hub is exactly the right mechanism.
+  #
+  # The danger is ASYMMETRIC, which is why these four went rather than getting
+  # patched: a false alarm about GitHub wastes a check, but a false alarm about
+  # orc-internal state feeds a coordinator mandate that closes and respawns
+  # agents with no permission needed. Same mechanism, incomparable blast radius.
+  #
+  #   stuck_agents                  -- asserted agent liveness. ORC owns the
+  #                                    fleet. Produced a false "agent died" for
+  #                                    the agent with the freshest activity
+  #                                    timestamp on the box (2026-08-08).
+  #   active_work_reconciliation    -- asserted task/owner/agent agreement. Both
+  #                                    authorities are ORC's; only the copy could
+  #                                    be wrong.
+  #   unowned_high_priority_backlog -- censused the TaskGraph through a hardcoded
+  #                                    DB path and reported a 108-task backlog
+  #                                    against a database the orchestrator could
+  #                                    not see for an entire session.
+  #   unowned_residue               -- combined ORC fleet + TaskGraph owner +
+  #                                    slot state. Its one non-ORC signal (a slot
+  #                                    with no process cwd inside it) is now
+  #                                    covered by `worktree_disk_residue` above.
+  #
+  # The scripts remain on disk and remain useful when a coordinator or agent runs
+  # them ON REQUEST against a question it is actually asking. What is withdrawn
+  # is their standing authority to interrupt and instruct.
+  #
+  # RE-SCOPED, NOT REMOVED: agent_container_lifecycle. Reclaiming leaked podman
+  # containers is genuine resource cleanup that ORC cannot see (libpod scopes sit
+  # outside the launching agent's cgroup, and ORC has no shell). But its reclaim
+  # predicate falls back to "owner agent is absent from the ORC snapshot" ->
+  # gracefully_remove(), so a stale or empty ignored/ci-hub/agent-snapshot.json
+  # authorizes destroying a live agent's container -- and headless agents have no
+  # tmux pane for the process-evidence path to rescue them. The audit half is
+  # kept; `--apply` is withdrawn until the predicate rests on process evidence
+  # alone. Follow-up: rescope-agent-container-reclaim-to-process-evidence.
+  # ---------------------------------------------------------------------------
   - name: agent_container_lifecycle
     cadence_secs: 300
     gate:
-      cmd: ./scripts/agent-podman.rs reconcile --agents-json ignored/ci-hub/agent-snapshot.json --apply
+      cmd: ./scripts/agent-podman.rs reconcile --agents-json ignored/ci-hub/agent-snapshot.json
       when: failure
       capture: true
     emit:
@@ -275,7 +375,7 @@ reminders:
       skill: hard-warn-coordinator
       fields:
         component: agent-container-lifecycle
-      title: "agent-owned containers need attention: {summary}"
+      title: "agent-owned containers need attention (REPORT-ONLY, coordinator reclaims): {summary}"
 
   # Memory <-> skill sync: the sync/lint scripts existed but nothing invoked them,
   # so being in-sync was luck. This reminder runs the authoritative structural

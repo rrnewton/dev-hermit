@@ -11,7 +11,7 @@
 #      size (Hard Invariant 11). A 17 KiB compiled mutant is as refused as a
 #      50 MB one; no size limit can catch that shape.
 #   2. SOFT SIZE, type-independent -- WARNS + BLOCKS over a per-file limit, so an
-#      oversized artifact never lands by accident.
+#      oversized artifact never lands by accident. SIZE-DELTA AWARE: see below.
 #
 # Neither blanket-bans an extension; small curated logs/reports commit freely.
 #
@@ -24,11 +24,52 @@
 # decision, and HERMIT_HYGIENE_OVERRIDE deliberately does NOT reach it:
 #     HERMIT_BINARY_GUARD=off git commit ...
 #
+# ---------------------------------------------------------------------------
+# WHY THE SIZE GATE IS DELTA-AWARE (2026-08-08).
+#
+# An absolute-only limit fires on EVERY commit to a legitimately-growing tracked
+# file. The validate ledger shard crossed 1024 KiB on its first import and was
+# 1221 KiB on its second, so every future import would have needed
+# HERMIT_HYGIENE_OVERRIDE -- and a gate that fires on every legitimate operation
+# trains routine override until it protects nothing. That is not a forecast:
+# SEVEN tracked files already exceed 1024 KiB, and six are raw logs/dumps under
+# experiments/ -- precisely the class this hook exists to refuse. They are here
+# because the only way past the gate was a flag that releases it entirely.
+#
+# The two populations are cleanly separable by DELTA, not by size:
+#   * every one of those six arrived LARGE IN ONE COMMIT, with no prior version;
+#   * the ledger got there by repeated small appends (+155 KiB / 81 rows;
+#     measured 1700 B/row, ~153 KiB for a day's import).
+# So: an over-limit path with NO baseline in HEAD is refused as before, while an
+# over-limit path that ALREADY EXISTS is judged on how much it GREW. A routine
+# append passes untouched; a 1.5 MiB dump appended to a tracked file does not.
+#
+# Raising the limit was rejected: clearing the ledger would mean clearing all six
+# logs too. Path-exempting the ledger was rejected: it blinds the gate to the one
+# file actually growing, and would need repeating per host and per team shard.
+#
+# THE CEILING IS NOT A THIRD GUARD -- it is AGENTS.md's existing rule finally
+# implemented. "Textual files over 2 MiB require explicit coordinator approval
+# before staging" was not enforced anywhere: HERMIT_HYGIENE_OVERRIDE exited 0 at
+# ANY size, so the flag used routinely for a 1.2 MiB ledger also waved through a
+# 50 MiB file. The ceiling is absolute and, following this file's established
+# idiom, the routine override deliberately does NOT reach it:
+#     HERMIT_HYGIENE_CEILING_OVERRIDE=1 git commit ...   (coordinator decision)
+# Tune the growth allowance / ceiling (KiB):
+#     HERMIT_HYGIENE_MAX_GROWTH_KB=256   HERMIT_HYGIENE_CEILING_KB=2048
+# ---------------------------------------------------------------------------
+#
 # Install:  scripts/setup-hooks.sh   (sets core.hooksPath=.githooks)
 # Policy:   .githooks/hygiene-policy.md
 
 set -u
 LIMIT_KB="${HERMIT_HYGIENE_MAX_KB:-1024}"
+# Per-commit growth allowance for a path that ALREADY exists in HEAD. 256 KiB is
+# ~1.7x the measured 153 KiB daily ledger import, so a normal append has room
+# while a dump appended to a tracked file is still far outside it.
+GROWTH_KB="${HERMIT_HYGIENE_MAX_GROWTH_KB:-256}"
+# AGENTS.md coordinator-approval threshold. Absolute; delta cannot buy past it.
+CEILING_KB="${HERMIT_HYGIENE_CEILING_KB:-2048}"
 POLICY=".githooks/hygiene-policy.md"
 
 # Parent main is a serialized publication surface.  This early check gives a
@@ -234,16 +275,74 @@ if [ "${#bins[@]}" -gt 0 ]; then
 fi
 
 big=()
+over_ceiling=()
+grew_ok=()
 # Only added/copied/modified files; deletions and renames-away don't add bytes.
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   # Size of the STAGED blob (bytes). Fail open on any lookup error (never wedge).
   sz=$(git cat-file -s ":$f" 2>/dev/null) || continue
   kb=$(( (sz + 1023) / 1024 ))
-  if [ "$kb" -gt "$LIMIT_KB" ]; then
-    big+=("$(printf '%7d KiB  %s' "$kb" "$f")")
+
+  # The ceiling is checked FIRST and independently: it is an absolute policy
+  # threshold, so neither a small delta nor the routine override may reach it.
+  if [ "$kb" -gt "$CEILING_KB" ]; then
+    over_ceiling+=("$(printf '%7d KiB  %s' "$kb" "$f")")
+    continue
   fi
+
+  [ "$kb" -le "$LIMIT_KB" ] && continue
+
+  # Over the soft limit. Judge an ALREADY-TRACKED path on its growth instead of
+  # its absolute size: that is what separates a legitimate append from a dump
+  # landing in one commit. A path with no baseline in HEAD has no growth to
+  # measure and stays refused exactly as before.
+  base=$(git cat-file -s "HEAD:$f" 2>/dev/null) || base=""
+  if [ -n "$base" ]; then
+    base_kb=$(( (base + 1023) / 1024 ))
+    delta_kb=$(( kb - base_kb ))
+    if [ "$delta_kb" -le "$GROWTH_KB" ]; then
+      grew_ok+=("$(printf '%7d KiB (+%d KiB)  %s' "$kb" "$delta_kb" "$f")")
+      continue
+    fi
+    big+=("$(printf '%7d KiB (+%d KiB, allowance %d KiB)  %s' \
+      "$kb" "$delta_kb" "$GROWTH_KB" "$f")")
+    continue
+  fi
+  big+=("$(printf '%7d KiB (new file, no baseline)  %s' "$kb" "$f")")
 done < <(git diff --cached --name-only --diff-filter=ACM)
+
+# Growth stays VISIBLE even when allowed: a silent allowance is how a file
+# creeps to the ceiling with nobody noticing it happening.
+if [ "${#grew_ok[@]}" -gt 0 ]; then
+  {
+    echo "repo hygiene: over ${LIMIT_KB} KiB but growing normally (allowance ${GROWTH_KB} KiB/commit):"
+    for g in "${grew_ok[@]}"; do echo "  $g"; done
+    echo "  ceiling is ${CEILING_KB} KiB and needs a coordinator decision."
+  } >&2
+fi
+
+if [ "${#over_ceiling[@]}" -gt 0 ]; then
+  {
+    echo "----------------------------------------------------------------------"
+    echo "REPO HYGIENE: staged file(s) over the ${CEILING_KB} KiB CEILING:"
+    for b in "${over_ceiling[@]}"; do echo "  $b"; done
+    echo
+    echo "AGENTS.md: textual files over 2 MiB require explicit coordinator"
+    echo "approval before staging. This is a POLICY threshold, not a soft limit,"
+    echo "so HERMIT_HYGIENE_OVERRIDE does NOT reach it -- same reason the binary"
+    echo "guard has its own flag: two different decisions must not collapse into"
+    echo "one habit."
+    echo
+    echo "BLOCKED. Prefer splitting/sharding the artifact so no single file"
+    echo "crosses the threshold. With a recorded coordinator decision:"
+    echo "        HERMIT_HYGIENE_CEILING_OVERRIDE=1 git commit ..."
+    echo "----------------------------------------------------------------------"
+  } >&2
+  [ "${HERMIT_HYGIENE_CEILING_OVERRIDE:-}" = "1" ] || exit 1
+  echo "HERMIT_HYGIENE_CEILING_OVERRIDE=1 set -- proceeding on a recorded" >&2
+  echo "coordinator decision for the above." >&2
+fi
 
 [ "${#big[@]}" -eq 0 ] && exit 0
 

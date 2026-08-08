@@ -184,9 +184,14 @@ executed_count,evidence_count,comparison_tier
   every row. `full-stdout-info-stack-heap` and
   `stdout-info-stack-heap-spot-check` are the only values that qualify a raw
   pass as green. `legacy-unqualified`, `unqualified-stdout-only`, and
-  `unqualified-tool-count-only` preserve weaker evidence explicitly and never
-  count green. This is deliberately separate from `tier`, which records the
-  self-determinism comparator used within one backend.
+  `unqualified-tool-count-only` preserve weaker cross-backend evidence
+  explicitly. `unqualified-self-verify-only` records only repeated-run or
+  within-backend self-consistency; it makes no cross-backend stdout, Tool,
+  stack, or heap parity claim. `unqualified-no-comparison` records a fresh row
+  for which no comparison witness exists, such as an unexecuted gap; it asserts
+  neither self-consistency nor cross-backend parity. Every `unqualified-*`
+  value is non-green. This is deliberately separate from `tier`, which records
+  the self-determinism comparator used within one backend.
 
 The renderer keys logical cells on `(bucket, test_id, test_mode, backend)`.
 `--all` is accepted only for a single run identity; mixed-run aggregation is

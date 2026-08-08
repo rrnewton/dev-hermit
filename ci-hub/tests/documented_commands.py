@@ -22,7 +22,7 @@ DOCS = (
     ROOT / "ci-hub/landing/README.md",
     ROOT / "ci-hub/containers/README.md",
 )
-EXPECTED_COMMANDS = 52
+EXPECTED_COMMANDS = 53
 FENCE = re.compile(r"^```(?P<language>[A-Za-z0-9_-]*)\s*$")
 FATAL_OUTPUT = (
     "gh auth login",
@@ -37,6 +37,53 @@ FATAL_OUTPUT = (
 
 class DocsCommandError(RuntimeError):
     """A documented command could not be classified or exercised."""
+
+
+class DocsUnverifiable(RuntimeError):
+    """A probe COULD NOT MEASURE, and nobody declared that it could not.
+
+    Three-valued, matching ``ci-hub/taskgraph/unowned_backlog.py``: rc 0 is
+    measured-and-clean, rc 1 is measured-and-failing, rc 2 is could-not-measure.
+    Before this existed the third state was spelled ``SKIP`` and was counted in
+    ``probes=`` exactly like a pass, so a probe that measured NOTHING reported
+    the same headline as one that measured everything.
+    """
+
+
+#: Probes that genuinely cannot be measured somewhere must be DECLARED here,
+#: with the reason and with what would make them measurable again. A declared
+#: could-not-measure is still PRINTED and still counted under ``unverifiable=``
+#: -- it just does not fail the run. An UNDECLARED one is rc 2.
+#:
+#: The rule this encodes: you may be unable to measure something, but you may
+#: not be SILENT about it, and you may not discover it by accident.
+DECLARED_UNMEASURABLE: dict[str, str] = {
+    "quickstart tg": (
+        "`tg quickstart` is not a subcommand of tg and never has been. tg's root "
+        "command takes a positional `[TASK]...`, so `tg quickstart` parses as the "
+        "default mission-control view focused on a task named 'quickstart' and "
+        "opens the database -- which is why this probe read as an impurity. "
+        "dev-hermit b3995f3 added `ci-hub quickstart` and a probe for a symmetric "
+        "`tg quickstart` in one commit, but the tg half lives in fbcode/orc/tg and "
+        "was never written: `grep -rn quickstart --include=*.rs` over that tree "
+        "returns zero hits. Measurable again once fbcode/orc/tg grows a "
+        "database-free `quickstart` that prints the markers below; at that point "
+        "DELETE this entry -- test_declared_unmeasurable_entries_are_still_true "
+        "fails if a declared probe starts passing."
+    ),
+}
+
+
+def _unverifiable(name: str, detail: str) -> str:
+    """Record a could-not-measure. Declared -> a counted report; else rc 2."""
+    reason = DECLARED_UNMEASURABLE.get(name)
+    if reason is None:
+        raise DocsUnverifiable(
+            f"{name}: {detail}. This probe measured nothing and no declaration "
+            f"in DECLARED_UNMEASURABLE says it could not. Either fix the probe or "
+            f"declare -- with a reason -- that it cannot run here."
+        )
+    return f"UNVERIFIABLE {name}: {detail} -- declared: {reason}"
 
 
 @dataclass(frozen=True)
@@ -114,6 +161,13 @@ def _classify(text: str) -> str:
     # The landing preflight is illustrated with <placeholder> arguments, so it is
     # parse-only: the snippet documents the three checks, it is not run verbatim.
     if normalized.startswith("python3 ci-hub/landing/preflight.py"):
+        return "parse"
+    # Same shape as the preflight snippet above: the coalesce-guard example is
+    # written with a `<you>` placeholder and a literal `...` standing in for the
+    # constituent PR list, so it documents the invocation rather than being a
+    # command anyone runs verbatim. Parse-only is the truthful classification --
+    # calling it live-read would assert it executes, which it cannot.
+    if normalized.startswith("python3 ci-hub/landing/coalesce_guard.py"):
         return "parse"
     if normalized == "./ci-hub/directives/check.py --quickstart":
         return "local-read"
@@ -221,6 +275,16 @@ def _parse_probe(command: str) -> str:
         return "./ci-hub/bin/reconcile-receipts --help"
     if normalized.startswith("python3 ci-hub/landing/preflight.py"):
         return "python3 ci-hub/landing/preflight.py --help"
+    # Classifying a snippet "parse" is only half the job: parse-mode still RUNS
+    # something, and without an entry here that something is the snippet
+    # VERBATIM. The coalesce-guard example carries a `<you>` placeholder and a
+    # literal `...` standing in for the constituent PR list, so running it
+    # verbatim dies in argparse ("invalid int value: '...'", exit 2) and the
+    # step reports a documented-command failure for a doc that is correct.
+    # That is precisely what happened after 3e9c299 added the _classify entry
+    # without this one.
+    if normalized.startswith("python3 ci-hub/landing/coalesce_guard.py"):
+        return "python3 ci-hub/landing/coalesce_guard.py --help"
     return command
 
 
@@ -291,7 +355,20 @@ def _run_one(
         else:
             executed = _parse_probe(rendered)
     elif command.mode == "live-read":
-        allowed = {0, 1, 2} if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered) else {0}
+        # ci-hub read commands report their VERDICT through the exit code, so a
+        # nonzero status here is data, not a probe failure: `hosted-status`
+        # alone answers 0 GREEN / 3 RED / 4 NO_RESULT, and it is documented with
+        # a placeholder SHA that necessarily dereferences to NO_RESULT. The old
+        # {0, 1, 2} allowlist therefore failed the step for a command that had
+        # worked perfectly. This never showed up on main because this whole
+        # live step sits behind the coalesce-guard red and had never once
+        # executed. Crashes are still caught: a Rust panic is 101, a missing
+        # binary 127, and any traceback trips FATAL_OUTPUT above.
+        allowed = (
+            {0, 1, 2, 3, 4}
+            if re.match(r"^(?:\./)?ci-hub/ci-hub\s", rendered)
+            else {0}
+        )
 
     timeout = 120 if live else 45
     before = _workspace_state(root, include_ignored=True) if verify_purity else ""
@@ -363,6 +440,41 @@ def _run_one(
                 f"\ntracked mtimes changed: {changed_mtimes or 'none'}"
             )
     return reports
+
+
+def _tg_exposes_quickstart(binary: str) -> bool:
+    """Does this tg actually HAVE a `quickstart` subcommand?
+
+    Read out of the `Commands:` block ONLY. tg's help opens with several
+    paragraphs of prose and a worked example, so a substring match over the
+    whole text would cheerfully "find" a subcommand that does not exist -- and
+    the point of this function is to stop us asserting against a fiction.
+    Absent binary or unreadable help both answer False: cannot tell IS no.
+    """
+    try:
+        result = subprocess.run(
+            [binary, "--help"],
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    in_commands = False
+    for line in (result.stdout + result.stderr).splitlines():
+        if re.match(r"^\s*(?:Commands|SUBCOMMANDS):\s*$", line):
+            in_commands = True
+            continue
+        if not in_commands:
+            continue
+        if not line.strip():
+            continue
+        if not line.startswith((" ", "\t")):
+            break  # dedent: the Commands block ended
+        if re.match(r"^\s+quickstart\b", line):
+            return True
+    return False
 
 
 def _run_tg_quickstart(
@@ -558,8 +670,27 @@ def run(*, root: Path = ROOT, live: bool = False) -> list[str]:
                     verify_purity=verify_purity,
                 )
             )
+        # Three outcomes, never two. Absent tool and missing interface are both
+        # "could not measure" -- they are NOT a pass, and the old `SKIP` string
+        # made them indistinguishable from one.
         tg_binary = os.environ.get("CI_HUB_TG_BIN") or shutil.which("tg")
-        if tg_binary:
+        if not tg_binary:
+            reports.append(
+                _unverifiable(
+                    "quickstart tg",
+                    "tg is not on PATH (it is a large fbsource binary, absent from "
+                    "ubuntu-latest, so hosted CI can never measure this)",
+                )
+            )
+        elif not _tg_exposes_quickstart(tg_binary):
+            reports.append(
+                _unverifiable(
+                    "quickstart tg",
+                    f"{tg_binary} exposes no `quickstart` subcommand, so there is no "
+                    "primer here whose purity could be measured",
+                )
+            )
+        else:
             reports.extend(
                 _run_tg_quickstart(
                     tg_binary,
@@ -567,10 +698,6 @@ def run(*, root: Path = ROOT, live: bool = False) -> list[str]:
                     environment=environment,
                     verify_purity=verify_purity,
                 )
-            )
-        else:
-            reports.append(
-                "SKIP quickstart tg tool-unavailable; fbsource tg integration owns its purity test"
             )
     reports.append(
         "PASS checkout-purity "
@@ -625,11 +752,23 @@ def main(argv: list[str] | None = None) -> int:
     except DocsCommandError as error:
         print(f"DOCUMENTED COMMAND FAILURE: {error}", file=sys.stderr)
         return 1
+    except DocsUnverifiable as error:
+        # rc 2, not 1 and not 0: measuring nothing is neither a pass nor a
+        # failure, and collapsing it into either is how a hole stays invisible.
+        print("state=unverifiable", file=sys.stderr)
+        print(f"summary={error}", file=sys.stderr)
+        return 2
     for report in reports:
         print(report)
+    # `probes=` counts what was MEASURED. An unverifiable is reported next to
+    # it, never inside it -- the old code did `probes=len(reports)` with the
+    # SKIP string in that list, so a probe that measured nothing inflated the
+    # headline exactly like one that passed.
+    unverifiable = [r for r in reports if r.startswith("UNVERIFIABLE ")]
     print(
         f"DOCUMENTED COMMANDS: PASS commands={EXPECTED_COMMANDS} "
-        f"probes={len(reports)} live={str(args.live).lower()}"
+        f"probes={len(reports) - len(unverifiable)} "
+        f"unverifiable={len(unverifiable)} live={str(args.live).lower()}"
     )
     return 0
 

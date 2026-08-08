@@ -46,6 +46,10 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
+# One resolver for the TaskGraph, shared with every other ci-hub consumer.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
 
 # The tracker is named, not discovered, because it is a single designated
 # authority. If it is ever renamed, this must fail loudly rather than silently
@@ -70,8 +74,17 @@ class Unavailable(Exception):
 
 
 def _run(cmd: list[str], timeout: int) -> str:
+    env = None
+    if cmd and cmd[0] == "tg":
+        # Unbound, `tg` reads an empty default and succeeds with 0 rows, which
+        # this reconciler would read as "the tracker has no entries" -- exactly
+        # the downgrade to "no gaps" the Unavailable class exists to prevent.
+        try:
+            env = taskgraph_db.child_env(taskgraph_db.resolve())
+        except taskgraph_db.TaskGraphUnavailable as exc:
+            raise Unavailable(str(exc)) from exc
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise Unavailable(f"timed out after {timeout}s: {' '.join(cmd[:4])}") from exc
     except OSError as exc:

@@ -55,10 +55,25 @@
 # keeps the report-only contract: exit 0 whether or not orphans exist. In BOTH
 # modes a fail-safe fleet-read abort is exit 3 and flags nothing.
 #
+# TWO INPUTS, BOTH FAIL CLOSED. The report is a cross-reference of the live
+# fleet against the task graph, so it is only meaningful when BOTH were read.
+# The fleet side has always aborted rather than mass-flag (exit 3). The task-graph
+# side used to fail OPEN: `tg` with no database bound reads an empty `tasks`
+# default and returns 0 rows, so a bare run printed "scanned 0 ... ORPHANED: 0"
+# at exit 0 — byte-identical in verdict and exit code to a full census that found
+# nothing. Measured 2026-08-08: bound = "scanned 17 ... ORPHANED: 0" rc=0,
+# unbound = "scanned 0 ... ORPHANED: 0" rc=0. Silence read as health.
+# The database is now resolved through the single authority
+# ci-hub/lib/taskgraph_db.py and an unresolvable one is exit 2, never a clean
+# report. A BOUND database with genuinely zero owned non-terminal tasks stays a
+# MEASURED clean 0 — the resolver validates the database's SHAPE, never its
+# contents, precisely so empty stays distinguishable from unreadable.
+#
 # Exit codes:
 #   0  = ran; default mode (orphans may or may not exist, see report), or
 #        --gate mode with ZERO orphans.
 #   1  = --gate mode ONLY: ran and found >=1 orphan (actionable).
+#   2  = could not read the task graph (nothing scanned; fail-closed).
 #   3  = could not determine the live fleet (nothing flagged; fail-safe).
 #   64 = usage error.
 set -uo pipefail
@@ -78,6 +93,26 @@ done
 command -v tg >/dev/null 2>&1 || { echo "orphaned-task-detector: 'tg' not on PATH" >&2; exit 3; }
 command -v orc >/dev/null 2>&1 || { echo "orphaned-task-detector: 'orc' not on PATH" >&2; exit 3; }
 command -v tmux >/dev/null 2>&1 || { echo "orphaned-task-detector: 'tmux' not on PATH" >&2; exit 3; }
+
+# --- TASK GRAPH: resolve through the one authority, or refuse. ---
+# Checked BEFORE the fleet read so an unreadable graph never emits a line that
+# looks like a report. We export the resolved path rather than trusting an
+# inherited TG_DB_PATH: the binding is STATED for the `tg` child, the same
+# posture as taskgraph_db.child_env() for the Python consumers.
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+TG_RESOLVER="$REPO_ROOT/ci-hub/lib/taskgraph_db.py"
+if [[ ! -f $TG_RESOLVER ]]; then
+    echo "orphaned-task-detector: COULD NOT MEASURE — resolver missing at $TG_RESOLVER" >&2
+    echo "  (refusing to report: an unread task graph must not be printed as zero orphans)" >&2
+    exit 2
+fi
+if ! TG_DB_RESOLVED=$(python3 "$TG_RESOLVER" --print-path 2>&1); then
+    echo "orphaned-task-detector: COULD NOT MEASURE — ${TG_DB_RESOLVED}" >&2
+    echo "  (refusing to report: an unread task graph must not be printed as zero orphans)" >&2
+    echo "  bind one explicitly, e.g. TG_DB_PATH=~/.tg/<graph>.db $0" >&2
+    exit 2
+fi
+export TG_DB_PATH="$TG_DB_RESOLVED"
 
 # --- LIVE FLEET: window names across all sessions on orc's isolated socket. ---
 SOCK=$(orc tmux ls 2>/dev/null | grep -oP 'TMUX_TMPDIR\):\s*\K\S+')
@@ -112,9 +147,21 @@ QUERY="SELECT 'ROW|' || owner || '|' || status || '|' || local_modified_at || '|
        FROM tasks WHERE owner IS NOT NULL AND owner != '' AND $STATUS_FILTER \
        ORDER BY owner, local_modified_at DESC"
 
+# Run the query BEFORE printing any report line, and check its status. A failed
+# `tg sql` used to be swallowed by `2>/dev/null` inside a process substitution,
+# where the exit status is discarded, so a broken query was indistinguishable
+# from a graph containing no owned tasks.
+if ! QUERY_OUT=$(tg sql "$QUERY" 2>&1); then
+    echo "orphaned-task-detector: COULD NOT MEASURE — tg sql failed against $TG_DB_PATH" >&2
+    echo "  ${QUERY_OUT}" >&2
+    echo "  (refusing to report: a failed query must not be printed as zero orphans)" >&2
+    exit 2
+fi
+
 now=$(date +%s)
 echo "orphaned-task-detector: live fleet = ${#LIVE[@]} windows on $SOCK"
 echo "  live agents: $(printf '%s ' "${!LIVE[@]}" | tr ' ' '\n' | sort | grep -v '^$' | tr '\n' ' ')"
+echo "  task graph: $TG_DB_PATH"
 echo "  scanning ${STATUS_FILTER}  [REPORT ONLY — no task is reassigned or closed]"
 echo
 printf '%-46s %-16s %-12s %8s\n' TASK OWNER status age_h
@@ -133,7 +180,7 @@ while IFS='|' read -r _tag owner status modified local_id; do
     orphan_n=$((orphan_n+1))
     ORPHAN_OWNERS[$owner]=$(( ${ORPHAN_OWNERS[$owner]:-0} + 1 ))
     printf '%-46s %-16s %-12s %8s\n' "$local_id" "$owner" "$status" "$age_h"
-done < <(tg sql "$QUERY" 2>/dev/null | grep '^ROW|')
+done < <(printf '%s\n' "$QUERY_OUT" | grep '^ROW|')
 
 echo "-------------------------------------------------------------------------------------"
 echo "scanned $owned_n owned non-terminal task(s); ORPHANED (owner not in live fleet): $orphan_n"
@@ -141,9 +188,10 @@ if (( orphan_n > 0 )); then
     echo "orphan owners (agent no longer exists):"
     for o in "${!ORPHAN_OWNERS[@]}"; do echo "  $o  -> ${ORPHAN_OWNERS[$o]} task(s)"; done
     echo
-    echo "ROUTE each (coordinator decision — never a silent third state):"
+    echo "ROUTE each (never a silent third state):"
     echo "  * still wanted -> reassign: tg claim <task> (as the new owner) or tg update <task> --owner <agent>"
-    echo "  * done/moot    -> coordinator records evidence, then uses ./ci-hub/bin/close-task"
+    echo "  * done/moot    -> record the evidence in a note, then close: tg update <task> --status closed"
+    echo "                    (already landed? use ./ci-hub/bin/close-task so CLOSURE-VERIFIED clears the landing debt)"
     echo "This tool only DETECTS. It does not reassign or close anything."
 fi
 # --gate: signal orphan presence through the exit code so a composite health poll

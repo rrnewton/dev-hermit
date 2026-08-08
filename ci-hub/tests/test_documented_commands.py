@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -158,6 +161,99 @@ class DocumentedCommandsTest(unittest.TestCase):
             dirty_note="concurrent.txt is owned by hermit-226 and intentionally left unchanged",
         )
         self.assertIn("concurrent.txt", "\n".join(reports))
+
+
+class CouldNotMeasureTest(unittest.TestCase):
+    """The third state. A probe that measures nothing must not read as a pass.
+
+    Both directions, with counts, because the defect this replaces was a probe
+    that was green in three different ways at once: SKIPped on hosted CI (tg
+    absent), failing locally behind an unrelated red, and unit-tested only
+    against a stub that satisfied the contract by construction.
+    """
+
+    def _stub_tg(self, directory: str, commands_block: str) -> str:
+        binary = Path(directory) / "tg"
+        binary.write_text(
+            "#!/bin/sh\ncat <<'EOF'\nSome prose preamble mentioning quickstart.\n\n"
+            f"Commands:\n{commands_block}\n\nArguments:\n  [TASK]...\nEOF\n"
+        )
+        binary.chmod(0o755)
+        return str(binary)
+
+    def test_help_scanner_reads_the_commands_block_not_the_prose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            # NEGATIVE: 'quickstart' appears in the prose only -- must be False,
+            # otherwise the scanner would happily confirm a fictional interface.
+            absent = self._stub_tg(tmp, "  show   Show a task\n  agent-setup   Set up")
+            self.assertFalse(documented_commands._tg_exposes_quickstart(absent))
+        with tempfile.TemporaryDirectory() as tmp:
+            # POSITIVE: same scanner, real entry -- proves it is not just False.
+            present = self._stub_tg(tmp, "  quickstart   Print the primer\n  show   Show")
+            self.assertTrue(documented_commands._tg_exposes_quickstart(present))
+        # And a binary that does not exist answers False rather than raising.
+        self.assertFalse(documented_commands._tg_exposes_quickstart("/nonexistent/tg"))
+
+    def test_a_declared_could_not_measure_is_reported_not_swallowed(self) -> None:
+        report = documented_commands._unverifiable("quickstart tg", "tg is not on PATH")
+        self.assertTrue(report.startswith("UNVERIFIABLE "))
+        self.assertIn("tg is not on PATH", report)
+        self.assertIn("declared:", report)
+
+    def test_an_UNDECLARED_could_not_measure_is_rc_2(self) -> None:
+        """The fail-closed direction, matching unowned_backlog.py's rc 2."""
+        with self.assertRaises(documented_commands.DocsUnverifiable):
+            documented_commands._unverifiable("probe-nobody-declared", "no tool")
+        original = documented_commands.run
+        try:
+            def _raise(**_kwargs):
+                raise documented_commands.DocsUnverifiable("probe-x: measured nothing")
+
+            documented_commands.run = _raise
+            self.assertEqual(documented_commands.main([]), 2)
+        finally:
+            documented_commands.run = original
+
+    def test_unverifiable_is_counted_apart_from_measured_probes(self) -> None:
+        """probes= must count MEASUREMENTS. The old code put the SKIP string in
+        that same list, so measuring nothing inflated the headline like a pass."""
+        original = documented_commands.run
+        try:
+            documented_commands.run = lambda **_kwargs: [
+                "PASS a",
+                "PASS b",
+                "UNVERIFIABLE quickstart tg: ... -- declared: ...",
+            ]
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                self.assertEqual(documented_commands.main([]), 0)
+            summary = buffer.getvalue().splitlines()[-1]
+            self.assertIn("probes=2", summary)
+            self.assertIn("unverifiable=1", summary)
+            self.assertNotIn("probes=3", summary)
+        finally:
+            documented_commands.run = original
+
+    def test_declared_unmeasurable_entries_are_still_true(self) -> None:
+        """A declaration must not outlive its reason.
+
+        Asserts something real in BOTH branches -- a branch that asserted
+        nothing would be the very hole this class exists to close.
+        """
+        self.assertIn("quickstart tg", documented_commands.DECLARED_UNMEASURABLE)
+        binary = os.environ.get("CI_HUB_TG_BIN") or shutil.which("tg")
+        if binary is None:
+            # Tool absent IS one of the declared reasons; assert the machinery
+            # actually fires rather than silently returning nothing.
+            report = documented_commands._unverifiable("quickstart tg", "tg absent")
+            self.assertTrue(report.startswith("UNVERIFIABLE "))
+            return
+        self.assertFalse(
+            documented_commands._tg_exposes_quickstart(binary),
+            "tg now HAS a `quickstart` subcommand, so this probe is measurable "
+            "again -- delete the DECLARED_UNMEASURABLE['quickstart tg'] entry and "
+            "let the purity probe run for real.",
+        )
 
 
 if __name__ == "__main__":

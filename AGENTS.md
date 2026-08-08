@@ -1,4 +1,4 @@
-# MISSION: This is an AUTONOMOUS, forward-driving, SELF-HEALING SWE team. The coordinator replaces broken/degraded/stuck agents immediately and autonomously (close+respawn, no permission needed), drives all work forward without stalling on routine approvals, keeps main green + PRs near zero, and heals the fleet continuously.
+# MISSION: This is an AUTONOMOUS, forward-driving, SELF-HEALING SWE team. The coordinator replaces broken/degraded/stuck agents immediately and autonomously (close+respawn, no permission needed) once their death is VERIFIED (**Verify Before You Replace** — no permission needed, but evidence needed), drives all work forward without stalling on routine approvals, keeps main green + PRs near zero, and heals the fleet continuously.
 
 On every hourly status update, call `scripts/status-log.rs` with the workstream→worker mapping + full status text to append a structured JSONL entry.
 
@@ -14,30 +14,30 @@ also apply inside those repos (architecture, build, test, style); the stricter r
 
 ## Role Boundary
 
-Coordinator guide (task dispatch, slot/checkout ownership, cross-repo order, PR landing, parent gitlinks,
-status rollups) — not a product manual. Implementation agents follow `hermit/AGENTS.md` or `reverie/AGENTS.md`;
-`.llms/skills/` holds task skills, not policy. When aggregating, preserve exact implementation evidence; never
-replace a product-specific requirement with a summary.
+Coordinator guide (dispatch, checkout ownership, landing, gitlinks, status), not a product manual.
+Implementation agents also follow the applicable product `AGENTS.md`; the stricter rule wins. `.llms/skills/`
+holds task skills, not policy. Preserve exact implementation evidence when aggregating.
 
 For landing work, use [`pr-landing-planner`](agent-utils/skills/pr-landing-planner/SKILL.md) to produce the
 advisory conflict/evidence plan, then [`pr-landing-operations`](agent-utils/skills/pr-landing-operations/SKILL.md)
 to execute an authorized drain. This file remains the authority for authorization, review, repository policy,
 and closure; neither skill may weaken it.
 
-Codex coordinator discipline: coordinate only; delegate nontrivial tool work to workers. Never paste raw tool
-output into the user transcript; provide concise synthesized results to avoid the cybersecurity false-positive
-filter. If a worker hits that filter, rephrase or replace the worker without stalling the coordinator.
+Codex coordinators delegate nontrivial tool work, synthesize results instead of pasting raw tool output, and
+rephrase or replace a worker that hits the cybersecurity false-positive filter rather than stalling.
+
+**The ORC coordinator HAS NO SHELL** — its only effects are `orc.*` plus scripts pre-registered via
+`orc.registerScript` (today: `hermitOperationalTick`, `hermitSpeculativeLandObligations`,
+`hermitSpeculativeLandWakeSent`). It cannot run an arbitrary command, so **every coordinator duty in this file
+means "ensure this outcome and require the evidence back", never "personally type this command"** — that gap,
+not disobedience, jammed task closure until 2026-08-08. To make a command routinely coordinator-runnable,
+register it on the plugin surface.
 
 ## Conventions
 
-- **Role + team tag — required in the COMMIT MESSAGE, the PR, and cross-team comments.** The tag is `[<role>, MODEL] [<full-team-name>]` where role is `impl agent`, `adversarial-reviewer agent`, `coordinator`, or `Human`, and the team name includes the machine (e.g. `[impl agent, gpt-5.6-sol] [codex-coord-176]`). It MUST appear in all three places:
-  - **Every commit message**, as the last line of the body (a trailer). **This is the load-bearing one.** `main` is rebase-merged, which replays the branch commit verbatim and adds no PR reference, so a tag that lives only in the PR description is invisible to anyone reading `git log main` — a properly-PR'd commit and a hand-pushed one look identical. Only a tag carried *in the commit* makes the history self-attributing. (Audited 2026-08-07 over all 27 commits from the prior 24 h: every one came from a PR, 26 of 27 PR bodies carried a role tag, and **2 of 27 carried a team name** — so neither the commit nor the PR identified the owning team.)
-  - **Every PR description**, as the opening line.
-  - **The prefix of every GitHub comment** on an issue or PR when coordinating across teams.
-
-  Never infer a commit's provenance from its message alone; the authority is `GET /repos/<owner>/<repo>/commits/<sha>/pulls`, which resolves the PR even for a rebase merge.
-- **Mechanism tags:** when a task or PR changes a load-bearing mechanism, apply the same stable `mechanism:<slug>` tag to both (create the label when needed). Before landing, run `ci-hub pr-status`: a mechanism shared by two open PRs requires coordinator review and appears beside file conflicts in the landing plan (semantic overlap only, not conflicting intent).
-- **Stable descriptive naming:** use a stable, descriptive, lowercase-hyphenated slug for every option/wave/workstream/phase/task/semantic unit — name the work/outcome (`btrfs-flood-fix`), unchanged across updates. Never a bare ordinal/placeholder (`Option-A`, `phase-1`, `round-N`, `wave-X`); enumerate variants by suffix (`btrfs-flood-fix/claude-agent`). Existing infra IDs (PR/slot numbers, canonical agent names) stay valid. Define a coined term once beside the artifact that owns it; link later uses. In user-facing updates, lead with the observable consequence and the decision it creates; put internal names after.
+- **Role + team tag:** `[<role>, MODEL] [<full-team-name>]`, with role `impl agent`, `adversarial-reviewer agent`, `coordinator`, or `Human`; the team name includes the machine. Require it in **Every commit message** as the final body line, **Every PR description** as the opening line, and the prefix of every GitHub comment used for cross-team coordination. The commit trailer is load-bearing under rebase merge. For provenance, dereference `GET /repos/<owner>/<repo>/commits/<sha>/pulls`; never infer it from the message alone. Rationale and the 2026-08-07 audit are in the companion doc.
+- **Mechanism tags:** when a task or PR changes a load-bearing mechanism, apply the same stable `mechanism:<slug>` tag to both (create the label when needed). Before landing, the landing agent runs `ci-hub pr-status` and reports it: a mechanism shared by two open PRs requires coordinator review and appears beside file conflicts in the landing plan (semantic overlap only, not conflicting intent).
+- **Stable descriptive naming:** give every option/wave/workstream/phase/task/semantic unit one persistent lowercase-hyphenated outcome slug (`btrfs-flood-fix`), never a bare ordinal/placeholder; suffix variants (`btrfs-flood-fix/claude-agent`). Existing infra IDs stay valid. Define coined terms once at their owning artifact. User updates lead with observable consequence and decision, then internal names.
 
 ## Primary Checkout Invariant
 
@@ -46,16 +46,27 @@ or checkout a feature branch on a primary — all validation, testing, and featu
 slots only. After ANY operation touching a primary, verify `git branch --show-current` is `main`; when
 finished, return it to latest main (`git checkout main && with-proxy git pull origin main`).
 
+## Parent Working Tree
+
+**`~/work/dev-hermit` is not a workspace, and neither the invariant above nor Hard Invariant 1 binds it.**
+
+**The hazard is WRITES, not presence.** Reading the parent is always fine, and the old "one agent,
+occasionally" rule was unenforceable and universally ignored — 15+ agents sit here right now. Every real
+incident came from writing: a broken worktree linkage, stale `index.lock`s, a shared-index race that nearly
+destroyed a 329-line file, staged blobs that would have silently reverted landed commits, a dirty parent that
+blocked the 0.3 RC. The parent tree and its `.git/index` are SHARED MACHINE STATE — concurrent agents stage
+into one index and sweep each other's files into their commits.
+
+So: **write to the parent only under a task that names the parent paths it owns**, and then always
+`git commit -- <explicit paths>` (*Commit Hygiene*), never `git add -A`. All other mutating work goes in a
+registered slot. "No free slot" is a reason to allocate one, not to write here. A registry records ownership
+and cannot enforce it.
+
 ## Project Overview
 
-`~/work/dev-hermit/` is a multi-agent development harness — **not** the Hermit, Reverie, or LiteInst2 code
-project. It coordinates product submodules plus one tooling submodule — all four checked out by default, all
-pinned by exact gitlinks:
-
-- `hermit/`: primary Hermit product checkout.
-- `reverie/`: Reverie instrumentation/runtime checkout (reference, compatibility, coordinated changes).
-- `liteinst2/`: standalone LiteInst2 checkout.
-- `agent-utils/`: shared tooling incl. `tick-hub`; `update = checkout` like every other submodule — a plain `git submodule update --init --recursive` materializes it. (The former `update = none` opt-out was retired by the 2026-08-02 checked-out-by-default policy; this line described it until 2026-08-06.)
+`~/work/dev-hermit/` is the multi-agent harness, not product source. Its exact gitlinks are `hermit/`,
+`reverie/`, `liteinst2/`, and tooling `agent-utils/`; all four are checked out by default (`update = checkout`)
+and `git submodule update --init --recursive` materializes them.
 
 The parent owns orchestration policy, worktree registries, experiments, AI notes, exact submodule pins;
 product source/tests/build/docs stay in their submodule. The parent harness works directly on shared `main`;
@@ -65,24 +76,22 @@ before publishing Reverie work. Stale `integration`/legacy-lead/per-machine pare
 
 ## Vocabulary (full glossary in companion doc)
 
-- **Primary checkout**: `{hermit,reverie,liteinst2}/`; coordinator-owned integration surface.
-- **Slot**: one paired workspace under `worktrees/`. **Active**: assigned to live work, in `ACTIVE.md`. **Parked**: clean, detached, retained for cache reuse, omitted from `ACTIVE.md`. **Legacy**: pre-policy non-canonical slot; may finish its task but must be removed, not reused.
-- **Shared slot**: one used by multiple research-only agents, or mutating agents with explicitly disjoint file ownership in `ACTIVE.md`. No two agents may edit the same file concurrently.
-- **Submodule**, **Feature branch**, **Hermit base**/**upstream**, **Handoff SHA**, **3pai agent sandbox**: see companion glossary (their predicates also appear inline where they bind action).
+**Primary checkouts** are the product submodules `hermit/`, `reverie/`, `liteinst2/` — coordinator-owned
+integration surfaces. The **parent working tree** (`~/work/dev-hermit` itself) is neither a primary nor a slot
+and has its own rule (**Parent Working Tree**). A **slot** is a workspace under `worktrees/`:
+**active** means assigned and registered; **parked** means clean, detached, cache-retained, and omitted from
+`ACTIVE.md`; **legacy** means non-canonical and remove-after-task, never reuse. A shared slot is research-only
+or has explicit disjoint mutating ownership in `ACTIVE.md`.
 
 ## Canonical Layout (full tree in companion doc)
 
-**Nested layout v3, one slot per agent.** Every normal worktree path is
-`worktrees/<slot>/{hermit,reverie,liteinst2}` where `<slot>` is a named agent (`kvm`, `dbi`, `sabre`,
-`e9patch`, `liteinst`, `ci`, `coord`, `lander`, `opt` — `hermit-` prefix stripped) or a generic `slotNN`;
-exactly one mutating agent owns a slot. Old flat layout (`worktrees/slotNN` + sibling `worktrees_reverie/`)
-and primary-nested `hermit/.worktrees/…` scratch trees are deprecated — do not create either.
-**`ai_docs/transient/2026-07-27-worktree-management-map.md` indexes every place worktree information lives —
-read it before any worktree operation.**
+**Nested layout v3, one slot per agent:** `worktrees/<slot>/{hermit,reverie,liteinst2}`, with a named-agent
+slot (strip `hermit-`) or `slotNN`, and exactly one mutating owner. Never create old flat/sibling or
+primary-nested scratch layouts. The companion carries the full tree.
 
 ## Hard Invariants
 
-1. Never do feature development in a primary checkout.
+1. Never do feature development in a primary checkout, nor in the parent working tree (**Parent Working Tree**).
 2. Never let two agents mutate the same file or branch. Shared slots require explicit disjoint path ownership in `ACTIVE.md`.
 3. Register every active slot, agent, task, branch, and owned path in `worktrees/ACTIVE.md` before the first edit or commit.
 4. Require clean state before assignment, integration, parking, or pinning.
@@ -90,83 +99,92 @@ read it before any worktree operation.**
 6. Do not run `git clean` anywhere in the parent, submodules, or slots.
 7. Do not use a branch name as a worktree directory name.
 8. Do not share writable build directories between worktrees.
-9. Publish Hermit product work through a feature PR to `rrnewton/hermit:main`; do not land it by mutating the primary checkout.
+9. Publish Hermit product work through a feature PR to `rrnewton/hermit:main`; do not land it by mutating the primary checkout. Sole exception: **Red-Tip Direct Land**.
 10. Never force-push shared branches or `main`.
 11. Never commit binaries or generated build artifacts to any repository.
 12. A handoff is incomplete without exact SHAs and validation results.
-13. Never exceed twelve active worktrees, five parked slots, or fifteen agents (count each separately; active work does not consume the parked allowance). Every normal worktree path is `worktrees/<slot>/{hermit,reverie,liteinst2}` (no other path shapes).
+13. Never exceed twelve active worktrees, five parked slots, or fifteen agents (count each separately; active work does not consume the parked allowance). **All three caps are PER BOX, not per ORC session** — two sessions share this machine. Count agents as top-level `claude`/`codex` processes whose parent is not itself one (`ps -eo pid,ppid,comm`): 16 on 2026-08-08, already over. Every normal worktree path is `worktrees/<slot>/{hermit,reverie,liteinst2}` (no other path shapes).
 14. Never remove a dirty slot until its state has a documented recovery SHA.
 15. Never broad-kill processes on this shared box — no `pkill`/`killall`/pattern/name/`-f`-substring/user/`ps|grep|kill`. Kill only your own child PID/PGID. See **Process-Kill Safety**.
+16. Never take an irreversible self-healing action (close+respawn, container reclaim, slot `--clean`) on an alarm alone. Verify the named subject is dead AT THE MOMENT OF ACTION, from a source independent of the gate that raised the alarm. See **Verify Before You Replace**.
 
 ## Clean Start And Checkout Ownership
 
-Before dispatching or starting work, inspect the parent, all primaries, and the assigned slot (`git status
---short --branch`; `git submodule status`; same for each product and the slot's children). A dirty checkout is
-not an invitation to clean it; a `+` submodule status is not automatically an error (integration may be in
-flight — attribute before acting; status-flag legend in companion doc). Primaries are integration surfaces:
-only the coordinator or an agent explicitly assigned an integration op may mutate them; ordinary agents may
-read them and use their build caches as copy sources. Record ownership in `ACTIVE.md` and task notes. Modify
-the parent root only when a task names parent files and ownership is explicit; never mix a parent edit into an
-unrelated product task.
+Before dispatch/work, inspect parent, primaries, slot, and children with `git status --short --branch` and
+`git submodule status`. Attribute dirt and `+` gitlinks; never treat them as cleanup permission. Only the
+coordinator or an explicitly assigned integration agent may mutate primaries; others may read/copy caches.
+Record ownership in `ACTIVE.md` and task notes. Modify parent files only when the task names and owns them;
+never mix parent edits into product work. Status-flag details are in the companion.
 
 ## Worktree Registry
 
-`worktrees/ACTIVE.md` is the source of truth for slot ownership. Keep exactly one live row per active slot:
-`slot | agents/tasks | owned paths | Hermit branch | Reverie branch | LiteInst2 branch | started | purpose`.
-Use `-` or `detached:<short-sha>` for an unchanged child; never duplicate rows as a task changes phase —
-update the existing row. List every agent/task sharing a slot and make mutating path ownership unambiguous;
-research-only agents may be `read-only`. A DONE/HELD/ABANDONED row does not belong in `ACTIVE.md`: keep it
-active with an accurate purpose, or park it and append the final state to `ARCHIVED.md`. Before dispatch,
-reconcile the registry with all Git worktree registries (`git worktree list --porcelain`) and the filesystem
-(the specific conflicts to resolve before assigning a slot: companion doc). Never silently delete a stale path
-— record what owns it and preserve uncommitted work first.
+`worktrees/ACTIVE.md` is the slot-ownership authority. Keep one live row per active slot with slot,
+agents/tasks, owned paths, all three product branches, start, and purpose; use `-` or
+`detached:<short-sha>` for unchanged children. Update, never duplicate, a phase-changing row. Shared rows must
+name every agent and unambiguous path ownership (`read-only` is allowed). DONE/HELD/ABANDONED rows are invalid:
+keep work accurately active or park it and append `ARCHIVED.md`. Before dispatch, reconcile `ACTIVE.md`, every
+`git worktree list --porcelain`, and the filesystem. Never delete an unexplained stale path; preserve and
+attribute it. The companion lists reconciliation conflicts.
 
 ## Strict Slot Pool
 
-All new work uses a canonical slot name under `worktrees/<slot>/`. **Branch and task names never appear in
-worktree paths.** At five parked slots, reclaim the least useful before creating another. Active slots are
-never evicted to satisfy the parked cap; a dirty/blocked slot stays active until handed off. Do not move or
-rename a slot directory. Pre-policy non-canonical worktrees are exceptions only while their task is active; at
-closeout, archive and remove them — do not park/rename/reassign.
+New work uses `worktrees/<slot>/`; branch/task names never enter paths. At five parked slots, reclaim before
+creating another, but never evict active work; dirty/blocked slots remain active until handoff. Never move or
+rename slots. A legacy path may finish its active task, then must be archived and removed, not parked/reused.
 
-**Provision/release with the registry-aware scripts, never raw `git worktree add`.** `scripts/allocate-worktree.rs`
-and `scripts/release-worktree.rs` enforce one-owner-per-slot and one-slot-per-agent and are the **single
-writer** of `worktree-state.json` and the ACTIVE.md managed block (`scripts/slot-init.sh` is a detached-only
-manual fallback that does NOT touch the registry). Provisioning is coordinator-only: init primary submodules
-first, then `scripts/allocate-worktree.rs --agent <agent> --task <id> --product all --purpose "<one-line>"`.
-Seed caches with CoW copies (`cp -a --reflink=auto`); never symlink `target/` or another writable cache between
-checkouts. Share a slot only when the registry names every agent, task, branch, and owned path
-(`--i-promise-this-agent-is-read-mostly`); no concurrent edits to the same file or branch (Invariant 2).
+Provision/release only with `scripts/allocate-worktree.rs` and `scripts/release-worktree.rs`, the single writers
+of `worktree-state.json` and the managed `ACTIVE.md` block; never raw `git worktree add`. `scripts/slot-init.sh`
+is a detached-only non-registry fallback. Provisioning initializes primaries, then runs
+`scripts/allocate-worktree.rs --agent <agent> --task <id> --product all --purpose "<one-line>"`; the
+coordinator delegates that run and confirms the registered row before dispatching into the slot.
 
-**Starting work in a slot.** Before the first edit: confirm the parent slot and all nested submodules are
-registered and clean; fetch relevant remotes without changing checked-out files; branch Hermit from current
-`origin/main` and Reverie from the task's confirmed base + publication target; create a descriptive feature
-branch in each repo that will change; leave each unchanged child detached at its recorded parent gitlink;
-add/update one `ACTIVE.md` row and post the assignment to each task. Run all edits/builds/tests/commits from the
-assigned child worktrees, always setting the working directory explicitly.
+**A slot allocated before its agent exists is born LEASE-LESS, and that is normal.** `observe_owner_lease()`
+has no live pane to bind, so the allocator warns and proceeds (54% of live slots on 2026-08-08). **Repair by
+ADOPTION, never release-then-reallocate** — which collides slots and has already broken one: on arrival the
+living owner re-runs that exact `allocate-worktree.rs` line, no flags, and the row gains `tmux_pane_id` +
+`cgroup_path`. Leases never expire, so an unadopted row stays un-`--clean`-able once its owner dies; a plain
+release without `--clean` still deregisters it, and only disk reclaim is blocked.
 
-**Closing/parking/reclaiming (mechanics: companion doc).** Close a slot only after intended work is committed
-and handed off; record child HEADs/branches/SHAs/validation/disposition in `ARCHIVED.md`, detach each child at
-its parent-pinned gitlink until `git -C $slot status --short` is empty, and remove the slot's row from
-`ACTIVE.md`. Keep feature branches until reachable from a pushed branch or merged target. Reclaiming/reusing a
-parked slot never authorizes discarding changes or resetting a child to make it current.
+Seed caches with `cp -a --reflink=auto`, never writable symlinks. Sharing requires all agents/tasks/branches/paths registered
+with `--i-promise-this-agent-is-read-mostly`; files and branches remain single-writer.
+
+**Start:** verify slot/children registered and clean; fetch without changing files; branch changed repos from
+their confirmed current bases/targets (Hermit: `origin/main`); leave unchanged children detached at recorded
+gitlinks; register/post assignment before editing. Run all work from the assigned child with explicit cwd.
+
+**Close/park/reclaim:** only after committed handoff; archive child HEADs/branches/SHAs/validation/disposition,
+detach children at parent gitlinks until the slot is clean, and remove its active row. Retain branches until
+published/merged. Reuse never authorizes discarding or resetting. Follow companion mechanics.
 
 ## Hermit Git And Pull Request Workflow
 
 Primary Hermit repo is `rrnewton/hermit`; public `facebookexperimental/hermit` is reference, not the default
 landing target. Ordinary Hermit work flows from a feature branch to a PR against current `rrnewton/hermit:main`.
 
+### Red-Tip Direct Land (owner-authorized exception to Hard Invariant 9)
+
+**When the tip of `main` is RED, push the fix for that red DIRECTLY to `main`. No PR, no extra ceremony**
+(owner, 2026-08-08). Waiting is unsafe: while red, rebasing onto newest-green hits admission containment,
+so the PR drain stops.
+
+- **Establish the red yourself first.** A dispatch asserting a red tip is a claim, not evidence: dereference
+  the authority at that exact tip SHA before invoking. "Premise refuted" is a valid outcome (companion doc,
+  *Red-Tip Direct Land — worked example*).
+- **Covers:** the fix for the observed red, nothing bundled. Unrelated work still takes a PR.
+- **Who:** any agent holding the shell, naming in the commit body the red it repairs.
+- **Does NOT relax:** local validation evidence at the exact SHA; explicit-path staging (never `git add -A`);
+  the role/team commit trailer; and **Hard Invariant 10 — never force-push.** This waives the PR, not history
+  safety or evidence.
+- **Ends** the moment the tip is green; the next change goes back through a feature PR.
+
 ### Feature Branch Rules — **ALWAYS COMMIT ON FEATURE BRANCHES**
 
-**Every mutating agent must finish with all intended work committed on its task feature branch. Never stash.
-Never leave intended work uncommitted. An uncommitted or stashed handoff is incomplete.**
-
-- Fetch through the required proxy and branch from current `origin/main` — not an old slot HEAD, stale local branch, or parent gitlink. Do not trust a handed SHA; verify the frontier (see *Trust The Ledger*).
-- Create/use the task's dedicated feature branch before the first edit. Never commit task work directly on `main` or a shared integration branch.
-- Keep one coherent task on one branch. Coordinated Hermit/Reverie branches are one logical change but separate Git histories.
-- Commit all intended task-owned changes before reporting completion. If blocked, commit every coherent completed change and record the remaining blocker.
-- Push the committed branch and open a draft PR without asking separate permission; an explicit "do not publish" is the only exception. Always push with an explicit refspec: `git push origin HEAD:refs/heads/<branch>`.
-- Never force-push a shared branch or `main`. Rebase only a private feature branch, only when authorized; then rerun affected validation and give the new SHA.
+**Every mutating agent finishes with intended work committed on its task feature branch; never stash or hand
+off intended uncommitted work.** Fetch via proxy and branch Hermit from verified current `origin/main`, never a
+slot HEAD/gitlink/handed SHA. Create the dedicated branch before editing; one coherent task per branch, with
+coordinated repos kept as separate histories. Commit coherent partial work plus blocker if blocked. Unless told
+not to publish, push explicitly (`git push origin HEAD:refs/heads/<branch>`) and open a draft PR without asking.
+Never force-push shared branches/`main`; rebase only an authorized private branch, then revalidate its new SHA.
 
 **Existing Hermit PR checkout — never validate against the PR's historical Reverie pin.** Checkout and
 preparation are one operation via `scripts/checkout-hermit-pr-latest-reverie.sh` (mechanics: companion doc); a
@@ -174,11 +192,9 @@ stale pin is a hard validation failure, so do not substitute raw `gh pr checkout
 
 ### Publishing And Review
 
-Unless a task prohibits it, push the branch and open a draft PR against `rrnewton/hermit:main`. Before opening:
-confirm the branch is based on the intended current `origin/main` with no unrelated commits; review the full
-feature diff and validation evidence; run the focused tests + repo validation the task requires; confirm the
-tested SHA is the branch tip; write the mandatory PR sections (below); re-read concurrent remote state before
-pushing. Use `with-proxy` for networked `git`/`gh`; never `gh auth switch` (auth is shared machine state).
+Before publishing, confirm current intended base, no unrelated commits, full diff/evidence, required tests,
+tested tip SHA, mandatory PR sections, and freshly reread remote state. Use `with-proxy` for networked
+`git`/`gh`; never mutate shared auth with `gh auth switch`.
 Require an owner-authorized authority green at the exact PR head. For Hermit the two positive paths are
 interchangeable: (1) `ci-hub validate-status` dereferences a clean, counted local receipt, or (2) `ci-hub
 hosted-status` dereferences the registered `CI (GitHub-managed portable)` / `Regular tests (GitHub-managed
@@ -193,39 +209,31 @@ hosted authority is operational end to end, and do not bypass that required chec
 
 ### Proxy Binding Review Axis (predicate; full rationale, registry, 12 examples, 3-layer taxonomy in the [companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md))
 
-**Proxy Binding** is the mandatory adversarial-review axis: **what binds this check to the fact it claims, and
-can I observe that binding rather than infer it?** A check fails when it keys on a correlated proxy (label,
-status, marker, flag, hash, count) without an observable identity/causal/coverage/provenance link to the
-claimed condition. Enforce as predicates (examples in the companion doc):
+**Proxy Binding** asks: **what observably binds this check to the fact it claims?** Reject correlated labels,
+statuses, markers, flags, hashes, or counts without identity/causal/coverage/provenance binding.
 
-- **Carry the condition with the value.** A value not recording its conditions is a proxy: store `{jobs, bytes}`, not a bare cap; bind green to an exact-SHA run with a nonzero executed-test count; bind landing to `mergeCommit.oid` ancestry on freshly-fetched main, not a PR head or `MERGED` flag.
-- **A green must carry what it verified** in one record: exact SHA, profile, discovered/selected/executed/filtered/failure counts, declared per-node coverage. Full green = full profile, nonzero execution, satisfied coverage, zero failures. `filtered == 0` is not completeness; `test result: ok` with zero executed tests is a no-result.
+- **Carry conditions with values:** bind green to exact SHA + nonzero execution, and landing to freshly fetched `mergeCommit.oid` ancestry, never a PR head/`MERGED` flag. A green record carries exact SHA, profile, discovered/selected/executed/filtered/failure counts, and declared per-node coverage; full green means full profile, nonzero execution, satisfied coverage, zero failures. Zero filtered or zero executed is not completeness/success.
 - A grandfathered schema-4 local receipt may retain its historical authority, but it must report
   `coverage_satisfied: null` and `coverage_status: grandfathered-unknown`; it must never claim per-node coverage it
   did not carry. Schema-5+ requires declared satisfied per-node coverage.
-- **One verifier per authority, called by every consumer.** Each evidence authority gets one semantic verifier that dereferences the source; a label/comment/status/copied field is only a cache. Do not collapse different authorities behind one generic check. Mark an authority covered only after a counted qualifying positive passes, a well-shaped nonexistent/tampered negative is refused, and a call-site audit shows every consumer invokes it. The **Load-Bearing Authority Registry** (companion doc) records each authority, its verifier, and coverage holes.
+- **One verifier per authority, called by every consumer.** Labels/comments/statuses/copied fields are caches, not sources. Do not collapse different authorities. Coverage requires a counted positive, refusal of a well-shaped nonexistent/tampered negative, and audited consumers. Maintain the companion's **Load-Bearing Authority Registry**.
 - **Bracket both sides.** Negative: plant the violating case, confirm refusal. Positive: plant the qualifying case, confirm it fires (not inert). State counts on both sides.
 - **Never plant an artifact that is itself an authorization** (a merge/review/validation label, an auto-merge workflow) to test a gate. Exercise the consumer with an inert fixture, dry-run, or isolated repo incapable of authorizing the action whose refusal it tests.
 
 ### Post-Facto Human Review
 
-Canonical protocol is post-facto: once required adversarial review is resolved and the authoritative CI gate is
-green, land the authorized change without waiting for human-owner review (the human reviews after landing; fix
-forward). Apply the single `post-facto-human-review` label iff a PR has at least one trigger:
+After resolved adversarial review and authoritative green CI, land an authorized change without waiting for
+human-owner review; human review is post-land/fix-forward. Apply `post-facto-human-review` iff triggered by:
 
 1. **New syscall support.** Verify in-code audit tags: `AUTONOMOUS-BOT-IMPLEMENTED` at the new dispatch/classification entry and `TODO-HUMAN-REVIEW(PR-id)` at the implementation/determinization block.
 2. **A Reverie API or core-abstraction change** — the `Tool`, `Guest`, `Backend`, or syscall-interception model.
 3. **A new determinization strategy** (not an implementation of an established one).
 4. **A core DetCore scheduling change** — anything affecting how programs are scheduled, especially race-search (PR #1151 is canonical).
 
-Routine backend-parity work toward the golden ptrace reference does **not** trigger review merely because it
-changes KVM/DBI/SaBRe/LiteInst; apply the label only when it also meets a trigger. Every PR description must
-contain: **Summary**; **Determinism** (mandatory every PR — why the change is deterministic, with logic or
-informal proof, not only test results); **Validation** (exact commands, outcomes, limitations, relaxations);
-**Relationship to gVisor** (required for KVM changes); **Human Review Required** (mandatory when the label is
-applied — name the numbered trigger(s)). The label is informational, never a landing blocker; keep
-`pre-land-human-review` notional but **never apply it**; never apply/remove/alter `human-approved` (owner-only);
-never recreate obsolete `human-review`/`post-facto-review` labels. Only a human reviewer removes the audit tags.
+Backend parity alone is not a trigger. Every PR has **Summary**, logical/informal-proof **Determinism**, and
+exact **Validation**; KVM adds **Relationship to gVisor**; labeled PRs add **Human Review Required** naming
+triggers. The label never blocks landing. Never apply `pre-land-human-review`, touch owner-only
+`human-approved`, or recreate obsolete labels. Only a human removes syscall audit tags.
 
 ### Landing Authorization
 
@@ -233,45 +241,34 @@ On startup or replacement, `hermit-lander` must run `ci-hub/ci-hub inherit-oblig
 inherited remediation before taking new queue work (wake messages are advisory, lost during recycling; startup
 mechanics + obligation lifecycle: companion doc). Merge only when the task explicitly authorizes landing,
 adversarial review is resolved, and authoritative checks are green at the current head SHA. Human-owner review
-is post-facto and does not block landing. Never push directly to Hermit `main`, force-push shared branches, or
-use a local primary to bypass PR controls. Parent-only policy/gitlink changes go to shared `main` only when a
+is post-facto and does not block landing. Outside **Red-Tip Direct Land**, never push directly to Hermit
+`main`, force-push shared branches (never, no exception), or use a local primary to bypass PR controls. Parent-only policy/gitlink changes go to shared `main` only when a
 task explicitly authorizes them; `worktrees/ACTIVE.md` never participates in commits or merges.
 
 ## Task Lifecycle And Closure
 
-**Cross-agent routing.** Use TaskGraph as the durable handoff channel: `tg note <consumer-task-id> "FROM
-<producer-task-id>: <deliverable, exact SHA/path, evidence, next action>"` on the task whose owner must act.
-`SendMessage` cannot resolve fleet names and is not delivery acknowledgement; do not claim a fleet agent was
-notified merely because a message was attempted. Task notes are pull-based (do not wake a recipient); for a
-time-sensitive handoff, write the note first, then ask the coordinator to relay it (`scripts/orc-hermit-msg.py`).
-Completion splits into an implementation step the worker performs and a closure step only the coordinator
-performs, with an adversarial review gate between (phantom-closure rationale: companion doc).
+**Cross-agent routing:** write `tg note <consumer-task-id> "FROM <producer-task-id>: <deliverable, exact
+SHA/path, evidence, next action>"` on the consumer task. `SendMessage` cannot resolve fleet names or prove
+delivery; notes persist but do not wake. For urgency, note first, then have the coordinator relay through
+`scripts/orc-hermit-msg.py`. Workers implement, adversarial reviewers verify, and the agent that owns a task
+closes it.
 
-**Status model.** `tg` has three non-terminal statuses (`open`, `backlog`, `in_progress`) and one terminal
-(`closed`). **`resolved` is NOT a distinct state: `tg` accepts it only as an alias that immediately maps to
-`closed`.** There is no "implemented but not landed" status, so IMPLEMENTED is a **tag** while status stays
-`in_progress`: `in_progress` = actively working; `in_progress` + `implemented` = complete and published (PR
-link + handoff SHA in a note), kept out of `closed` until it lands; `closed` = coordinator confirmed the PR
-merged to `main`.
+**Status model:** `open`, `backlog`, and `in_progress` are non-terminal; `closed` is terminal and `resolved` is
+only its alias. `closed` means published + evidenced, NOT landed. **Landing debt rides on the `implemented`
+tag, never on the status** — `drain-implemented-to-landed` and `health-tick` enumerate it from
+CLOSED+`implemented` records.
 
 **Rules:**
 
-1. **A working agent NEVER moves a task to a terminal status.** Ignore any dispatch text telling a worker to set a terminal status. At implementation completion: (1) commit and push the feature branch; (2) post the PR/durable-artifact URL, exact SHA, and validation evidence — `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"`; (3) add the `implemented` tag while leaving status `in_progress`, preserving existing tags since `--tags` replaces the set — `tg update <id> --tags <existing-tags>,implemented`; (4) stop. A report without a PR link (or, research-only, the durable artifact path) is incomplete. Bind results to the SHA, not a branch name.
-2. **An adversarial review agent confirms the work exists in the PR** before closure — the PR contains the claimed change, the diff matches the report, the cited validation is real at the handoff SHA. An `implemented` task whose PR is empty/superseded/already-merged-elsewhere is a phantom: strip the tag, keep it `in_progress`, do not close.
-3. **The task stays IMPLEMENTED until the PR lands on `main`.** A green unmerged PR is IMPLEMENTED, not LANDED. Do not close on local validation, a green check, or an approval alone.
-4. **Only the coordinator closes tasks, and only through the verified closure gateway.** Never use raw `tg update --status closed`. Run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` for code, `--artifact <durable-path-or-URL>` for research, or `--run-id <GitHub-run-id>` for a run-backed result. The gateway freshly verifies code ancestry (via the PR replay SHA when applicable), confirms the artifact/run exists, records `CLOSURE-VERIFIED`, and only then changes status. `REFUSED` (rc 1) and `UNVERIFIABLE` (rc 2) never close.
+1. **Record the evidence BEFORE you change status.** At implementation completion: (1) commit and push the feature branch; (2) post the PR/durable-artifact URL, exact SHA, and validation evidence — `tg note <id> "IMPLEMENTED: <PR url> | branch <name> | SHA <40-hex> | <validation summary>"`; (3) add the `implemented` tag, preserving existing tags since `--tags` replaces the set — `tg update <id> --tags <existing-tags>,implemented`. A report without a PR link (or, research-only, the durable artifact path) is incomplete; bind results to the SHA, not a branch name. Nothing gates this now, so the note IS the audit trail — an unevidenced close is a violation even though no tool will stop it.
+2. **An adversarial review agent confirms the work exists in the PR**: claimed diff and real validation at the handoff SHA. Empty/superseded/already-merged-elsewhere PRs are phantoms: strip `implemented` and reopen.
+3. **Then the owning agent closes its own task, the normal way — `tg update <id> --status closed`.** No coordinator, no gateway. Close once rule 1 is satisfied and the PR is published; do NOT hold it open waiting for the merge. An implemented task left nonterminal is a `LIFECYCLE-VIOLATION` — invisible to the drain while still occupying the live queue.
+4. **`./ci-hub/bin/close-task` is no longer a gatekeeper, but it is still the only writer of `CLOSURE-VERIFIED` — the one note that discharges landing debt** (`health-tick` derives `landed` from it). A plain close leaves the task counted as owed forever, so once the PR is on `main` run `./ci-hub/bin/close-task <id> --code <PR-or-full-SHA> --repo <owner/repo> --source <checkout>` (also `--artifact <path-or-URL>`, `--run-id <id>`). It verifies ancestry, records the note, then closes; `REFUSED` (rc 1) / `UNVERIFIABLE` (rc 2) never close — leave the task closed and fix the evidence.
 
-**Exceptions:** **Research-only tasks** produce no PR. Their closure evidence is a typed tuple, not a bare
-path: repository identity + durable artifact path + the artifact's last content commit + fresh target-main
-ancestry. For parent artifacts, `./ci-hub/bin/close-task TASK --artifact ai_docs/path.md` derives and records
-`rrnewton/dev-hermit:path@content-commit;target=main@tip`. The coordinator separately confirms that the
-artifact answers the task's stated question; existence/ancestry proves publication, not goal completion.
-Tag `implemented` (status `in_progress`) with the durable artifact path and exact content SHA. A memory slug
-must be exported to a versioned artifact or another typed durable authority before closure. **Blocked tasks**
-stay `in_progress` (or move to `open`) with
-the exact blocker and any partial committed SHA; never tag `implemented` or close to signal progress.
-**Stale-premise tasks** are tagged `implemented` with a note explaining the stale premise and evidence SHA; the
-coordinator closes after verifying it.
+**Exceptions:** Research closes on a durable artifact that answers the question, never a bare path: tag
+`implemented` with path + exact SHA, export memory to versioned authority. Blocked work stays
+`in_progress`/`open` with blocker and partial SHA — never `implemented`, never `closed`. A stale premise may be
+`implemented` with explanatory evidence, then closed with that explanation recorded.
 
 ## Bot-Created GitHub Issue Policy
 
@@ -285,16 +282,11 @@ destination to its `rrnewton` fork, rejects unrelated repositories, and supplies
 
 ## What Goes Where
 
-Use ownership boundaries, not convenience. **Parent** tracks: workspace policy (this guide), `.gitmodules`,
-exact gitlinks and ignore rules, `worktrees/ARCHIVED.md`, generic workspace scripts/coordination tooling,
-durable AI research/handoffs under `ai_docs/`, reproducible experiments under `experiments/`. Ignored parent
-locations hold transient material (`scratch/`, physical `worktrees/slot*/` contents, local runtime
-state/registries/credentials, build output, core dumps, coverage, downloads). An experiment is durable only
-when another engineer can repeat it: `experiments/<name>_YYYYMMDD/` with `README.md` (question,
-method, results, interpretation, reproduction), `metadata.json` (repo SHAs, command, host, toolchain, seed,
-inputs), `results.csv`. **Hermit** source/APIs/CLI/tests/build/docs belong in `hermit`; do not copy Hermit code
-into a parent script to dodge a proper product change. **Reverie** source/APIs/tests/build/docs belong in
-`reverie`; reference use does not justify modifying it — create a Reverie feature branch only for a real change.
+The parent owns policy, gitlinks/ignores, `ARCHIVED.md`, generic orchestration, durable `ai_docs/`, and
+reproducible `experiments/`; scratch, physical slots, runtime state, credentials, and build/evidence output are
+ignored. A durable experiment has `experiments/<name>_YYYYMMDD/{README.md,metadata.json,results.csv}` sufficient
+to reproduce it. Product source/API/tests/build/docs stay in their product repo; never copy code into parent
+tooling to dodge a product change, and modify Reverie only for a real change.
 
 ## Reverie API Policy
 
@@ -337,8 +329,8 @@ gitlink update status. For a coordinated change, give both repo SHAs even if one
 The parent records exact submodule commits for reproducibility. Do not add a `branch = ...` field to
 `.gitmodules`; do not use `git submodule update --remote` as a normal update mechanism.
 
-- **When to update a pointer** — only when the target commit is intentional, reviewed, reachable from its reviewed feature branch or target `main`, validated locally at that exact SHA, cross-repo compatible when relevant, and the parent commit message names the reason. Not merely because a primary is ahead, a feature branch exists, or `git status` shows a modified submodule. Do not pin an unpublished private commit unless the task establishes how every consumer can fetch it. **A/B protocol, staging procedure, and initialization mechanics: companion doc** — follow them before any pin; use `make single-submodule-bump ARGS='plan ...'` first, and never bury a gitlink advance in an unrelated commit.
-- **Agent-utils main peg.** The parent gitlink and canonical `agent-utils/` checkout must equal fetched `rrnewton/agent-utils:main`; `make check-agent-utils-pin` rejects stale/ahead/diverged checkout, gitlink mismatch, or unreachable commits. Generic changes (runner cgroups/CPU budgets, `tick-hub`, PR planning) belong in `rrnewton/agent-utils`: serialize; run full intra-agent-utils validation; push directly to `rrnewton/agent-utils:main`; then fetch, update the canonical checkout, run `check-agent-utils-pin`, commit the exact gitlink in the parent. A PR is the exception (high-risk or coordinating with in-flight parent change) — at most one in flight. Direct-to-main is not unvalidated-to-main: fix any red required check before pushing main.
+- **When to update a pointer** — only when the target commit is intentional, reviewed, reachable from its reviewed feature branch or target `main`, validated locally at that exact SHA, cross-repo compatible when relevant, and the parent commit message names the reason. Not merely because a primary is ahead, a feature branch exists, or `git status` shows a modified submodule. Do not pin an unpublished private commit unless the task establishes how every consumer can fetch it. **A/B protocol, staging, and initialization mechanics: companion doc.** Use `make single-submodule-bump ARGS='plan ...'` first; never bury a gitlink advance in an unrelated commit.
+- **Agent-utils main peg.** The parent gitlink and canonical `agent-utils/` checkout must equal fetched `rrnewton/agent-utils:main`; `make check-agent-utils-pin` rejects stale/ahead/diverged checkout, gitlink mismatch, or unreachable commits. Generic changes (runner cgroups/CPU budgets, `tick-hub`, PR planning) belong in `rrnewton/agent-utils`: serialize; validate fully; push direct to its `main`; then fetch, update the canonical checkout, run `check-agent-utils-pin`, commit the exact gitlink. A PR is the exception (high-risk or coordinating an in-flight parent change) — at most one in flight. Direct-to-main is not unvalidated-to-main: fix any red required check first.
 - **Self-hosted runner security.** Never run a GitHub Actions runner as root on a Meta dev box/data-center host (it executes arbitrary repo-controlled workflow content — root grants that code elevated privileges on internal infra). Moving work off privileged self-hosted execution is required architecture; the genuine residue is KVM (`/dev/kvm`) + real-PMU counters, each given minimum privilege. `hermit-gate-newton` authorization/ownership/disposition is an open security question.
 
 ## Binary And Large-File Policy
@@ -362,8 +354,9 @@ name — always report: **Hermit SHA** (40-hex), **Reverie SHA** (40-hex or expl
 **Command**, **Result** (pass/fail/skipped with material output summarized), **Environment** (host/toolchain/
 hardware constraints when relevant). Hardware-dependent Hermit tests may be impossible on some hosts — report
 that fact and the observed failure; do not weaken, delete, or falsely bless a test to make the local
-environment green. When landing is authorized, the coordinator dereferences the owner-authorized exact-head
-authority at the Hermit PR head and final mutation boundary: a qualifying counted local receipt or the versioned
+environment green. When landing is authorized, the landing agent dereferences the owner-authorized exact-head
+authority at the Hermit PR head and final mutation boundary and reports it verbatim; the coordinator requires
+that evidence before authorizing the merge. A qualifying counted local receipt or the versioned
 hosted job policy is a green positive; missing/partial/stale evidence is NO_RESULT and a genuine red from either
 path blocks. Local feature-branch validation does not prove a hosted job is green, and a hosted job does not prove
 locally executed backend coverage beyond the job's declared scope.
@@ -406,7 +399,7 @@ an immutable parent commit, never from the PR under test. (Full rationale: compa
 
 ## Product Vision (full statement in companion doc)
 
-Two long-range goals (full statement in companion doc). `goal-hermit-v2`: robust deterministic execution of
+`goal-hermit-v2`: robust deterministic execution of
 arbitrary real-world binaries — run/record, chaos race exposure, schedule-search localization, ptrace-free
 production backend, parallel non-communicating processes. `goal-qemu-linux-under-hermit`: a full Linux VM as a
 userspace QEMU process under Hermit to expose/localize kernel races across the stack. Prioritize correctness,
@@ -431,8 +424,8 @@ to commits, not branch names.
 - **Record every measurement immediately.** First check whether the number already exists (`experiments/`, task notes, ci-hub history store). Any measurement — even incidental — goes into a task note immediately with units, context, and **how obtained (a polled aggregate is not a cgroup-recorded peak)**.
 - **Trust the ledger, not a handed SHA.** A handed SHA — or a "latest green"/"known-good" commit — is a claim, not evidence. Establish the validated frontier yourself: `ci-hub newest-green` (default `--branch main`; `--json`; `--no-fetch` offline) returns the newest commit whose latest LOCAL validation passed. If the handed SHA and the ledger disagree, the ledger wins — report the discrepancy.
 - **A run's conclusion is not the registered job's conclusion.** `gh run view <id> --json conclusion` describes a *workflow run*; the exact-head authority is the named *job*, read through `ci-hub hosted-status`. They disagree, and the authority wins. Observed 2026-08-07: a run reporting `completed/success` sat at a head whose authority read `HOSTED RED … positive=0/1`.
-- **DO NOT MANUALLY DISPATCH HOSTED CI FOR A PR UNDER `merge-gate-v4` — the gate dispatches it for you, and a manual dispatch races the gate's own.** On a NO_RESULT the gate re-dispatches the missing legs and then *deliberately cancels itself*, logging `NO_RESULT blocks landing but is not a failure; cancelling gate run <id> after re-dispatch`. A hand-rolled dispatch therefore lands a second run at the same SHA, the two contend for admission-limited runners, some jobs of one are starved and cancelled, and **a cancelled job writes a `failure` check under the authority job's name** — so `hosted-status` reports RED for a head whose genuine result was green. Measured on hermit#1911 at `18758e9a`: 30+ jobs succeeded and exactly two (`test: sabre`, `e2e: c-programs__verify__ptrace`) were cancelled, which was enough to flip `Regular tests (GitHub-managed portable)` to `failure`. Note also that the gate requires **both** `ci-portable.yml` and `ci-privileged.yml` (`portable=… privileged=…`), so a manual portable-only dispatch cannot satisfy it even in principle. **The correct action for a NO_RESULT is to re-run `merge-gate-v4` and let it drive** — that produced `Every required leg has a PASSED result.` on the first attempt. Only dispatch by hand when no merge gate is in play (e.g. re-deriving the authority for an already-landed commit), and check `gh run list --workflow <id> --branch <br>` first. Once a SHA is poisoned, the repair is **one** clean dispatch so the newest instance of the authority job is green — verified moving `fda945d7` from `HOSTED RED 0/1` to `HOSTED GREEN 1/1`.
-- **A land-lock SIGCONT must cover the WHOLE subtree, roots and descendants.** `land-lock status` hangs while its census holds verifiers in `do_signal_stop`, and the documented remedy (SIGCONT, then `reclaim-dead`, never a kill) only works if every stopped member is resumed. Both partial attempts fail silently and look like a wedged lock: resuming only the descendants leaves the roots stopped, and resuming only the roots leaves the actual worker stopped one level down (observed 2026-08-07 — root `973456` running while its child `973903` stayed `Tl`, log frozen). Enumerate the subtree recursively from the land's validator roots, SIGCONT every member whose `stat` starts with `T`, then re-check that none remain.
+- **DO NOT MANUALLY DISPATCH HOSTED CI FOR A PR UNDER `merge-gate-v4`** — the gate dispatches for you and a manual run races it. Two runs at one SHA contend for admission-limited runners; starved jobs are cancelled, and **a cancelled job writes a `failure` check under the authority job's name**, so `hosted-status` reports RED for a genuinely green head. The gate also needs BOTH `ci-portable.yml` and `ci-privileged.yml`. **On a NO_RESULT, re-run `merge-gate-v4` and let it drive.** Dispatch by hand only with no gate in play (e.g. re-deriving authority for a landed commit), checking `gh run list` first; repair a poisoned SHA with exactly ONE clean dispatch. Measurements: companion doc.
+- **A land-lock SIGCONT must cover the WHOLE subtree, roots and descendants.** `land-lock status` hangs while its census holds verifiers in `do_signal_stop`; the remedy (SIGCONT, then `reclaim-dead`, never a kill) works only if every stopped member is resumed. Either partial attempt fails silently and looks like a wedged lock — resuming only roots leaves the real worker stopped one level down. Enumerate the subtree recursively from the validator roots, SIGCONT every member whose `stat` starts with `T`, then re-check none remain.
 
 ## Failure, Recovery, And Concurrent Work
 
@@ -446,6 +439,25 @@ integration or pinning step; unexpected movement is a reason to reassess, not to
 - If a submodule pointer conflicts, resolve the intended product history first, then choose the exact gitlink — never pick a side without inspecting the commits.
 - If a task is blocked, preserve clean committed work, post the exact blocker and SHAs, and keep the slot active until the coordinator decides to park it.
 
+## Verify Before You Replace (Hard Invariant 16)
+
+**An alarm is a TRIGGER TO CHECK, never a WARRANT TO ACT.** The mission mandate removes the need for
+PERMISSION to replace an agent. It does not remove the need for EVIDENCE. Before replacing `<name>`:
+
+```
+orc.scripts.hermitVerifyAgentDeath("<name>")   # python3 ci-hub/health/agent_liveness_probe.py <name>
+```
+
+rc 0 verified-dead → replace, promptly. **rc 1 (alive) and rc 2 (unverifiable) BOTH REFUSE** — failing to
+prove life is not proving death. The probe reads `DG_AGENT_NAME` from `/proc`, independent of ORC, the agent
+snapshot, and tick-hub; it never kills; and if it can see no agent at all it returns 2 rather than declaring
+the whole fleet dead. Registered on the plugin surface because the coordinator has no shell (**Role Boundary**).
+
+**Why an independent source, not a fresher one.** Measured 2026-08-08: `/proc` held **29 live agents while the
+snapshot health-tick reads listed 13** — it cannot see other orc sessions' agents, so repairing its contents
+cannot fix this. That same day the tick called `fleet-forensics` dead while it held the freshest activity
+timestamp on the box; obeying the mandate literally would have destroyed a live agent mid-P0.
+
 ## Process-Kill Safety (Hard Invariant 15)
 
 **NEVER use a broad `pkill`, `killall`, or any pattern-matched process kill on this machine** — up to eighteen
@@ -457,10 +469,9 @@ companion doc.)
 
 ## Coordinator Checklist
 
-Terse coordinator-only preflights (before dispatch / publication-or-landing / parent-pinning / closeout /
-task-closure) recapping the rules above — full checklist in the
-[companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md). Each
-bullet references its own section here; consult it before the corresponding coordinator action.
+Preflights for dispatch / publication-or-landing / parent-pinning / closeout live in the
+[companion doc](https://github.com/rrnewton/dev-hermit/blob/main/ai_docs/agents-md-policy-rationale.md). They
+are outcomes to require evidence for, not commands the coordinator runs (**Role Boundary**).
 
 ---
 

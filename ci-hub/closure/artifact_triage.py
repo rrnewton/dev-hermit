@@ -42,11 +42,16 @@ import json
 import re
 import sqlite3
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DB = Path.home() / ".tg" / "hermit.db"
+
+# Resolved, never hardcoded: this literal named the predecessor's frozen
+# database.  See ci-hub/lib/taskgraph_db.py.
+sys.path.insert(0, str(ROOT / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
 
 EPHEMERAL = ("/tmp/", "scratch/", "ignored/")
 MIN_BYTES = 400
@@ -139,11 +144,18 @@ def main() -> int:
     ap.add_argument("--audit-json", type=Path,
                     default=ROOT / "ignored/ancestry/standing-audit.json")
     ap.add_argument("--out", type=Path, default=ROOT / "ignored/ancestry/artifact-plan.json")
+    ap.add_argument("--db", type=Path, default=None)
     args = ap.parse_args()
+
+    try:
+        db = taskgraph_db.resolve(args.db).path
+    except taskgraph_db.TaskGraphUnavailable as error:
+        print(f"UNVERIFIABLE: {error}", file=sys.stderr)
+        return 2
 
     unknown = {r["task"] for r in json.load(open(args.audit_json))["results"]
                if r["bucket"] == "UNKNOWN"}
-    con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     con.text_factory = lambda b: b.decode("utf-8", "replace")
     rows = con.execute(
         """select t.local_id, t.title, coalesce(group_concat(n.content,' ~~ '),'')

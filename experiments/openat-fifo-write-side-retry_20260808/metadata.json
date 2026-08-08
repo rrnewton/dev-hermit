@@ -1,0 +1,11 @@
+{
+  "question": "Is the write side of the openat-on-FIFO deadlock convertible without BlockedPool, as the design note claims?",
+  "answer": "Both documented obstacles dissolve, but a third (scheduler starvation of the peer) defeats the approach; the original DECLINE stands for a different reason.",
+  "host": "devbig176, 176-core AMD EPYC 9D64, CentOS Stream 9",
+  "hermit_base": "origin/main f65f7446, reverie pin 038e9939",
+  "backend": "ptrace",
+  "command": "hermit --log=debug run --strict --no-virtualize-cpuid -- ./fifo_writer_open",
+  "writer_turns": 309428,
+  "reader_turns": 3,
+  "issue": "rrnewton/hermit#1850"
+}

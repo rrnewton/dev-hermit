@@ -2,11 +2,40 @@
 # Serialize every parent-main publication and bind it to a freshly fetched
 # origin/main value.  Hooks call the verify-* subcommands; humans and tools use
 # commit, publish, or sync.  No mode force-pushes or rewrites a branch.
-set -euo pipefail
+set -Eeuo pipefail
 
 ZERO=0000000000000000000000000000000000000000
 
+# NO SILENT FAILURE ON THE ONE PATH EVERY AGENT MUST USE.
+#
+# `set -e` aborts with no output at all when an un-`if`-guarded command fails,
+# and this is the single serialized route to landing anything -- so a wordless
+# abort costs every reader the same reconstruction. It happened: a SIGPIPE in the
+# reversion guard killed the script mid-sentence and agents saw a publish that
+# simply did not work.
+#
+# `die` is the EXPLAINED exit. This trap catches everything else and says WHERE,
+# so an unexplained failure is at worst a located one. It only prints: it never
+# changes an exit status and never turns a failure into a success. `set -E` is
+# required for it to fire inside functions and subshells, which is where the
+# interesting failures are.
+_pmw_explained=0
+_pmw_on_err() {
+  local rc=$1 line=$2
+  [ "$_pmw_explained" = 1 ] && return 0
+  echo "parent-main-write: ABORTED at line $line with status $rc, and no reason" >&2
+  echo "  was printed. That is a defect in this tool, not a verdict on your" >&2
+  echo "  change: nothing was published and nothing was modified." >&2
+  case "$rc" in
+    141) echo "  Status 141 is SIGPIPE -- a producer was still writing when a" >&2
+         echo "  reader (head/grep -q) closed the pipe, and pipefail promoted it." >&2 ;;
+  esac
+  return 0
+}
+trap '_pmw_on_err "$?" "$LINENO"' ERR
+
 die() {
+  _pmw_explained=1
   echo "parent-main-write: REFUSED: $*" >&2
   exit 1
 }
@@ -171,11 +200,186 @@ verify_push() {
   fi
 }
 
+# Refuse a publication that would drop a line main already has, from a region the
+# author never touched.
+#
+# THE FAILURE THIS EXISTS FOR (near-miss, 2026-08-08): an agent read a shared file,
+# edited one field, and its content was later committed onto a NEWER base. The
+# commit then carried two hunks -- the authored one, and a silent reversion of
+# everything that landed in that file meanwhile. The second hunk is invisible in a
+# diff against the base the author read, which is the diff every review habit
+# looks at; it only appears against origin/main. Nobody was careless.
+#
+# MEASURED, so the guard fires on the right thing: committing on a stale base and
+# REBASING is safe -- git replays only the authored diff, and the colleague's line
+# survives. The dangerous move is committing stale CONTENT onto a current BASE
+# (transplanting a file between trees, or regenerating one from a stale read).
+# So this must key on content lineage, not on tree staleness; keying on staleness
+# would cry wolf on the safe-and-common case and be ignored within a day.
+#
+# THE TEST: for each changed file, replay main's own A..tip changes into the
+# SUBMITTED content using an older main version A as base. A CLEAN merge that
+# still changes the submission means the submission is missing work that landed
+# and that the author never touched -- an unauthored reversion. A CONFLICTING
+# merge means the author did edit that region, which is a real edit and is
+# allowed through.
+REVERT_SCAN_DEPTH=${HERMIT_PARENT_MAIN_REVERT_SCAN_DEPTH:-20}
+refuse_unauthored_reverts() {
+  local root=$1 expected=$2 source=$3
+  # NB: written as `if`, not `[ ... ] && ...`. Under `set -e` a false `[ ]` in an
+  # && list aborts the whole script, which would make this guard fail SILENTLY --
+  # the exact failure mode it exists to prevent.
+  if [ "${HERMIT_PARENT_MAIN_ALLOW_REVERT:-0}" = 1 ]; then
+    echo "parent-main-write: reversion guard DISABLED by HERMIT_PARENT_MAIN_ALLOW_REVERT=1" >&2
+    return 0
+  fi
+  local tmp file base scanned truncated=0 findings=0 report=""
+  tmp=$(mktemp -d) || die "cannot create a scratch directory for the reversion scan"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    git -C "$root" show "$expected:$file" >"$tmp/ours" 2>/dev/null || continue
+    git -C "$root" show "$source:$file"  >"$tmp/theirs" 2>/dev/null || continue
+    if cmp -s "$tmp/ours" "$tmp/theirs"; then continue; fi
+    scanned=0
+    while IFS= read -r base; do
+      scanned=$((scanned + 1))
+      git -C "$root" show "$base:$file" >"$tmp/base" 2>/dev/null || continue
+      # Main did not move this file between A and tip: nothing could be dropped.
+      if cmp -s "$tmp/base" "$tmp/ours"; then continue; fi
+      cp "$tmp/theirs" "$tmp/probe"
+      if git merge-file -q -p "$tmp/probe" "$tmp/base" "$tmp/ours" >"$tmp/merged" 2>/dev/null; then
+        # merged != theirs is NOT sufficient. Two independent insertions at the
+        # same place (main appended a class; the author appended another) merge
+        # cleanly into a DIFFERENT file without anything being dropped -- the
+        # merge merely re-inserts what the author already has. Refusing on
+        # inequality alone fires on "append to a file main also appended to",
+        # which is routine, and a guard that fires on routine work is switched
+        # off within a day. Refuse only on content that main has and the
+        # submission genuinely LACKS.
+        # Every stage guarded: `grep -v` exits 1 when it filters everything out,
+        # and under `set -e -o pipefail` that aborts the script mid-classification
+        # -- silently, which is the failure mode this whole file exists to avoid.
+        lost_lines=$( { diff "$tmp/theirs" "$tmp/merged" 2>/dev/null || true; } \
+          | { sed -n 's/^> //p' || true; } \
+          | { grep -v '^[[:space:]]*$' || true; } \
+          | while IFS= read -r line; do
+              grep -Fqx -- "$line" "$tmp/theirs" || printf '%s\n' "$line"
+            done || true)
+        if [ -n "$lost_lines" ]; then
+          findings=$((findings + 1))
+          report+="  $file: would drop content that landed on main after ${base:0:12}"$'\n'
+          # TRUNCATE IN awk, NOT WITH `| head -6` (2026-08-08). `head` closes
+          # the pipe after six lines; if `sed` is still writing it dies of
+          # SIGPIPE, `pipefail` makes this substitution exit 141, and `set -e`
+          # aborts the script -- while building the very message that explains
+          # the refusal. It was SIZE-DEPENDENT, so the message went missing
+          # exactly when there was most to say: measured, 55 lost lines reported
+          # fine and 4995 aborted with no output at all. awk reads the whole
+          # stream and caps its own output, so no reader closes the pipe early.
+          report+=$(printf '%s\n' "$lost_lines" \
+            | awk '{ if (++n <= 6) print "      LOST: " $0 }
+                   END { if (n > 6) printf "      ... and %d more lost line(s)\n", n - 6 }' \
+            )$'\n'
+          break
+        fi
+      fi
+    done < <(git -C "$root" rev-list --max-count="$REVERT_SCAN_DEPTH" "$expected" -- "$file")
+    if [ "$scanned" -ge "$REVERT_SCAN_DEPTH" ]; then truncated=1; fi
+  done < <(git -C "$root" diff --name-only "$expected" "$source" -- 2>/dev/null)
+  rm -rf "$tmp"
+  # No silent caps: say so when the scan window bounded the search.
+  if [ "$truncated" = 1 ]; then
+    echo "parent-main-write: note: reversion scan bounded to $REVERT_SCAN_DEPTH commits per file" >&2
+  fi
+  if [ "$findings" -gt 0 ]; then
+    printf '%s\n' "$report" >&2
+    die "publication would revert landed work in $findings file(s) that the author did not edit.
+  Your own diff will look correct -- this hunk is only visible against origin/main.
+  Fix by REBASING rather than transplanting content: re-read the file from
+  origin/main, re-apply your change, and publish that.
+  If the reversion is deliberate, re-run with HERMIT_PARENT_MAIN_ALLOW_REVERT=1."
+  fi
+}
+
+# Adopt working-tree residue that is ALREADY byte-identical to the fetched target.
+#
+# THE FREEZE THIS EXISTS FOR (2026-08-08): the shared parent sat pinned while
+# origin/main advanced six commits, so `commit` refused for every agent -- the
+# fleet's only serialized landing path was shut, and the blockage belonged to
+# nobody. The cause was ~14 tracked paths and 2 untracked files left by agents
+# whose tasks had already CLOSED. Their bytes already matched origin/main.
+#
+# Git refuses the fast-forward anyway, because it compares the working tree
+# against the INDEX, not against the target: "local changes would be overwritten
+# by merge" and "untracked working tree files would be overwritten". Both are
+# true statements about the index and false statements about the content -- the
+# merge would not have changed a single byte on disk.
+#
+# So the distinction this turns on, the same one the reversion guard turns on:
+# a stale index entry for content that is ALREADY PUBLISHED is not somebody's
+# uncommitted work. Adopting it destroys nothing, because the bytes on both
+# sides are equal -- that equality is checked per path, and it is the ONLY thing
+# that authorizes the adoption.
+#
+# FAIL-CLOSED, ABSOLUTELY: a path whose bytes differ from the target is never
+# touched, never staged, and still blocks. This mirrors how `main-green` cleared
+# the freeze by hand -- it stopped on a genuinely different ai_docs file and
+# waited for its owner rather than reasoning past it.
+adopt_published_residue() {
+  local root=$1 target=$2
+  local path mode blob adopted=0 blockers="" plan=""
+  # TWO PASSES, DELIBERATELY. A single pass that stages as it goes leaves the
+  # index half-adopted when it later hits a blocker -- which is the very class of
+  # residue this function exists to remove, created by the thing removing it, on
+  # the failure path where nobody is looking. It also made the refusal message
+  # ("Nothing was staged or modified") a lie. Classify everything first; mutate
+  # only once the whole set is known to be safe.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    # Not present on disk: the merge simply creates or removes it.
+    if [ ! -e "$root/$path" ]; then continue; fi
+    # Absent from the target tree (a deletion): never adopt, let git decide.
+    if ! git -C "$root" cat-file -e "$target:$path" 2>/dev/null; then continue; fi
+    # Already matching the index: ordinary clean path, nothing to reconcile.
+    if git -C "$root" diff --quiet HEAD -- "$path" 2>/dev/null &&
+       git -C "$root" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      continue
+    fi
+    blob=$(git -C "$root" rev-parse "$target:$path" 2>/dev/null) || continue
+    # THE ONLY AUTHORIZATION: the bytes on disk are the published bytes.
+    if git -C "$root" hash-object -- "$root/$path" 2>/dev/null | grep -Fqx "$blob"; then
+      mode=$(git -C "$root" ls-tree "$target" -- "$path" | awk '{print $1}')
+      [ -n "$mode" ] || mode=100644
+      plan+="$mode,$blob,$path"$'\n'
+    else
+      blockers+="  $path"$'\n'
+    fi
+  done < <(git -C "$root" diff --name-only HEAD "$target" -- 2>/dev/null)
+
+  if [ -n "$blockers" ]; then
+    printf '%s' "$blockers" >&2
+    die "the paths above differ from BOTH your HEAD and $target, so they are real
+  uncommitted work, not published residue. Nothing was staged or modified.
+  Land them, or move them aside, then re-run sync."
+  fi
+
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    git -C "$root" update-index --add --cacheinfo "$entry" ||
+      die "cannot adopt published residue at ${entry##*,}"
+    adopted=$((adopted + 1))
+    echo "parent-main-write: adopted published residue (bytes identical to $target): ${entry##*,}" >&2
+  done <<<"$plan"
+  # Never a silent action: say how many entries moved, including none.
+  printf 'PARENT_MAIN_WRITE residue adopted=%s target=%s\n' "$adopted" "$target"
+}
+
 publish_sha() {
   local root=$1 source=$2 expected published
   expected=$HERMIT_PARENT_MAIN_EXPECT
   git -C "$root" merge-base --is-ancestor "$expected" "$source" ||
     die "source $source is not based on fetched origin/main $expected"
+  refuse_unauthored_reverts "$root" "$expected" "$source"
   if range_has_sensitive_path "$root" "$expected" "$source"; then
     verify_audit_receipt "$root" "$expected" "$source"
   fi
@@ -223,6 +427,7 @@ case "$command" in
     fi
     git -C "$root" merge-base --is-ancestor "$head" "$HERMIT_PARENT_MAIN_EXPECT" ||
       die "local main diverges from fetched origin; reconcile without reset"
+    adopt_published_residue "$root" "$HERMIT_PARENT_MAIN_EXPECT"
     git -C "$root" merge --ff-only refs/remotes/origin/main
     printf 'PARENT_MAIN_WRITE sync old=%s new=%s fast-forward=1/1\n' \
       "$head" "$HERMIT_PARENT_MAIN_EXPECT"

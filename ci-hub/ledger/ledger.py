@@ -438,7 +438,13 @@ def append_events(path: Any, events: Iterable[dict]) -> int:
 _LEGACY_GROUP_KEYS = ("host", "started_at", "finished_at", "commit")
 
 
-def migrate_legacy(rows: Sequence[dict], *, team: str) -> list[dict]:
+def migrate_legacy(
+    rows: Sequence[dict],
+    *,
+    team: str,
+    start_run_index: int = 0,
+    start_legacy_index: int = 0,
+) -> list[dict]:
     """One event per legacy row — nothing collapsed, nothing invented (§9).
 
     Rows sharing (host, started_at, finished_at, commit) are one run: the first
@@ -450,6 +456,16 @@ def migrate_legacy(rows: Sequence[dict], *, team: str) -> list[dict]:
     The source row is carried verbatim on the event so the migration is exactly
     reversible (`replay_legacy`). Reversibility is the property that makes the
     migration safe to run before anyone trusts the new format.
+
+    `start_run_index` / `start_legacy_index` let an INCREMENTAL import continue a
+    shard's existing numbering instead of restarting it. Both default to 0, so a
+    whole-corpus migration is byte-for-byte what it always was. They exist
+    because both ids are POSITIONAL: a second import that restarted at zero would
+    mint `legacy-000000` again, and `union_events` deduplicates BY `event_id` —
+    so the re-minted events would silently annihilate the already-published ones
+    rather than collide visibly. `legacy_index` is offset for the same reason on
+    the read side: `replay_legacy` orders by it, and duplicated indices would
+    make the replayed order ambiguous.
     """
     groups: dict[tuple, list[int]] = {}
     for index, row in enumerate(rows):
@@ -457,7 +473,7 @@ def migrate_legacy(rows: Sequence[dict], *, team: str) -> list[dict]:
 
     events: list[dict] = [None] * len(rows)  # type: ignore[list-item]
     for group_index, (_key, members) in enumerate(sorted(groups.items(), key=lambda kv: kv[1][0])):
-        run_id = f"legacy-{group_index:06d}"
+        run_id = f"legacy-{start_run_index + group_index:06d}"
         previous_id = None
         for position, row_index in enumerate(members):
             row = rows[row_index]
@@ -475,7 +491,7 @@ def migrate_legacy(rows: Sequence[dict], *, team: str) -> list[dict]:
                 "commit": row.get("commit"),
                 "outcome": row.get("result"),
                 "legacy_row": row,
-                "legacy_index": row_index,
+                "legacy_index": start_legacy_index + row_index,
             }
             if position:
                 event["enriches"] = previous_id

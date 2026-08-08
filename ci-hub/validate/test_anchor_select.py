@@ -41,6 +41,10 @@ def qualifying_row(commit: str, **over) -> dict:
         "finished_at": "2026-08-05T00:00:00Z",
         "real_seconds": 528,
         "host": "testbox",
+        "producer": "hermit-validate-sh",
+        "admission": "ci-hub-validate-lock",
+        "concurrent_validates": 0,
+        "concurrency_proof": "validate_lock_owner_ancestry",
         "coverage": {"planned_test_nodes": 19, "zero_executed_nodes": [], "absent_nodes": []},
     }
     row.update(over)

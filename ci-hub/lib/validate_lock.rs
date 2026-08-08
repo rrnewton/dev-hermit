@@ -29,12 +29,14 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
-    capture_and_freeze_residuals, cgroup_population, current_host, enable_child_subreaper,
-    exact_process_liveness, exit_status_code, heartbeat_test_helper_delay, payload_cgroup_anchor,
-    print_cleanup_record, process_group_exists, process_start_ticks, reap_exited_children,
-    remove_cleanup_record, safe_ci_slice_for, signal_group, spawn_gated_child, suffix,
-    verify_cleanup_record, write_cleanup_record, CgroupCensus, CleanupPhase, CleanupRecord,
-    CleanupVerification, GatedChild, ProcessIdentity, ResidualCapture,
+    box_exclusion_anchor_path as box_exclusion_anchor_at, capture_and_freeze_residuals,
+    census_disposition, census_recorded_domain, current_host, enable_child_subreaper,
+    exact_process_liveness, exit_status_code, foreign_box_claim, heartbeat_test_helper_delay,
+    payload_cgroup_anchor, print_cleanup_record, process_group_exists, process_start_ticks,
+    reap_exited_children, register_box_claim, remove_cleanup_record_and_claim,
+    repository_lock_root, signal_group, spawn_gated_child, suffix, verify_cleanup_record,
+    write_cleanup_record, BoxExclusionAnchor, CleanupPhase, CleanupRecord, CleanupVerification,
+    DomainEvidence, GatedChild, ProcessIdentity, ResidualCapture,
 };
 
 const DEFAULT_WAIT_SECONDS: u64 = 1_800;
@@ -60,16 +62,68 @@ const REFUSED_EXIT_CODE: i32 = 3;
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
 const CHILD_POLL_MILLIS: u64 = 500;
-/// Exit code reported when admission REFUSES a validate whose head predates a
-/// fixed floor or the freshly fetched origin/main tip. Same 3 as an ownership
-/// refusal: a refusal, not a crash.
+/// Exit code reported when admission REFUSES a validate whose head predates an
+/// immutable fixed floor. Same 3 as an ownership refusal: a refusal, not a
+/// crash. Mutable-tip currency belongs only at the final merge boundary.
 const STALE_BASE_EXIT_CODE: i32 = 3;
-/// Env override for the composite validation-admission command (space-split
-/// argv). The target head is appended as `--head <sha>`. Defaults to the in-tree
-/// `ci-hub/validate/preflight_validate.py`, which checks both fixed floors and
-/// freshly fetched origin/main. Overridable so Rust tests need neither Python,
-/// egress, nor a Hermit checkout.
+/// TEST-BUILD-ONLY override of the composite validation-admission command
+/// (space-split argv). The target head is appended as `--head <sha>`.
+/// Production always runs the in-tree `ci-hub/validate/preflight_validate.py`,
+/// which checks the immutable producer and merge-gate floors. See
+/// [`test_only_override`] for why the name is compiled into BOTH builds while
+/// its effect exists only under `cfg(test)`.
 const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
+/// TEST-BUILD-ONLY override of the box-exclusive lockfile base path. Production
+/// always uses `<repository main worktree>/.validate-lock`.
+const VALIDATE_LOCK_PATH_ENV: &str = "CI_HUB_VALIDATE_LOCK";
+/// Anchor filename for VALIDATE. Distinct from `landing_lock::LANDING_BOX_ANCHOR`
+/// on purpose: a validate must never block a lander and vice versa, so the two
+/// are box-global with respect to their own kind and invisible to each other.
+const VALIDATE_BOX_ANCHOR: &str = "validate-box.lock";
+
+/// Read a TEST-BUILD-ONLY environment override.
+///
+/// **AN ADMISSION GATE WHOSE VERDICT ITS CALLER CAN SET IS NOT A GATE.** Both
+/// variables above began as convenience hooks so Rust tests would need neither
+/// Python, egress, nor a Hermit checkout — and both were live in the production
+/// admission path. Measured 2026-08-08 on the then-current `origin/main`
+/// (`ci-hub validate-lock run --kind validate --target <nonexistent 40-hex>`):
+/// `CI_HUB_ADMIT_PREFLIGHT_CMD=false` refused with exit 3 and 0 children, while
+/// `=true` ADMITTED the same nonexistent SHA, exit 0, 1 child. Separately,
+/// `CI_HUB_VALIDATE_LOCK=<tmp>` acquired the box with the workspace's real
+/// `.validate-lock*` never created at all — box exclusivity escaped by an
+/// ambient variable that any inherited environment could carry.
+///
+/// The names stay compiled into every build ON PURPOSE: a production binary
+/// must be able to SAY that it saw the override and refused it. Silently
+/// ignoring a variable an operator deliberately exported is its own trap — they
+/// would believe the stub took effect. The NOTICE is the whole observable
+/// difference; the admission verdict, the lock target, and the spawned-child
+/// count are identical whether the variables are set or unset.
+///
+/// Ignoring (rather than refusing) is fail-SAFE in both directions: an
+/// inert `CI_HUB_ADMIT_PREFLIGHT_CMD` means the real preflight runs, and an
+/// inert `CI_HUB_VALIDATE_LOCK` means the real box lock is contended. A hard
+/// refusal would instead let one stale exported variable wedge every validate
+/// on the box.
+#[cfg(test)]
+fn test_only_override(name: &str) -> Option<OsString> {
+    env::var_os(name).filter(|value| !value.is_empty())
+}
+
+#[cfg(not(test))]
+fn test_only_override(name: &str) -> Option<OsString> {
+    if env::var_os(name).is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "validate-lock: NOTICE: {name} is set but INERT in this build — it is \
+             a test-build-only override, compiled out of production. Admission \
+             uses the in-tree preflight and the workspace box lock regardless. \
+             To exercise the override, run the test binary \
+             (`rust-script --test ci-hub/ci-hub.rs`)."
+        );
+    }
+    None
+}
 
 #[derive(Args, Clone, Debug)]
 pub struct ValidateLockArgs {
@@ -426,10 +480,8 @@ pub enum ValidateLockError {
     UnboundedChildDeadline,
     #[error("validate-lock: --max must be 1; box-exclusive cap >1 is unproven (detcore_misc residual is monotonic in load, experiments/multisect_detcore_misc_20260803); raising N requires hermit-250 evidence")]
     BadMax,
-    /// Admission refused a validate whose head predates a fixed floor or the
-    /// freshly fetched origin/main tip. The message names the exact base and
-    /// remedy. This is mechanical REBASE-BEFORE-VALIDATE: a stale base never
-    /// gets a slot.
+    /// Admission refused a validate whose head predates an immutable producer
+    /// or merge-gate floor. Mutable-tip currency is enforced at merge time.
     #[error("{0}")]
     StaleBase(String),
     #[error(
@@ -472,20 +524,46 @@ struct LockPaths {
     queue: PathBuf,
     owner: PathBuf,
     cleanup: PathBuf,
+    /// The box-global exclusion anchor (see [`BoxExclusionAnchor`]). Carried here
+    /// rather than read from a global so it is CONSTRUCTOR-SCOPED: production
+    /// builds it from the uid, and each test builds its own beside its own temp
+    /// lease. That is deliberate — the first version of this used a `cfg(test)`
+    /// env override and two tests raced it through the process-global
+    /// environment, one of them taking the REAL box anchor and blocking on it.
+    /// A test binary must never contend with the live box.
+    anchor: PathBuf,
 }
 
 impl LockPaths {
     fn for_workspace(root: &Path) -> Self {
-        // Env override mirrors CI_HUB_LANDING_LOCK; default base is DISTINCT from
-        // `.landing-lock` so a validate never contends with a lander.
-        let lock = env::var_os("CI_HUB_VALIDATE_LOCK")
+        // The base is DISTINCT from `.landing-lock` so a validate never contends
+        // with a lander. The path is NOT caller-selectable in a production build:
+        // `test_only_override` returns None there (and says so), because an
+        // ambient variable that redirects the box-exclusive lockfile escapes box
+        // exclusivity outright (c6767e06).
+        //
+        // AND THE ROOT IS CANONICALIZED TO THE REPOSITORY'S MAIN WORKTREE, because
+        // `root` alone is not one place. `workspace_root()` (ci-hub.rs) returns the
+        // git toplevel of the running `ci-hub.rs`, so EVERY linked worktree used to
+        // derive its own private `.validate-lock` and admit independently. Measured
+        // 2026-08-08 on this box: 46 worktrees of ~/work/dev-hermit, all 46 carrying
+        // a runnable `ci-hub/ci-hub`, i.e. 46 mutually blind box-exclusive locks —
+        // and two runs from two of them were admitted 2/2 concurrently. Only the
+        // main worktree held any `.validate-lock*` state (5 files; the other 45 held
+        // none), so collapsing them onto it orphans nothing.
+        let lock = test_only_override(VALIDATE_LOCK_PATH_ENV)
             .map(PathBuf::from)
-            .unwrap_or_else(|| root.join(".validate-lock"));
+            .unwrap_or_else(|| repository_lock_root(root).join(".validate-lock"));
+        Self::at(lock)
+    }
+
+    fn at(lock: PathBuf) -> Self {
         Self {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
+            anchor: box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR),
             lock,
         }
     }
@@ -523,6 +601,28 @@ pub fn execute(root: &Path, args: ValidateLockArgs) -> Result<i32, ValidateLockE
         ValidateLockCommand::Acquire(args) => {
             reject_bad_max(args.max)?;
             base_admission_check(root, &args.target, args.kind, args.skip_base_check)?;
+            // `acquire` cannot HOLD the box-global anchor (see `held_by_another`),
+            // but it must not hand out a lease while another repository's payload
+            // owns the box. `run` is the sanctioned production path
+            // (ci-hub/validate/start_unit.py invokes `validate-lock run`); this
+            // keeps the bare-`acquire` path from being the way around it.
+            if BoxExclusionAnchor::held_by_another(&lock.paths.anchor) {
+                eprintln!(
+                    "REFUSED: box-exclusive anchor held by {}; this box admits one \
+                     validate or benchmark at a time across ALL checkouts and clones",
+                    BoxExclusionAnchor::describe_holder(&lock.paths.anchor)
+                );
+                return Ok(REFUSED_EXIT_CODE);
+            }
+            // The anchor is a live-process signal; this is the durable one. A
+            // supervisor that died leaving its payload alive released the anchor,
+            // but its quarantine record is still outstanding, and now visible from
+            // here. ONE MORE necessary condition -- `require_no_cleanup` inside
+            // `acquire` still runs for this repository's own record.
+            if let Some(reason) = foreign_box_claim(&lock.paths.anchor, &lock.paths.cleanup) {
+                eprintln!("REFUSED: {reason}");
+                return Ok(REFUSED_EXIT_CODE);
+            }
             lock.acquire(&args.agent, args.kind, &args.target, args.wait, args.hold)
         }
         ValidateLockCommand::Renew(args) => {
@@ -560,18 +660,21 @@ fn is_full_sha(target: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
-/// MECHANICAL rebase-before-validate: refuse to admit a `Validate` unless its
-/// exact head contains both every fixed floor and the freshly fetched
-/// origin/main tip. Thus every qualifying receipt describes a state that can
-/// land without another rebase. The refusal names the exact missing base and
-/// remedy — a bare "refused" gets a gate disabled.
+/// Refuse to admit a `Validate` unless its exact head contains every immutable
+/// producer and merge-gate floor. Mutable origin/main currency is intentionally
+/// absent here: the receipt records its exact base and the canonical verifier
+/// asserts currency once at the final merge boundary.
 ///
 /// Non-Validate kinds pass through. Validate targets that are not exact SHAs and
 /// the legacy `--skip-base-check` flag are refused: either would sever the
 /// observable binding between the admission verdict and the validated commit.
 /// The predicate is shelled out to `preflight_validate.py`, the same composite
-/// authority used by all other ci-hub validation producers. Overridable via
-/// `CI_HUB_ADMIT_PREFLIGHT_CMD` so tests need neither Python nor a checkout.
+/// authority used by all other ci-hub validation producers. THAT IS THE ONLY
+/// PREDICATE A PRODUCTION BUILD WILL RUN: `CI_HUB_ADMIT_PREFLIGHT_CMD` is
+/// compiled out of it (see [`test_only_override`]), so the verdict is not
+/// caller-settable. This function adds no second implementation of the
+/// admission predicate in any language; it dereferences the one Python
+/// authority and maps its exit code.
 ///
 /// Fail-CLOSED: preflight exit 2 (REFUSED) and any other non-zero (ERROR: head
 /// unresolved) both become `StaleBase`. An admission gate that admitted on "I
@@ -588,7 +691,7 @@ fn base_admission_check(
     if skip {
         return Err(ValidateLockError::StaleBase(format!(
             "REFUSE: --skip-base-check cannot authorize qualifying validation of \
-             {target}. Rebase onto freshly fetched origin/main before validating. \
+             {target}. The immutable validation floors must be checked. \
              Historical differential debugging is non-qualifying and must run \
              outside validate-run so it cannot mint landing evidence."
         )));
@@ -601,14 +704,21 @@ fn base_admission_check(
         )));
     }
 
-    let mut argv: Vec<OsString> = match env::var(ADMIT_PREFLIGHT_CMD_ENV) {
-        Ok(cmd) if !cmd.trim().is_empty() => cmd.split_whitespace().map(OsString::from).collect(),
-        _ => vec![
+    let override_argv = test_only_override(ADMIT_PREFLIGHT_CMD_ENV)
+        .map(|cmd| cmd.to_string_lossy().into_owned())
+        .filter(|cmd| !cmd.trim().is_empty())
+        .map(|cmd| {
+            cmd.split_whitespace()
+                .map(OsString::from)
+                .collect::<Vec<OsString>>()
+        });
+    let mut argv: Vec<OsString> = override_argv.unwrap_or_else(|| {
+        vec![
             OsString::from("python3"),
             root.join("ci-hub/validate/preflight_validate.py")
                 .into_os_string(),
-        ],
-    };
+        ]
+    });
     argv.push(OsString::from("--head"));
     argv.push(OsString::from(target));
 
@@ -618,8 +728,7 @@ fn base_admission_check(
         Err(err) => {
             return Err(ValidateLockError::StaleBase(format!(
                 "validate-lock: validation admission check could not run \
-                 ({err}); base for {target} is UNRESOLVED. Rebase onto current \
-                 origin/main before validating."
+                 ({err}); fixed-floor ancestry for {target} is UNRESOLVED."
             )));
         }
     };
@@ -633,8 +742,8 @@ fn base_admission_check(
             // stdout; carry it verbatim so the operator sees the exact floor.
             let msg = if stdout.is_empty() {
                 format!(
-                    "REFUSE: base for {target} predates a rebase-base floor. \
-                     Rebase onto current origin/main before validating."
+                    "REFUSE: base for {target} predates an immutable \
+                     validation floor. Rebase onto the named floor before validating."
                 )
             } else {
                 stdout
@@ -653,8 +762,7 @@ fn base_admission_check(
             };
             Err(ValidateLockError::StaleBase(format!(
                 "validate-lock: validation admission check for {target} did not \
-                 resolve ({detail}); treating the base as STALE. Rebase onto \
-                 current origin/main before validating."
+                 resolve ({detail}); treating fixed-floor ancestry as STALE."
             )))
         }
     }
@@ -713,7 +821,19 @@ impl ValidateLock {
             }
             self.require_no_cleanup(Some(&holder))?;
             write_cleanup_record(&self.paths.cleanup, &record)
-                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
+            // Publish the box-global pointer at the SAME moment the durable record
+            // is armed -- before any payload exists. From here on, if this
+            // supervisor dies its record outlives it, and every OTHER repository
+            // can now see that record instead of being admitted beside the escaped
+            // payload it describes.
+            register_box_claim(
+                &self.paths.anchor,
+                &self.paths.cleanup,
+                agent,
+                &format!("{}:{target}", kind.as_str()),
+            );
+            Ok(())
         })
     }
 
@@ -826,7 +946,7 @@ impl ValidateLock {
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Armed { .. } => {
                     self.assert_current_process_owner("clear unstarted run")?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(ValidateLockError::InvalidState(format!(
@@ -901,7 +1021,7 @@ impl ValidateLock {
             })?;
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Recoverable { .. } => {
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(ValidateLockError::InvalidState(format!(
@@ -1302,7 +1422,7 @@ impl ValidateLock {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.kind, holder.target, reason)))
                 }
@@ -1520,8 +1640,7 @@ impl ValidateLock {
             io_error("enable child subreaper at", Path::new("/proc/self"), source)
         })?;
 
-        // MECHANICAL rebase-before-validate at the admission chokepoint: refuse a
-        // stale-base validate BEFORE spending a ~17-min box slot. Refuse cleanly
+        // Immutable producer-floor admission at the chokepoint. Refuse cleanly
         // with STALE_BASE_EXIT_CODE (mirroring the --no-wait Held refusal) so a
         // wrapper reads a distinct, non-crashing exit and can surface the remedy.
         if let Err(err) = base_admission_check(root, &args.target, args.kind, args.skip_base_check)
@@ -1533,6 +1652,51 @@ impl ValidateLock {
                 }
                 other => return Err(other),
             }
+        }
+
+        // BOX-GLOBAL ANCHOR, TAKEN OUTERMOST AND HELD FOR THE WHOLE RUN.
+        //
+        // Before this, exclusion was per selected lease file, so two roots admitted
+        // 2/2 concurrently. The anchor is taken BEFORE any lease work so a loser
+        // waits without holding its own repository's lease, and AFTER
+        // `base_admission_check` so a stale-base validate is refused without ever
+        // occupying the box. `_box_anchor` lives until `run` returns; the kernel
+        // drops the flock if this supervisor dies, which is why it can never wedge
+        // the box the way a stale record can.
+        //
+        // RESIDUE, stated rather than papered over: the flock spans the SUPERVISOR,
+        // so an escaped payload that outlives its supervisor releases the anchor
+        // early. Within a repository that case is still covered by the durable
+        // cleanup quarantine, which is unchanged and still consulted below; ACROSS
+        // repositories it is not. Closing that needs a box-global durable record,
+        // which is a different change from this one.
+        let wait_budget = if args.no_wait { 0 } else { args.wait };
+        let _box_anchor = match BoxExclusionAnchor::take(&self.paths.anchor, wait_budget)
+            .map_err(|source| io_error("take box exclusion anchor", &self.paths.anchor, source))?
+        {
+            Some(anchor) => anchor,
+            None => {
+                eprintln!(
+                    "REFUSED: box-exclusive anchor held by {}; this box admits one \
+                     validate or benchmark at a time across ALL checkouts and \
+                     clones, not one per lock file",
+                    BoxExclusionAnchor::describe_holder(&self.paths.anchor)
+                );
+                return Ok(REFUSED_EXIT_CODE);
+            }
+        };
+        eprintln!(
+            "validate-lock: box-global anchor held at {}",
+            _box_anchor.path().display()
+        );
+
+        // Durable half of box exclusion, checked WITH the anchor held so the
+        // answer cannot change under us. The anchor proves no LIVE supervisor
+        // holds the box; this proves no DEAD supervisor left a live payload
+        // behind in some other repository.
+        if let Some(reason) = foreign_box_claim(&self.paths.anchor, &self.paths.cleanup) {
+            eprintln!("REFUSED: {reason}");
+            return Ok(REFUSED_EXIT_CODE);
         }
 
         // Admission: block FIFO, or refuse immediately under --no-wait. Never
@@ -2040,140 +2204,6 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> ValidateLoc
     }
 }
 
-/// What the KERNEL can still say about a recorded payload domain once the
-/// supervisor is gone.
-///
-/// Three outcomes, not two: "I could not look" must never be collapsed into
-/// "nothing is there", which is exactly the mistake that would let a census
-/// bury a live domain.
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum DomainEvidence {
-    /// Every domain named by the record is empty, verified against the kernel.
-    ProvenEmpty(String),
-    /// At least one live process remains. Not overridable by attestation.
-    Populated(String),
-    /// Not determinable from the record alone; attestation is the only recourse.
-    Unproven(String),
-}
-
-/// Census the payload domain post-hoc from the recorded cgroup anchor.
-///
-/// This is what closes the UNCENSUSED one-way door. `leader`/`pgid` are both
-/// dead ends after the supervisor exits — a ppid walk needs the subreaper that
-/// died with it, and pgid membership does not survive `setsid()`. Cgroup
-/// membership survives both, so a recorded cgroup can be read directly.
-///
-/// Two domains are checked, and BOTH must be empty: the payload's own cgroup
-/// subtree, and `safe-ci.slice`, the one place a payload legitimately migrates
-/// out of its unit cgroup (via `safe-ci-dag-runner`).
-fn census_recorded_domain(cgroup: Option<&str>) -> DomainEvidence {
-    let Some(payload) = cgroup else {
-        return DomainEvidence::Unproven(
-            "the cleanup record carries no cgroup anchor (written before cgroup anchoring, or \
-             the payload's cgroup was unreadable at publish time)"
-                .into(),
-        );
-    };
-
-    let mut proven = Vec::new();
-    let mut census = |label: &str, path: &str| -> Result<(), DomainEvidence> {
-        match cgroup_population(path) {
-            CgroupCensus::Empty { absent } => {
-                // Absence is a POSITIVE proof, not a skipped check: a cgroup can
-                // only be removed once it holds no processes.
-                proven.push(format!(
-                    "{label} {path} {}",
-                    if absent { "is absent" } else { "is empty" }
-                ));
-                Ok(())
-            }
-            CgroupCensus::Populated(pids) => Err(DomainEvidence::Populated(format!(
-                "{label} {path} still holds {} process(es): {}",
-                pids.len(),
-                pids.iter()
-                    .map(u32::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ))),
-            CgroupCensus::Unknown(why) => Err(DomainEvidence::Unproven(format!(
-                "{label} {path} could not be censused: {why}"
-            ))),
-        }
-    };
-
-    if let Err(evidence) = census("payload cgroup", payload) {
-        return evidence;
-    }
-    let Some(safe_ci) = safe_ci_slice_for(payload) else {
-        return DomainEvidence::Unproven(format!(
-            "payload cgroup {payload} is not user-manager shaped, so safe-ci.slice cannot be \
-             derived and the migration target would go uncensused"
-        ));
-    };
-    if let Err(evidence) = census("migration target", &safe_ci) {
-        return evidence;
-    }
-    DomainEvidence::ProvenEmpty(proven.join("; "))
-}
-
-/// What discharges this census, if anything.
-///
-/// Pure on purpose: this is the entire policy change of the cgroup-anchor work,
-/// so it is testable without fabricating lock state. `Ok` is the disposition to
-/// record in the transcript, `Err` the refusal.
-fn census_disposition(
-    domain: DomainEvidence,
-    attested: bool,
-    evidence: &str,
-    mechanical_context: &str,
-) -> Result<String, String> {
-    match domain {
-        // Mechanical. An attestation, if supplied, is simply not needed.
-        DomainEvidence::ProvenEmpty(detail) => Ok(format!("empty domain PROVEN: {detail}")),
-        // Refused by default. An override is possible but never silent: the
-        // exact occupant pids are echoed into the transcript and the
-        // disposition is labelled so nobody can later read it as a clean census.
-        DomainEvidence::Populated(detail) => {
-            if !attested {
-                return Err(format!(
-                    "the recorded payload domain is NOT empty: {detail}. Wait for it to drain, \
-                     or kill it by exact identity. Overriding requires an explicit \
-                     --attest-domain-empty --evidence and will be recorded as an override."
-                ));
-            }
-            if evidence.trim().is_empty() {
-                return Err("--evidence must record the observations backing \
-                            --attest-domain-empty; an anonymous attestation is not auditable"
-                    .to_string());
-            }
-            Ok(format!(
-                "empty domain ATTESTED OVER A POPULATED CGROUP -- the kernel disagrees ({detail}): {}",
-                evidence.trim()
-            ))
-        }
-        DomainEvidence::Unproven(why) => {
-            if !attested {
-                return Err(format!(
-                    "every mechanical precondition passes ({mechanical_context}), but the \
-                     domain could not be censused mechanically: {why}. Re-run with \
-                     --attest-domain-empty --evidence '<observations>' after confirming the \
-                     payload's unit cgroup is absent/empty AND every cgroup the payload \
-                     migrates into is empty."
-                ));
-            }
-            if evidence.trim().is_empty() {
-                return Err("--evidence must record the observations backing \
-                            --attest-domain-empty; an anonymous attestation is not auditable"
-                    .to_string());
-            }
-            Ok(format!(
-                "empty domain ATTESTED (not mechanically provable: {why}): {}",
-                evidence.trim()
-            ))
-        }
-    }
-}
-
 /// How a supervised `run` child ended.
 enum ChildOutcome {
     Exited {
@@ -2443,6 +2473,10 @@ mod tests {
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
+            // PER-TEST anchor beside the per-test lease. Every `run`-path test
+            // therefore exercises the real anchor CODE while touching neither the
+            // live box anchor nor any sibling test's.
+            anchor: suffix(&lock, ".box-anchor"),
             lock,
         }
     }
@@ -3676,16 +3710,232 @@ exit 0
 
     const HEX_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
+    // --- the two overrides are TEST-BUILD-ONLY ---
+    //
+    // These run in a `cfg(test)` binary, so they see the override arm of
+    // `test_only_override`. They are the sanctioned mechanism that replaced
+    // poking a production binary with an ambient env var: the capability is
+    // retained, but only where `cfg(test)` holds.
+    //
+    // The complementary half — that a PRODUCTION build ignores both — cannot be
+    // asserted from inside this crate, because a `cfg(test)` build is by
+    // definition not that build. It is bracketed out-of-process against the real
+    // `ci-hub` binary; see the task evidence for
+    // `remove-production-admission-overrides-from-validate-lock`.
+
+    #[test]
+    fn preflight_override_is_honored_only_in_a_test_build() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let stub = write_stub("cfg-gate", "#!/bin/sh\necho OK\nexit 0\n");
+        env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
+        let observed = test_only_override(ADMIT_PREFLIGHT_CMD_ENV);
+        // `/nonexistent` has no preflight_validate.py, so an admitted verdict
+        // proves the STUB ran, not the default authority.
+        let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
+        env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
+        let after = test_only_override(ADMIT_PREFLIGHT_CMD_ENV);
+        let _ = fs::remove_file(&stub);
+        assert_eq!(observed.as_deref(), Some(stub.as_os_str()));
+        assert!(
+            res.is_ok(),
+            "the test-build override must fire, got {res:?}"
+        );
+        assert!(after.is_none(), "an unset override must read as absent");
+    }
+
+    #[test]
+    fn lock_path_override_is_honored_only_in_a_test_build() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let root = env::temp_dir().join(format!(
+            "ci-hub-vlock-cfg-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        let alt = root.join("alt-validate-lock");
+        // Default: derived from the workspace root, never from the environment.
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        let default_paths = LockPaths::for_workspace(&root);
+        assert_eq!(default_paths.lock, root.join(".validate-lock"));
+        assert_eq!(default_paths.guard, root.join(".validate-lock.guard"));
+        // Override arm: present only because this is a `cfg(test)` build.
+        env::set_var(VALIDATE_LOCK_PATH_ENV, &alt);
+        let overridden = LockPaths::for_workspace(&root);
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        assert_eq!(overridden.lock, alt);
+        assert_eq!(overridden.queue, suffix(&alt, ".queue"));
+        // An empty value is not an override -- it would otherwise select "" and
+        // silently relocate every lock file to the process working directory.
+        env::set_var(VALIDATE_LOCK_PATH_ENV, "");
+        let empty = LockPaths::for_workspace(&root);
+        env::remove_var(VALIDATE_LOCK_PATH_ENV);
+        assert_eq!(empty.lock, root.join(".validate-lock"));
+    }
+
+    // --- box-global exclusion: one lease per REPOSITORY, one anchor per BOX ---
+
+    fn git(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn every_worktree_of_one_repository_shares_one_lease_file() {
+        // THE DEFECT, at unit scale. `workspace_root()` hands `for_workspace` the
+        // git toplevel of the running ci-hub.rs, so before this each linked
+        // worktree derived a private `.validate-lock` and admitted independently.
+        let base = env::temp_dir().join(format!(
+            "ci-hub-vlock-repo-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        let main = base.join("main");
+        let linked = base.join("linked");
+        fs::create_dir_all(&main).unwrap();
+        if !git(&main, &["init", "--quiet"]) {
+            return; // no usable git on this host; the live bracket covers it
+        }
+        let _ = git(&main, &["config", "user.email", "t@example.invalid"]);
+        let _ = git(&main, &["config", "user.name", "t"]);
+        fs::write(main.join("seed"), b"seed").unwrap();
+        assert!(git(&main, &["add", "seed"]));
+        assert!(git(&main, &["commit", "--quiet", "-m", "seed"]));
+        assert!(git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                linked.to_str().unwrap()
+            ]
+        ));
+
+        let from_main = LockPaths::for_workspace(&main);
+        let from_linked = LockPaths::for_workspace(&linked);
+        assert_eq!(
+            from_linked.lock,
+            main.join(".validate-lock"),
+            "a linked worktree must resolve to the main worktree's lease"
+        );
+        assert_eq!(from_main.lock, from_linked.lock);
+        assert_eq!(from_main.guard, from_linked.guard);
+        assert_eq!(from_main.cleanup, from_linked.cleanup);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_non_repository_root_falls_back_to_itself() {
+        // Fail-SAFE direction: without a resolvable repository identity we keep the
+        // previous behaviour rather than pointing a live lease somewhere invented.
+        let root = env::temp_dir().join(format!(
+            "ci-hub-vlock-norepo-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(repository_lock_root(&root), root);
+        assert_eq!(
+            LockPaths::for_workspace(&root).lock,
+            root.join(".validate-lock")
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // No ENV_LOCK and no environment: the anchor path is a PARAMETER, so this test
+    // is isolated by construction and can never touch the live box anchor.
+    #[test]
+    fn box_anchor_admits_one_and_refuses_the_second() {
+        let dir = env::temp_dir().join(format!(
+            "ci-hub-vlock-anchor-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let anchor = dir.join("validate-box.lock");
+
+        // Nothing held: the FIRST caller is admitted (the mechanism is not inert).
+        assert!(!BoxExclusionAnchor::held_by_another(&anchor));
+        let first = BoxExclusionAnchor::take(&anchor, 0).unwrap();
+        assert!(first.is_some(), "an unheld anchor must be granted");
+
+        // A SECOND caller -- which in production is a different repository with its
+        // own lease file -- is refused, and `acquire`'s non-holding probe sees it.
+        let second = BoxExclusionAnchor::take(&anchor, 0).unwrap();
+        assert!(
+            second.is_none(),
+            "a held anchor must refuse the second caller"
+        );
+        assert!(BoxExclusionAnchor::held_by_another(&anchor));
+        assert!(
+            BoxExclusionAnchor::describe_holder(&anchor).contains("box-exclusive-v1"),
+            "the refusal must be able to name the holder"
+        );
+
+        // Released by dropping the holder -- no record to clean, so a dead holder
+        // can never strand the box.
+        //
+        // Re-TAKE with a bound rather than asserting an instantaneous release, and
+        // the reason is a real property of `flock` + `fork`, not test flake. An
+        // flock belongs to the OPEN FILE DESCRIPTION, and `fork` shares
+        // descriptions. `O_CLOEXEC` (which Rust sets) closes the inherited fd at
+        // EXEC, not at fork, so any sibling thread of this multithreaded test
+        // binary that is between fork and exec while we hold the anchor is also
+        // holding the description. Measured: asserting release in the same
+        // instruction failed 2 of 3 suite runs against a suite that spawns
+        // children constantly. Production is unaffected -- the supervisor holds the
+        // anchor across its whole run, so the fork window is inside the hold, never
+        // after it -- but the test must not assert a stronger timing property than
+        // the mechanism has.
+        drop(first);
+        let reacquired = BoxExclusionAnchor::take(&anchor, 5).unwrap();
+        assert!(
+            reacquired.is_some(),
+            "dropping the holder must release the box within the fork/exec window"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn box_anchor_path_is_uid_derived_and_not_workspace_derived() {
+        let path = box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR);
+        let uid = unsafe { libc::getuid() };
+        assert!(
+            path.is_absolute(),
+            "the anchor must not be relative to a cwd"
+        );
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("validate-box.lock")
+        );
+        let text = path.to_string_lossy().into_owned();
+        assert!(
+            text.contains(&uid.to_string()),
+            "the anchor must be keyed on the uid, got {text}"
+        );
+        // Stable across calls, and never a function of the workspace.
+        assert_eq!(box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR), path);
+        // The PRODUCTION constructor wires that uid-derived path in; only the
+        // test constructor (`paths_at`) substitutes a per-test one.
+        let workspace = env::temp_dir().join("ci-hub-vlock-anchor-prod-probe");
+        assert_eq!(LockPaths::for_workspace(&workspace).anchor, path);
+    }
+
     // NEGATIVE direction: a floor-blocked head is REFUSED, and the refusal
     // carries the NAMED remedy (not a bare "refused"). This is the mutation that
     // proves the gate fires — swap the stub to exit 0 and it must stop refusing.
     #[test]
-    fn base_admission_refuses_stale_and_names_remedy() {
+    fn base_admission_refuses_fixed_floor_and_names_remedy() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let stub = write_stub(
             "refuse",
             "#!/bin/sh\necho 'REFUSE: head 01234567 predates merge-gate floor \
-             c369be3f; Rebase onto current origin/main (>= c369be3f) before \
+             c369be3f; Rebase onto the named floor (>= c369be3f) before \
              validating/landing.'\nexit 2\n",
         );
         env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
@@ -3701,17 +3951,20 @@ exit 0
         }
     }
 
-    // POSITIVE direction: a current head is GRANTED. Required so the gate is not
+    // POSITIVE direction: a floor-containing head is GRANTED. Required so the gate is not
     // one that "refuses everything" — such a gate gets disabled.
     #[test]
-    fn base_admission_admits_current_head() {
+    fn base_admission_admits_floor_containing_head() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let stub = write_stub("ok", "#!/bin/sh\necho OK\nexit 0\n");
         env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
         let res = base_admission_check(Path::new("/nonexistent"), HEX_SHA, Kind::Validate, false);
         env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
         let _ = fs::remove_file(&stub);
-        assert!(res.is_ok(), "a current head must be GRANTED, got {res:?}");
+        assert!(
+            res.is_ok(),
+            "a floor-containing head must be GRANTED, got {res:?}"
+        );
     }
 
     // FAIL-CLOSED: an ERROR (unresolvable base) is treated as stale, never waved
@@ -3769,10 +4022,11 @@ exit 0
         }
     }
 
-    // END-TO-END through run(): a stale base is refused with STALE_BASE_EXIT_CODE
+    // END-TO-END through run(): a fixed-floor violation is refused with
+    // STALE_BASE_EXIT_CODE
     // and NEVER consumes the box — a doomed ~17-min validate never starts.
     #[test]
-    fn run_refuses_stale_base_without_consuming_box() {
+    fn run_refuses_fixed_floor_without_consuming_box() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let paths = temp_paths("run-stale-base");
         let lock = ValidateLock {
@@ -3780,8 +4034,8 @@ exit 0
         };
         let stub = write_stub(
             "run-refuse",
-            "#!/bin/sh\necho 'REFUSE: predates floor; Rebase onto current \
-             origin/main before validating/landing.'\nexit 2\n",
+            "#!/bin/sh\necho 'REFUSE: predates immutable validation floor; \
+             rebase onto the named floor before validating.'\nexit 2\n",
         );
         env::set_var(ADMIT_PREFLIGHT_CMD_ENV, &stub);
         let code = lock
@@ -3805,7 +4059,7 @@ exit 0
         env::remove_var(ADMIT_PREFLIGHT_CMD_ENV);
         assert_eq!(
             code, STALE_BASE_EXIT_CODE,
-            "stale base must refuse (not run the child to a 0 exit)"
+            "a fixed-floor violation must refuse (not run the child to a 0 exit)"
         );
         assert!(
             lock.read_holder().unwrap().is_none(),

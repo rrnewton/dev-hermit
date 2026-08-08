@@ -39,6 +39,27 @@ cat >"$tmp/producer-registry.json" <<REG
 REG
 export PRODUCER_DEFINITION_REGISTRY=$tmp/producer-registry.json
 
+# Exact production rotation under review.  Keep the previous pair as a planted
+# negative: after the live registry advances, yesterday's once-valid producer
+# must stop authorizing while the exact current pair remains accepted.
+production_registry=$script_dir/../validate/producer-definition.json
+production_registered_at='rrnewton/hermit@b22e0f30700602f0f8fa92ff2895ad0d307f7542'
+production_validate=349f8c0bae065597708019005180d2872d9c90b2
+production_portable=ef7cdc0211ebaeafcaba4286cb2374a80ab9f3fb
+previous_validate=836a070e5e02017ae232e243904fb033a5c45b17
+previous_portable=6d47112dbbd6566e6d0453551a0c730bc7aeb8d9
+if ! jq -e \
+    --arg at "$production_registered_at" \
+    --arg validate "$production_validate" \
+    --arg portable "$production_portable" '
+      .registered_at == $at
+      and .registered["validate.sh"] == $validate
+      and .registered[".github/workflows/ci-portable.yml"] == $portable
+    ' "$production_registry" >/dev/null; then
+    echo "FAIL: production producer-definition registry does not match the audited rotation" >&2
+    exit 1
+fi
+
 make_receipt() {
     local executed=$1 output=$2
     local raw=$tmp/receipt-build.json selected
@@ -129,7 +150,7 @@ write_comments() {
 # normalized. So the anchor compares CANONICAL CONTENT (`jq -S -c`), which is
 # what "the mutation changed the receipt" actually means.
 mutation_anchor_failures=0
-mutation_anchors_total=10
+mutation_anchors_total=16
 assert_mutated() { # assert_mutated <base> <mutant> <label>
     local a b
     a=$(jq -S -c . "$1" 2>/dev/null) || a="<unparseable:$1>"
@@ -142,16 +163,19 @@ assert_mutated() { # assert_mutated <base> <mutant> <label>
 
 verify_file() {
     local file=$1 expected=$2 label=$3 role_tag=${4:-'[impl agent, ci-hub]'}
-    local file_digest file_path status=0
+    local query_sha=${5:-$sha}
+    local file_digest file_path status=0 expected_status=1
+    [[ $expected == pass ]] && expected_status=0
     file_digest=$(sha256sum "$file" | awk '{print $1}')
     file_path="validation-receipts/rrnewton/hermit/$sha/$file_digest.json"
     mkdir -p "$tmp/receipts/$receipt_commit/$(dirname "$file_path")"
     cp "$file" "$tmp/receipts/$receipt_commit/$file_path"
     write_comments "$file_path" "$file_digest" "$role_tag"
-    "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
+    "$verifier" --sha "$query_sha" --comments "$tmp/comments.json" \
         --fixture-receipts "$tmp/receipts" >/dev/null 2>&1 || status=$?
-    if [[ $expected == pass && $status != 0 ]] || [[ $expected == fail && $status == 0 ]]; then
-        printf 'FAIL: %s expected %s, verifier exit=%s\n' "$label" "$expected" "$status" >&2
+    if [[ $status != "$expected_status" ]]; then
+        printf 'FAIL: %s expected %s (rc=%s), verifier exit=%s\n' \
+            "$label" "$expected" "$expected_status" "$status" >&2
         exit 1
     fi
 }
@@ -175,6 +199,47 @@ cp "$tmp/receipt.json" "$tmp/receipts/$receipt_commit/$path"
 write_comments "$path" "$digest"
 "$verifier" --sha "$sha" --comments "$tmp/comments.json" \
     --fixture-receipts "$tmp/receipts" >/dev/null
+
+# Bracket the exact live producer-definition rotation through the immutable
+# verifier rather than merely comparing JSON maps.  The wrapper bytes and
+# digest-addressed path are recomputed for every mutant, so each refusal turns
+# only on producer-definition/head binding, not on a stale outer checksum.
+jq -cS --arg validate "$production_validate" --arg portable "$production_portable" '
+  .producer.definition = {
+    "validate.sh": $validate,
+    ".github/workflows/ci-portable.yml": $portable
+  }
+' "$tmp/receipt.json" >"$tmp/production-current.json"
+assert_mutated "$tmp/receipt.json" "$tmp/production-current.json" \
+    "PRODUCER production rotation from synthetic fixture"
+PRODUCER_DEFINITION_REGISTRY=$production_registry \
+    verify_file "$tmp/production-current.json" pass \
+    "production rotation: exact current definition qualifies"
+
+jq -cS --arg validate "$previous_validate" --arg portable "$previous_portable" '
+  .producer.definition = {
+    "validate.sh": $validate,
+    ".github/workflows/ci-portable.yml": $portable
+  }
+' "$tmp/production-current.json" >"$tmp/production-previous.json"
+assert_mutated "$tmp/production-current.json" "$tmp/production-previous.json" \
+    "PRODUCER previous registered definition"
+PRODUCER_DEFINITION_REGISTRY=$production_registry \
+    verify_file "$tmp/production-previous.json" fail \
+    "production rotation: previous definition no longer authorizes"
+
+jq -cS '.producer.definition["validate.sh"] = ("0" * 40)' \
+    "$tmp/production-current.json" >"$tmp/production-tampered.json"
+assert_mutated "$tmp/production-current.json" "$tmp/production-tampered.json" \
+    "PRODUCER tampered current definition"
+PRODUCER_DEFINITION_REGISTRY=$production_registry \
+    verify_file "$tmp/production-tampered.json" fail \
+    "production rotation: one-blob tamper is refused"
+
+PRODUCER_DEFINITION_REGISTRY=$production_registry \
+    verify_file "$tmp/production-current.json" fail \
+    "production rotation: current definition cannot authorize another head" \
+    '[impl agent, ci-hub]' ffffffffffffffffffffffffffffffffffffffff
 
 # The wrapper's digest-addressed path is not permission to forge the selected
 # row identity. Change only that inner digest; verify_file recomputes the outer
@@ -371,7 +436,16 @@ fi
 # legitimate landing authorizations rather than repeated parsing of one row.
 sha=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 make_receipt 12 "$tmp/schema5-base.json"
-jq '.ledger_record.schema_version = 5' "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
+jq '.ledger_record.schema_version = 5
+    | .ledger_record.producer = "hermit-validate-sh"
+    | .ledger_record.admission = "ci-hub-validate-lock"
+    | .ledger_record.concurrent_validates = 0
+    | .ledger_record.concurrency_proof = "validate_lock_owner_ancestry"
+    | .ledger_record.base_sha = ("1" * 40)
+    | .ledger_record.base_tree = ("2" * 40)
+    | .ledger_record.reverie_base_sha = ("3" * 40)
+    | .ledger_record.reverie_base_tree = ("4" * 40)' \
+    "$tmp/schema5-base.json" >"$tmp/schema5-missing-raw.json"
 assert_mutated "$tmp/schema5-base.json" "$tmp/schema5-missing-raw.json" "COVERAGE schema5 missing coverage block"
 refresh_selected_identity "$tmp/schema5-missing-raw.json" "$tmp/schema5-missing.json"
 verify_file "$tmp/schema5-missing.json" fail "schema5 missing coverage"
@@ -418,6 +492,12 @@ jq '.ledger_record.coverage = {
 assert_mutated "$tmp/schema5-missing.json" "$tmp/schema5-valid-raw.json" "COVERAGE schema5 complete coverage (positive)"
 refresh_selected_identity "$tmp/schema5-valid-raw.json" "$tmp/schema5-valid.json"
 verify_file "$tmp/schema5-valid.json" pass "schema5 complete coverage"
+jq 'del(.ledger_record.base_sha)' \
+    "$tmp/schema5-valid.json" >"$tmp/schema5-no-base-raw.json"
+assert_mutated "$tmp/schema5-valid.json" "$tmp/schema5-no-base-raw.json" \
+    "BASE schema5 missing recorded base"
+refresh_selected_identity "$tmp/schema5-no-base-raw.json" "$tmp/schema5-no-base.json"
+verify_file "$tmp/schema5-no-base.json" fail "schema5 missing recorded base"
 
 plant_root=$tmp
 rm -rf -- "$plant_root"
@@ -438,4 +518,4 @@ if [[ $mutation_anchor_failures -ne 0 ]]; then
     exit 1
 fi
 
-echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts and 5/5 role tags accepted; current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, and five incomplete schema5 controls refused; fixture plant deleted cleanly"
+echo "PASS: 2/2 legitimate exact-head landing receipts accepted; 2/2 additional identity/compatibility receipts, 5/5 role tags, and 1/1 exact production producer definition accepted; previous/tampered/wrong-head production definitions (3/3), current-tagged identity omission, malformed legacy identity, tampered selected-row digest after outer rehash, current-tagged weak row, 4/4 malformed role tags, stale-head, forged, tampered, zero-executed, host-mismatch, host-absent, five incomplete schema5 coverage controls and 1/1 missing-base control refused; fixture plant deleted cleanly"

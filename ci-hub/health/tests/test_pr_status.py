@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -801,11 +802,19 @@ class GhEngineLoudFailureTests(unittest.TestCase):
         self.assertEqual(status.open, 0)  # legit empty list == 0 PRs (query OK)
         sleep.assert_called_once()
 
+    # Isolate the exact-job setup-only path: the hosted authority dereference is
+    # its own consumer with its own test class, and leaving it live here would
+    # eat entries from the positional `side_effect` list below.
+    @mock.patch("pr_status.hosted_authority_states", return_value={})
     @mock.patch("pr_status.banked_failure_tier_commits", return_value={})
     @mock.patch("pr_status.banked_green_commits", return_value=frozenset())
     @mock.patch("pr_status.subprocess.run")
     def test_fetch_consumer_dereferences_setup_failure(
-        self, run: mock.Mock, _green: mock.Mock, _failure: mock.Mock
+        self,
+        run: mock.Mock,
+        _green: mock.Mock,
+        _failure: mock.Mock,
+        _hosted: mock.Mock,
     ) -> None:
         check = SetupOnlyRollupClassificationTests.failed_check()
         raw = [_pr(1665, [check], head=SetupOnlyRollupClassificationTests.HEAD)]
@@ -832,11 +841,16 @@ class GhEngineLoudFailureTests(unittest.TestCase):
             "repos/rrnewton/hermit/actions/jobs/92660569815",
         )
 
+    @mock.patch("pr_status.hosted_authority_states", return_value={})
     @mock.patch("pr_status.banked_failure_tier_commits", return_value={})
     @mock.patch("pr_status.banked_green_commits", return_value=frozenset())
     @mock.patch("pr_status.subprocess.run")
     def test_fetch_consumer_preserves_genuine_product_red(
-        self, run: mock.Mock, _green: mock.Mock, _failure: mock.Mock
+        self,
+        run: mock.Mock,
+        _green: mock.Mock,
+        _failure: mock.Mock,
+        _hosted: mock.Mock,
     ) -> None:
         check = SetupOnlyRollupClassificationTests.failed_check(
             name="P0 demo gate (demos 1-8)",
@@ -1367,6 +1381,394 @@ class ReviewEvidenceBindingTests(unittest.TestCase):
         )
         self.assertIsNone(pr_status.extract_pass_sha("VERDICT: PASS. Looks good."))
         self.assertIsNone(pr_status.extract_pass_sha(""))
+
+HEAD_RED = "73652f90269c322ba0be298288ec5ff25f089993"    # hermit #1890, live
+HEAD_GREEN = "c36f681eb05f8c9a832f84d89638b527a6283dcd"  # hermit #1897, live
+HERMIT_AUTHORITY_JOB = "Regular tests (GitHub-managed portable)"
+
+
+def _hosted_payload(sha: str, state: str, *, positive: int, required: int = 1):
+    """A `ci-hub hosted-status --json` report, shaped like the live one."""
+    job_state = state if state in ("green", "red") else "no_result"
+    return {
+        "authority": "github-actions-exact-head-jobs",
+        "schema_version": 1,
+        "policy_schema_version": 3,
+        "repo": "rrnewton/hermit",
+        "sha": sha,
+        "state": state,
+        "positive_count": positive,
+        "required_positive_count": required,
+        "jobs": [
+            {
+                "job_name": HERMIT_AUTHORITY_JOB,
+                "workflow_name": "CI (GitHub-managed portable)",
+                "workflow_file": ".github/workflows/ci-portable.yml",
+                "state": job_state,
+                "job_id": 93056597653,
+                "run_id": 31238554232,
+            }
+        ],
+        "last_poll_error": None,
+    }
+
+
+class HostedAuthorityReaderTests(unittest.TestCase):
+    """`hosted_authority_for_head` is a CONSUMER of the one registered verifier.
+
+    Bracketed both ways: a qualifying answer must FIRE (not be inert), and a
+    well-shaped answer that does not bind to the requested authority/repo/sha
+    must be REFUSED rather than believed.
+    """
+
+    def _run(self, returncode: int, stdout: str):
+        return mock.patch(
+            "pr_status.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=returncode, stdout=stdout, stderr=""
+            ),
+        )
+
+    def _exists(self):
+        return mock.patch("pr_status.Path.exists", return_value=True)
+
+    def test_green_answer_fires(self) -> None:
+        payload = json.dumps(_hosted_payload(HEAD_GREEN, "green", positive=1))
+        with self._exists(), self._run(0, payload):
+            authority = pr_status.hosted_authority_for_head(
+                "rrnewton/hermit", HEAD_GREEN
+            )
+        self.assertEqual(authority.state, "green")
+        self.assertEqual(authority.positive_count, 1)
+        self.assertEqual(authority.required_positive_count, 1)
+        self.assertEqual(authority.failing_job_names, ())
+
+    def test_red_answer_fires_despite_nonzero_exit(self) -> None:
+        # `hosted-status` exits 3 on red. The EXIT CODE IS NOT THE SIGNAL: a
+        # reader that treated nonzero as "query failed" would demote every
+        # genuine red to unknown, which is exactly the direction that lets a
+        # broken head read as pending.
+        payload = json.dumps(_hosted_payload(HEAD_RED, "red", positive=0))
+        with self._exists(), self._run(3, payload):
+            authority = pr_status.hosted_authority_for_head("rrnewton/hermit", HEAD_RED)
+        self.assertEqual(authority.state, "red")
+        self.assertEqual(authority.failing_job_names, (HERMIT_AUTHORITY_JOB,))
+
+    def test_no_result_is_not_green_and_is_observed(self) -> None:
+        payload = json.dumps(_hosted_payload(HEAD_RED, "no_result", positive=0))
+        with self._exists(), self._run(4, payload):
+            authority = pr_status.hosted_authority_for_head("rrnewton/hermit", HEAD_RED)
+        self.assertEqual(authority.state, "no_result")
+        self.assertTrue(authority.observed)
+
+    def test_answer_for_another_sha_is_refused(self) -> None:
+        # A perfectly well-formed GREEN report — for a DIFFERENT commit. Believing
+        # it would let one head's authority authorize another's.
+        payload = json.dumps(_hosted_payload(HEAD_GREEN, "green", positive=1))
+        with self._exists(), self._run(0, payload):
+            authority = pr_status.hosted_authority_for_head("rrnewton/hermit", HEAD_RED)
+        self.assertEqual(authority.state, "unknown")
+        self.assertFalse(authority.observed)
+        self.assertIn("does not bind", authority.reason)
+
+    def test_answer_for_another_repo_is_refused(self) -> None:
+        payload = _hosted_payload(HEAD_GREEN, "green", positive=1)
+        payload["repo"] = "rrnewton/reverie"
+        with self._exists(), self._run(0, json.dumps(payload)):
+            authority = pr_status.hosted_authority_for_head(
+                "rrnewton/hermit", HEAD_GREEN
+            )
+        self.assertEqual(authority.state, "unknown")
+
+    def test_answer_from_another_authority_is_refused(self) -> None:
+        # The tampered case: a green report that never names the exact-head job
+        # authority. Different authorities must not collapse into one another.
+        payload = _hosted_payload(HEAD_GREEN, "green", positive=1)
+        payload["authority"] = "ci-hub-local-receipt-policy-v1"
+        with self._exists(), self._run(0, json.dumps(payload)):
+            authority = pr_status.hosted_authority_for_head(
+                "rrnewton/hermit", HEAD_GREEN
+            )
+        self.assertEqual(authority.state, "unknown")
+
+    def test_unknown_state_vocabulary_is_refused(self) -> None:
+        payload = _hosted_payload(HEAD_GREEN, "passed", positive=1)
+        with self._exists(), self._run(0, json.dumps(payload)):
+            authority = pr_status.hosted_authority_for_head(
+                "rrnewton/hermit", HEAD_GREEN
+            )
+        self.assertEqual(authority.state, "unknown")
+
+    def test_missing_binary_and_non_json_and_timeout_are_unknown(self) -> None:
+        with mock.patch("pr_status.Path.exists", return_value=False):
+            self.assertEqual(
+                pr_status.hosted_authority_for_head(
+                    "rrnewton/hermit", HEAD_GREEN
+                ).state,
+                "unknown",
+            )
+        with self._exists(), self._run(0, "not json at all"):
+            self.assertEqual(
+                pr_status.hosted_authority_for_head(
+                    "rrnewton/hermit", HEAD_GREEN
+                ).state,
+                "unknown",
+            )
+        with self._exists(), mock.patch(
+            "pr_status.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="ci-hub", timeout=1),
+        ):
+            self.assertEqual(
+                pr_status.hosted_authority_for_head(
+                    "rrnewton/hermit", HEAD_GREEN
+                ).state,
+                "unknown",
+            )
+
+    def test_parser_is_bound_to_the_real_verifier_output(self) -> None:
+        """The shape we parse is the shape the verifier actually emits.
+
+        Not a hand-written fixture: this drives the REAL
+        `remediation/protocol.py hosted-status --json` code path with only its
+        network call stubbed, then feeds its verbatim stdout to our reader. If
+        the verifier's report schema moves, this fails instead of silently
+        degrading every head to `unknown`.
+        """
+        import contextlib
+        import io
+        import types
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from remediation import protocol
+
+        self.assertTrue(
+            pr_status.HOSTED_STATUS_VERIFIER.exists(),
+            f"verifier missing at {pr_status.HOSTED_STATUS_VERIFIER}",
+        )
+        run = {
+            "databaseId": 31238567851,
+            "headSha": HEAD_GREEN,
+            "workflowFile": ".github/workflows/ci-portable.yml",
+            "workflowName": "CI (GitHub-managed portable)",
+            "status": "completed",
+            "conclusion": "success",
+            "event": "workflow_dispatch",
+            "startedAt": "2026-08-08T04:02:55Z",
+            "updatedAt": "2026-08-08T04:18:34Z",
+            "url": "https://github.com/rrnewton/hermit/actions/runs/31238567851",
+            "jobs": [
+                {
+                    "id": 93057001025,
+                    "run_id": 31238567851,
+                    "head_sha": HEAD_GREEN,
+                    "name": HERMIT_AUTHORITY_JOB,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "started_at": "2026-08-08T04:02:55Z",
+                    "completed_at": "2026-08-08T04:18:34Z",
+                    "html_url": (
+                        "https://github.com/rrnewton/hermit/actions/runs/"
+                        "31238567851/job/93057001025"
+                    ),
+                }
+            ],
+        }
+        buffer = io.StringIO()
+        with mock.patch.object(protocol, "github_runs", return_value=[run]):
+            with contextlib.redirect_stdout(buffer):
+                exit_code = protocol.hosted_status(
+                    types.SimpleNamespace(
+                        repo="rrnewton/hermit", sha=HEAD_GREEN, json=True
+                    )
+                )
+        emitted = buffer.getvalue().strip()
+        self.assertEqual(exit_code, 0)
+        with self._exists(), self._run(exit_code, emitted):
+            authority = pr_status.hosted_authority_for_head(
+                "rrnewton/hermit", HEAD_GREEN
+            )
+        self.assertEqual(authority.state, "green")
+        self.assertEqual(authority.positive_count, 1)
+        self.assertEqual(authority.required_positive_count, 1)
+
+    def test_short_sha_is_never_queried(self) -> None:
+        with mock.patch("pr_status.subprocess.run") as run:
+            authority = pr_status.hosted_authority_for_head("rrnewton/hermit", "abc123")
+        run.assert_not_called()
+        self.assertEqual(authority.state, "unknown")
+
+
+class HostedAuthorityClassificationTests(unittest.TestCase):
+    """The rollup no longer decides CI state on its own.
+
+    Regression guard for the measured defect: `statusCheckRollup` carried 0 of
+    455 `workflow_dispatch`-produced check runs across hermit's 12 ready heads
+    (2026-08-08), so under merge-gate-v4 the registered authority job is absent
+    from it. Three heads whose authority job had FAILED were reported `pending`.
+    """
+
+    @staticmethod
+    def _authority(sha: str, state: str, *, failing=()):
+        return {
+            sha: pr_status.HostedAuthority(
+                state=state,
+                positive_count=1 if state == "green" else 0,
+                required_positive_count=1,
+                failing_job_names=tuple(failing),
+            )
+        }
+
+    def test_authority_red_under_an_empty_rollup_is_red_not_pending(self) -> None:
+        # THE DEFECT. Rollup shows only the gate's own cancelled/skipped checks
+        # (all NO_RESULT => pending); the authority job failed and is invisible.
+        raw = [
+            _pr(
+                1890,
+                _rollup(("COMPLETED", "CANCELLED"), ("COMPLETED", "SKIPPED")),
+                head=HEAD_RED,
+            )
+        ]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            hosted_authority=self._authority(
+                HEAD_RED, "red", failing=(HERMIT_AUTHORITY_JOB,)
+            ),
+        )
+        self.assertEqual(status.prs[0]["ci"], "red")
+        self.assertEqual(status.prs[0]["rollup_ci"], "pending")
+        self.assertEqual(status.prs[0]["hosted_authority"], "red")
+        self.assertEqual(status.pending, 0)
+        self.assertEqual(status.red, 1)
+        self.assertEqual(status.real_reds, 1)
+        # The authority job is a product test, so it must land in the product
+        # bucket -- an empty rollup previously routed it to `gate`.
+        self.assertEqual(status.product_reds, 1)
+        self.assertEqual(status.gate_reds, 0)
+        self.assertIn(HERMIT_AUTHORITY_JOB, status.prs[0]["failing_checks"])
+        self.assertEqual(status.hosted_red, 1)
+
+    def test_authority_green_under_a_pending_rollup_is_green(self) -> None:
+        raw = [
+            _pr(
+                1897,
+                _rollup(("COMPLETED", "CANCELLED"), ("COMPLETED", "SKIPPED")),
+                head=HEAD_GREEN,
+            )
+        ]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            hosted_authority=self._authority(HEAD_GREEN, "green"),
+        )
+        self.assertEqual(status.prs[0]["ci"], "green")
+        self.assertEqual(status.prs[0]["rollup_ci"], "pending")
+        self.assertEqual(status.green, 1)
+        self.assertEqual(status.hosted_green, 1)
+        self.assertEqual(status.prs[0]["hosted_positive"], "1/1")
+
+    def test_rollup_red_dominates_a_green_authority(self) -> None:
+        # A green product job does not clear a failing landing gate. Both are
+        # reported; the head stays red, attributed to `gate`.
+        raw = [
+            _pr(
+                1665,
+                [
+                    {
+                        "name": "merge-gate-v4",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                    }
+                ],
+                head=HEAD_GREEN,
+            )
+        ]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            hosted_authority=self._authority(HEAD_GREEN, "green"),
+        )
+        self.assertEqual(status.prs[0]["ci"], "red")
+        self.assertEqual(status.prs[0]["hosted_authority"], "green")
+        self.assertEqual(status.gate_reds, 1)
+        self.assertEqual(status.product_reds, 0)
+
+    def test_unobserved_authority_never_manufactures_green(self) -> None:
+        # No entry in the map at all: we did not look. That must read as UNKNOWN
+        # coverage, never as a positive, and the rollup alone still drives.
+        raw = [_pr(1635, _rollup(("COMPLETED", "CANCELLED")), head=HEAD_RED)]
+        status = pr_status._classify_gh_prs("rrnewton/hermit", raw)
+        self.assertEqual(status.prs[0]["ci"], "pending")
+        self.assertEqual(status.prs[0]["hosted_authority"], "unknown")
+        self.assertEqual(status.prs[0]["hosted_positive"], "")
+        self.assertEqual(status.green, 0)
+        self.assertEqual(status.hosted_unknown, 1)
+        self.assertEqual(status.hosted_green, 0)
+
+    def test_authority_no_result_is_not_green(self) -> None:
+        raw = [_pr(1635, [], head=HEAD_RED)]
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit",
+            raw,
+            hosted_authority=self._authority(HEAD_RED, "no_result"),
+        )
+        self.assertEqual(status.prs[0]["ci"], "pending")
+        self.assertEqual(status.green, 0)
+        self.assertEqual(status.hosted_green, 0)
+        self.assertEqual(status.hosted_unknown, 0)
+
+    def test_report_names_both_sources_per_head(self) -> None:
+        raw = [
+            _pr(1890, _rollup(("COMPLETED", "CANCELLED")), head=HEAD_RED),
+            _pr(1897, _rollup(("COMPLETED", "CANCELLED")), head=HEAD_GREEN),
+        ]
+        authority = self._authority(HEAD_RED, "red", failing=(HERMIT_AUTHORITY_JOB,))
+        authority.update(self._authority(HEAD_GREEN, "green"))
+        status = pr_status._classify_gh_prs(
+            "rrnewton/hermit", raw, hosted_authority=authority
+        )
+        report = pr_status.render_report([status], warn_threshold=99, engine="gh")
+        self.assertIn("hosted authority (ci-hub hosted-status", report)
+        self.assertIn("green=1 red=1 unobserved=0", report)
+        self.assertIn("rollup=pending", report)
+        self.assertIn("hosted=red", report)
+        self.assertIn("hosted=green(1/1)", report)
+        # The verdict must state that the rollup alone is not an input.
+        self.assertIn("statusCheckRollup alone", report)
+
+
+class HostedAuthorityFanOutTests(unittest.TestCase):
+    def test_only_ready_heads_are_dereferenced(self) -> None:
+        raw = [
+            _pr(1, _rollup(("COMPLETED", "SUCCESS")), head="a" * 40),
+            _pr(2, _rollup(("COMPLETED", "SUCCESS")), head="b" * 40, draft=True),
+        ]
+        with mock.patch(
+            "pr_status.banked_green_commits", return_value=frozenset()
+        ), mock.patch(
+            "pr_status.banked_failure_tier_commits", return_value={}
+        ), mock.patch(
+            "pr_status.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(raw), stderr=""
+            ),
+        ), mock.patch(
+            "pr_status.hosted_authority_states", return_value={}
+        ) as states:
+            pr_status.fetch_repo_status_gh("rrnewton/hermit", net_wrapper=[])
+        states.assert_called_once()
+        self.assertEqual(states.call_args.args[1], ["a" * 40])
+
+    def test_exhausted_deadline_leaves_heads_unobserved_not_green(self) -> None:
+        with mock.patch("pr_status.hosted_authority_for_head") as reader:
+            observed = pr_status.hosted_authority_states(
+                "rrnewton/hermit",
+                [HEAD_GREEN, HEAD_RED],
+                deadline=time.monotonic() - 1.0,
+            )
+        reader.assert_not_called()
+        self.assertEqual(observed, {})
+
 
 if __name__ == "__main__":
     unittest.main()

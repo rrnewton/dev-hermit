@@ -140,4 +140,40 @@ set -e
 grep -F 'qualified green=0/2 raw passes' "$TMP/legacy-unqualified.out" >/dev/null
 grep -F '0 ptrace/verify qualifying passing cells' "$TMP/legacy-unqualified.out" >/dev/null
 
-echo "observable schema: 4 positive current/legacy reads; 5 schema/tier violations refused; explicit legacy tier credited 0/2 raw passes"
+# A self-verify tier is a known provenance class, but within-backend
+# repeatability must never be counted as cross-backend stdout parity.
+sed "s/,$STRICT_TIER$/,unqualified-self-verify-only/" \
+    "$TMP/stdout-current.csv" >"$TMP/self-verify-only.csv"
+set +e
+"$RENDER" --csv "$TMP/self-verify-only.csv" --all --backends dbi \
+    --json >"$TMP/self-verify-only.json" 2>"$TMP/self-verify-only.err"
+self_verify_rc=$?
+set -e
+[ "$self_verify_rc" -eq 3 ] || {
+    echo "self-verify-only: expected no-data exit 3, got $self_verify_rc" >&2
+    cat "$TMP/self-verify-only.err" >&2
+    exit 1
+}
+jq -e '.comparison_tier_distribution["unqualified-self-verify-only"] == 2
+       and .qualified_green_count == 0 and .raw_pass_count == 2' \
+    "$TMP/self-verify-only.json" >/dev/null
+
+# Even a malformed producer that pairs stdout_parity=1 with "no comparison"
+# cannot launder that unsupported boolean into a qualified green.
+sed "s/,$STRICT_TIER$/,unqualified-no-comparison/" \
+    "$TMP/stdout-current.csv" >"$TMP/no-comparison.csv"
+set +e
+"$RENDER" --csv "$TMP/no-comparison.csv" --all --backends dbi \
+    --json >"$TMP/no-comparison.json" 2>"$TMP/no-comparison.err"
+no_comparison_rc=$?
+set -e
+[ "$no_comparison_rc" -eq 3 ] || {
+    echo "no-comparison: expected no-data exit 3, got $no_comparison_rc" >&2
+    cat "$TMP/no-comparison.err" >&2
+    exit 1
+}
+jq -e '.comparison_tier_distribution["unqualified-no-comparison"] == 2
+       and .qualified_green_count == 0 and .raw_pass_count == 2' \
+    "$TMP/no-comparison.json" >/dev/null
+
+echo "observable schema: 4 positive current/legacy reads; 5 schema/tier violations refused; legacy, self-verify, and no-comparison tiers each credited 0/2 raw passes"

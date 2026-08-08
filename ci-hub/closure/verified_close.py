@@ -17,6 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import content_presence  # noqa: E402  (sibling module in ci-hub/closure)
 
 ROOT = Path(__file__).resolve().parents[2]
+# One resolver for the TaskGraph, shared with every other ci-hub consumer.
+sys.path.insert(0, str(ROOT / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
 PARENT_REPO = "rrnewton/dev-hermit"
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -53,6 +56,21 @@ def _run(
     cwd: Path | None = None,
     timeout: float = 120,
 ) -> subprocess.CompletedProcess[str]:
+    env = None
+    if command and command[0] == "tg":
+        # This module WRITES: it is the only producer of CLOSURE-VERIFIED, and
+        # it also runs `tg note` and `tg update --status closed`. An unbound
+        # `tg` silently addresses an empty default database, so a misdirected
+        # write would record closure evidence where no reader looks while the
+        # real task keeps its landing debt. Refusing to bind is therefore
+        # refusing to write -- UNVERIFIABLE, never a claimed close. git/gh calls
+        # through this helper are deliberately left unbound and unaffected.
+        try:
+            env = taskgraph_db.child_env(taskgraph_db.resolve())
+        except taskgraph_db.TaskGraphUnavailable as error:
+            return subprocess.CompletedProcess(
+                list(command), UNVERIFIABLE, "", f"taskgraph-unavailable: {error}"
+            )
     try:
         return subprocess.run(
             list(command),
@@ -61,6 +79,7 @@ def _run(
             text=True,
             timeout=timeout,
             check=False,
+            env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return subprocess.CompletedProcess(list(command), UNVERIFIABLE, "", str(error))

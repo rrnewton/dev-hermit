@@ -158,5 +158,174 @@ class ParentMainWriteTests(unittest.TestCase):
         self.assertIn("lacks Parent-Main-Write-Mode trailer", result.stderr)
 
 
+class UnauthoredReversionTests(ParentMainWriteTests):
+    """The near-miss of 2026-08-08, both directions.
+
+    An agent read a shared file, edited one field, and its CONTENT was later
+    committed onto a newer base. The commit carried the authored hunk plus a
+    silent reversion of everything that had landed in that file meanwhile. The
+    second hunk is invisible in a diff against the base the author read -- the
+    diff every review habit inspects -- and only appears against origin/main.
+    """
+
+    def advance_main(self, text: str, message: str) -> str:
+        """Land a commit on main WITHOUT the writer, so each test takes the host
+        mutex exactly once (two writer calls in one test contend on it)."""
+        self.change("shared.txt", text)
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", message, "--", "shared.txt")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD:main")
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+    def land_colleague_change(self) -> None:
+        self.advance_main("alpha\nBETA_original\ngamma\n", "seed shared")
+        self.advance_main("alpha\nBETA_LANDED_BY_COLLEAGUE\ngamma\n", "colleague lands BETA")
+
+    def test_negative_transplanted_stale_content_is_refused_and_names_the_lost_line(self) -> None:
+        self.land_colleague_change()
+        # The author's content was read BEFORE the colleague's line landed, then
+        # written out whole onto the current base. Their own diff shows only the
+        # added line; the reversion is invisible to them.
+        self.change("shared.txt", "alpha\nBETA_original\ngamma\nDELTA_authored\n")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", "add DELTA", "--", "shared.txt")
+        result = self.writer("publish")
+        self.assertNotEqual(0, result.returncode)
+        combined = result.stdout + result.stderr
+        self.assertIn("would revert landed work", combined)
+        # It must name WHAT is lost, not merely that something is.
+        self.assertIn("BETA_LANDED_BY_COLLEAGUE", combined)
+
+    def test_positive_current_tree_whole_file_commit_still_publishes(self) -> None:
+        self.land_colleague_change()
+        self.change("shared.txt", "alpha\nBETA_LANDED_BY_COLLEAGUE\ngamma\nDELTA_authored\n")
+        result = self.writer("commit", "-m", "add DELTA from a current tree", "--", "shared.txt")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("PARENT_MAIN_WRITE published=", result.stdout)
+
+    def test_positive_stale_base_then_rebase_does_not_cry_wolf(self) -> None:
+        """THE test that decides whether this guard survives contact.
+
+        Committing on a stale base and REBASING is safe -- git replays only the
+        authored diff -- and it is the common case. A guard that keys on tree
+        staleness rather than on content lineage would fire here, be recognised
+        as noise, and be switched off within a day.
+        """
+        stale_base = self.advance_main("alpha\nBETA_original\ngamma\n", "seed shared")
+        # Colleague lands on main while the author works from the older base.
+        tip = self.advance_main("alpha\nBETA_LANDED_BY_COLLEAGUE\ngamma\n", "colleague lands BETA")
+        git(self.repo, "checkout", "-q", "-B", "author", stale_base)
+        self.change("shared.txt", "alpha\nBETA_original\ngamma\nDELTA_authored\n")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", "add DELTA on a stale base", "--", "shared.txt")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "rebase", tip)
+        rebased = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        result = self.writer("publish", rebased)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("PARENT_MAIN_WRITE published=", result.stdout)
+
+    def test_author_editing_the_same_region_is_a_real_edit_not_a_reversion(self) -> None:
+        self.land_colleague_change()
+        self.change("shared.txt", "alpha\nBETA_rewritten_by_the_author\ngamma\n")
+        result = self.writer("commit", "-m", "rewrite the line main touched", "--", "shared.txt")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_documented_opt_out_allows_a_deliberate_reversion(self) -> None:
+        """One writer call per test, deliberately.
+
+        Two invocations in a single test contend on the host mutex: a backgrounded
+        hook inherits the writer's lock file descriptor and keeps the flock after
+        the writer itself has exited. That is a real property of this harness, not
+        of the guard, and the refusal side is already proven by
+        test_negative_transplanted_stale_content_is_refused_and_names_the_lost_line
+        against byte-identical inputs.
+        """
+        self.land_colleague_change()
+        self.change("shared.txt", "alpha\nBETA_original\ngamma\nDELTA_authored\n")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", "add DELTA", "--", "shared.txt")
+        self.env["HERMIT_PARENT_MAIN_ALLOW_REVERT"] = "1"
+        result = self.writer("publish")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("reversion guard DISABLED", result.stdout + result.stderr)
+
+
+class PublishedResidueTests(ParentMainWriteTests):
+    """The 2026-08-08 freeze, both directions.
+
+    The shared parent sat pinned while origin/main advanced six commits, so the
+    fleet's only serialized landing path was shut and the blockage belonged to
+    nobody. The cause was residue left by agents whose tasks had already CLOSED,
+    whose bytes ALREADY matched origin/main. Git blocks the fast-forward anyway
+    because it compares the working tree against the INDEX, not the target.
+    """
+
+    def freeze(self, planted: str | None = None) -> str:
+        """Leave local main behind origin/main with residue on disk.
+
+        Returns the fetched target sha. `planted` is written to work.txt and is
+        the only thing that should ever change the verdict.
+        """
+        self.change("shared.txt", "v1\n")
+        self.change("work.txt", "w1\n")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", "seed shared")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD:main")
+        base = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        self.change("shared.txt", "v2\n")
+        self.change("work.txt", "w2\n")
+        self.change("added.md", "new\n")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", "origin advances")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD:main")
+        target = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        # Local main falls behind, exactly as the shared parent did.
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "reset", "--hard", base)
+        # Residue: bytes already identical to what is published.
+        (self.repo / "shared.txt").write_text("v2\n")
+        (self.repo / "added.md").write_text("new\n")
+        (self.repo / "work.txt").write_text(planted if planted is not None else "w2\n")
+        return target
+
+    def test_positive_byte_identical_residue_does_not_block_a_sync(self) -> None:
+        target = self.freeze()
+        result = self.writer("sync")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(target, git(self.repo, "rev-parse", "HEAD").stdout.strip())
+        self.assertIn("residue adopted=3", result.stdout)
+        # Not one byte on disk may have moved.
+        self.assertEqual("v2\n", (self.repo / "shared.txt").read_text())
+        self.assertEqual("w2\n", (self.repo / "work.txt").read_text())
+        self.assertEqual("new\n", (self.repo / "added.md").read_text())
+
+    def test_negative_a_genuinely_modified_file_still_blocks_and_nothing_moves(self) -> None:
+        self.freeze(planted="GENUINE UNCOMMITTED WORK\n")
+        head_before = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        index_before = git(self.repo, "write-tree").stdout.strip()
+        result = self.writer("sync")
+        self.assertNotEqual(0, result.returncode)
+        combined = result.stdout + result.stderr
+        self.assertIn("work.txt", combined)
+        self.assertIn("real", combined)
+        # The refusal must be TOTAL: a first pass that stages as it goes would
+        # leave the index half-adopted here, which is the residue class this
+        # function exists to remove, created on the failure path.
+        self.assertEqual(head_before, git(self.repo, "rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(index_before, git(self.repo, "write-tree").stdout.strip())
+        self.assertEqual("", git(self.repo, "diff", "--cached", "--name-only").stdout.strip())
+        self.assertEqual("GENUINE UNCOMMITTED WORK\n", (self.repo / "work.txt").read_text())
+
+    def test_negative_no_automated_path_refreshes_an_entry_whose_bytes_differ(self) -> None:
+        # The same planted file, asserted from the other side: the differing path
+        # must never appear in the adoption log, and adoption must not be claimed.
+        self.freeze(planted="DIFFERENT\n")
+        result = self.writer("sync")
+        combined = result.stdout + result.stderr
+        self.assertNotIn("adopted published residue (bytes identical to", combined.split("REFUSED")[0].replace("shared.txt", ""))
+        self.assertNotIn("residue adopted=", result.stdout)
+
+    def test_neutral_a_clean_current_tree_reports_zero_and_still_syncs(self) -> None:
+        # No cry-wolf: the common case must be silent about residue, not noisy.
+        self.change("notes.md", "changed\n")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "commit", "-m", "ordinary")
+        git(self.repo, "-c", "core.hooksPath=/dev/null", "push", "origin", "HEAD:main")
+        result = self.writer("sync")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("already-current=", result.stdout)
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,9 @@ KNOWN_COMPARISON_TIERS = {
     "full-stdout-info-stack-heap",
     "stdout-info-stack-heap-spot-check",
     "legacy-unqualified",
+    "unqualified-no-comparison",
     "unqualified-stdout-only",
+    "unqualified-self-verify-only",
     "unqualified-tool-count-only",
 }
 

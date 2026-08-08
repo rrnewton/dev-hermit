@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LEDGER = Path(__file__).resolve().with_name("ledger.json")
 DEFAULT_REPORT = ROOT / "ignored/ci-hub/directives/latest.json"
 TASK_RE = re.compile(r"[A-Za-z0-9_.-]+")
+# Marks a status that came from an ARCHIVED database rather than the live one, so
+# "resolved" never silently means "resolved somewhere we no longer operate".
+ARCHIVED_SUFFIX = "@archived"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 REPO_RE = re.compile(r"[^/\s]+/[^/\s]+")
 # States that are genuine drift — an unmet obligation nobody is demonstrably
@@ -29,6 +33,16 @@ REPO_RE = re.compile(r"[^/\s]+/[^/\s]+")
 DRIFT_STATES = (
     "needs_owner",
     "missing_task",
+    # Named a task that exists in NO known task database. Distinct from
+    # `missing_task` (named none at all): same symptom, different remedy --
+    # `missing_task` needs a task filed, `task_not_found` needs the pointer or
+    # the database set corrected. Collapsing the two is how a database problem
+    # disguises itself as a bookkeeping problem.
+    "task_not_found",
+    # A row that is not satisfied while its accountable task is CLOSED. This IS drift by the
+    # definition above -- nobody is demonstrably advancing it, because the record that would
+    # have surfaced it says the work is finished.
+    "unaccountable",
     "not_landed",
     "invalid",
     "unverifiable",
@@ -138,6 +152,7 @@ def _run(
     *,
     cwd: Path = ROOT,
     timeout: float = 24,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -147,6 +162,7 @@ def _run(
             text=True,
             timeout=timeout,
             check=False,
+            env=None if env is None else dict(env),
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return subprocess.CompletedProcess(list(command), 2, "", str(error))
@@ -240,26 +256,97 @@ def _assert_acyclic(directives: Sequence[Directive]) -> None:
 
 def _query_known_tasks(
     directives: Sequence[Directive], run: Run, timeout: float
-) -> tuple[set[str], str | None]:
+) -> tuple[dict[str, str], str | None]:
+    """Accountable task id -> its TaskGraph status.
+
+    Selecting `status` as well as `local_id` is load-bearing, not cosmetic. Existence alone
+    answers "is there a task", which a CLOSED task satisfies exactly as well as a live one --
+    so a directive could sit unlanded while the only record a human would look at said the work
+    was done. Measured 2026-08-08 on the live ledger: 3 of 21 rows were non-satisfied with a
+    CLOSED accountable task, including the `green-time-automatic-log` row that has neither an
+    implementation nor a gate. See `closed_task` in `_metadata_issues`.
+    """
     tasks = sorted({item.task for item in directives if item.task})
     if not tasks:
-        return set(), None
+        return {}, None
     if any(not TASK_RE.fullmatch(task) for task in tasks):
-        return set(), "task ids may contain only letters, digits, dot, underscore, hyphen"
+        return {}, "task ids may contain only letters, digits, dot, underscore, hyphen"
     quoted = ",".join("'" + task.replace("'", "''") + "'" for task in tasks)
-    result = run(
-        ("tg", "sql", f"SELECT local_id FROM tasks WHERE local_id IN ({quoted});"),
-        cwd=ROOT,
-        timeout=timeout,
-    )
-    if result.returncode != 0:
-        return set(), (result.stderr or result.stdout or "TaskGraph lookup failed").strip()
-    known = {
-        line.strip()
-        for line in result.stdout.splitlines()
-        if TASK_RE.fullmatch(line.strip()) and line.strip() != "local_id"
-    }
+    query = f"SELECT local_id || '\t' || status FROM tasks WHERE local_id IN ({quoted});"
+
+    known: dict[str, str] = {}
+    first_error: str | None = None
+    for index, db in enumerate(task_databases()):
+        env = dict(os.environ)
+        if db is not None:
+            env["TG_DB_PATH"] = str(db)
+        result = run(("tg", "sql", query), cwd=ROOT, timeout=timeout, env=env)
+        if result.returncode != 0:
+            # Only the LIVE database failing is a lookup outage. An archive that
+            # cannot be opened is a missing archive, not an unknown fleet state.
+            if index == 0:
+                first_error = (
+                    result.stderr or result.stdout or "TaskGraph lookup failed"
+                ).strip()
+            continue
+        for line in result.stdout.splitlines():
+            local_id, _, status = line.strip().partition("\t")
+            local_id = local_id.strip()
+            if not TASK_RE.fullmatch(local_id) or local_id == "local_id":
+                continue
+            status = status.strip()
+            # First database to answer wins, and the live one is queried first, so
+            # a task that still exists live is never reported from an archive.
+            if local_id in known:
+                continue
+            known[local_id] = status if index == 0 else f"{status}{ARCHIVED_SUFFIX}"
+        if len(known) == len(tasks):
+            break
+    if first_error is not None and not known:
+        return {}, first_error
     return known, None
+
+
+def task_databases() -> list[Path | None]:
+    """The live TaskGraph database first, then same-lineage archives.
+
+    A fleet cutover RENAMES the database (2026-08-07: `hermit.db` became the
+    archive and `hermit2.db` the live fleet), so every directive filed before the
+    cutover names a task that is perfectly real and simply lives in the previous
+    file. Resolving against the live database alone reported `task_not_found` on
+    21 of 21 records -- a 100% failure that is a partition, never a fact.
+
+    Lineage is the ALPHABETIC STEM of the live database, so `hermit2.db` admits
+    `hermit.db` and `hermit1.db` but not `hermit-policy-audit.db`; matching a bare
+    `hermit*` prefix would resolve task ids out of unrelated projects' databases
+    and manufacture a false positive, which is worse than the miss it fixes.
+    Override the whole set with `DIRECTIVE_TASK_DBS` (os.pathsep-separated).
+    """
+    override = os.environ.get("DIRECTIVE_TASK_DBS")
+    if override is not None:
+        return [Path(part) for part in override.split(os.pathsep) if part]
+    live_raw = os.environ.get("TG_DB_PATH")
+    # `None` means "let `tg` pick its own default"; we must not guess it here.
+    if not live_raw:
+        return [None]
+    live = Path(live_raw)
+    databases: list[Path | None] = [live]
+    stem_base = re.match(r"^([A-Za-z_.-]+?)\d*$", live.stem)
+    if stem_base is None:
+        return databases
+    pattern = re.compile(rf"^{re.escape(stem_base.group(1))}\d*$")
+    siblings = []
+    try:
+        for candidate in live.parent.glob("*.db"):
+            if candidate == live or not pattern.match(candidate.stem):
+                continue
+            siblings.append(candidate)
+    except OSError:
+        return databases
+    # Newest archive first: the most recent predecessor is the likeliest owner.
+    siblings.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+    databases.extend(siblings)
+    return databases
 
 
 def _metadata_issues(
@@ -285,6 +372,25 @@ def _metadata_issues(
         issues.append("task_lookup_unavailable")
     elif directive.task not in known_tasks:
         issues.append("task_not_found")
+    elif known_tasks[directive.task].endswith(ARCHIVED_SUFFIX):
+        # Real and accountable, but the pointer is into a database this fleet no
+        # longer writes. Reported so the pointer can be migrated; deliberately NOT
+        # in the state chain below, because a satisfied directive whose task was
+        # closed before a cutover is a correct end state, not drift.
+        issues.append("task_in_archived_db")
+    if (
+        directive.task
+        and directive.task in known_tasks
+        and known_tasks[directive.task]
+        .removesuffix(ARCHIVED_SUFFIX)
+        .strip()
+        .upper()
+        .startswith("CLOSED")
+    ):
+        # Recorded unconditionally, including on satisfied rows, where a closed task is the
+        # CORRECT end state. Only `evaluate` decides it is a contradiction, and only for a row
+        # that is not satisfied -- the point is the pairing, not the closure.
+        issues.append("closed_task")
     if not directive.owner:
         issues.append("missing_owner")
     if directive.implementation is None:
@@ -402,9 +508,18 @@ def evaluate(
                     "not_landed": "not-ancestor",
                     "fetch_failed": "fetch_failed",
                 }.get(state, "unverifiable")
-        if any(issue in {"missing_task", "task_not_found"} for issue in issues):
+        # Two facts, two states, two remedies. Merging them made a database
+        # cutover -- every accountable task alive in the previous file -- read as
+        # 21 directives nobody had ever filed a task for.
+        if "missing_task" in issues:
             state = "missing_task"
-            reason = "directive has no resolvable accountable task"
+            reason = "directive names no accountable task"
+        elif "task_not_found" in issues:
+            state = "task_not_found"
+            reason = (
+                f"directive names task {directive.task!r}, which exists in none of "
+                f"the {len(task_databases())} known task database(s)"
+            )
         elif "task_lookup_unavailable" in issues:
             state = "unverifiable"
             reason = task_lookup_error or "TaskGraph lookup unavailable"
@@ -413,7 +528,21 @@ def evaluate(
             reason = "directive has no accountable owner"
         elif any(
             issue
-            not in {"no_implementation", "missing_task", "task_not_found", "missing_owner"}
+            not in {
+                "no_implementation",
+                "missing_task",
+                "task_not_found",
+                # Not invalid metadata: the pointer is well-formed and resolves,
+                # just into a pre-cutover database. It is reported as its own
+                # issue and left out of the state chain so it cannot demote a row
+                # that is otherwise satisfied.
+                "task_in_archived_db",
+                "missing_owner",
+                # A closed task is not INVALID metadata -- on a satisfied row it is the correct
+                # end state. Whether it is a contradiction is decided below, against the row's
+                # settled state, not here.
+                "closed_task",
+            }
             for issue in issues
         ):
             state = "invalid"
@@ -423,6 +552,20 @@ def evaluate(
             reason = f"gated on: {directive.gate}"
         elif implementation is None:
             state = "open"
+        # UNACCOUNTABLE: an ungated row is not satisfied, yet its accountable task is CLOSED.
+        # Nothing else catches that pairing, because task lookup tests existence and a closed
+        # task exists. A named external gate is different: the versioned gate condition is the
+        # durable obligation, and the hourly checker continues to surface it after the finite
+        # recording task closes. Demoting that explicit deferral to `unaccountable` makes it
+        # impossible to record a completed decision without filing an artificial forever-open
+        # task. Keep only explicitly named gates exempt; a closed task plus no implementation
+        # and no gate remains genuine drift.
+        if state not in {"satisfied", "gated"} and "closed_task" in issues:
+            reason = (
+                f"{reason}; accountable task {directive.task!r} is CLOSED, so nothing will "
+                f"surface this unmet obligation"
+            )
+            state = "unaccountable"
         base[directive.id] = DirectiveResult(
             id=directive.id,
             summary=directive.summary,
@@ -503,6 +646,7 @@ def _field(value: object) -> str:
 def _print_fields(report: Report) -> None:
     drift = [item.id for item in report.directives if item.state in DRIFT_STATES]
     gated = [item.id for item in report.directives if item.state == "gated"]
+    unaccountable = [item.id for item in report.directives if item.state == "unaccountable"]
     in_progress = report.counts.get("open", 0)
     if not drift:
         summary = (
@@ -520,7 +664,10 @@ def _print_fields(report: Report) -> None:
         "open": in_progress,
         "gated": len(gated),
         "needs_owner": report.counts.get("needs_owner", 0),
+        "unaccountable": len(unaccountable),
         "missing_task": report.counts.get("missing_task", 0),
+        "task_not_found": report.counts.get("task_not_found", 0),
+        "task_in_archived_db": report.issue_counts.get("task_in_archived_db", 0),
         "not_landed": report.counts.get("not_landed", 0),
         "unverifiable": report.counts.get("unverifiable", 0),
         "drift": len(drift),

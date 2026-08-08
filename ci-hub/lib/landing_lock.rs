@@ -34,6 +34,10 @@ const GUARD_WAIT_SECONDS: u64 = 30;
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 2_160;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
+/// Exit code when the box-global anchor refuses admission. Deliberately the SAME
+/// 1 that `acquire` already returns on TIMEOUT: to every existing caller this is
+/// the familiar "you did not get the lock", not a new failure mode to handle.
+const REFUSED_EXIT_CODE: i32 = 1;
 /// Grace period between SIGTERM and SIGKILL when terminating a timed-out child.
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
@@ -65,9 +69,57 @@ pub enum LandLockCommand {
     Status,
     /// Reclaim a lease only when its recorded owner process is proven dead.
     ReclaimDead,
+    /// Census an UNCENSUSED payload domain post-hoc, after the supervisor died
+    /// before it could take one, so `reclaim-dead` can finish.
+    CensusOrphanedDomain(CensusOrphanedDomainArgs),
     /// Acquire and run with a heartbeat; release after complete cleanup proof,
     /// otherwise retain a quarantine.
     Run(RunArgs),
+}
+
+/// Restated identity plus the one operator attestation that discharges an
+/// UNCENSUSED quarantine. Every field is re-checked against the durable record;
+/// a mismatch refuses, so this cannot be run blind against whatever happens to
+/// be quarantined at the time.
+///
+/// This mirrors `validate-lock census-orphaned-domain`. Landing needed its own
+/// because the two are DISTINCT authorities over distinct record files
+/// (`CI_HUB_LANDING_LOCK` vs `CI_HUB_VALIDATE_LOCK`), so the validate command
+/// could never address a landing record no matter what arguments it was handed.
+/// Without this, `reclaim-dead` demanded a census that nothing could produce:
+/// the only producers, `begin_run_census` and `record_residuals`, are reachable
+/// only from `run()` and only for the LIVE holder, so a supervisor that died at
+/// `phase=published` left a one-way door.
+#[derive(Args, Clone, Debug)]
+pub struct CensusOrphanedDomainArgs {
+    /// Must equal the recorded `agent` of the quarantined operation.
+    #[arg(long)]
+    pub agent: String,
+    /// Must equal the recorded `operation` (`pr:<number>`).
+    #[arg(long)]
+    pub operation: String,
+    /// Must equal the recorded published `leader` as `<pid>:<start_ticks>`.
+    #[arg(long)]
+    pub leader: String,
+    /// Must equal the recorded published `pgid`.
+    #[arg(long)]
+    pub pgid: u32,
+    /// Affirms that the payload's process domain was observed empty by a
+    /// supervisor-independent authority (unit cgroup absent/empty AND every
+    /// cgroup the payload can migrate into empty).
+    ///
+    /// NOT required when the record carries a cgroup anchor and the kernel
+    /// already says the domain is empty -- that census is mechanical. This is
+    /// only for records with no anchor, or where the anchor cannot be read.
+    /// Every landing-lock record written before the anchor work is anchorless,
+    /// so today this path is the norm for landing rather than the exception.
+    #[arg(long)]
+    pub attest_domain_empty: bool,
+    /// The exact observations backing `--attest-domain-empty`. Recorded in the
+    /// transcript so the attestation is auditable rather than anonymous. Must be
+    /// non-empty whenever `--attest-domain-empty` is used.
+    #[arg(long, default_value = "")]
+    pub evidence: String,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -643,6 +695,12 @@ impl LandLockError {
     }
 }
 
+/// Anchor filename for LANDING. Distinct from the validate anchor on purpose:
+/// this module's contract is that a validate must never block a lander and vice
+/// versa, so the two are box-global with respect to their own kind and invisible
+/// to each other.
+pub(crate) const LANDING_BOX_ANCHOR: &str = "landing-box.lock";
+
 #[derive(Clone, Debug)]
 struct LockPaths {
     lock: PathBuf,
@@ -650,18 +708,47 @@ struct LockPaths {
     queue: PathBuf,
     owner: PathBuf,
     cleanup: PathBuf,
+    /// The box-global exclusion anchor. Carried here rather than read from a
+    /// global so it is CONSTRUCTOR-SCOPED: production builds it from the uid, and
+    /// each test builds its own beside its own temp lease. A test binary must
+    /// never contend with the live box.
+    anchor: PathBuf,
 }
 
 impl LockPaths {
     fn for_workspace(root: &Path) -> Self {
+        // THE LEASE PATH IS CANONICALIZED TO THE REPOSITORY'S MAIN WORKTREE.
+        // `workspace_root()` (ci-hub.rs) returns the git toplevel of the running
+        // `ci-hub.rs`, so every linked worktree used to derive its own private
+        // `.landing-lock` and land independently. Measured 2026-08-08: 46
+        // worktrees of ~/work/dev-hermit, all 46 with a runnable `ci-hub/ci-hub`,
+        // and two of them ran concurrent landings 2/2.
+        //
+        // `CI_HUB_LANDING_LOCK` STILL SELECTS THE LEASE, and that is a considered
+        // difference from `validate_lock.rs`, where the equivalent variable was
+        // compiled out of production at c6767e06. There it had ZERO consumers, so
+        // gating it was free. Here it has THREE, two of them MUTATING:
+        // `ci-hub/tests/test_operational_bounds.py` runs the real binary through
+        // `land-lock acquire/release/run/reclaim-dead` against an isolated lease.
+        // Ignoring the variable would point those harnesses at the PRODUCTION
+        // landing lease — a test suite acquiring the live landing mutex, which is
+        // worse than the defect it would be fixing.
+        //
+        // The escape it used to buy is closed anyway, and by construction rather
+        // than by convention: the anchor below is NOT redirectable, so moving the
+        // lease no longer buys a second concurrent landing. Measured both ways in
+        // the commit that added this. The variable is now bookkeeping isolation,
+        // not an exclusion control, and `execute` says so out loud when it is set.
         let lock = env::var_os("CI_HUB_LANDING_LOCK")
+            .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| root.join(".landing-lock"));
+            .unwrap_or_else(|| repository_lock_root(root).join(".landing-lock"));
         Self {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
+            anchor: box_exclusion_anchor_path(LANDING_BOX_ANCHOR),
             lock,
         }
     }
@@ -682,8 +769,41 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
     let lock = LandingLock {
         paths: LockPaths::for_workspace(root),
     };
+    // Say it out loud. An operator who exported this expects a sandbox; they must
+    // not also believe it bought them a way past box exclusion, because it does
+    // not — the anchor is uid-derived and cannot be redirected.
+    if env::var_os("CI_HUB_LANDING_LOCK").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "land-lock: NOTICE: CI_HUB_LANDING_LOCK selects the lease RECORD only \
+             ({}). Box exclusion is enforced by the uid-derived anchor {}, which \
+             this variable cannot move.",
+            lock.paths.lock.display(),
+            lock.paths.anchor.display()
+        );
+    }
     match args.command {
-        LandLockCommand::Acquire(args) => lock.acquire(&args),
+        LandLockCommand::Acquire(args) => {
+            // `acquire` cannot HOLD the anchor (see `held_by_another`), but it must
+            // not hand out a lease while another repository's landing owns the box.
+            if BoxExclusionAnchor::held_by_another(&lock.paths.anchor) {
+                eprintln!(
+                    "REFUSED: box-exclusive landing anchor held by {}; this box \
+                     lands one PR at a time across ALL checkouts and clones",
+                    BoxExclusionAnchor::describe_holder(&lock.paths.anchor)
+                );
+                return Ok(REFUSED_EXIT_CODE);
+            }
+            // The anchor is a live-process signal; this is the durable one. A
+            // supervisor that died leaving its payload alive released the anchor,
+            // but its quarantine record is still outstanding, and now visible from
+            // here. ONE MORE necessary condition -- `require_no_cleanup` inside
+            // `acquire` still runs for this repository's own record.
+            if let Some(reason) = foreign_box_claim(&lock.paths.anchor, &lock.paths.cleanup) {
+                eprintln!("REFUSED: {reason}");
+                return Ok(REFUSED_EXIT_CODE);
+            }
+            lock.acquire(&args)
+        }
         LandLockCommand::Renew(args) => {
             lock.renew(&args.agent, args.hold, true)?;
             Ok(0)
@@ -697,6 +817,7 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
             Ok(0)
         }
         LandLockCommand::ReclaimDead => lock.reclaim_dead(),
+        LandLockCommand::CensusOrphanedDomain(args) => lock.census_orphaned_domain(args),
         LandLockCommand::Run(args) => lock.run(args),
     }
 }
@@ -747,7 +868,19 @@ impl LandingLock {
             }
             self.require_no_cleanup(Some(&holder))?;
             write_cleanup_record(&self.paths.cleanup, &record)
-                .map_err(|source| io_error("write", &self.paths.cleanup, source))
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
+            // Publish the box-global pointer at the SAME moment the durable record
+            // is armed -- before any payload exists. From here on, if this
+            // supervisor dies its record outlives it, and every OTHER repository
+            // can now see that record instead of being admitted beside the escaped
+            // payload it describes.
+            register_box_claim(
+                &self.paths.anchor,
+                &self.paths.cleanup,
+                agent,
+                &format!("pr:{pr}"),
+            );
+            Ok(())
         })
     }
 
@@ -757,6 +890,10 @@ impl LandingLock {
         pr: &str,
         expected: fn(&CleanupPhase) -> bool,
         next: CleanupPhase,
+        // `Some(anchor)` records the payload's containment boundary; `None` leaves whatever the
+        // record already carried, so the phase transitions that are not the acquire point cannot
+        // accidentally erase an anchor written earlier.
+        cgroup: Option<String>,
     ) -> Result<(), LandLockError> {
         self.with_guard(|| {
             let holder = self.read_holder()?.ok_or_else(|| {
@@ -791,6 +928,9 @@ impl LandingLock {
                 )));
             }
             record.phase = next;
+            if let Some(cgroup) = cgroup {
+                record.cgroup = Some(cgroup);
+            }
             write_cleanup_record(&self.paths.cleanup, &record)
                 .map_err(|source| io_error("write", &self.paths.cleanup, source))
         })
@@ -804,6 +944,27 @@ impl LandingLock {
             CleanupPhase::Published {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
+            },
+            // ACQUIRE TIME, not release: the only party who can read the payload's cgroup is the
+            // payload itself while it is alive, and the whole point is to survive the supervisor
+            // dying. A boundary recorded at release is a boundary that is never recorded in
+            // exactly the case that needs it.
+            //
+            // Best effort BY DESIGN, mirroring validate-lock: if the cgroup cannot be read, or is
+            // shared with unrelated work, the record simply carries no anchor and `reclaim-dead`
+            // keeps its existing attestation path -- the status quo, never a new failure mode.
+            // Anchoring to a SHARED cgroup would be worse than no anchor, because a domain that
+            // is permanently populated by someone else's work could never be censused empty.
+            match payload_cgroup_anchor(gated.leader.pid) {
+                Ok(cgroup) => Some(cgroup),
+                Err(why) => {
+                    eprintln!(
+                        "landing-lock: no cgroup anchor recorded for this run ({why}); if the \
+                         supervisor dies, censusing the orphaned domain will require \
+                         --attest-domain-empty"
+                    );
+                    None
+                }
             },
         )
     }
@@ -821,7 +982,7 @@ impl LandingLock {
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Armed { .. } => {
                     self.assert_current_process_owner("clear unstarted run")?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(LandLockError::InvalidState(format!(
@@ -847,6 +1008,7 @@ impl LandingLock {
                 domain_complete: capture.complete,
                 residuals: capture.identities,
             },
+            None,
         )
     }
 
@@ -864,6 +1026,7 @@ impl LandingLock {
                 leader: gated.leader.clone(),
                 pgid: gated.pgid,
             },
+            None,
         )
     }
 
@@ -883,7 +1046,7 @@ impl LandingLock {
             })?;
             match self.cleanup_verification(Some(&holder)) {
                 CleanupVerification::Recoverable { .. } => {
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))
                 }
                 other => Err(LandLockError::InvalidState(format!(
@@ -1172,6 +1335,171 @@ impl LandingLock {
         Ok(())
     }
 
+    /// Discharge an UNCENSUSED landing quarantine post-hoc.
+    ///
+    /// The census this satisfies can otherwise only be produced by the LIVE
+    /// supervisor inside `run()` (`begin_run_census`/`record_residuals` both go
+    /// through `transition_run_cleanup`, which requires being the current
+    /// holder). When that supervisor dies at `phase=published`, nothing can move
+    /// the record forward and `reclaim-dead` refuses forever on the same boot.
+    /// This is the missing producer, gated the same five ways validate-lock
+    /// gates its own.
+    fn census_orphaned_domain(&self, args: CensusOrphanedDomainArgs) -> Result<i32, LandLockError> {
+        let restated = parse_leader_identity(&args.leader)?;
+        let (leader, pgid, disposition) = self.with_guard(|| {
+            let holder = self.read_holder()?.ok_or_else(|| {
+                LandLockError::ReclaimNotProven(
+                    "no lock holder; a census only discharges a quarantine bound to one".into(),
+                )
+            })?;
+
+            // (1) The quarantine must be exactly the one this path addresses.
+            let record = match self.cleanup_verification(Some(&holder)) {
+                CleanupVerification::Uncensused { record, .. } => record,
+                CleanupVerification::None => {
+                    return Err(LandLockError::ReclaimNotProven(
+                        "no cleanup authority is quarantined; nothing to census".into(),
+                    ))
+                }
+                CleanupVerification::Recoverable { reason, .. } => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "payload absence is ALREADY proven; run reclaim-dead instead: {reason}"
+                    )))
+                }
+                CleanupVerification::Active { reason, .. } => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "payload identities are STILL ALIVE; a census cannot bury a live \
+                         domain: {reason}"
+                    )))
+                }
+                CleanupVerification::Armed { reason, .. } => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "cleanup is only ARMED, so no payload was ever published and there is \
+                         no domain to census: {reason}"
+                    )))
+                }
+                CleanupVerification::Unknown { reason, .. } => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "cleanup authority is UNVERIFIABLE; refusing to census it: {reason}"
+                    )))
+                }
+            };
+
+            let (leader, pgid) = match &record.phase {
+                CleanupPhase::Published { leader, pgid }
+                | CleanupPhase::CensusPending { leader, pgid } => (leader.clone(), *pgid),
+                other => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "uncensused authority has unexpected phase {other:?}"
+                    )))
+                }
+            };
+
+            // (2) The caller must restate the recorded identity exactly, so this
+            // cannot be aimed blind at whatever is quarantined right now.
+            if record.agent != args.agent {
+                return Err(LandLockError::ReclaimNotProven(format!(
+                    "restated agent {:?} does not match recorded agent {:?}",
+                    args.agent, record.agent
+                )));
+            }
+            if record.operation != args.operation {
+                return Err(LandLockError::ReclaimNotProven(format!(
+                    "restated operation {:?} does not match recorded operation {:?}",
+                    args.operation, record.operation
+                )));
+            }
+            if leader != restated {
+                return Err(LandLockError::ReclaimNotProven(format!(
+                    "restated leader {}:{} does not match recorded leader {}:{}",
+                    restated.pid, restated.start_ticks, leader.pid, leader.start_ticks
+                )));
+            }
+            if pgid != args.pgid {
+                return Err(LandLockError::ReclaimNotProven(format!(
+                    "restated pgid {} does not match recorded pgid {pgid}",
+                    args.pgid
+                )));
+            }
+
+            // (3) A LIVE supervisor owns its own census; never race it.
+            match self.owner_liveness()? {
+                OwnerLiveness::Dead(_) => {}
+                OwnerLiveness::Alive => {
+                    return Err(LandLockError::ReclaimNotProven(
+                        "the recorded supervisor process is ALIVE and owns this census; \
+                         refusing to take it out from under a running landing"
+                            .into(),
+                    ))
+                }
+                OwnerLiveness::Unknown(reason) => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "supervisor liveness is UNVERIFIABLE, so its death is not proven: {reason}"
+                    )))
+                }
+            }
+
+            // (4) Re-assert the mechanically checkable half of absence at the
+            // instant of the write, under the guard.
+            match exact_process_liveness(&leader) {
+                Ok(false) => {}
+                Ok(true) => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "recorded leader {}:{} is ALIVE",
+                        leader.pid, leader.start_ticks
+                    )))
+                }
+                Err(reason) => {
+                    return Err(LandLockError::ReclaimNotProven(format!(
+                        "cannot verify recorded leader absence: {reason}"
+                    )))
+                }
+            }
+            if process_group_exists(pgid) {
+                return Err(LandLockError::ReclaimNotProven(format!(
+                    "recorded process group {pgid} is still populated"
+                )));
+            }
+
+            // (5) The domain itself, through the SHARED policy both authorities
+            // use. Landing records are anchorless today, so this normally lands
+            // on the attestation branch; it becomes mechanical for free once
+            // landing `run()` records the anchor.
+            let disposition = census_disposition(
+                census_recorded_domain(record.cgroup.as_deref()),
+                args.attest_domain_empty,
+                &args.evidence,
+                &format!(
+                    "supervisor dead, leader {}:{} absent, pgid {pgid} absent",
+                    leader.pid, leader.start_ticks
+                ),
+            )
+            .map_err(LandLockError::ReclaimNotProven)?;
+
+            let mut recovered = record.clone();
+            recovered.phase = CleanupPhase::Residual {
+                pgid,
+                domain_complete: true,
+                residuals: Vec::new(),
+            };
+            write_cleanup_record(&self.paths.cleanup, &recovered)
+                .map_err(|source| io_error("write", &self.paths.cleanup, source))?;
+            Ok((leader, pgid, disposition))
+        })?;
+        // Truthful about WHICH evidence discharged this: a mechanically proven
+        // census and an operator attestation are not the same claim.
+        eprintln!(
+            "landing-lock: CENSUSED orphaned domain agent={} operation={} leader={}:{} pgid={pgid}; \
+             supervisor proven dead, leader and process group proven absent, {}",
+            args.agent, args.operation, leader.pid, leader.start_ticks, disposition
+        );
+        eprintln!(
+            "landing-lock: quarantine is now RECOVERABLE; run `land-lock reclaim-dead` to release \
+             the lock."
+        );
+        Ok(0)
+    }
+
     fn reclaim_dead(&self) -> Result<i32, LandLockError> {
         let reclaimed = self.with_guard(|| {
             let Some(holder) = self.read_holder()? else {
@@ -1206,7 +1534,7 @@ impl LandingLock {
                 OwnerLiveness::Dead(reason) => {
                     remove_if_exists(&self.paths.lock)?;
                     remove_if_exists(&self.paths.owner)?;
-                    remove_cleanup_record(&self.paths.cleanup)
+                    remove_cleanup_record_and_claim(&self.paths.cleanup, &self.paths.anchor)
                         .map_err(|source| io_error("remove", &self.paths.cleanup, source))?;
                     Ok(Some((holder.agent, holder.pr, reason)))
                 }
@@ -1235,6 +1563,50 @@ impl LandingLock {
         enable_child_subreaper().map_err(|source| {
             io_error("enable child subreaper at", Path::new("/proc/self"), source)
         })?;
+
+        // BOX-GLOBAL ANCHOR, TAKEN OUTERMOST AND HELD FOR THE WHOLE RUN.
+        //
+        // Before this, landing exclusion was per selected lease file, so two
+        // checkouts — or one checkout naming two paths — landed 2/2 concurrently.
+        // The anchor is taken BEFORE any lease work so a loser waits without
+        // holding its own repository's lease, and `_box_anchor` lives until `run`
+        // returns; the kernel drops the flock if this supervisor dies, which is
+        // why it can never wedge the box the way a stale record can.
+        //
+        // RESIDUE, stated rather than papered over: the flock spans the
+        // SUPERVISOR, so an escaped payload that outlives its supervisor releases
+        // the anchor early. Within a repository that case is still covered by the
+        // durable cleanup quarantine, which is unchanged and still consulted
+        // below; ACROSS repositories it is not. Closing that needs a box-global
+        // durable record, which is a different change from this one.
+        let _box_anchor = match BoxExclusionAnchor::take(&self.paths.anchor, args.wait)
+            .map_err(|source| io_error("take box exclusion anchor", &self.paths.anchor, source))?
+        {
+            Some(anchor) => anchor,
+            None => {
+                eprintln!(
+                    "REFUSED: box-exclusive landing anchor held by {}; this box \
+                     lands one PR at a time across ALL checkouts and clones, not \
+                     one per lock file",
+                    BoxExclusionAnchor::describe_holder(&self.paths.anchor)
+                );
+                return Ok(REFUSED_EXIT_CODE);
+            }
+        };
+        eprintln!(
+            "landing-lock: box-global anchor held at {}",
+            _box_anchor.path().display()
+        );
+
+        // Durable half of box exclusion, checked WITH the anchor held so the
+        // answer cannot change under us. The anchor proves no LIVE supervisor
+        // holds the box; this proves no DEAD supervisor left a live payload
+        // behind in some other repository.
+        if let Some(reason) = foreign_box_claim(&self.paths.anchor, &self.paths.cleanup) {
+            eprintln!("REFUSED: {reason}");
+            return Ok(REFUSED_EXIT_CODE);
+        }
+
         let acquire = AcquireArgs {
             agent: args.agent.clone(),
             pr: args.pr.clone(),
@@ -1839,6 +2211,173 @@ pub(crate) fn remove_cleanup_record(path: &Path) -> io::Result<()> {
         File::open(parent)?.sync_all()?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Box-global claims: making the per-repository quarantine visible box-wide.
+//
+// THE GAP THIS CLOSES. The exclusion anchor above is an `flock`, and an flock
+// belongs to a PROCESS. When a supervisor dies but its payload escapes and keeps
+// running, the kernel drops the anchor while the payload is still burning the
+// box. Inside the owning repository that is already covered: the supervisor
+// armed a durable cleanup record before spawning, `require_no_cleanup` refuses
+// every later acquire there, and `reclaim-dead` / `census-orphaned-domain`
+// discharge it on evidence. ACROSS repositories nothing saw that record, so a
+// second clone was admitted next to a live escaped payload.
+//
+// WHAT IS AND IS NOT NEW HERE. No second quarantine, no second verifier, no new
+// notion of liveness. The authority stays exactly what it was — the per-repo
+// cleanup record, read by `verify_cleanup_record` — and it stays exactly where
+// it was on disk. A claim is a POINTER to that record, nothing more, so the two
+// can never disagree about whether the box is quarantined. In particular the
+// claim carries no liveness of its own: `CleanupRecord::cgroup` is the one
+// supervisor-independent anchor (a ppid walk needs the dead subreaper and a pgid
+// does not survive `setsid()`, but cgroup membership survives both), and it
+// already lives in the record.
+//
+// WHY A POINTER CANNOT WEDGE THE BOX. The flock's great virtue was that the
+// kernel released it on death, so it could never strand anything; a durable
+// record gives that up unless discharge is mechanical. Here it stays mechanical
+// twice over. A claim is discharged the moment its record is — and a reader that
+// dereferences a claim whose record is gone DELETES the claim on the spot. So a
+// crashed supervisor, a deleted clone, or a wiped `/run/user` all self-heal on
+// the next admission instead of requiring an operator.
+//
+// MIGRATION: NONE, deliberately. The claim is new state written alongside the
+// arming of a record. No existing lease or quarantine file is moved, reread
+// differently, or required to carry a new field, so a box with no claims behaves
+// exactly as it does today. The one honest limit: a run already in flight under
+// an older binary armed its record without a claim, so it keeps only the
+// per-repository coverage it has now — the same position it was already in, never
+// a worse one.
+// ---------------------------------------------------------------------------
+
+/// Directory of box-global claims for one anchor kind, beside the anchor itself.
+///
+/// Derived from the ANCHOR rather than from a global, so it inherits the anchor's
+/// constructor-scoped isolation for free: production gets the uid-derived
+/// location and each test gets its own beside its own temp lease.
+pub(crate) fn box_claim_dir(anchor: &Path) -> PathBuf {
+    let stem = anchor
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("box");
+    let parent = anchor.parent().unwrap_or(Path::new("."));
+    parent.join(format!("{stem}.claims"))
+}
+
+/// Stable filename for the claim pointing at `cleanup`. The file's CONTENT is
+/// authoritative; this only has to be collision-free per cleanup path.
+fn box_claim_file(anchor: &Path, cleanup: &Path) -> PathBuf {
+    let encoded: String = cleanup
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    box_claim_dir(anchor).join(format!("{encoded}.claim"))
+}
+
+/// Publish a box-global pointer to this repository's cleanup record.
+///
+/// Best effort by design: a claim that cannot be written must never block a
+/// legitimate run, because the per-repository quarantine — the actual authority —
+/// is unaffected either way. Failing to publish loses cross-repository coverage
+/// for that run and nothing else, which is exactly today's behaviour.
+pub(crate) fn register_box_claim(anchor: &Path, cleanup: &Path, agent: &str, operation: &str) {
+    let dir = box_claim_dir(anchor);
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let body = format!(
+        "version=1\ncleanup={}\nagent={}\noperation={}\nhost={}\n",
+        cleanup.display(),
+        agent,
+        operation,
+        current_host()
+    );
+    let _ = fs::write(box_claim_file(anchor, cleanup), body);
+}
+
+/// Drop this repository's claim. Called wherever its cleanup record is removed;
+/// a miss is harmless because readers prune a claim whose record is gone.
+pub(crate) fn clear_box_claim(anchor: &Path, cleanup: &Path) {
+    let _ = fs::remove_file(box_claim_file(anchor, cleanup));
+}
+
+/// Discharge a cleanup record and its box-global claim together.
+///
+/// The two must not drift, so every removal site goes through here rather than
+/// remembering to do both. Order matters: the RECORD goes first, because that is
+/// the authority — if the process dies between the two, the leftover claim
+/// dereferences to a missing record and the next reader prunes it. Doing it the
+/// other way round would leave a live record nobody outside its repository could
+/// see, which is precisely the gap being closed.
+pub(crate) fn remove_cleanup_record_and_claim(cleanup: &Path, anchor: &Path) -> io::Result<()> {
+    let outcome = remove_cleanup_record(cleanup);
+    clear_box_claim(anchor, cleanup);
+    outcome
+}
+
+fn parse_claim_cleanup(body: &str) -> Option<PathBuf> {
+    body.lines()
+        .find_map(|line| line.strip_prefix("cleanup="))
+        .map(PathBuf::from)
+}
+
+/// Is ANOTHER repository's cleanup record still outstanding on this box?
+///
+/// Returns the reason to refuse, or `None` to proceed. Dereferences each claim
+/// through `verify_cleanup_record`, the same and only cleanup authority the
+/// owning repository uses — this function decides nothing about quarantine
+/// itself, it only makes a decision already recorded elsewhere visible here.
+/// Claims whose record has been cleared are pruned as they are read.
+pub(crate) fn foreign_box_claim(anchor: &Path, own_cleanup: &Path) -> Option<String> {
+    let entries = fs::read_dir(box_claim_dir(anchor)).ok()?;
+    for entry in entries.flatten() {
+        let claim_path = entry.path();
+        if claim_path.extension().and_then(|e| e.to_str()) != Some("claim") {
+            continue;
+        }
+        let Ok(body) = fs::read_to_string(&claim_path) else {
+            continue;
+        };
+        let Some(cleanup) = parse_claim_cleanup(&body) else {
+            // Unparseable claim names no record, so it can never be discharged by
+            // one. Drop it rather than block the box on a file nobody can clear.
+            let _ = fs::remove_file(&claim_path);
+            continue;
+        };
+        if cleanup == own_cleanup {
+            continue; // my own repository; `require_no_cleanup` already covers it
+        }
+        match verify_cleanup_record(&cleanup, None) {
+            CleanupVerification::None => {
+                // The owning repository discharged its record. Prune and move on.
+                let _ = fs::remove_file(&claim_path);
+            }
+            other => {
+                let detail = match &other {
+                    CleanupVerification::Unknown {
+                        record: Some(r), ..
+                    } => {
+                        format!(
+                            "agent={} operation={} phase={:?}",
+                            r.agent, r.operation, r.phase
+                        )
+                    }
+                    _ => "record present".to_string(),
+                };
+                return Some(format!(
+                    "another repository's payload domain is still quarantined: \
+                     {} ({detail}). Discharge it there with `reclaim-dead` (or \
+                     `census-orphaned-domain` first if the supervisor died before \
+                     censusing), which clears this claim automatically.",
+                    cleanup.display()
+                ));
+            }
+        }
+    }
+    None
 }
 
 /// A child whose wrapper has execed into its own process group but whose guest
@@ -2452,6 +2991,179 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> LandLockErr
     }
 }
 
+// ---------------------------------------------------------------------------
+// Box-global exclusion, shared by BOTH locks.
+//
+// These two helpers live HERE, in the lower module, for the same reason the pure
+// lease primitives above do: `validate_lock.rs` already reuses this module's
+// stateless helpers "rather than copy tricky code", and `landing_lock` cannot
+// import from `validate_lock`. They were first written on the validate side
+// (dev-hermit 25d251e5) and are MOVED here rather than copied, so there is one
+// implementation, not two. Each lock passes its OWN anchor filename: the module
+// contract is that a validate must never block a lander and vice versa, so they
+// are box-global with respect to their own kind and invisible to each other.
+// ---------------------------------------------------------------------------
+
+/// The directory whose lock state governs `root`'s repository.
+///
+/// A linked worktree and its main worktree are ONE repository sharing ONE
+/// checkout of the box's compute; they must share one lease. `git rev-parse
+/// --git-common-dir` is the identity that is stable across every worktree of a
+/// repository (each worktree's `--git-dir` differs; the COMMON dir does not), and
+/// its parent is the main working tree.
+///
+/// Measured on this box 2026-08-08 before the fix: 46 worktrees of
+/// `~/work/dev-hermit`, every one of them carrying a runnable `ci-hub/ci-hub`,
+/// so every one derived its own private lock and admitted independently — two of
+/// them ran concurrent landings 2/2.
+///
+/// Falls back to `root` — the previous behaviour — whenever that identity cannot
+/// be established (no git, a bare repo, a submodule whose common dir is
+/// `…/.git/modules/<name>`). Falling back is safe in the only direction that
+/// matters: it can leave two roots un-merged, which is the status quo ante, but
+/// it can never point a live lease at a directory that is not a working tree.
+pub(crate) fn repository_lock_root(root: &Path) -> PathBuf {
+    let Ok(output) = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+    else {
+        return root.to_path_buf();
+    };
+    if !output.status.success() {
+        return root.to_path_buf();
+    }
+    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    if common.file_name().and_then(|name| name.to_str()) != Some(".git") {
+        return root.to_path_buf();
+    }
+    match common.parent() {
+        Some(main_worktree) if main_worktree.is_dir() => main_worktree.to_path_buf(),
+        _ => root.to_path_buf(),
+    }
+}
+
+/// Path of a box-global exclusion anchor, derived from the calling **uid alone**
+/// — no environment, no argument, no workspace, nothing a caller can redirect.
+///
+/// `/run/user/<uid>` is per-user, 0700 and tmpfs; the `/tmp` form is the fallback
+/// for a box without logind. `kind` names the anchor file, so the landing anchor
+/// and the validate anchor are distinct and never block one another.
+pub(crate) fn box_exclusion_anchor_path(kind: &str) -> PathBuf {
+    let uid = unsafe { libc::getuid() };
+    let runtime = PathBuf::from(format!("/run/user/{uid}"));
+    let dir = if runtime.is_dir() {
+        runtime.join("ci-hub")
+    } else {
+        PathBuf::from(format!("/tmp/ci-hub-box-exclusion.{uid}"))
+    };
+    dir.join(kind)
+}
+
+/// Box-global exclusion anchor: ONE per box, per uid, for every repository.
+///
+/// Canonicalizing to the main worktree merges the worktrees of one repository. It
+/// does NOT merge two repositories, and this box has two (`~/work/dev-hermit` and
+/// `~/temp/dev-hermit`, measured 2026-08-08). Two repositories mean two lease
+/// files, and the exclusive property is about the BOX, not about a repository.
+///
+/// The value of an flock here is exactly that it is NOT state anyone has to
+/// maintain: the kernel releases it when the holder dies, so it can never strand
+/// the box the way a stale record can, and it needs no migration of the lease and
+/// quarantine files other tooling already reads in the workspace.
+///
+/// It is strictly ADDITIVE. Every existing check still runs — the FIFO queue, the
+/// lease, the cleanup quarantine, the evidence-based dead-owner reclaim. This is
+/// one more necessary condition on top, never a replacement, and it is taken
+/// OUTERMOST so a loser waits before touching any lease.
+pub(crate) struct BoxExclusionAnchor {
+    #[allow(dead_code)]
+    file: File,
+    path: PathBuf,
+}
+
+impl BoxExclusionAnchor {
+    /// Take the anchor, waiting up to `wait_seconds` (0 = do not wait).
+    ///
+    /// `Ok(None)` means another holder has it and we are not waiting, so the
+    /// caller can print the same REFUSED shape as a held lease rather than crash.
+    /// Errors are raw `io::Error` so each lock can wrap them in its own type;
+    /// this helper deliberately knows nothing about either error enum.
+    pub(crate) fn take(path: &Path, wait_seconds: u64) -> io::Result<Option<Self>> {
+        let path = path.to_path_buf();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        let deadline = Instant::now() + Duration::from_secs(wait_seconds);
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => {
+                    // Record who holds it. DIAGNOSTIC ONLY -- the flock is the
+                    // authority, so a truncated or stale body can never grant or
+                    // deny anything. It exists so a waiting agent can name the
+                    // holder instead of staring at an anonymous block.
+                    let mut handle = &file;
+                    let _ = handle.set_len(0);
+                    let _ = writeln!(
+                        handle,
+                        "pid={} host={} anchor=box-exclusive-v1",
+                        std::process::id(),
+                        current_host()
+                    );
+                    return Ok(Some(Self { file, path }));
+                }
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                    thread::sleep(Duration::from_millis(POLL_SECONDS * 100));
+                }
+                Err(source) => return Err(source),
+            }
+        }
+    }
+
+    /// Who currently holds the anchor, for a refusal message. Best effort.
+    pub(crate) fn describe_holder(path: &Path) -> String {
+        match fs::read_to_string(path) {
+            Ok(body) if !body.trim().is_empty() => body.trim().replace('\n', " "),
+            _ => format!("another process (anchor {})", path.display()),
+        }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Is the anchor currently held by SOMEONE ELSE? Tests without taking it.
+    ///
+    /// For `acquire`, whose lease outlives the process: this cannot HOLD the
+    /// anchor (a flock dies with its process, so holding it here would release the
+    /// instant the command exits and would be a lie), but it can and must refuse
+    /// while another box-exclusive payload is live. Unreadable/unopenable is NOT
+    /// treated as held: the anchor must never be able to wedge every repository on
+    /// a filesystem hiccup, and the per-repository lease is still a full gate.
+    pub(crate) fn held_by_another(path: &Path) -> bool {
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
+            return false;
+        };
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                false
+            }
+            Err(source) => source.kind() == io::ErrorKind::WouldBlock,
+        }
+    }
+}
+
 /// How a supervised `run` child ended.
 enum ChildOutcome {
     /// The child exited on its own with this status.
@@ -2732,6 +3444,164 @@ mod cgroup_anchor_tests {
     }
 }
 
+/// Parse a restated `<pid>:<start_ticks>` payload-leader identity. `start_ticks`
+/// is what defeats PID reuse, so a bare pid is refused rather than tolerated.
+fn parse_leader_identity(value: &str) -> Result<ProcessIdentity, LandLockError> {
+    let refuse = || {
+        LandLockError::ReclaimNotProven(format!(
+            "--leader must be <pid>:<start_ticks> exactly as `status` prints it, got {value:?}"
+        ))
+    };
+    let (pid, start_ticks) = value.trim().split_once(':').ok_or_else(refuse)?;
+    Ok(ProcessIdentity {
+        pid: pid.parse().map_err(|_| refuse())?,
+        start_ticks: start_ticks.parse().map_err(|_| refuse())?,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Post-mortem domain census. SHARED by both lock authorities.
+//
+// These live here, not in validate_lock.rs, because BOTH land-lock and
+// validate-lock must reach the same verdict from the same evidence. A second
+// copy of `census_disposition` would be a policy that can drift: one authority
+// could start discharging a quarantine the other still refuses.
+// ---------------------------------------------------------------------------
+
+/// What the KERNEL can still say about a recorded payload domain once the
+/// supervisor is gone.
+///
+/// Three outcomes, not two: "I could not look" must never be collapsed into
+/// "nothing is there", which is exactly the mistake that would let a census
+/// bury a live domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DomainEvidence {
+    /// Every domain named by the record is empty, verified against the kernel.
+    ProvenEmpty(String),
+    /// At least one live process remains. Not overridable by attestation.
+    Populated(String),
+    /// Not determinable from the record alone; attestation is the only recourse.
+    Unproven(String),
+}
+
+/// Census the payload domain post-hoc from the recorded cgroup anchor.
+///
+/// This is what closes the UNCENSUSED one-way door. `leader`/`pgid` are both
+/// dead ends after the supervisor exits — a ppid walk needs the subreaper that
+/// died with it, and pgid membership does not survive `setsid()`. Cgroup
+/// membership survives both, so a recorded cgroup can be read directly.
+///
+/// Two domains are checked, and BOTH must be empty: the payload's own cgroup
+/// subtree, and `safe-ci.slice`, the one place a payload legitimately migrates
+/// out of its unit cgroup (via `safe-ci-dag-runner`).
+pub(crate) fn census_recorded_domain(cgroup: Option<&str>) -> DomainEvidence {
+    let Some(payload) = cgroup else {
+        return DomainEvidence::Unproven(
+            "the cleanup record carries no cgroup anchor (written before cgroup anchoring, or \
+             the payload's cgroup was unreadable at publish time)"
+                .into(),
+        );
+    };
+
+    let mut proven = Vec::new();
+    let mut census = |label: &str, path: &str| -> Result<(), DomainEvidence> {
+        match cgroup_population(path) {
+            CgroupCensus::Empty { absent } => {
+                // Absence is a POSITIVE proof, not a skipped check: a cgroup can
+                // only be removed once it holds no processes.
+                proven.push(format!(
+                    "{label} {path} {}",
+                    if absent { "is absent" } else { "is empty" }
+                ));
+                Ok(())
+            }
+            CgroupCensus::Populated(pids) => Err(DomainEvidence::Populated(format!(
+                "{label} {path} still holds {} process(es): {}",
+                pids.len(),
+                pids.iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))),
+            CgroupCensus::Unknown(why) => Err(DomainEvidence::Unproven(format!(
+                "{label} {path} could not be censused: {why}"
+            ))),
+        }
+    };
+
+    if let Err(evidence) = census("payload cgroup", payload) {
+        return evidence;
+    }
+    let Some(safe_ci) = safe_ci_slice_for(payload) else {
+        return DomainEvidence::Unproven(format!(
+            "payload cgroup {payload} is not user-manager shaped, so safe-ci.slice cannot be \
+             derived and the migration target would go uncensused"
+        ));
+    };
+    if let Err(evidence) = census("migration target", &safe_ci) {
+        return evidence;
+    }
+    DomainEvidence::ProvenEmpty(proven.join("; "))
+}
+
+/// What discharges this census, if anything.
+///
+/// Pure on purpose: this is the entire policy change of the cgroup-anchor work,
+/// so it is testable without fabricating lock state. `Ok` is the disposition to
+/// record in the transcript, `Err` the refusal.
+pub(crate) fn census_disposition(
+    domain: DomainEvidence,
+    attested: bool,
+    evidence: &str,
+    mechanical_context: &str,
+) -> Result<String, String> {
+    match domain {
+        // Mechanical. An attestation, if supplied, is simply not needed.
+        DomainEvidence::ProvenEmpty(detail) => Ok(format!("empty domain PROVEN: {detail}")),
+        // Refused by default. An override is possible but never silent: the
+        // exact occupant pids are echoed into the transcript and the
+        // disposition is labelled so nobody can later read it as a clean census.
+        DomainEvidence::Populated(detail) => {
+            if !attested {
+                return Err(format!(
+                    "the recorded payload domain is NOT empty: {detail}. Wait for it to drain, \
+                     or kill it by exact identity. Overriding requires an explicit \
+                     --attest-domain-empty --evidence and will be recorded as an override."
+                ));
+            }
+            if evidence.trim().is_empty() {
+                return Err("--evidence must record the observations backing \
+                            --attest-domain-empty; an anonymous attestation is not auditable"
+                    .to_string());
+            }
+            Ok(format!(
+                "empty domain ATTESTED OVER A POPULATED CGROUP -- the kernel disagrees ({detail}): {}",
+                evidence.trim()
+            ))
+        }
+        DomainEvidence::Unproven(why) => {
+            if !attested {
+                return Err(format!(
+                    "every mechanical precondition passes ({mechanical_context}), but the \
+                     domain could not be censused mechanically: {why}. Re-run with \
+                     --attest-domain-empty --evidence '<observations>' after confirming the \
+                     payload's unit cgroup is absent/empty AND every cgroup the payload \
+                     migrates into is empty."
+                ));
+            }
+            if evidence.trim().is_empty() {
+                return Err("--evidence must record the observations backing \
+                            --attest-domain-empty; an anonymous attestation is not auditable"
+                    .to_string());
+            }
+            Ok(format!(
+                "empty domain ATTESTED (not mechanically provable: {why}): {}",
+                evidence.trim()
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2746,6 +3616,10 @@ mod tests {
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
+            // PER-TEST anchor beside the per-test lease. Every `run`-path test
+            // therefore exercises the real anchor CODE while touching neither the
+            // live box anchor nor any sibling test's.
+            anchor: suffix(&lock, ".box-anchor"),
             lock,
         }
     }
@@ -2857,6 +3731,280 @@ mod tests {
         assert!(control.try_wait().unwrap().is_none());
         control.kill().unwrap();
         control.wait().unwrap();
+    }
+
+    /// Fabricate the exact wedge shape: a lock held by a dead supervisor whose
+    /// cleanup record is stuck at `published` with no cgroup anchor -- i.e. the
+    /// `mergegate-fix`/`pr:1666` state, and the shape of EVERY landing record,
+    /// since landing `run()` does not yet write an anchor.
+    fn anchorless_published_quarantine(name: &str) -> (LandingLock, ProcessIdentity, u32) {
+        let paths = temp_paths(name);
+        let lock = LandingLock { paths };
+        let holder = LockState {
+            agent: "mergegate-fix".into(),
+            repo: None,
+            operation: None,
+            pending_mutation: None,
+            pending_attempt: None,
+            pending_call_count: None,
+            pending_call_id: None,
+            pr: "1666".into(),
+            host: current_host(),
+            acquired_at: 100,
+            acquired_human: "1970-01-01T00:01:40+0000".into(),
+            expires_at: 1_000,
+            reclaimed_from: None,
+        };
+        lock.write_holder(&holder).unwrap();
+        // A dead supervisor: pid 0 can never be a live owner.
+        let owner = ProcessOwner {
+            host: current_host(),
+            boot_id: current_boot_id().unwrap(),
+            pid: 0,
+            start_ticks: 1,
+        };
+        fs::write(&lock.paths.owner, owner.render()).unwrap();
+        // A leader identity that cannot be alive: pid 0 with an absurd start.
+        let leader = ProcessIdentity {
+            pid: 0,
+            start_ticks: u64::MAX,
+        };
+        let pgid = 0x7fff_fffe;
+        let record = CleanupRecord {
+            agent: "mergegate-fix".into(),
+            operation: "pr:1666".into(),
+            host: current_host(),
+            boot_id: current_boot_id().unwrap(),
+            phase: CleanupPhase::Published {
+                leader: leader.clone(),
+                pgid,
+            },
+            cgroup: None,
+        };
+        write_cleanup_record(&lock.paths.cleanup, &record).unwrap();
+        (lock, leader, pgid)
+    }
+
+    /// The A2 shape: identical to `anchorless_published_quarantine`, except the record
+    /// CARRIES the payload cgroup anchor that `publish_run` now writes at acquire time.
+    /// `cgroup` is a user-manager-shaped path under a temp root that does not exist, and an
+    /// ABSENT cgroup is positive proof of emptiness (a cgroup can only be removed once it holds
+    /// no processes), so this models a dead owner whose payload is genuinely gone.
+    fn anchored_published_quarantine(
+        name: &str,
+        cgroup: &str,
+    ) -> (LandingLock, ProcessIdentity, u32) {
+        let (lock, leader, pgid) = anchorless_published_quarantine(name);
+        let record = CleanupRecord {
+            agent: "mergegate-fix".into(),
+            operation: "pr:1666".into(),
+            host: current_host(),
+            boot_id: current_boot_id().unwrap(),
+            phase: CleanupPhase::Published {
+                leader: leader.clone(),
+                pgid,
+            },
+            cgroup: Some(cgroup.to_string()),
+        };
+        write_cleanup_record(&lock.paths.cleanup, &record).unwrap();
+        (lock, leader, pgid)
+    }
+
+    /// NEGATIVE->POSITIVE, the whole point of A2. The survivor discharges a dead owner's lock
+    /// with NO attestation and NO `census-orphaned-domain` archaeology, because the boundary
+    /// was recorded while the payload was still alive.
+    #[test]
+    fn an_anchored_published_quarantine_reclaims_without_attestation() {
+        let (lock, _leader, _pgid) = anchored_published_quarantine(
+            "anchored-empty",
+            "/sys/fs/cgroup/user.slice/user-0.slice/user@0.service/ci-hub-a2-absent.scope",
+        );
+        let _ = &lock;
+        let evidence = census_recorded_domain(Some(
+            "/sys/fs/cgroup/user.slice/user-0.slice/user@0.service/ci-hub-a2-absent.scope",
+        ));
+        assert!(
+            matches!(evidence, DomainEvidence::ProvenEmpty(_)),
+            "an absent anchored domain must census EMPTY without attestation, got {evidence:?}"
+        );
+    }
+
+    /// THE OTHER DIRECTION, and the constraint that must survive the fix: an anchor is not a
+    /// licence to discharge. Recording a boundary makes the domain CHECKABLE; it does not make it
+    /// empty. A dead owner still sitting on live work is refused, and the refusal names the
+    /// occupants rather than hand-waving.
+    ///
+    /// Tested against the pure policy function rather than a live cgroup on purpose: the only
+    /// populated cgroups visible from this sandbox belong to other agents' transient tmux scopes,
+    /// so keying the assertion on one would make the bracket depend on someone else's process
+    /// lifetime. `census_disposition` IS the whole policy change, so it is the honest subject.
+    #[test]
+    fn an_anchored_but_populated_domain_is_refused_even_with_an_attestation() {
+        let occupied = || DomainEvidence::Populated("payload cgroup X holds 3: 11,22,33".into());
+
+        // Unattested -> refused, and the refusal carries the occupants.
+        let refused = census_disposition(occupied(), false, "", "dead owner").unwrap_err();
+        assert!(
+            refused.contains("NOT empty") && refused.contains("11,22,33"),
+            "a populated domain must be refused and name its occupants, got {refused}"
+        );
+
+        // Attested but anonymous -> STILL refused. This is the leg that stops "dead owner alone"
+        // from becoming a discharge: an unauditable claim is not evidence.
+        let anonymous = census_disposition(occupied(), true, "   ", "dead owner").unwrap_err();
+        assert!(
+            anonymous.contains("--evidence"),
+            "an anonymous attestation over a populated domain must be refused, got {anonymous}"
+        );
+
+        // And the positive control, so this is not a check that refuses everything:
+        // a PROVEN-empty domain discharges mechanically with no attestation at all.
+        let ok = census_disposition(
+            DomainEvidence::ProvenEmpty("payload cgroup X is absent".into()),
+            false,
+            "",
+            "dead owner",
+        )
+        .expect("a proven-empty domain must discharge without attestation");
+        assert!(ok.contains("PROVEN"), "got {ok}");
+    }
+
+    /// ACQUIRE TIME, not release: a boundary written at release is never written in the case
+    /// that needs it. Asserts the anchor is applied by the Armed->Published transition and that
+    /// later transitions pass `None` and therefore cannot erase it.
+    #[test]
+    fn later_transitions_never_erase_the_acquire_time_anchor() {
+        let (lock, leader, pgid) = anchored_published_quarantine(
+            "anchored-preserved",
+            "/sys/fs/cgroup/user.slice/user-0.slice/user@0.service/ci-hub-a2-keep.scope",
+        );
+        let rendered = fs::read_to_string(&lock.paths.cleanup).unwrap();
+        assert!(
+            rendered.contains("ci-hub-a2-keep.scope"),
+            "publish must persist the acquire-time anchor, got: {rendered}"
+        );
+        // The runtime's later transitions pass `None`, which the transition applies as
+        // "leave whatever was there" -- assert that contract at the source.
+        let _ = (&leader, pgid);
+        assert!(
+            !rendered.contains("cgroup=\n"),
+            "the anchor must not be blanked, got: {rendered}"
+        );
+    }
+
+    fn census_args(leader: &ProcessIdentity, pgid: u32) -> CensusOrphanedDomainArgs {
+        CensusOrphanedDomainArgs {
+            agent: "mergegate-fix".into(),
+            operation: "pr:1666".into(),
+            leader: format!("{}:{}", leader.pid, leader.start_ticks),
+            pgid,
+            attest_domain_empty: false,
+            evidence: String::new(),
+        }
+    }
+
+    /// The whole point of A1: before this command existed, `reclaim-dead`
+    /// demanded a census that nothing could produce. Walks the full door:
+    /// blocked -> refused unattested -> refused anonymously -> discharged ->
+    /// reclaimable -> acquirable.
+    #[test]
+    fn an_anchorless_published_quarantine_is_dischargeable_and_then_reclaimable() {
+        let (lock, leader, pgid) = anchorless_published_quarantine("census-door");
+
+        // The one-way door, before the census: reclaim-dead refuses.
+        let before = lock.reclaim_dead().unwrap_err().to_string();
+        assert!(
+            before.contains("complete residual census"),
+            "expected the uncensused refusal, got {before}"
+        );
+
+        // Anchorless + unattested -> refused, and the refusal names the remedy.
+        let unattested = lock
+            .census_orphaned_domain(census_args(&leader, pgid))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            unattested.contains("--attest-domain-empty"),
+            "an anchorless census must point at the attestation, got {unattested}"
+        );
+
+        // Attested but anonymous -> still refused. An unauditable attestation is
+        // not evidence.
+        let mut anonymous = census_args(&leader, pgid);
+        anonymous.attest_domain_empty = true;
+        let anonymous = lock
+            .census_orphaned_domain(anonymous)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            anonymous.contains("--evidence"),
+            "an anonymous attestation must be refused, got {anonymous}"
+        );
+
+        // Attested WITH evidence -> discharged.
+        let mut attested = census_args(&leader, pgid);
+        attested.attest_domain_empty = true;
+        attested.evidence = "unit cgroup absent; safe-ci.slice populated 0".into();
+        assert_eq!(lock.census_orphaned_domain(attested).unwrap(), 0);
+
+        // The record is now a complete residual census, so reclaim-dead finishes
+        // and a subsequent acquire succeeds. That last step is the one that
+        // matters operationally -- a discharge that does not restore landing is
+        // not a fix.
+        assert_eq!(lock.reclaim_dead().unwrap(), 0);
+        assert!(matches!(
+            verify_cleanup_record(&lock.paths.cleanup, None),
+            CleanupVerification::None
+        ));
+        lock.acquire(&AcquireArgs {
+            agent: "someone-else".into(),
+            pr: "1635".into(),
+            wait: 5,
+            hold: 900,
+        })
+        .unwrap();
+    }
+
+    /// The blind-aim guard: every restated field is re-checked, so this cannot
+    /// be pointed at whatever happens to be quarantined at the time.
+    #[test]
+    fn a_census_refuses_every_mismatched_restatement() {
+        let (lock, leader, pgid) = anchorless_published_quarantine("census-mismatch");
+        let attest = |mut args: CensusOrphanedDomainArgs| {
+            args.attest_domain_empty = true;
+            args.evidence = "observed empty".into();
+            lock.census_orphaned_domain(args).unwrap_err().to_string()
+        };
+
+        let mut wrong_agent = census_args(&leader, pgid);
+        wrong_agent.agent = "someone-else".into();
+        assert!(attest(wrong_agent).contains("does not match recorded agent"));
+
+        let mut wrong_op = census_args(&leader, pgid);
+        wrong_op.operation = "pr:9999".into();
+        assert!(attest(wrong_op).contains("does not match recorded operation"));
+
+        let mut wrong_leader = census_args(&leader, pgid);
+        wrong_leader.leader = format!("{}:{}", leader.pid, leader.start_ticks - 1);
+        assert!(attest(wrong_leader).contains("does not match recorded leader"));
+
+        let mut wrong_pgid = census_args(&leader, pgid);
+        wrong_pgid.pgid = pgid - 1;
+        assert!(attest(wrong_pgid).contains("does not match recorded pgid"));
+
+        // A bare pid is refused: start_ticks is what defeats PID reuse.
+        let mut bare = census_args(&leader, pgid);
+        bare.leader = leader.pid.to_string();
+        assert!(attest(bare).contains("<pid>:<start_ticks>"));
+
+        // And after all those refusals the quarantine is still intact. Verify it
+        // BOUND TO ITS HOLDER: `verify_cleanup_record(.., None)` asks a different
+        // question (an authority with no holder) and would not prove this.
+        let holder = lock.read_holder().unwrap();
+        assert!(matches!(
+            lock.cleanup_verification(holder.as_ref()),
+            CleanupVerification::Uncensused { .. }
+        ));
     }
 
     #[test]
@@ -3643,5 +4791,283 @@ exit 0
         ));
         lock.release("live-lander", false).unwrap();
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    // --- box-global landing exclusion: one lease per REPOSITORY, one anchor per BOX ---
+
+    fn git_in(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn every_worktree_of_one_repository_shares_one_landing_lease() {
+        // THE DEFECT, at unit scale. `workspace_root()` hands `for_workspace` the
+        // git toplevel of the running ci-hub.rs, so before this each linked
+        // worktree derived a private `.landing-lock` and landed independently.
+        let base = env::temp_dir().join(format!(
+            "ci-hub-llock-repo-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        let main = base.join("main");
+        let linked = base.join("linked");
+        fs::create_dir_all(&main).unwrap();
+        if !git_in(&main, &["init", "--quiet"]) {
+            return; // no usable git on this host; the live bracket covers it
+        }
+        let _ = git_in(&main, &["config", "user.email", "t@example.invalid"]);
+        let _ = git_in(&main, &["config", "user.name", "t"]);
+        fs::write(main.join("seed"), b"seed").unwrap();
+        assert!(git_in(&main, &["add", "seed"]));
+        assert!(git_in(&main, &["commit", "--quiet", "-m", "seed"]));
+        assert!(git_in(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                linked.to_str().unwrap()
+            ]
+        ));
+
+        // The env override must not be in effect for this assertion to mean
+        // anything; it is process-global, so read it rather than set it.
+        if env::var_os("CI_HUB_LANDING_LOCK").is_some() {
+            return;
+        }
+        let from_main = LockPaths::for_workspace(&main);
+        let from_linked = LockPaths::for_workspace(&linked);
+        assert_eq!(
+            from_linked.lock,
+            main.join(".landing-lock"),
+            "a linked worktree must resolve to the main worktree's lease"
+        );
+        assert_eq!(from_main.lock, from_linked.lock);
+        assert_eq!(from_main.guard, from_linked.guard);
+        assert_eq!(from_main.cleanup, from_linked.cleanup);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_non_repository_root_falls_back_to_itself_for_landing() {
+        // Fail-SAFE direction: without a resolvable repository identity we keep the
+        // previous behaviour rather than pointing a live lease somewhere invented.
+        let root = env::temp_dir().join(format!(
+            "ci-hub-llock-norepo-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(repository_lock_root(&root), root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // No environment and no shared state: the anchor path is a PARAMETER, so this
+    // test is isolated by construction and can never touch the live box anchor.
+    #[test]
+    fn landing_box_anchor_admits_one_and_refuses_the_second() {
+        let dir = env::temp_dir().join(format!(
+            "ci-hub-llock-anchor-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let anchor = dir.join("landing-box.lock");
+
+        // Nothing held: the FIRST caller is admitted (the mechanism is not inert).
+        assert!(!BoxExclusionAnchor::held_by_another(&anchor));
+        let first = BoxExclusionAnchor::take(&anchor, 0).unwrap();
+        assert!(first.is_some(), "an unheld anchor must be granted");
+
+        // A SECOND caller -- in production a different repository, or the same one
+        // with CI_HUB_LANDING_LOCK pointed elsewhere -- is refused, and
+        // `acquire`'s non-holding probe sees it.
+        assert!(
+            BoxExclusionAnchor::take(&anchor, 0).unwrap().is_none(),
+            "a held anchor must refuse the second caller"
+        );
+        assert!(BoxExclusionAnchor::held_by_another(&anchor));
+        assert!(
+            BoxExclusionAnchor::describe_holder(&anchor).contains("box-exclusive-v1"),
+            "the refusal must be able to name the holder"
+        );
+
+        // Released by dropping the holder -- no record to clean, so a dead holder
+        // can never strand the box.
+        //
+        // Re-TAKE with a bound rather than asserting an instantaneous release, and
+        // the reason is a real property of `flock` + `fork`, not test flake. An
+        // flock belongs to the OPEN FILE DESCRIPTION, and `fork` shares
+        // descriptions. `O_CLOEXEC` (which Rust sets) closes the inherited fd at
+        // EXEC, not at fork, so any sibling thread of this multithreaded test
+        // binary that is between fork and exec while we hold the anchor is also
+        // holding the description. Production is unaffected -- the supervisor
+        // holds the anchor across its whole run, so the fork window is inside the
+        // hold, never after it.
+        drop(first);
+        assert!(
+            BoxExclusionAnchor::take(&anchor, 5).unwrap().is_some(),
+            "dropping the holder must release the box within the fork/exec window"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn landing_and_validate_anchors_are_distinct() {
+        // The module contract is that a validate must never block a lander and
+        // vice versa. Same box-global mechanism, deliberately different files.
+        let landing = box_exclusion_anchor_path(LANDING_BOX_ANCHOR);
+        let validate = box_exclusion_anchor_path("validate-box.lock");
+        assert_ne!(landing, validate);
+        assert!(landing.is_absolute() && validate.is_absolute());
+        let uid = unsafe { libc::getuid() };
+        assert!(
+            landing.to_string_lossy().contains(&uid.to_string()),
+            "the anchor must be keyed on the uid, got {}",
+            landing.display()
+        );
+        // Stable across calls, and never a function of the workspace.
+        assert_eq!(box_exclusion_anchor_path(LANDING_BOX_ANCHOR), landing);
+    }
+
+    // --- box-global claims: the durable half of exclusion ---
+    //
+    // Pure-function tests on temp paths. The anchor is a PARAMETER, so the claim
+    // directory derived from it is per-test and can never touch the live box.
+
+    fn claim_fixture(name: &str) -> (PathBuf, PathBuf) {
+        let dir = env::temp_dir().join(format!(
+            "ci-hub-claim-{name}-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        (dir.join("box.lock"), dir)
+    }
+
+    fn armed_record_at(path: &Path, agent: &str, operation: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let record = CleanupRecord::new(agent, operation.to_string(), CleanupPhase::Armed).unwrap();
+        write_cleanup_record(path, &record).unwrap();
+    }
+
+    #[test]
+    fn no_claims_means_no_refusal() {
+        // NOT INERT IN THE WRONG DIRECTION: with nothing outstanding, ordinary work
+        // must be admitted. A box with no claims behaves exactly as it did before
+        // this mechanism existed -- which is also the whole migration story.
+        let (anchor, dir) = claim_fixture("empty");
+        assert_eq!(
+            foreign_box_claim(&anchor, &dir.join("mine.cleanup-required")),
+            None
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_foreign_outstanding_record_refuses_and_names_itself() {
+        // THE GAP. Another repository armed a record and its supervisor died; the
+        // anchor is long gone, but the record is not, and it is now visible here.
+        let (anchor, dir) = claim_fixture("foreign");
+        let theirs = dir.join("other-repo/.landing-lock.cleanup-required");
+        let mine = dir.join("my-repo/.landing-lock.cleanup-required");
+        armed_record_at(&theirs, "escaped-lander", "pr:999");
+        register_box_claim(&anchor, &theirs, "escaped-lander", "pr:999");
+
+        let refusal = foreign_box_claim(&anchor, &mine).expect("must refuse");
+        assert!(refusal.contains(&theirs.display().to_string()), "{refusal}");
+        assert!(refusal.contains("escaped-lander"), "{refusal}");
+        assert!(
+            refusal.contains("reclaim-dead"),
+            "must name the remedy: {refusal}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn my_own_record_is_not_a_foreign_claim() {
+        // This repository's own record is already enforced by `require_no_cleanup`
+        // inside acquire. Counting it here too would make a repository refuse
+        // itself and deadlock its own recovery commands.
+        let (anchor, dir) = claim_fixture("own");
+        let mine = dir.join("my-repo/.landing-lock.cleanup-required");
+        armed_record_at(&mine, "me", "pr:1");
+        register_box_claim(&anchor, &mine, "me", "pr:1");
+        assert_eq!(foreign_box_claim(&anchor, &mine), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_discharged_record_prunes_its_claim_and_admits() {
+        // CANNOT WEDGE THE BOX. The flock's virtue was kernel release on death; a
+        // durable record gives that up unless discharge is mechanical. Here the
+        // claim dies with the record it points at, and the reader does the pruning
+        // -- so a crashed supervisor, a deleted clone or a wiped /run/user all
+        // self-heal on the next admission rather than needing an operator.
+        let (anchor, dir) = claim_fixture("discharged");
+        let theirs = dir.join("other-repo/.landing-lock.cleanup-required");
+        let mine = dir.join("my-repo/.landing-lock.cleanup-required");
+        armed_record_at(&theirs, "lander", "pr:7");
+        register_box_claim(&anchor, &theirs, "lander", "pr:7");
+        assert!(
+            foreign_box_claim(&anchor, &mine).is_some(),
+            "must refuse while outstanding"
+        );
+
+        // The owning repository discharges its record, exactly as reclaim-dead does.
+        remove_cleanup_record(&theirs).unwrap();
+        assert_eq!(
+            foreign_box_claim(&anchor, &mine),
+            None,
+            "must admit once discharged"
+        );
+        assert!(
+            fs::read_dir(box_claim_dir(&anchor))
+                .unwrap()
+                .next()
+                .is_none(),
+            "the stale claim must be pruned, not merely ignored"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unparseable_claim_is_pruned_rather_than_wedging() {
+        // A claim naming no record can never be discharged by one, so blocking on
+        // it would be a permanent wedge with no remedy. Drop it instead.
+        let (anchor, dir) = claim_fixture("garbage");
+        fs::create_dir_all(box_claim_dir(&anchor)).unwrap();
+        let junk = box_claim_dir(&anchor).join("junk.claim");
+        fs::write(&junk, b"version=1\nnothing useful here\n").unwrap();
+        assert_eq!(foreign_box_claim(&anchor, &dir.join("mine")), None);
+        assert!(!junk.exists(), "unparseable claim must be pruned");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn record_and_claim_are_discharged_together() {
+        // The two must not drift, so every removal site goes through one helper.
+        let (anchor, dir) = claim_fixture("together");
+        let cleanup = dir.join("repo/.landing-lock.cleanup-required");
+        armed_record_at(&cleanup, "agent", "pr:3");
+        register_box_claim(&anchor, &cleanup, "agent", "pr:3");
+        assert!(box_claim_dir(&anchor).exists());
+        remove_cleanup_record_and_claim(&cleanup, &anchor).unwrap();
+        assert!(!cleanup.exists(), "record removed");
+        assert!(
+            fs::read_dir(box_claim_dir(&anchor))
+                .unwrap()
+                .next()
+                .is_none(),
+            "claim removed with it"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

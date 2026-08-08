@@ -339,6 +339,15 @@ def reverie_cache_derivation_errors(hermit: Path) -> list[str]:
     return errors
 
 
+# Outcome codes for `publish_parent_snapshot`. DEFERRED is the one that matters:
+# it separates "this cannot be done AT THIS INSTANT, ask again" from "something is
+# wrong". Collapsing those two into a single failure is what made this a gate that
+# could not be satisfied.
+SNAPSHOT_PUBLISHED = 0
+SNAPSHOT_BLOCKED = 1
+SNAPSHOT_DEFERRED = 2
+
+
 def publish_parent_snapshot(
     root: Path,
     *,
@@ -346,7 +355,38 @@ def publish_parent_snapshot(
     out: TextIO = sys.stdout,
     err: TextIO = sys.stderr,
 ) -> int:
-    """Commit and push exact product-main gitlinks when the snapshot is coherent."""
+    """Commit and push exact product-main gitlinks when the snapshot is coherent.
+
+    Returns ``SNAPSHOT_PUBLISHED`` / ``SNAPSHOT_BLOCKED`` / ``SNAPSHOT_DEFERRED``.
+
+    WHY THERE IS A THIRD OUTCOME. This function used to answer "did it publish?"
+    with yes/no, and every no was a HARD WARNING. But most nos are not defects,
+    they are races: thirteen agents push parent main, so the reference this
+    snapshot must sit on top of moves while the snapshot is being prepared.
+    Measured 2026-08-08, parent main advanced five times in about twenty minutes
+    (fde6376f -> 82a4c328 -> a6d0ed99 -> 08ce5ca0 -> 119aa11b -> a20ca763). An
+    agent dispatched to "make the gate stop firing" is chasing a target that
+    moves faster than it can be caught, and one nearly looped forever doing it.
+
+    WHAT THE REFUSAL ACTUALLY PROTECTS, which is the thing to bind to. The hazard
+    is committing this gitlink snapshot onto a STALE parent base: published, that
+    is either rejected non-fast-forward or, reconciled carelessly, reverts
+    everything landed between the stale base and the tip. This repository has
+    already lost 45 commits exactly that way, so the hazard is real.
+
+    IT IS ALREADY PREVENTED ONE LAYER DOWN, ATOMICALLY. `scripts/parent-main-write`
+    takes an exclusive lock, fetches origin/main, requires local main to equal the
+    fetched value, commits, pushes under CAS and verifies ancestry. The currency
+    precheck here was a SECOND, WEAKER COPY of that check run OUTSIDE the lock --
+    which is precisely why it raced when the real one does not. AGENTS.md is
+    explicit: one verifier per authority, called by every consumer. So currency is
+    no longer pre-judged here; `parent-main-write` remains its single verifier and
+    a lost race is reported as DEFERRED.
+
+    WHAT STAYS AN IMMEDIATE HARD WARNING: incoherence that no amount of retrying
+    fixes -- a dirty primary, a primary off main, a primary not at its own
+    origin/main, or an inconsistent Reverie pin. Those are not moving references.
+    """
     heads: dict[str, str] = {}
     failures: list[str] = []
     for product in PRODUCTS:
@@ -388,7 +428,7 @@ def publish_parent_snapshot(
         print("HARD WARNING: PARENT SUBMODULE SNAPSHOT NOT PUBLISHED", file=err)
         for failure in failures:
             print(f"  {failure}", file=err)
-        return 1
+        return SNAPSHOT_BLOCKED
 
     parent_branch = run_git(root, "branch", "--show-current").stdout.strip()
     parent_head = run_git(root, "rev-parse", "HEAD").stdout.strip()
@@ -397,7 +437,7 @@ def publish_parent_snapshot(
     if remote_query.returncode != 0 or not live_parent:
         print_command_output(remote_query, err)
         print("ERROR: parent live origin/main query failed; snapshot not published.", file=err)
-        return 1
+        return SNAPSHOT_BLOCKED
     if parent_remote != live_parent:
         fetch = run_git(
             root, "fetch", "origin", "main", network=True, use_proxy=use_proxy
@@ -405,51 +445,90 @@ def publish_parent_snapshot(
         print_command_output(fetch, out if fetch.returncode == 0 else err)
         if fetch.returncode != 0:
             print("ERROR: parent origin/main fetch failed; snapshot not published.", file=err)
-            return 1
+            return SNAPSHOT_BLOCKED
         parent_remote = run_git(root, "rev-parse", "origin/main").stdout.strip()
-    if parent_branch != "main" or not parent_head or parent_head != parent_remote:
-        print(
-            "HARD WARNING: parent is not current on main; refusing automatic gitlink commit "
-            f"(branch={parent_branch or 'DETACHED'} HEAD={parent_head or 'unknown'} "
-            f"origin/main={parent_remote or 'unknown'}).",
-            file=err,
-        )
-        return 1
 
-    staged = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
-    if staged.returncode != 0:
-        print(
-            "HARD WARNING: product gitlinks are already staged; refusing to overwrite "
-            "another coordinator operation.",
-            file=err,
-        )
-        return 1
-
-    committed_heads = {
-        product: run_git(root, "rev-parse", f"HEAD:{product}").stdout.strip()
+    # ASK "IS THERE ANYTHING TO PUBLISH?" BEFORE ASKING "MAY I PUBLISH?".
+    #
+    # This ordering is the fix for a false page with no underlying defect. The
+    # currency refusal used to run FIRST, so a parent that was merely a commit or
+    # two behind hard-warned even when the published gitlinks were already exactly
+    # right and there was nothing whatsoever to commit. That is why the gate could
+    # be observed firing while every sample showed HEAD == freshly fetched
+    # origin/main: by the time anyone looked, the snapshot was a no-op.
+    #
+    # The comparison is against `origin/main:<product>` -- what is PUBLISHED --
+    # not `HEAD:<product>`, which is only the local tree's view and is itself
+    # stale whenever the parent is behind. Asking the stale copy whether the
+    # published state is current is the same category of error one level down.
+    published_gitlinks = {
+        product: run_git(root, "rev-parse", f"origin/main:{product}").stdout.strip()
         for product in PRODUCTS
     }
-    if committed_heads == heads:
+    if published_gitlinks == heads:
         print(
-            "Parent product snapshot already current: "
+            "Parent product snapshot already current on origin/main: "
             + ", ".join(f"{name}={heads[name][:12]}" for name in PRODUCTS),
             file=out,
         )
-        return 0
+        return SNAPSHOT_PUBLISHED
+
+    if parent_branch != "main" or not parent_head or parent_head != parent_remote:
+        # DEFERRED, not blocked. The snapshot genuinely cannot be committed from a
+        # tree that is not sitting on the tip -- that is the stale-base hazard --
+        # but "not right now" is not "something is wrong", and nobody can hold
+        # thirteen agents still long enough to make it right now. The tick's
+        # persistence tracking escalates this only if it never clears.
+        behind = run_git(
+            root, "rev-list", "--count", f"{parent_head}..{parent_remote}"
+        ).stdout.strip() or "?"
+        ahead = run_git(
+            root, "rev-list", "--count", f"{parent_remote}..{parent_head}"
+        ).stdout.strip() or "?"
+        note = ""
+        if ahead not in ("0", "?"):
+            # Local parent commits are a different defect with a different owner:
+            # the `unpushed_parent_commits` reminder detects and rescues them. Say
+            # so instead of raising a second, competing alarm about the same fact.
+            note = " (parent also has unpublished local commits; that is the "
+            note += "unpushed_parent_commits reminder's authority, not this one)"
+        print(
+            "DEFERRED: parent is not on the tip, so a gitlink commit would sit on a "
+            f"stale base (branch={parent_branch or 'DETACHED'} ahead={ahead} "
+            f"behind={behind} HEAD={parent_head[:12] or 'unknown'} "
+            f"origin/main={parent_remote[:12] or 'unknown'}){note}. "
+            "Snapshot is genuinely due; retrying next tick.",
+            file=out,
+        )
+        return SNAPSHOT_DEFERRED
+
+    staged = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
+    if staged.returncode != 0:
+        # Another coordinator operation is mid-flight. Transient by construction:
+        # yielding to it is correct, paging about it is not.
+        print(
+            "DEFERRED: product gitlinks are already staged by another coordinator "
+            "operation; yielding rather than overwriting it.",
+            file=out,
+        )
+        return SNAPSHOT_DEFERRED
 
     add = run_git(root, "add", "--", *PRODUCTS)
     if add.returncode != 0:
         print_command_output(add, err)
-        return 1
+        return SNAPSHOT_BLOCKED
     for product in PRODUCTS:
         staged_head = run_git(root, "rev-parse", f":{product}").stdout.strip()
         if staged_head != heads[product]:
+            # The primary advanced between validation and staging. Another moving
+            # reference: refusing to publish the mismatch is right, paging is not.
             print(
-                "HARD WARNING: validated primary moved while staging parent gitlinks; "
-                f"{product} index={staged_head or 'missing'} validated={heads[product]}.",
-                file=err,
+                f"DEFERRED: validated primary moved while staging parent gitlinks; "
+                f"{product} index={staged_head or 'missing'} validated={heads[product]}. "
+                "Re-validating next tick.",
+                file=out,
             )
-            return 1
+            return SNAPSHOT_DEFERRED
     changed = run_git(root, "diff", "--cached", "--quiet", "--", *PRODUCTS)
     if changed.returncode == 0:
         print(
@@ -457,10 +536,10 @@ def publish_parent_snapshot(
             + ", ".join(f"{name}={heads[name][:12]}" for name in PRODUCTS),
             file=out,
         )
-        return 0
+        return SNAPSHOT_PUBLISHED
     if changed.returncode != 1:
         print("ERROR: could not inspect staged product gitlinks.", file=err)
-        return 1
+        return SNAPSHOT_BLOCKED
 
     publish = run_parent_main_write(
         root,
@@ -475,19 +554,25 @@ def publish_parent_snapshot(
     )
     print_command_output(publish, out if publish.returncode == 0 else err)
     if publish.returncode != 0:
+        # parent-main-write is the single verifier of currency, and it refuses for
+        # two very different reasons that its exit code does not separate: lock
+        # contention with another writer, and the base moving under it. Both are
+        # races and both clear on their own. A durable failure is caught by the
+        # tick's persistence tracking rather than by paging on the first loss.
         print(
-            "HARD WARNING: serialized parent snapshot publication failed; reconcile "
-            "any named local commit without force-pushing.",
-            file=err,
+            "DEFERRED: serialized parent snapshot publication did not complete "
+            "(lock contention or the base moved under the write). No local commit "
+            "was force-pushed or rewritten; retrying next tick.",
+            file=out,
         )
-        return 1
+        return SNAPSHOT_DEFERRED
     snapshot = run_git(root, "rev-parse", "HEAD").stdout.strip()
     print(
         f"Published parent snapshot {snapshot}: "
         + ", ".join(f"{name}={heads[name]}" for name in PRODUCTS),
         file=out,
     )
-    return 0
+    return SNAPSHOT_PUBLISHED
 
 
 def checkout_fresh(
@@ -587,17 +672,25 @@ def checkout_fresh(
             failures += 1
             continue
         print(f"{product}: main is current at {head}", file=out)
+    deferred = False
     if publish_parent and failures == 0 and skipped == 0:
-        failures += publish_parent_snapshot(
-            root, use_proxy=use_proxy, out=out, err=err
-        )
+        outcome = publish_parent_snapshot(root, use_proxy=use_proxy, out=out, err=err)
+        if outcome == SNAPSHOT_DEFERRED:
+            deferred = True
+        elif outcome != SNAPSHOT_PUBLISHED:
+            failures += 1
     elif publish_parent and skipped:
         print(
             "HARD WARNING: parent snapshot not published because a primary checkout "
             "was dirty and preserved.",
             file=err,
         )
-    return 1 if failures or (strict and skipped) else 0
+    if failures or (strict and skipped):
+        return SNAPSHOT_BLOCKED
+    # A deferral is surfaced as its own code so the tick can track how long it has
+    # persisted. Folding it into either 0 or 1 loses the only thing that separates
+    # a lost race from a stuck snapshot.
+    return SNAPSHOT_DEFERRED if deferred else SNAPSHOT_PUBLISHED
 
 
 @dataclass(frozen=True)

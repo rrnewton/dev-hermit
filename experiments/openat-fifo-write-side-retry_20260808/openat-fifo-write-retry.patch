@@ -1,0 +1,130 @@
+diff --git a/detcore/src/syscalls/files.rs b/detcore/src/syscalls/files.rs
+index 375f4218..d2a77e75 100644
+--- a/detcore/src/syscalls/files.rs
++++ b/detcore/src/syscalls/files.rs
+@@ -36,6 +36,7 @@ use tracing::trace;
+ use tracing::warn;
+ 
+ use super::deterministic_stdio_inode;
++use super::helpers::retry_nonblocking_syscall_with_timeout;
+ use crate::config::SchedHeuristic;
+ use crate::dirents::*;
+ use crate::fd::*;
+@@ -227,7 +228,40 @@ impl<T: RecordOrReplay> Detcore<T> {
+         // Ask for permission to resolve this path into a file:
+         let request = guest.thread_state().mk_request(resource, Permission::R);
+         resource_request(guest, request).await;
+-        let res = self.record_or_replay(guest, Syscall::Openat(call)).await;
++
++        // AUTONOMOUS-BOT-IMPLEMENTED
++        // TODO-HUMAN-REVIEW(#1850): A write-open of a FIFO with no reader blocks
++        // in the kernel holding the scheduler turn, and the peer that would
++        // unblock it is queued behind that turn -- a deadlock (instance 3 of the
++        // blocking-while-holding-the-turn class). Route write-intent opens
++        // through the nonblockize-and-retry path, whose `NonblockableSyscall`
++        // impl for `Openat` treats ENXIO as "no reader yet, try again".
++        //
++        // Only WRITE intent takes this path. A read-open needs no conversion for
++        // the deadlock at hand, and converting it would be WRONG: the
++        // nonblocking read-open succeeds and its first `read()` reports a
++        // spurious EOF.
++        //
++        // For a non-FIFO the added O_NONBLOCK is inert (regular files ignore it)
++        // and never yields ENXIO, so the retry predicate cannot fire and the
++        // call completes on its first injection exactly as before. The fd is
++        // registered below with `call.flags()` -- the flags the GUEST asked for
++        // -- so the physical flag stays Detcore-internal, the same contract
++        // `handle_pipe2` already relies on.
++        let write_intent = {
++            let f = call.flags();
++            f.contains(OFlag::O_WRONLY) || f.contains(OFlag::O_RDWR)
++        };
++        let res = if write_intent && !call.flags().contains(OFlag::O_NONBLOCK) {
++            let mut rsrc = Resources::new(guest.thread_state().dettid);
++            rsrc.insert(ResourceID::InternalIOPolling, Permission::W);
++            rsrc.fyi("openat-fifo-write");
++            retry_nonblocking_syscall_with_timeout(guest, call, rsrc, None)
++                .await
++                .map_err(|e| e.into_errno().unwrap_or(Errno::EIO))
++        } else {
++            self.record_or_replay(guest, Syscall::Openat(call)).await
++        };
+ 
+         match res {
+             Ok(fd) => {
+diff --git a/detcore/src/syscalls/helpers.rs b/detcore/src/syscalls/helpers.rs
+index 52e34cb6..6de67d91 100644
+--- a/detcore/src/syscalls/helpers.rs
++++ b/detcore/src/syscalls/helpers.rs
+@@ -18,6 +18,7 @@ use reverie::syscalls;
+ use reverie::syscalls::Addr;
+ use reverie::syscalls::Displayable;
+ use reverie::syscalls::MapFlags;
++use reverie::syscalls::OFlag;
+ use reverie::syscalls::MemoryAccess;
+ use reverie::syscalls::ProtFlags;
+ use reverie::syscalls::Syscall;
+@@ -761,6 +762,63 @@ impl TimeoutableSyscall for reverie::syscalls::EpollWait {
+     }
+ }
+ 
++// AUTONOMOUS-BOT-IMPLEMENTED
++// TODO-HUMAN-REVIEW(#1850): Write-opening a FIFO with no reader blocks in the
++// kernel at `wait_for_partner`. Under `--sequentialize-threads` the opener holds
++// the scheduler turn while blocked, and the only task that can unblock it -- the
++// peer opening the read end -- is queued behind that turn, so the guest
++// deadlocks. This is instance 3 of the blocking-while-holding-the-turn defect
++// class; instance 1 was `epoll_pwait` (#1864).
++//
++// The write side converts cleanly and does NOT need `BlockedPool` modelling.
++// `O_WRONLY|O_NONBLOCK` on a readerless FIFO returns ENXIO, which is a precise
++// "no reader has arrived yet" -- so a yield-and-retry loop resumes at exactly
++// the moment a blocking open would have returned, with no timing information
++// invented. Measured on this host (`harness/fifo-open-semantics.c`):
++//
++//     O_WRONLY|O_NONBLOCK, no reader   -> ENXIO
++//     O_WRONLY|O_NONBLOCK, reader present -> succeeds
++//     O_WRONLY, no reader              -> blocks (the bug)
++//
++// The READ side is deliberately NOT handled here: its `O_NONBLOCK` open succeeds
++// and the first `read()` then reports a spurious EOF, so a guest that should
++// have waited would instead see end-of-input. Linux exposes no non-consuming
++// "does this FIFO have a writer?" probe, so the read side genuinely requires
++// scheduler-level modelling. Converting it with this mechanism would silently
++// corrupt guest input, which is worse than the hang.
++//
++// ENXIO rather than EAGAIN is why the generic machinery did not already cover
++// this: `syscall_would_have_blocked` defaults to a different predicate, so the
++// override below is the whole of the second obstacle.
++#[async_trait]
++impl NonblockableSyscall for reverie::syscalls::Openat {
++    async fn into_nonblocking<T: RecordOrReplay, G: Guest<Detcore<T>>>(
++        self,
++        _guest: &mut G,
++    ) -> (Self, Option<<G::Stack as Stack>::StackGuard>) {
++        (self.with_flags(self.flags() | OFlag::O_NONBLOCK), None)
++    }
++
++    fn syscall_would_have_blocked(&self, res: Result<i64, Errno>) -> bool {
++        res == Err(Errno::ENXIO)
++    }
++
++    fn signal_interrupt_errno(&self) -> Errno {
++        Errno::EINTR
++    }
++}
++
++// `retry_nonblocking_syscall_with_timeout` requires this bound even when the
++// caller passes `None`. `openat(2)` has no timeout in the kernel API and Detcore
++// never supplies one for it, so this arm is unreachable; return a distinctive
++// errno rather than a plausible success so that if it ever DOES fire, it
++// surfaces as an obvious bug instead of a silently-invented open failure.
++impl TimeoutableSyscall for reverie::syscalls::Openat {
++    fn timeout_return_val(&self) -> Result<i64, Errno> {
++        Err(Errno::ETIMEDOUT)
++    }
++}
++
+ async fn zero_timespec<'stack, T: RecordOrReplay, G: Guest<Detcore<T>>>(
+     guest: &mut G,
+ ) -> (Addr<'stack, Timespec>, <G::Stack as Stack>::StackGuard) {

@@ -159,6 +159,23 @@ class _ParentWorkspaceFixture(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "parent"
         self.root.mkdir()
+
+        # ISOLATE THE SERIALIZED-WRITER LOCK. `parent-main-write` defaults to
+        # /tmp/dev-hermit-parent-main-<uid>.lock, which is MACHINE-WIDE and shared
+        # with every live agent. A fixture publishing into its own throwaway remote
+        # was contending with real parent-main publications, so any test that
+        # publishes failed with "another parent-main writer owns ..." whenever the
+        # box happened to be busy -- observed live 2026-08-08. The fixture must not
+        # queue behind, or block, real work; scope the lock to the temp directory.
+        lock = Path(self.temp.name) / "parent-main.lock"
+        previous = os.environ.get("HERMIT_PARENT_MAIN_LOCK_PATH")
+        os.environ["HERMIT_PARENT_MAIN_LOCK_PATH"] = str(lock)
+        self.addCleanup(
+            lambda: os.environ.__setitem__("HERMIT_PARENT_MAIN_LOCK_PATH", previous)
+            if previous is not None
+            else os.environ.pop("HERMIT_PARENT_MAIN_LOCK_PATH", None)
+        )
+
         self.seeds: dict[str, Path] = {}
         for product in primary_checkout.PRODUCTS:
             remote = Path(self.temp.name) / f"{product}.git"
@@ -281,6 +298,29 @@ class _ParentWorkspaceFixture(unittest.TestCase):
         lock.write_text(lock.read_text().replace(reverie_head, "0" * 40))
         (self.root / "hermit" / "liteinst-runtime-build" / "Cargo.lock").unlink()
         (self.root / "hermit" / "scratch-note.md").write_text("someone else's work\n")
+
+    def advance_parent_remote(self, commits: int = 1) -> str:
+        """Land `commits` on the parent REMOTE without touching the parent tree.
+
+        This reproduces the steady state on the real box: agents publish parent
+        main from their own worktrees, so `origin/main` advances while the shared
+        parent working tree stays where it was. Nothing pulls it automatically, so
+        "parent is behind" is the normal condition, not an incident.
+        """
+        clone = Path(self.temp.name) / "parent-publisher"
+        if not clone.exists():
+            subprocess.run(
+                ("git", "clone", str(Path(self.temp.name) / "parent.git"), str(clone)),
+                check=True, capture_output=True,
+            )
+            git(clone, "config", "user.email", "other@example.com")
+            git(clone, "config", "user.name", "Other Agent")
+        for index in range(commits):
+            (clone / f"other-agent-{index}.md").write_text("landed elsewhere\n")
+            git(clone, "add", "-A")
+            git(clone, "commit", "-m", f"another agent's commit {index}")
+        git(clone, "push", "origin", "main")
+        return git(clone, "rev-parse", "HEAD")
 
     def drift_hermit_commit(self) -> str:
         """Commit a real Reverie pin drift IN the Hermit submodule. Returns its SHA."""
@@ -971,6 +1011,176 @@ class LegacyCheckBlindSpotTests(_PrimaryFixture):
         code = primary_checkout.check_freshness(self.root, out=out, err=err)
         self.assertIn("core.bare=true", err.getvalue())
         self.assertEqual(code, 0)  # still advisory: must not start blocking commits
+
+
+class SnapshotMovingReferenceTests(_ParentWorkspaceFixture):
+    """Separate a LOST RACE from a REAL DEFECT, and bracket both directions.
+
+    The gate used to answer "may I publish?" before "is there anything to
+    publish?", and treated every no as a hard warning. With thirteen agents
+    pushing parent main, that made it a check nobody could satisfy: the reference
+    moved faster than any agent could chase it, and one looped trying.
+
+    The cheap failure is a false page. The expensive failure is going quiet about
+    a genuinely incoherent snapshot -- a dirty primary or a mismatched Reverie pin
+    would record something actually wrong in the gitlink. So every test below
+    states which side it is defending.
+    """
+
+    def snapshot(self) -> tuple[int, str, str]:
+        out, err = StringIO(), StringIO()
+        code = primary_checkout.publish_parent_snapshot(
+            self.root, use_proxy=False, out=out, err=err
+        )
+        return code, out.getvalue(), err.getvalue()
+
+    def advance_product(self, product: str = "liteinst2") -> str:
+        """Move a product and bring its PRIMARY along, so a snapshot is genuinely due.
+
+        `publish_parent_snapshot` reads primary HEADs and requires each to equal
+        its own origin/main, so a product advanced only on its remote leaves the
+        primary stale and the snapshot a no-op. `checkout_fresh` normally does
+        this fast-forward first; calling the publish step directly does not.
+
+        Defaults to liteinst2 on purpose: hermit's Cargo manifests pin reverie, so
+        advancing reverie alone makes the pin inconsistent and the snapshot is then
+        correctly BLOCKED for a real reason -- which would mask the deferral this
+        suite is trying to observe.
+        """
+        head = self.advance(product)
+        git(self.root / product, "fetch", "origin", "main")
+        git(self.root / product, "merge", "--ff-only", "origin/main")
+        return head
+
+    # ---- NEGATIVE: must NOT hard-warn -------------------------------------
+
+    def test_parent_behind_with_snapshot_due_defers_rather_than_warning(self) -> None:
+        """The filed defect. Snapshot IS due and the parent is two commits behind.
+
+        Publishing from here would sit the gitlink commit on a stale base, so
+        declining is correct -- but it is a race, not a fault, and it must not
+        page. Two commits is deliberately small: this is the everyday case.
+        """
+        self.advance_product("liteinst2")
+        self.advance_parent_remote(2)
+
+        code, out, err = self.snapshot()
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_DEFERRED, err)
+        self.assertNotIn("HARD WARNING", err)
+        self.assertIn("DEFERRED", out)
+        self.assertIn("behind=2", out)
+        self.assertIn("stale base", out)
+
+    def test_parent_behind_but_gitlinks_already_published_is_success(self) -> None:
+        """The ordering bug, which is a false page with NO underlying defect.
+
+        Nothing has moved in any product, so the published gitlinks are already
+        exactly right and there is nothing to commit at all. The old code asked
+        "may I publish?" first and hard-warned about a parent that was merely
+        behind -- warning about work that did not need doing. It must now report
+        plain success, and must not even reach the currency question.
+        """
+        self.advance_parent_remote(3)
+
+        code, out, err = self.snapshot()
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_PUBLISHED, err)
+        self.assertNotIn("HARD WARNING", err)
+        self.assertNotIn("DEFERRED", out)
+        self.assertIn("already current on origin/main", out)
+
+    def test_no_op_is_judged_against_published_gitlinks_not_the_local_view(self) -> None:
+        """`origin/main:<product>`, never `HEAD:<product>`.
+
+        A parent that is behind holds a stale view of its own gitlinks, so asking
+        the local copy whether the PUBLISHED state is current repeats the same
+        error one level down. Here another agent has ALREADY published the
+        advanced gitlink while this parent tree still records the old one: the
+        honest answer is "nothing to do", and only the published reference can
+        give it. Reading HEAD:<product> instead would see a difference, conclude
+        work was due, and then refuse it for being behind -- a page for a job
+        somebody else already finished.
+        """
+        new_head = self.advance_product("liteinst2")
+
+        publisher = Path(self.temp.name) / "parent-snapshotter"
+        subprocess.run(
+            ("git", "clone", str(Path(self.temp.name) / "parent.git"), str(publisher)),
+            check=True, capture_output=True,
+        )
+        git(publisher, "config", "user.email", "other@example.com")
+        git(publisher, "config", "user.name", "Other Agent")
+        git(publisher, "update-index", "--cacheinfo",
+            f"160000,{new_head},liteinst2")
+        git(publisher, "commit", "-m", "another agent published the liteinst2 gitlink")
+        git(publisher, "push", "origin", "main")
+
+        stale_view = git(self.root, "rev-parse", "HEAD:liteinst2")
+        self.assertNotEqual(stale_view, new_head,
+                            "fixture failed to make the local gitlink view stale")
+
+        code, out, err = self.snapshot()
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_PUBLISHED, err + out)
+        self.assertIn("already current on origin/main", out)
+        self.assertNotIn("HARD WARNING", err)
+
+    # ---- POSITIVE: must STILL block, immediately -------------------------
+
+    def test_dirty_primary_still_blocks_immediately(self) -> None:
+        """Not a moving reference. Retrying never fixes it, so never defer it."""
+        self.advance_product("liteinst2")
+        self.dirty_hermit_worktree()
+
+        code, out, err = self.snapshot()
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_BLOCKED, out)
+        self.assertIn("HARD WARNING", err)
+        self.assertIn("primary is dirty", err)
+        self.assertNotIn("DEFERRED", out)
+
+    def test_inconsistent_reverie_pin_still_blocks_immediately(self) -> None:
+        """A gitlink recorded here WOULD capture something actually wrong."""
+        self.drift_hermit_commit()
+        git(self.root / "hermit", "push", "origin", "main")
+        git(self.root / "hermit", "fetch", "origin", "main")
+
+        code, out, err = self.snapshot()
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_BLOCKED, out)
+        self.assertIn("HARD WARNING", err)
+        self.assertNotIn("DEFERRED", out)
+
+    def test_primary_off_main_still_blocks_immediately(self) -> None:
+        git(self.root / "reverie", "checkout", "-b", "someones-feature")
+
+        code, out, err = self.snapshot()
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_BLOCKED, out)
+        self.assertIn("HARD WARNING", err)
+        self.assertIn("not on main", err)
+
+    # ---- the deferral must reach the caller intact ------------------------
+
+    def test_checkout_fresh_propagates_deferred_without_counting_a_failure(self) -> None:
+        """A deferral is neither success nor failure and must stay distinguishable.
+
+        Folding it into 0 hides a snapshot that never publishes; folding it into 1
+        recreates the unsatisfiable page. `checkout_fresh` has to carry the third
+        code out to the tick, which is the only layer that can time it.
+        """
+        self.advance_product("liteinst2")
+        self.advance_parent_remote(1)
+        out, err = StringIO(), StringIO()
+
+        code = primary_checkout.checkout_fresh(
+            self.root, publish_parent=True, strict=True,
+            use_proxy=False, out=out, err=err,
+        )
+
+        self.assertEqual(code, primary_checkout.SNAPSHOT_DEFERRED, err)
+        self.assertNotIn("HARD WARNING", err)
 
 
 if __name__ == "__main__":

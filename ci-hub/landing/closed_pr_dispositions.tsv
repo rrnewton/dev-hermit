@@ -1,0 +1,59 @@
+# Disposition of closed rrnewton/hermit PRs that the coalesce guard could not
+# classify from their close comment alone (the 45 REFUSE_UNKNOWN rows measured
+# 2026-08-07). Hand-classified by reading the FULL comment thread, not the last
+# comment -- last-comment-only is what produced the UNKNOWNs, because a later
+# reply often sits on top of the closing rationale (see #1703).
+#
+# SUPERSEDED  the work survives at a named, identifiable place -> safe to fold.
+# MERITS      an owner decided it must not land -> NEVER re-land.
+# UNKNOWN     not determinable from the record -> stays refused, fail closed.
+#
+# UNKNOWN is a real answer here, not a gap to be filled by inference: a wrong
+# SUPERSEDED is precisely what re-lands rejected work.
+#
+# pr	disposition	successor	reason
+1703	MERITS		vacuous fixture: no discriminating positive control, e9patch candidate_sites=0, DBI/KVM not run. NOTE: a LATER comment refutes the basis (DBI run found a real divergence); the close still stands, so re-landing needs a fresh decision, not a fold
+1667	MERITS		inert herdr-run write-path smoke probe, 'do not review', branch deleted; never a product change
+1652	SUPERSEDED	d386c965f3b13bee9ae788066ae91ae1e6bc8807	coordinator correction names the exact landed main commit; supersession conclusion unchanged
+1637	UNKNOWN		names #1668 as the alternative vehicle, but #1668 was itself closed on the merits ('unsafe aggregate without landing'), so no landed successor exists; not determinable
+1634	MERITS		coordinator permanently discontinued the work lane; explicitly 'not a landing or completion claim'
+1630	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main; branch preserved for archaeology, must not be layered over the landed mechanism
+1628	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main; preserved for archaeology
+1626	MERITS	#1644 f21b22ed (partial)	MIXED: NUMA sanitizer represented by #1644, but the /run/user/<uid> path-only suppression is REJECTED as an unsafe proxy binding and 'will not be carried'. Partially rejected => must never be folded wholesale
+1625	SUPERSEDED	#1644 f21b22ed	stale Reverie-pin vehicle; the newer pin landed through #1644 and ancestry verifies the old target is an ancestor
+1615	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main
+1596	MERITS		xfail authority remains forgeable at exact head; negative fixture does not bracket the real bypass; explicitly excluded from #1644
+1591	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main
+1582	SUPERSEDED	#1585 4b7eddfb	fully carried by its exact Git descendant, which stacks on this fold
+1577	MERITS		self-declared no-op CI-observation PR ('no-op, will close'); no comment, but the title is the record
+1576	MERITS		obsolete branch; nested-lock/pin commit would DOWNGRADE current Reverie; retry code still classifies generic divergence as retryable; conflicts with current strict model
+1573	MERITS		contains the exact #1570 cache commit which was rejected for returning success while executing zero tests; 'this head cannot be published'
+1572	MERITS		abandoned implementation scrapes rendered runner status lines via ERE in a shell being deleted; requirement to be carried into the typed wrapper instead
+1570	MERITS		returns success on a cache hit without executing a single gate; violates the nonzero-executed-count rule
+1568	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main
+1566	MERITS		classifies an environmental condition from rendered build-tool strings; PR itself says it is not a live-miss fix; extending the regex preserves the proxy mechanism
+1561	MERITS		job-collapse topology predates the exact-head evidence contract (#1578) and required-context transition (#1579); 'no longer publishable'
+1559	MERITS		fresh exact-head build crashes /bin/true under DBI with SIGSEGV exit 255; env hash ignores active SaBRe DETLOG forwarding
+1551	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main
+1550	MERITS	#1219 (partial)	0.2 floor + publish-metadata landed via #1219, but the remaining package-boundary/name choices are PENDING OWNER DECISIONS and must be rebuilt from current main, not folded
+1547	SUPERSEDED	ci-hub/history/query.py node-cpu-budgets	the durable derivation authority moved to the dev-hermit tool which replaces this PR's in-repo script; explicitly a disposition closure, not a landing claim
+1546	MERITS		coordinator permanently discontinued the work lane; 'the change was not accepted or landed'
+1544	MERITS		promoted contracts admit false positives and one asserts the OPPOSITE of Linux (process-group identity can split); excluded from the aggregate
+1543	SUPERSEDED	#1644 f21b22ed / #1647 72e973f5	governing changes landed on main
+1539	MERITS		explicitly disposable affected-test-selection probe; description says it is not for landing
+1538	MERITS		explicitly disposable affected-test-selection probe; not for landing
+1537	MERITS		explicitly disposable affected-test-selection probe; not for landing
+1536	MERITS		explicitly disposable affected-test-selection probe; not for landing
+1534	UNKNOWN		'fully subsumed by #1547', but #1547 was itself closed as obsolete and its named canonical successors #1611/#1620 are also closed; whether cpu_timeout=18 for e2e/metadata reached main is not determinable from the record
+1513	MERITS		superseded premise (main removed pmu-serial for demos); owner-signoff condition never satisfied; 'should not remain a landing candidate'
+1507	SUPERSEDED	branch codex/e9patch-corpus-relocation-stress @ 37f221e1	closed only to honour an inflow throttle; 'No work is lost', preserved on a named pushed branch, validated 22/22 PASS_L2, explicit intent to reopen
+1491	MERITS		TIME-BLUNTING: weakens the KVM timed-progress check 40-fold (1000ms -> 25ms) with no minimum-work or progress oracle; excluded from #1644
+1486	UNKNOWN		says 'superseded by the owner-authorized recovery commit on the primary main stack' but names NO SHA, PR or branch; the successor is described, not identified
+1483	SUPERSEDED	#1488 4402be0d	consolidated PR points at this exact final recovery head; duplicate prefix PR closed to prevent competing CI/merge
+1469	MERITS		TIME-BLUNTING: clamps observed PMU overshoot to a coarser armed budget, making time accounting less fine-grained; explicitly the forbidden sacred-time blunting pattern
+1466	MERITS		abandoned stacked carrier on unresolved #1443; pins a Reverie rev that is NOT an ancestor of the current pin, so it cannot safely advance the dependency
+1461	SUPERSEDED	tests/c/signal_disposition.c already on main	closed as redundant: the fixture is already present on main, so the PR adds no unique coverage
+1446	SUPERSEDED	tg coalesce-24-e9patch-corpus-prs-with-symmetry-enforcement	closed as part of e9patch-corpus coalescing with an explicit 'No coverage is abandoned' disposition. Successor is a TASK, not a landed commit -- weaker evidence than a SHA; re-verify before folding
+1445	MERITS		aged implementation closed as UNSAFE rather than rebased: fixed TCGETS/TIOCGWINSZ getters ignore successful guest set calls, so set-then-get returns a false terminal state, with no regression test
+1444	MERITS		~100 files of unrelated concerns; 'not a reviewable or independently recoverable landing unit'; must be split into current-main PRs
+1443	MERITS		aged PR closed as currently UNVERIFIABLE; no product subset safe to land; /bin/echo fails --verify-strict with bitwise_parity=false and >20 exact-log differences

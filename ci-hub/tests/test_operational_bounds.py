@@ -7,6 +7,7 @@ import json
 import os
 import resource
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -63,9 +64,47 @@ class OperationalBoundsTest(unittest.TestCase):
             json.dumps([{"name": "worker", "status": "busy", "current_task": "task"}])
         )
         self.store = self.temp / "obligations.jsonl"
+
+        # BIND A GRAPH so `active-work` can actually answer.
+        #
+        # The `tg` stub above is not enough any more, and that is the whole
+        # reason this test went red. ci-hub now refuses an UNBOUND TaskGraph
+        # read before it ever reaches `tg`: with TG_DB_PATH unset it returns
+        # rc 2 `taskgraph-query-unavailable` rather than letting tg's implicit
+        # `tasks` default report an empty fleet as clean. That refusal is
+        # CORRECT -- it is a could-not-measure, not a failure -- so the fix is to
+        # give the subcommand something to measure, NOT to widen the expected rc
+        # set. Widening would put a silent pass exactly where a correct
+        # could-not-measure is, which is the defect this repo has spent the
+        # session removing; a green bought that way is worse than the red.
+        #
+        # `validate()` requires only a readable sqlite file carrying a `tasks`
+        # relation; the row CONTENT comes from the stubbed `tg`, so an empty
+        # schema is sufficient and keeps the fixture hermetic.
+        #
+        # Binding explicitly also removes a hidden environmental dependency:
+        # `self.env` copies os.environ, so this test's outcome silently depended
+        # on whether the RUNNER happened to have TG_DB_PATH set. It passed for
+        # anyone with a graph bound and failed in CI without one, which is why
+        # it surfaced late.
+        self.graph = self.temp / "taskgraph.db"
+        connection = sqlite3.connect(self.graph)
+        try:
+            connection.executescript(
+                "CREATE TABLE tasks ("
+                " local_id TEXT PRIMARY KEY, title TEXT, owner TEXT,"
+                " status TEXT, tags TEXT);"
+                "CREATE TABLE task_notes ("
+                " id INTEGER PRIMARY KEY, task_id TEXT, content TEXT);"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
         self.env = os.environ.copy()
         self.env.update(
             {
+                "TG_DB_PATH": str(self.graph),
                 "PATH": f"{self.bin}:{self.env['PATH']}",
                 "CI_HUB_TOOL_COST_ACTIVE": "1",
                 "CI_HUB_MAIN_HEALTH_TIMEOUT": "0.1",
@@ -125,6 +164,39 @@ class OperationalBoundsTest(unittest.TestCase):
             msg=f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
         )
         return result
+
+    def test_could_not_measure_stays_distinguishable_from_success(self) -> None:
+        """The bracket: an UNBOUND graph must NOT be able to read as success.
+
+        This is the assertion that makes binding a graph above a real fix rather
+        than a way to make the red go away. If someone later "fixes" a future
+        failure of this suite by widening the expected rc set to {0, 2}, or by
+        letting an unbound read fall back to tg's implicit `tasks` default, this
+        test fails -- because rc 2 and rc 0 would stop being distinguishable and
+        an unmeasurable fleet would render as a clean one.
+
+        Same shape as the github-main repair: absence must alarm distinctly from
+        green, never quietly join it.
+        """
+        unbound = dict(self.env)
+        unbound.pop("TG_DB_PATH", None)
+
+        measured = self.run_bounded(
+            "active-work", "--agent-snapshot", str(self.snapshot), "--json",
+            expected={0},
+        )
+        unmeasurable = self.run_bounded(
+            "active-work", "--agent-snapshot", str(self.snapshot), "--json",
+            expected={2}, env=unbound,
+        )
+
+        self.assertNotEqual(
+            measured.returncode, unmeasurable.returncode,
+            "could-not-measure collapsed into the success code")
+        self.assertIn("taskgraph-query-unavailable", unmeasurable.stdout)
+        # And it must not dress the refusal up as a measured, empty fleet.
+        self.assertNotIn('"state": "clean"', unmeasurable.stdout)
+        self.assertIn('"state": "unknown"', unmeasurable.stdout)
 
     def test_every_subcommand_dispatches_within_wall_and_cpu_bounds(self) -> None:
         tick_env = self.env | {"CI_HUB_AGENT_TOOL": str(self.succeed)}

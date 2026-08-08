@@ -78,6 +78,67 @@ if ! python3 "${here}/check-scorecard-tier.py" --root "${here}"; then
   exit 1
 fi
 
+# The other half of the tier gate, and the reason it needed one. The check above
+# validates the tier VOCABULARY -- is the label in the allowed set -- and never
+# reads an evidence column, so `comparison_tier` was a self-declared string with
+# nothing binding it to the comparison actually performed. `tier_evidence.py` was
+# written to close that, passed 18 tests, and had ZERO CALL SITES; the same defect
+# the determinism gate above carries a comment about. An unwired verifier is a
+# comment.
+#
+# EXPECT `fully evidenced : 0 of 6` HERE. That is the correct starting number, not
+# a regression: it is the first time the claims have been checked at all. The six
+# pre-existing unevidenced claims are named in tier-evidence-baseline.json, which
+# is a RATCHET, not a mute button -- they are counted and printed on every run, a
+# SEVENTH unevidenced claim fails this gate, and an entry whose debt is gone also
+# fails it. `fail=1` rather than `exit 1` so this cannot mask the provenance checks
+# below.
+echo "== compat-envelope: a tier claim must carry evidence for every component it names =="
+if ! python3 "${here}/tier_evidence.py" --root "${here}" \
+      --baseline "${here}/tier-evidence-baseline.json"; then
+  echo "validate-envelope: UNREGISTERED unevidenced tier claim, or a stale debt-register entry" >&2
+  fail=1
+fi
+
+# The tier gate above can only check evidence that EXISTS, so this is the half
+# that keeps the evidence honest. `stdout_parity` is a boolean with two SHA-256
+# operands beside it, and at 2026-08-08 the reference operand was populated in 0
+# of 2290 published rows while the candidate was populated in 2068 -- so no reader
+# could tell parity-HELD from parity-DIFFERED from NEVER-ATTEMPTED. This keeps the
+# three states distinct and, above all, refuses the tempting repair: writing a
+# boolean into an empty column would convert a visible gap into an invisible false
+# record, which is strictly worse than the gap.
+#
+# EXPECT `UNMEASURED : 2290` AND rc 0 HERE. Unmeasured is counted and printed, never
+# coerced to a zero or a pass, and never a failure by itself -- an honest blank is
+# not an error, or this gate could not be wired at all. What DOES fail is a row
+# asserting a parity its own operands cannot support, of which there are currently
+# none. The gate exists to keep that count at zero.
+echo "== compat-envelope: a stdout parity verdict must be re-derivable from its row =="
+if ! python3 "${here}/stdout_operands.py" --root "${here}"; then
+  echo "validate-envelope: parity assertion unsupported by its own operands" >&2
+  fail=1
+fi
+
+# The tier gate REPORTS an unevidenced claim; this refuses to let one keep a
+# qualifying tier at all. The six `full-stdout-info-stack-heap` rows that were the
+# entire measured full-tier envelope had NO PRODUCER IN THE TREE -- their commit
+# ddfd448 changed only scorecard.csv, zero code -- so they could not be re-derived
+# and no producer fix could re-emit them. They were demoted to legacy-unqualified
+# by the tool below rather than by hand, because a hand-edited row is exactly what
+# created the problem and hand-repairing it would reproduce the defect while
+# appearing to cure it.
+#
+# EXPECT 0 HERE. This is --check: it reports and refuses, it never rewrites during
+# validation. Its criterion is computed, not a list -- a row is caught iff its tier
+# is qualifying and tier_evidence cannot evidence it -- so it catches the NEXT one
+# too. Remedy is `retire_unevidenced_tier_claims.py --apply`, which is idempotent.
+echo "== compat-envelope: no qualifying tier may outlive the evidence for it =="
+if ! python3 "${here}/retire_unevidenced_tier_claims.py" --root "${here}"; then
+  echo "validate-envelope: a qualifying tier claim its own row cannot evidence" >&2
+  fail=1
+fi
+
 # A parity boolean is accepted only when the row carries both hashed operands,
 # exact code state, comparison/profile identity, and counted run coverage.  This
 # is the same semantic verifier the renderer calls; labels and cached booleans

@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -25,14 +27,22 @@ def completed(command, rc=0, stdout="", stderr=""):
 
 
 class FakeRunner:
-    def __init__(self, known_tasks: set[str]):
+    def __init__(self, known_tasks: set[str], task_status: dict[str, str] | None = None):
         self.known_tasks = known_tasks
+        self.task_status = task_status or {}
         self.verifier_calls: list[str] = []
 
     def __call__(self, command, **_kwargs):
         command = tuple(str(item) for item in command)
         if command[:2] == ("tg", "sql"):
-            return completed(command, stdout="\n".join(sorted(self.known_tasks)) + "\n")
+            # The production query selects `local_id || '\t' || status`. Emitting a bare id
+            # (no tab) is still valid and reads as an unknown/blank status, which is what the
+            # pre-existing tests rely on.
+            rows = [
+                f"{task}\t{self.task_status.get(task, 'IN_PROGRESS')}"
+                for task in sorted(self.known_tasks)
+            ]
+            return completed(command, stdout="\n".join(rows) + "\n")
         if "protocol.py" in " ".join(command):
             identity = command[command.index("verify-landing") + 1]
             self.verifier_calls.append(identity)
@@ -230,6 +240,266 @@ class DirectiveCheckTest(unittest.TestCase):
         self.assertEqual("unverifiable", item.state)
         self.assertEqual(0, report.counts.get("fetch_failed", 0))
 
+
+
+
+class ClosedTaskAccountabilityTest(unittest.TestCase):
+    """A directive that is not satisfied must not have a CLOSED accountable task.
+
+    Task lookup used to test EXISTENCE only, and a closed task exists -- so a row could sit
+    unlanded while the one record a human reads said the work was done. Measured 2026-08-08 on
+    the live ledger: 3 of 21 rows were in exactly that state, including `green-time-automatic-log`,
+    which had neither an implementation nor a gate.
+
+    Bracketed three ways on purpose. The two POSITIVE legs are not decoration: the first draft of
+    this predicate made `closed_task` trip the invalid-metadata catch-all, which silently
+    demoted a correctly LANDED row to unaccountable. Only the landed+closed leg caught it.
+    """
+
+    def evaluate(self, directives, task_status):
+        tasks = {item["task"] for item in directives if item.get("task")}
+        runner = FakeRunner(tasks, task_status=task_status)
+        with tempfile.TemporaryDirectory() as temporary:
+            ledger = Path(temporary) / "ledger.json"
+            ledger.write_text(json.dumps({"schema_version": 1, "directives": directives}))
+            return directive_check.evaluate(
+                ledger_path=ledger,
+                run=runner,
+                checked_at="2026-08-08T00:00:00+00:00",
+            )
+
+    def test_negative_unlanded_row_with_closed_task_is_unaccountable(self):
+        row = directive("orphaned", identity=None, task="t-closed")
+        report = self.evaluate([row], {"t-closed": "CLOSED"})
+
+        item = report.directives[0]
+        self.assertEqual("unaccountable", item.state)
+        self.assertIn("closed_task", item.issues)
+        self.assertIn("CLOSED", item.reason)
+        # It is drift: nobody is advancing it, because the record that would surface it is closed.
+        self.assertIn(item.state, directive_check.DRIFT_STATES)
+        self.assertEqual(1, report.counts["unaccountable"])
+        self.assertEqual(0, report.counts.get("gated", 0))
+        self.assertEqual(1, report.exit_code)
+
+    def test_positive_unlanded_row_with_live_task_stays_open(self):
+        row = directive("owned", identity=None, task="t-live")
+        report = self.evaluate([row], {"t-live": "IN_PROGRESS"})
+
+        item = report.directives[0]
+        self.assertEqual("open", item.state)
+        self.assertNotIn("closed_task", item.issues)
+
+    def test_positive_named_gate_stays_gated_after_recording_task_closes(self):
+        row = directive(
+            "deferred",
+            identity=None,
+            task="t-closed",
+            gate="Hermit PR queue has drained",
+        )
+        report = self.evaluate([row], {"t-closed": "CLOSED"})
+
+        item = report.directives[0]
+        self.assertEqual("gated", item.state)
+        self.assertIn("closed_task", item.issues)
+        self.assertNotIn(item.state, directive_check.DRIFT_STATES)
+        self.assertEqual(1, report.counts["gated"])
+        self.assertEqual(0, report.counts.get("unaccountable", 0))
+
+    def test_positive_landed_row_with_closed_task_stays_satisfied(self):
+        # A closed task is the CORRECT end state once the directive has landed; the predicate
+        # keys on the PAIRING, not on closure alone.
+        row = directive("done", identity="a" * 40, task="t-closed")
+        report = self.evaluate([row], {"t-closed": "CLOSED"})
+
+        item = report.directives[0]
+        self.assertEqual("satisfied", item.state)
+        self.assertIn("closed_task", item.issues)
+
+
+class TaskDatabaseResolutionTest(unittest.TestCase):
+    """Bracket the four task-resolution classes, one per class, with counts.
+
+    Before this fix the checker queried only the live database and mapped BOTH
+    "names no task" and "names a task I cannot see" to state `missing_task`.
+    After the 2026-08-07 cutover renamed the fleet database, that reported
+    `missing_task=21` on 21 of 21 records whose tasks were all alive in the
+    previous file -- a 100% failure, which is a partition and never a fact.
+    """
+
+    LIVE = "/tmp/fixture-live.db"
+    ARCHIVE = "/tmp/fixture-archive.db"
+
+    class DbAwareRunner(FakeRunner):
+        """Answers `tg sql` differently per TG_DB_PATH, so the test can only pass
+        if the checker really varies the database it asks. A runner that ignored
+        the environment would return identical rows and the archive case could
+        not be distinguished from the live case."""
+
+        def __init__(self, per_db):
+            super().__init__(set())
+            self.per_db = per_db
+            self.queried: list[str] = []
+
+        def __call__(self, command, **kwargs):
+            command = tuple(str(item) for item in command)
+            if command[:2] == ("tg", "sql"):
+                db = (kwargs.get("env") or {}).get("TG_DB_PATH", "")
+                self.queried.append(db)
+                rows = [
+                    f"{task}\t{status}"
+                    for task, status in sorted(self.per_db.get(db, {}).items())
+                ]
+                return completed(command, stdout=("\n".join(rows) + "\n") if rows else "")
+            return super().__call__(command, **kwargs)
+
+    def evaluate(self, directives, per_db):
+        runner = self.DbAwareRunner(per_db)
+        env = dict(os.environ)
+        env["DIRECTIVE_TASK_DBS"] = os.pathsep.join([self.LIVE, self.ARCHIVE])
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            with tempfile.TemporaryDirectory() as temporary:
+                ledger = Path(temporary) / "ledger.json"
+                ledger.write_text(
+                    json.dumps({"schema_version": 1, "directives": directives})
+                )
+                report = directive_check.evaluate(
+                    ledger_path=ledger,
+                    run=runner,
+                    checked_at="2026-08-04T00:00:00+00:00",
+                )
+        return report, runner
+
+    def state_of(self, report, directive_id):
+        return next(item for item in report.directives if item.id == directive_id).state
+
+    def issues_of(self, report, directive_id):
+        return set(
+            next(item for item in report.directives if item.id == directive_id).issues
+        )
+
+    def test_four_resolution_classes_are_four_distinct_states(self):
+        directives = [
+            directive("in-live", identity="a" * 40, task="task-live"),
+            directive("in-archive", identity="a" * 39 + "1", task="task-archived"),
+            directive("nowhere", identity="a" * 39 + "2", task="task-ghost"),
+            directive("no-task-at-all", identity="a" * 39 + "3", task=""),
+        ]
+        per_db = {
+            self.LIVE: {"task-live": "IN_PROGRESS"},
+            self.ARCHIVE: {"task-archived": "IN_PROGRESS"},
+        }
+        report, runner = self.evaluate(directives, per_db)
+
+        # POSITIVE: a task in the CURRENT database resolves and is not reported.
+        self.assertEqual("satisfied", self.state_of(report, "in-live"))
+        self.assertEqual(set(), self.issues_of(report, "in-live"))
+
+        # POSITIVE: a task that exists only in an archive still resolves, and is
+        # flagged as its own fact rather than being called missing.
+        self.assertEqual("satisfied", self.state_of(report, "in-archive"))
+        self.assertEqual({"task_in_archived_db"}, self.issues_of(report, "in-archive"))
+
+        # NEGATIVE: a task in NO database is task_not_found -- DISTINCT from...
+        self.assertEqual("task_not_found", self.state_of(report, "nowhere"))
+        # ...NEGATIVE: a directive naming no task at all, which stays missing_task.
+        self.assertEqual("missing_task", self.state_of(report, "no-task-at-all"))
+
+        # Counts per class, both sides, in one assertion set.
+        self.assertEqual(2, report.counts["satisfied"])
+        self.assertEqual(1, report.counts["task_not_found"])
+        self.assertEqual(1, report.counts["missing_task"])
+        self.assertEqual(1, report.issue_counts["task_in_archived_db"])
+        self.assertEqual(1, report.issue_counts["task_not_found"])
+        self.assertEqual(1, report.issue_counts["missing_task"])
+
+        # The archive is only consulted because the live database came up short.
+        self.assertEqual([self.LIVE, self.ARCHIVE], runner.queried)
+
+    def test_live_database_wins_over_an_archive_holding_the_same_id(self):
+        # A recycled id must resolve to the LIVE row, never the stale archived one,
+        # or a reopened task would read as archived and closed.
+        directives = [directive("dup", identity="a" * 40, task="task-dup")]
+        per_db = {
+            self.LIVE: {"task-dup": "IN_PROGRESS"},
+            self.ARCHIVE: {"task-dup": "CLOSED"},
+        }
+        report, runner = self.evaluate(directives, per_db)
+        self.assertEqual(set(), self.issues_of(report, "dup"))
+        # Short-circuits: every id was satisfied by the live database.
+        self.assertEqual([self.LIVE], runner.queried)
+
+    def test_archive_only_resolution_cannot_demote_a_satisfied_row(self):
+        # The bug this guards: `task_in_archived_db` was initially outside the
+        # exempt set, so it fell through to `invalid` and then `unaccountable`,
+        # turning 18 ancestry-verified landed directives into drift.
+        directives = [directive("landed", identity="a" * 40, task="task-archived")]
+        per_db = {self.LIVE: {}, self.ARCHIVE: {"task-archived": "CLOSED"}}
+        report, _runner = self.evaluate(directives, per_db)
+        self.assertEqual("satisfied", self.state_of(report, "landed"))
+        self.assertEqual(0, report.exit_code)
+
+    def test_live_database_outage_is_unverifiable_not_a_mass_not_found(self):
+        # A dead live database must never read as "nobody has a task".
+        class DeadLive(self.DbAwareRunner):
+            def __call__(self, command, **kwargs):
+                command = tuple(str(item) for item in command)
+                if command[:2] == ("tg", "sql"):
+                    self.queried.append((kwargs.get("env") or {}).get("TG_DB_PATH", ""))
+                    return completed(command, rc=1, stderr="unable to open database")
+                return FakeRunner.__call__(self, command, **kwargs)
+
+        runner = DeadLive({})
+        env = dict(os.environ)
+        env["DIRECTIVE_TASK_DBS"] = os.pathsep.join([self.LIVE, self.ARCHIVE])
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            with tempfile.TemporaryDirectory() as temporary:
+                ledger = Path(temporary) / "ledger.json"
+                ledger.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "directives": [
+                                directive("x", identity="a" * 40, task="task-live")
+                            ],
+                        }
+                    )
+                )
+                report = directive_check.evaluate(
+                    ledger_path=ledger,
+                    run=runner,
+                    checked_at="2026-08-04T00:00:00+00:00",
+                )
+        self.assertEqual("unverifiable", self.state_of(report, "x"))
+        self.assertEqual(0, report.counts.get("task_not_found", 0))
+        self.assertEqual(0, report.counts.get("missing_task", 0))
+
+
+class TaskDatabaseLineageTest(unittest.TestCase):
+    def test_lineage_admits_numbered_siblings_and_excludes_other_projects(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in (
+                "hermit.db",
+                "hermit1.db",
+                "hermit2.db",
+                "hermit-policy-audit.db",
+                "hatch2.db",
+                "scx-sim.db",
+            ):
+                (root / name).write_text("")
+            with unittest.mock.patch.dict(
+                os.environ, {"TG_DB_PATH": str(root / "hermit2.db")}, clear=True
+            ):
+                found = directive_check.task_databases()
+        names = [Path(p).name for p in found]
+        self.assertEqual("hermit2.db", names[0], "live database must be queried first")
+        self.assertEqual({"hermit.db", "hermit1.db"}, set(names[1:]))
+        # A bare `hermit*` prefix would drag in an unrelated project's database and
+        # resolve task ids out of it -- a false positive worse than the miss.
+        self.assertNotIn("hermit-policy-audit.db", names)
+        self.assertNotIn("hatch2.db", names)
+        self.assertNotIn("scx-sim.db", names)
 
 if __name__ == "__main__":
     unittest.main()

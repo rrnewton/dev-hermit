@@ -29,7 +29,10 @@ import sqlite3
 import sys
 from pathlib import Path
 
-DB = Path.home() / ".tg" / "hermit.db"
+# Resolved, never hardcoded: this literal named the predecessor's frozen
+# database.  See ci-hub/lib/taskgraph_db.py.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import taskgraph_db  # noqa: E402
 
 # Exactly one of these per nonterminal task. `backend:<name>` is a family:
 # any label with that prefix counts as one workstream, so a new backend does
@@ -117,7 +120,7 @@ def is_p01(priority: str | None) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--db", type=Path, default=DB)
+    ap.add_argument("--db", type=Path, default=None)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--gate", choices=["all", "p01", "none"], default="p01",
                     help="which rows may fail the exit code. 'p01' (default) is the "
@@ -127,10 +130,12 @@ def main(argv: list[str] | None = None) -> int:
                          "Move to 'all' once the backlog is labelled.")
     a = ap.parse_args(argv)
 
-    if not a.db.exists():
-        print(f"UNVERIFIABLE: no TaskGraph db at {a.db}", file=sys.stderr)
+    try:
+        db = taskgraph_db.resolve(a.db).path
+    except taskgraph_db.TaskGraphUnavailable as error:
+        print(f"UNVERIFIABLE: {error}", file=sys.stderr)
         return 2
-    rows, agg = load(a.db)
+    rows, agg = load(db)
 
     if len(rows) != agg:
         # Should be impossible inside one transaction; if it happens the count

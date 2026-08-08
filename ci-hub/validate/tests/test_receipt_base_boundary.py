@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Two-sided brackets for receipt-carried base evidence at merge time."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+import qualifying_receipt as qr  # noqa: E402
+
+
+ENV = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "base-fixture",
+    "GIT_AUTHOR_EMAIL": "base@example.invalid",
+    "GIT_COMMITTER_NAME": "base-fixture",
+    "GIT_COMMITTER_EMAIL": "base@example.invalid",
+}
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=ENV,
+    ).stdout.strip()
+
+
+def commit(repo: Path, message: str) -> str:
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", message)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def make_repo(path: Path) -> Path:
+    path.mkdir()
+    git(path, "init", "-q")
+    return path
+
+
+def row_for(
+    hermit: Path, head: str, base: str, reverie: Path, reverie_base: str
+) -> dict:
+    return {
+        "commit": head,
+        "commit_anchored": True,
+        "tree_dirty": False,
+        "selection_mode": "full",
+        "profile": "full",
+        "result": "pass",
+        "raw_result": "pass",
+        "exit_code": 0,
+        "failures": 0,
+        "executed_tests": 1,
+        "filtered_tests": 0,
+        "schema_version": 5,
+        "repo": "hermit",
+        "tree": qr.git_tree(str(hermit), head),
+        "started_at": "2026-08-08T00:00:00Z",
+        "finished_at": "2026-08-08T00:01:00Z",
+        "host": "base-boundary-fixture",
+        "slot": "fixture-slot",
+        "log_file": "/tmp/base-boundary-fixture.log",
+        "checks": 1,
+        "gates_run": 1,
+        "gates_expected": 1,
+        "gates": [{"name": "fixture", "result": "pass", "exit_code": 0}],
+        "coverage": {
+            "planned_test_nodes": 1,
+            "executed_test_nodes": 1,
+            "zero_executed_nodes": [],
+            "absent_nodes": [],
+        },
+        "producer": "hermit-validate-sh",
+        "admission": "ci-hub-validate-lock",
+        "concurrent_validates": 0,
+        "concurrency_proof": "validate_lock_owner_ancestry",
+        "base_sha": base,
+        "base_tree": qr.git_tree(str(hermit), base),
+        "reverie_base_sha": reverie_base,
+        "reverie_base_tree": qr.git_tree(str(reverie), reverie_base),
+    }
+
+
+def running_consumer(
+    row: dict,
+    hermit: Path,
+    current_base: str,
+    reverie: Path,
+    current_reverie: str,
+) -> subprocess.CompletedProcess[str]:
+    root = Path(__file__).resolve().parents[3]
+    return subprocess.run(
+        [
+            str(root / "ci-hub/ci-hub"),
+            "receipt-digest",
+            "--sha",
+            row["commit"],
+            "--require-qualifying",
+            "--current-base",
+            current_base,
+            "--current-reverie-base",
+            current_reverie,
+            "--repo-checkout",
+            str(hermit),
+            "--reverie-checkout",
+            str(reverie),
+        ],
+        input=json.dumps(row),
+        capture_output=True,
+        text=True,
+        env=ENV,
+    )
+
+
+def test_merge_boundary_brackets_both_ways_and_preserves_schema4(tmp_path: Path) -> None:
+    hermit = make_repo(tmp_path / "hermit")
+    (hermit / "src").mkdir()
+    (hermit / "src/lib.rs").write_text("pub fn one() {}\n")
+    old_base = commit(hermit, "old base")
+    (hermit / "src/lib.rs").write_text("pub fn two() {}\n")
+    current_base = commit(hermit, "current base")
+    (hermit / "src/pr.rs").write_text("pub fn pr_change() {}\n")
+    pr_head = commit(hermit, "legitimately based PR head")
+    git(hermit, "checkout", "-q", old_base)
+    (hermit / "src/unsafe.rs").write_text("pub fn unsafe_base() {}\n")
+    unsafe_head = commit(hermit, "head that does not contain current base")
+    git(hermit, "checkout", "-q", pr_head)
+
+    reverie = make_repo(tmp_path / "reverie")
+    (reverie / "reverie-dbi/src").mkdir(parents=True)
+    (reverie / "reverie-dbi/src/lib.rs").write_text("pub fn dbi() {}\n")
+    (reverie / "AGENTS.md").write_text("old policy\n")
+    old_reverie = commit(reverie, "build content")
+    (reverie / "AGENTS.md").write_text("new policy only\n")
+    current_reverie = commit(reverie, "policy-only delta")
+
+    pred = qr.active()
+
+    positive = row_for(hermit, pr_head, current_base, reverie, current_reverie)
+    assert qr.base_boundary_verdict(
+        positive,
+        pred,
+        current_base=current_base,
+        current_reverie_base=current_reverie,
+        repo_checkout=str(hermit),
+        reverie_checkout=str(reverie),
+    ) is qr.BaseVerdict.SATISFIED
+    assert running_consumer(
+        positive, hermit, current_base, reverie, current_reverie
+    ).returncode == 0
+
+    # D is deliberately rejected: even a policy-only Reverie delta is a new
+    # exact tree and requires a fresh receipt. This keeps .gitmodules and every
+    # future unclassified path relevant without brittle build-script guards.
+    stale_reverie = row_for(hermit, pr_head, current_base, reverie, old_reverie)
+    assert qr.base_boundary_verdict(
+        stale_reverie,
+        pred,
+        current_base=current_base,
+        current_reverie_base=current_reverie,
+        repo_checkout=str(hermit),
+        reverie_checkout=str(reverie),
+    ) is qr.BaseVerdict.REVERIE_BASE_NOT_CURRENT
+    assert running_consumer(
+        stale_reverie, hermit, current_base, reverie, current_reverie
+    ).returncode != 0
+
+    stale = row_for(hermit, pr_head, old_base, reverie, current_reverie)
+    assert qr.base_boundary_verdict(
+        stale,
+        pred,
+        current_base=current_base,
+        current_reverie_base=current_reverie,
+        repo_checkout=str(hermit),
+        reverie_checkout=str(reverie),
+    ) is qr.BaseVerdict.BASE_NOT_CURRENT
+    assert running_consumer(
+        stale, hermit, current_base, reverie, current_reverie
+    ).returncode != 0
+
+    unsafe = row_for(hermit, unsafe_head, current_base, reverie, current_reverie)
+    assert qr.base_boundary_verdict(
+        unsafe,
+        pred,
+        current_base=current_base,
+        current_reverie_base=current_reverie,
+        repo_checkout=str(hermit),
+        reverie_checkout=str(reverie),
+    ) is qr.BaseVerdict.BASE_NOT_CONTAINED
+    assert running_consumer(
+        unsafe, hermit, current_base, reverie, current_reverie
+    ).returncode != 0
+
+    missing = dict(positive)
+    missing.pop("base_sha")
+    assert qr.base_evidence_verdict(missing, pred) is qr.BaseVerdict.BASE_SHA_MISSING
+    assert running_consumer(
+        missing, hermit, current_base, reverie, current_reverie
+    ).returncode != 0
+
+    # Honest grandfathering: pre-obligation rows remain unknown, never false.
+    grandfathered = dict(positive)
+    grandfathered["schema_version"] = 4
+    for field in (
+        "base_sha",
+        "base_tree",
+        "reverie_base_sha",
+        "reverie_base_tree",
+    ):
+        grandfathered.pop(field)
+    assert qr.base_boundary_verdict(
+        grandfathered,
+        pred,
+        current_base=current_base,
+        current_reverie_base=current_reverie,
+        repo_checkout=str(hermit),
+        reverie_checkout=str(reverie),
+    ) is qr.BaseVerdict.GRANDFATHERED_UNKNOWN
+    assert running_consumer(
+        grandfathered, hermit, current_base, reverie, current_reverie
+    ).returncode == 0

@@ -19,6 +19,7 @@ from pathlib import Path
 
 MODULE = Path(__file__).resolve().parents[1] / "check-scorecard-tier.py"
 MIGRATE = MODULE.with_name("migrate-scorecard-schema.py")
+README = MODULE.with_name("README.md")
 SPEC = importlib.util.spec_from_file_location("cst", MODULE)
 assert SPEC and SPEC.loader
 cst = importlib.util.module_from_spec(SPEC)
@@ -35,6 +36,18 @@ SPOT_CHECKED = (
 EXPLICITLY_UNQUALIFIED = (
     "program,backend,comparison_tier,result\n"
     "p,ptrace,legacy-unqualified,pass\n"
+)
+SELF_VERIFIED_ONLY = (
+    "program,backend,comparison_tier,result\n"
+    "p,ptrace,unqualified-self-verify-only,pass\n"
+)
+NO_COMPARISON = (
+    "program,backend,comparison_tier,result\n"
+    "p,ptrace,unqualified-no-comparison,gap\n"
+)
+UNKNOWN_TIER = (
+    "program,backend,comparison_tier,result\n"
+    "p,ptrace,unqualified-self-verify,pass\n"
 )
 UNTIERED_COLUMN = "program,backend,result\np,ptrace,pass\n"
 BLANK_TIER = "program,backend,comparison_tier,result\np,ptrace,,pass\n"
@@ -55,6 +68,42 @@ class GuardTest(unittest.TestCase):
             with p.open() as fh:
                 rows = list(csv.DictReader(fh))
             self.assertNotIn(rows[0]["comparison_tier"], cst.QUALIFYING)
+
+    def test_self_verify_only_is_known_but_never_cross_backend_green(self):
+        """Within-backend consistency is recorded without inventing parity."""
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "a-scorecard.csv"
+            p.write_text(SELF_VERIFIED_ONLY)
+            self.assertEqual(0, cst.main(["--root", t, "--quiet"]))
+            with p.open() as fh:
+                tier = next(csv.DictReader(fh))["comparison_tier"]
+            self.assertIn(tier, cst.UNQUALIFIED)
+            self.assertNotIn(tier, cst.QUALIFYING)
+
+    def test_nearby_unknown_self_verify_spelling_is_refused(self):
+        """The new value is one exact provenance class, not a prefix escape."""
+        with tempfile.TemporaryDirectory() as t:
+            (Path(t) / "a-scorecard.csv").write_text(UNKNOWN_TIER)
+            self.assertEqual(1, cst.main(["--root", t, "--quiet"]))
+
+    def test_no_comparison_is_known_but_never_green(self):
+        """An unexecuted gap carries no invented comparison witness."""
+        with tempfile.TemporaryDirectory() as t:
+            p = Path(t) / "a-scorecard.csv"
+            p.write_text(NO_COMPARISON)
+            self.assertEqual(0, cst.main(["--root", t, "--quiet"]))
+            with p.open() as fh:
+                tier = next(csv.DictReader(fh))["comparison_tier"]
+            self.assertIn(tier, cst.UNQUALIFIED)
+            self.assertNotIn(tier, cst.QUALIFYING)
+
+    def test_self_verify_only_has_schema_facing_provenance(self):
+        text = README.read_text(encoding="utf-8")
+        self.assertIn("`unqualified-self-verify-only`", text)
+        self.assertIn("within-backend self-consistency", text)
+        self.assertIn("makes no cross-backend stdout", text)
+        self.assertIn("`unqualified-no-comparison`", text)
+        self.assertIn("no comparison witness exists", text)
 
     def test_migration_marks_history_unqualified_without_inventing_a_strict_tier(self):
         with tempfile.TemporaryDirectory() as t:

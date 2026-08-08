@@ -114,6 +114,37 @@ ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
 WT="$ROOT/worktrees/lander/hermit"
 R=rrnewton/hermit
 say(){ echo "[land#$PR] $*"; }
+
+# BIND THE PR TO ITS REPOSITORY BEFORE DEREFERENCING ANY AUTHORITY.
+# `R` is hard-coded to rrnewton/hermit and there is no --repo option, so invoking
+# this with a PR number from another repository silently resolves the SAME NUMBER
+# in hermit and validates against a completely unrelated commit. Observed
+# 2026-08-08: `land-pr.sh 409 policy/commit-message-role-team-tag` for
+# rrnewton/reverie#409 reported "exact-head authority green for 18758e9a" -- the
+# head of hermit#1911 -- and dereferenced a hermit merge-gate run for it. It
+# abandoned only because head resolution happened to fail further down; nothing
+# had checked that PR 409 was a hermit PR at all.
+#
+# A PR number is not an identity. Refuse unless the number resolves in THIS
+# repository to a PR whose head branch is the branch the caller named.
+verify_pr_belongs_to_repo(){
+  local actual
+  actual=$(with-proxy gh pr view "$PR" -R "$R" --json headRefName -q .headRefName 2>/dev/null) || {
+    echo "land-pr: REFUSE: PR #$PR does not resolve in $R" >&2
+    exit 2
+  }
+  if [ -z "$actual" ]; then
+    echo "land-pr: REFUSE: PR #$PR has no head branch in $R" >&2
+    exit 2
+  fi
+  if [ "$actual" != "$BR" ]; then
+    echo "land-pr: REFUSE: $R#$PR has head branch '$actual', but '$BR' was named." >&2
+    echo "land-pr:   This lander only lands $R. If #$PR belongs to another" >&2
+    echo "land-pr:   repository, it CANNOT be landed here -- the same number in $R" >&2
+    echo "land-pr:   is a different pull request and its green is not your evidence." >&2
+    exit 2
+  fi
+}
 comment_abandon(){
   local reason="$1"
   with-proxy gh pr comment "$PR" -R "$R" --body \
@@ -196,11 +227,11 @@ abandon(){
 with-proxy git -C "$WT" fetch -q origin main || abandon "fetch origin/main failed" 2
 with-proxy git -C "$WT" fetch -q origin "$BR" 2>/dev/null || true
 
-# 1b. Owner-authorized exact-head authority gate. Hermit's counted local full
-# receipt and its versioned registered hosted-portable job are interchangeable
-# positives. A genuine red from either blocks; missing/partial/stale evidence is
-# NO_RESULT, never green. The same predicate is checked after a SHA-changing
-# rebase.
+# 1b. Owner-authorized exact-head OR gate. A counted local receipt and the
+# registered hosted job set are interchangeable positive authorities; a
+# genuine red from either blocks. Missing/partial/stale evidence is NO_RESULT,
+# never a green. The same predicate is checked again after a SHA-changing rebase.
+verify_pr_belongs_to_repo
 ORIG=$(git -C "$WT" rev-parse "origin/$BR" 2>/dev/null) || abandon "cannot resolve origin/$BR head for eligibility gate" 4
 VS=$("$SCRIPT_DIR/exact-head-validation-authority.sh" --repo "$R" --sha "$ORIG" 2>&1); VRC=$?
 say "exact-head validation(head=$ORIG) rc=$VRC: $VS"
@@ -231,11 +262,9 @@ esac
 # re-derives the exact-head authority at the NEW sha, and every exact-head green
 # earned at the old sha is orphaned -- a rebase can only ever downgrade an
 # already-authorized head to NO_RESULT. Measured 2026-08-07 on #1705/#1711/#1678:
-# all three held what the former OR rule called a qualifying
-# `AUTHORITY=hosted` green (~30 min of hosted CI each) that an unconditional
-# rebase would have voided the moment another team advanced main. Hosted-only is
-# no longer sufficient under the named coverage rule. See also
-# rrnewton/hermit#1812, where an unconditional
+# all three held a qualifying `AUTHORITY=hosted` green (~30 min of hosted CI
+# each) that an unconditional rebase would have voided the moment another team
+# advanced main. See also rrnewton/hermit#1812, where an unconditional
 # rebase-and-force-push in the union driver amended main's tip onto two PR
 # branches and landed #1188/#1209 as semantic no-ops.
 #
@@ -278,18 +307,27 @@ else
   say "pushed head=$HEAD"
 fi
 
-# 4. The pushed exact head needs counted local or versioned hosted authority.
-# A rebase that changed the SHA cannot inherit the old authorization.
+# 4. The pushed exact head needs a fresh positive from either registered
+# authority. A rebase that changed the SHA cannot inherit the old authorization.
 # Only the ledger-guarded applier may materialize the optional local cache label.
 #
-# 4a. Re-mint count-backed schema-5 rows from durable logs BEFORE reading the
-# ledger. hermit's validate.sh writes a count-less schema-3 receipt when it can't
-# reach the parent count helper; with the uncounted-receipt grandfather removed,
-# such a genuine green would be NotValidated. The scan (append-safe, idempotent)
-# upgrades HEAD's row from its own log so a real green is not stranded by a
-# producer that failed to inline its counts. Best-effort: never aborts landing —
-# eligibility below remains the authoritative fail-closed gate.
-"$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" || true
+# 4a. Re-mint one exact count-backed schema-5 row from its durable log BEFORE
+# reading the ledger. hermit's validate.sh writes a count-less schema-3 receipt
+# when it can't reach the parent count helper; with the uncounted-receipt
+# grandfather removed, such a genuine green would be NotValidated. Select one
+# exact HEAD row by its Rust-canonical digest, then pass both identities into the
+# append-safe finalizer so a real green is not stranded by a producer that
+# failed to inline its counts. Best-effort: never aborts landing — eligibility
+# below remains the authoritative fail-closed gate.
+selected_row_sha256=$("$ROOT/ci-hub/validate/scan-finalize.sh" \
+  --select-candidate-sha256 --sha "$HEAD" --hermit-checkout "$WT" \
+  2>/dev/null) || selected_row_sha256=
+if [[ $selected_row_sha256 =~ ^[0-9a-f]{64}$ ]]; then
+  "$ROOT/ci-hub/validate/scan-finalize.sh" --hermit-checkout "$WT" \
+    --sha "$HEAD" --selected-row-sha256 "$selected_row_sha256" || true
+else
+  say "scan-finalize: no unique exact source row selected for $HEAD (best-effort)"
+fi
 # Capture the VERBATIM first_error_line of every surviving red log into the
 # durable append-only sidecar (ignored/validate-red-attribution.jsonl) BEFORE the
 # /tmp log is evicted. Append-only + idempotent, so it races no appender and never
@@ -376,10 +414,20 @@ if [ "$gate" != ok ]; then
   exit 75
 fi
 
-# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. The
+# 5b. Re-evaluate the exact-head OR policy at the final mutation boundary. A
 # local positive now additionally dereferences its immutable receipt comment;
-# versioned hosted portable remains independently sufficient. Any genuine red
-# blocks.
+# a hosted positive remains independently sufficient. Any genuine red blocks.
+# Mutable-tip currency is asserted HERE, exactly once: refresh both authorities
+# immediately before dereferencing the receipt. A stale receipt costs this gate
+# rerun, never another full validation. No ancestry-distance budget exists.
+with-proxy git -C "$WT" fetch -q origin main \
+  || abandon "could not refresh Hermit main at the final receipt boundary" 5
+current_base=$(git -C "$WT" rev-parse --verify origin/main) \
+  || abandon "could not resolve Hermit main at the final receipt boundary" 5
+with-proxy git -C "$ROOT/reverie" fetch -q origin main \
+  || abandon "could not refresh Reverie main at the final receipt boundary" 5
+current_reverie_base=$(git -C "$ROOT/reverie" rev-parse --verify origin/main) \
+  || abandon "could not resolve Reverie main at the final receipt boundary" 5
 live_head=$(with-proxy gh pr view "$PR" -R "$R" --json headRefOid -q .headRefOid 2>/dev/null) \
   || abandon "could not resolve the live PR head before receipt authorization" 5
 [ "$live_head" = "$HEAD" ] \
@@ -391,7 +439,10 @@ if ! with-proxy gh api --paginate --slurp \
   printf '[]\n' >"$receipt_comments"
 fi
 receipt_detail=$("$SCRIPT_DIR/exact-head-validation-authority.sh" \
-  --repo "$R" --sha "$HEAD" --comments "$receipt_comments" 2>&1)
+  --repo "$R" --sha "$HEAD" --comments "$receipt_comments" \
+  --current-base "$current_base" \
+  --current-reverie-base "$current_reverie_base" \
+  --repo-checkout "$WT" --reverie-checkout "$ROOT/reverie" 2>&1)
 receipt_rc=$?
 rm -f -- "$receipt_comments"
 if [ "$receipt_rc" -ne 0 ]; then
@@ -399,19 +450,17 @@ if [ "$receipt_rc" -ne 0 ]; then
 fi
 say "exact-head validation authority authorized: $receipt_detail"
 
-# 6. FIX 2: the merge command is the mergeability arbiter. Attempt `gh pr merge
-# --rebase` (NEVER --admin) in a bounded retry loop -- the call forces GitHub to
-# recompute mergeability, resolving a stuck UNKNOWN here. Treat "already merged"
-# as success; a genuine block surfaces as a persistent error after the budget.
-merged=""; out=""
-for mtries in $(seq 12); do
-  out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase \
-    --match-head-commit "$HEAD" 2>&1) && { merged=ok; break; }
-  grep -qi 'already merged' <<<"$out" && { say "already merged"; merged=ok; break; }
-  say "merge attempt $mtries not-ready: $(tr '\n' ' ' <<<"$out" | tail -c 160)"
-  sleep 15
-done
-[ "$merged" = ok ] || abandon "gh pr merge --rebase did not succeed after 12 tries (last: $(tr '\n' ' ' <<<"$out" | tail -c 160))" 6
+# 6. The merge command is the mergeability arbiter. Make exactly one attempt
+# under the final-boundary verdict above. Retrying here would let an authorization
+# age for minutes after the mutable tips were observed. A refusal reruns the gate,
+# which re-fetches both tips and re-verifies the receipt; it never revalidates.
+out=$(with-proxy gh pr merge "$PR" -R "$R" --rebase \
+  --match-head-commit "$HEAD" 2>&1) && merged=ok || merged=
+if [ -z "$merged" ] && grep -qi 'already merged' <<<"$out"; then
+  say "already merged"
+  merged=ok
+fi
+[ "$merged" = ok ] || abandon "gh pr merge --rebase refused after the fresh final-boundary check; rerun the gate (last: $(tr '\n' ' ' <<<"$out" | tail -c 160))" 6
 
 # 7. ancestry-verify: a PR-head hash is NOT a landing. Confirm the merge commit is
 # reachable from origin/main before declaring success.

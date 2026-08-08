@@ -399,8 +399,14 @@ class OperationalHealthTest(unittest.TestCase):
     def test_agent_snapshot_cache_is_freshness_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "agents.json"
+            # Carries a pane id because the cached-read path now requires one:
+            # this test round-trips through the CACHE, and a cached entry with
+            # no `%NN` identity is refused as implausible. The subject of this
+            # test is freshness bounding, which the assertions below still
+            # exercise unchanged.
             agents, captured_at = operational_health.load_agent_snapshot(
-                '[{"name":"worker","status":"busy","current_task":"task"}]',
+                '[{"name":"worker","status":"busy","current_task":"task",'
+                '"tmux_pane_id":"%1"}]',
                 snapshot_file=path,
                 now=1000,
             )
@@ -444,7 +450,25 @@ class OperationalHealthTest(unittest.TestCase):
 (1 rows)
 """
         completed = SimpleNamespace(returncode=0, stdout=output, stderr="")
+        # The resolver must be stubbed as well as subprocess.run. `resolve()` is
+        # called while BUILDING run's `env=` argument, so it executes even though
+        # run itself is mocked -- and with no TG_DB_PATH bound it raises
+        # TaskGraphUnavailable before the parser under test is ever reached. That
+        # is why this passed on an agent box, where a graph is always bound, and
+        # failed on hosted CI, where none is. Verified by bracketing rather than
+        # inferred from the message: bound it passes, `env -u TG_DB_PATH`
+        # reproduces CI's exact RuntimeError.
+        #
+        # This is a PARSER test. Binding a real graph would make it depend on that
+        # graph's contents; stubbing the resolver keeps it testing exactly what it
+        # names. The resolver's own refusal is not weakened here -- it keeps its
+        # coverage in ci-hub/health/tests/test_orphaned_task_detector_fails_closed.py,
+        # where an unresolvable graph must be COULD NOT MEASURE and never a clean zero.
         with mock.patch.object(
+            operational_health.taskgraph_db, "resolve", return_value=None
+        ), mock.patch.object(
+            operational_health.taskgraph_db, "child_env", return_value={}
+        ), mock.patch.object(
             operational_health.subprocess,
             "run",
             return_value=completed,
@@ -539,9 +563,10 @@ class CloseOnImplementedLifecycleTest(unittest.TestCase):
     """
 
     @staticmethod
-    def _task(tid, *, status="IN_PROGRESS", owner="", tags=()):
+    def _task(tid, *, status="IN_PROGRESS", owner="", tags=(), landed=False):
         return operational_health.TaskRecord(
-            id=tid, title=tid, owner=owner, tags=tuple(tags), status=status
+            id=tid, title=tid, owner=owner, tags=tuple(tags), status=status,
+            landed=landed,
         )
 
     def fixture(self):
@@ -578,6 +603,78 @@ class CloseOnImplementedLifecycleTest(unittest.TestCase):
             ["implemented-unlanded", "implemented-unlanded-2"],
         )
         self.assertEqual(r.counts()["awaiting_land"], 2)
+
+    def test_awaiting_land_moves_in_BOTH_directions(self):
+        """A queue depth that cannot fall is not a queue depth.
+
+        The defect: `awaiting_landing` was a bare `return self.implemented`,
+        with an entry condition and NO exit. Nothing removes the tag and no
+        `landed` tag exists, so every landed task incremented the count
+        forever — it grew monotonically with success and read 1718 while the
+        real backlog was ~47. This asserts the property that was missing, in
+        both directions, because only rising is the whole bug.
+        """
+        base = self.fixture()
+        agents = [operational_health.AgentRecord(
+            name="agent-a", status="running", current_task="active-ready")]
+
+        def depth(tasks):
+            return operational_health.reconcile_active_work(
+                tasks, agents).counts()["awaiting_land"]
+
+        start = depth(base)
+        self.assertEqual(start, 2)
+
+        # UP: tag one more task implemented -> the debt RISES.
+        rose = base + [self._task("newly-implemented", status="CLOSED",
+                                  tags=("implemented",))]
+        self.assertEqual(depth(rose), start + 1,
+                         "tagging implemented must increase the debt")
+
+        # DOWN: that same task lands (gateway records CLOSURE-VERIFIED)
+        # -> the debt FALLS back. This is the direction the old code could
+        # never express.
+        landed = base + [self._task("newly-implemented", status="CLOSED",
+                                    tags=("implemented",), landed=True)]
+        self.assertEqual(depth(landed), start,
+                         "a proven-landed task must leave the debt")
+
+        # And landing the whole original set drains it to zero.
+        all_landed = [
+            self._task(t.id, status=t.status, owner=t.owner, tags=t.tags,
+                       landed=t.implemented)
+            for t in base
+        ]
+        self.assertEqual(depth(all_landed), 0,
+                         "the debt must be able to reach zero")
+
+    def test_closed_status_alone_does_not_discharge_the_debt(self):
+        """CLOSED is not landed, and must not be read as landed.
+
+        Measured 2026-08-07: only 291 of 1718 implemented tasks carried a
+        CLOSURE-VERIFIED proof, so 1427 were closed with no landing evidence.
+        Exiting on status instead of proof would discharge the debt by
+        assertion — the phantom-closure mode the gateway exists to prevent.
+        """
+        closed_unproven = [self._task("closed-no-proof", status="CLOSED",
+                                      tags=("implemented",), landed=False)]
+        r = operational_health.reconcile_active_work(closed_unproven, [])
+        self.assertEqual([t.id for t in r.awaiting_land], ["closed-no-proof"])
+
+    def test_lifecycle_violation_stays_a_distinct_signal(self):
+        """The two metrics must not collapse into near-duplicates.
+
+        Scoping awaiting_land to IN_PROGRESS (the other candidate fix) would
+        have made it `implemented AND NOT closed`, which is exactly
+        `lifecycle_violation`. Here an implemented+landed+open task is a
+        lifecycle deviation but NOT landing debt, so the sets differ.
+        """
+        tasks = [self._task("open-implemented-landed", status="IN_PROGRESS",
+                            owner="a", tags=("implemented",), landed=True)]
+        r = operational_health.reconcile_active_work(tasks, [])
+        self.assertEqual([t.id for t in r.lifecycle_violations],
+                         ["open-implemented-landed"])
+        self.assertEqual([t.id for t in r.awaiting_land], [])
 
     def test_closed_implemented_work_is_never_dispatchable(self):
         """Negative mutation: the landing debt must not leak into any set an
@@ -636,3 +733,174 @@ class CloseOnImplementedLifecycleTest(unittest.TestCase):
             any("+7 more" in d for d in detail),
             f"residue must be stated explicitly, got: {detail}",
         )
+
+
+class PrimarySnapshotDeferralTest(unittest.TestCase):
+    """Time the deferral instead of paging on the first lost race.
+
+    `primary_checkout` decides whether the snapshot CAN be published right now;
+    this layer is the only one that can tell a race from a stuck snapshot, because
+    only it persists across ticks. The threshold is on TIME, not on commit
+    distance -- commit distance is the moving quantity that made this gate
+    unsatisfiable in the first place.
+    """
+
+    def capture(self, **kwargs: object) -> tuple[int, str]:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = operational_health.primary_snapshot_gate(**kwargs)  # type: ignore[arg-type]
+        return int(result), output.getvalue()
+
+    @contextlib.contextmanager
+    def outcome(self, code: int):
+        with mock.patch.object(
+            operational_health.primary_checkout, "checkout_fresh", return_value=code
+        ):
+            yield
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.state = Path(self.temp.name) / "deferral.json"
+
+    # ---- NEGATIVE: a lost race must not page --------------------------------
+
+    def test_first_deferral_starts_the_clock_and_stays_quiet(self) -> None:
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            result, output = self.capture(state_path=self.state, now=1000.0)
+        self.assertEqual(result, 0)
+        self.assertIn("state=deferred", output)
+        self.assertIn("deferred_mins=0", output)
+        self.assertTrue(self.state.exists(), "the deferral clock was not persisted")
+
+    def test_deferral_inside_the_budget_still_does_not_page(self) -> None:
+        """59 minutes of losing races is still a race on a box this busy."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+            result, output = self.capture(state_path=self.state, now=1000.0 + 59 * 60)
+        self.assertEqual(result, 0)
+        self.assertIn("state=deferred", output)
+        self.assertIn("deferred_mins=59.0", output)
+
+    # ---- POSITIVE: a stuck snapshot must page -------------------------------
+
+    def test_deferral_past_the_budget_pages(self) -> None:
+        """Twelve consecutive lost ticks is not luck; something is holding it down."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+            result, output = self.capture(state_path=self.state, now=1000.0 + 61 * 60)
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+        self.assertIn("no longer a lost race", output)
+
+    def test_a_real_block_pages_immediately_without_waiting_out_the_budget(self) -> None:
+        """A dirty primary is not a moving reference and gets no grace period."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_BLOCKED):
+            result, output = self.capture(state_path=self.state, now=1000.0)
+        self.assertEqual(result, 1)
+        self.assertIn("state=blocked", output)
+
+    # ---- the clock must be honest ------------------------------------------
+
+    def test_a_successful_publish_clears_the_clock(self) -> None:
+        """Otherwise an old deferral ages into a page after the problem is gone."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_PUBLISHED):
+            result, output = self.capture(state_path=self.state, now=1000.0 + 10 * 60)
+        self.assertEqual(result, 0)
+        self.assertIn("state=ok", output)
+        self.assertFalse(self.state.exists(), "the deferral clock survived a success")
+
+        # And a fresh deferral after that starts from zero, not from the old clock.
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            result, output = self.capture(state_path=self.state, now=1000.0 + 20 * 60)
+        self.assertEqual(result, 0)
+        self.assertIn("deferred_mins=0", output)
+
+    def test_a_hard_block_also_clears_the_clock(self) -> None:
+        """A block is reported on its own terms; it must not inherit an aged clock
+        and then page twice for two different reasons."""
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_DEFERRED):
+            self.capture(state_path=self.state, now=1000.0)
+        with self.outcome(operational_health.primary_checkout.SNAPSHOT_BLOCKED):
+            self.capture(state_path=self.state, now=1000.0 + 5 * 60)
+        self.assertFalse(self.state.exists())
+
+
+class MainAuthorityAbsenceIsNotGreenTest(unittest.TestCase):
+    """Silence must stop meaning green, WITHOUT becoming unsatisfiable.
+
+    The gate alarmed on explicit red and stayed quiet otherwise, so an authority
+    that never resolved was indistinguishable from a passing one. The naive
+    repair -- alarm on `pending` -- fires after every push and is an alarm no
+    coordinator can satisfy, which is the anti-pattern removed from three other
+    gates today. So the discriminator is TIME, and both sides are planted here.
+    """
+
+    def _health(self, repo_states, available=True):
+        gh = operational_health.github_main_health
+        return [
+            gh.RepoMainHealth(repo=r, main_sha="a" * 40, state=s, runs=(),
+                              available=available)
+            for r, s in repo_states
+        ]
+
+    def capture(self, health, age):
+        gh = operational_health.github_main_health
+        out = io.StringIO()
+        with mock.patch.object(gh, "collect_health", return_value=health), \
+             mock.patch.object(gh, "pending_age_secs",
+                               side_effect=lambda runs, *a, **k: age):
+            with contextlib.redirect_stdout(out):
+                rc = operational_health.github_main_gate()
+        return rc, out.getvalue()
+
+    # ---- must NOT alarm -------------------------------------------------
+
+    def test_a_normal_post_push_pending_window_is_silent(self) -> None:
+        """90s of pending after a push is the common case and must stay quiet."""
+        rc, out = self.capture(self._health([("r/one", "pending")]), 90.0)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("state=pending", out)
+        self.assertIn("oldest_pending_secs=90", out)
+
+    def test_green_is_still_green(self) -> None:
+        rc, out = self.capture(self._health([("r/one", "green")]), None)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("state=green", out)
+
+    # ---- must alarm -----------------------------------------------------
+
+    def test_pending_past_the_bound_alarms_and_names_the_remedy(self) -> None:
+        """The live case: a run superseded under queue-depth-1, silent for hours."""
+        rc, out = self.capture(self._health([("r/one", "pending")]), 9198.0)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("state=stale-pending", out)
+        self.assertIn("9198", out)
+        self.assertIn("HOLE, not a green", out)
+        self.assertIn("Re-dispatch", out, "the alarm must name what clears it")
+
+    def test_an_absent_authority_reports_unmeasured_not_passing(self) -> None:
+        """`none` = no authority run at all. Not a green and not a red."""
+        rc, out = self.capture(self._health([("r/one", "none")]), None)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("COULD NOT BE MEASURED", out)
+        self.assertNotIn("main is green", out)
+
+    def test_an_unavailable_repo_reports_unmeasured(self) -> None:
+        rc, out = self.capture(
+            self._health([("r/one", "green")], available=False), None)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("COULD NOT BE MEASURED", out)
+
+    # ---- the threshold itself -------------------------------------------
+
+    def test_the_bound_is_above_the_slowest_observed_legitimate_run(self) -> None:
+        """758s was the slowest real completion measured; the bound must clear it.
+
+        If someone lowers this below observed reality the gate starts paging on
+        healthy runs, which is how it becomes unsatisfiable and then muted.
+        """
+        self.assertGreater(
+            operational_health.github_main_health.DEFAULT_PENDING_STALE_SECS, 758.0)

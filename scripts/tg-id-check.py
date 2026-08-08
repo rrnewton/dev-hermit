@@ -37,6 +37,20 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+# One resolver for the TaskGraph, shared with every ci-hub consumer.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
+
+
+def _tg_env():
+    """Bind `tg` explicitly, or exit 3 -- never query an unbound default."""
+    try:
+        return taskgraph_db.child_env(taskgraph_db.resolve())
+    except taskgraph_db.TaskGraphUnavailable as error:
+        print(f"tg-id-check: {error}", file=sys.stderr)
+        sys.exit(3)
 
 
 def slug4(title: str) -> str:
@@ -50,6 +64,7 @@ def known_ids() -> set[str]:
         ["tg", "sql", "SELECT local_id FROM tasks"],
         capture_output=True,
         text=True,
+        env=_tg_env(),
     )
     if proc.returncode != 0:
         print(f"tg-id-check: cannot query the graph: {proc.stderr.strip()}", file=sys.stderr)
@@ -92,6 +107,7 @@ def self_test() -> int:
         ["tg", "sql", "SELECT local_id || '|' || title FROM tasks"],
         capture_output=True,
         text=True,
+        env=_tg_env(),
     )
     if proc.returncode != 0:
         print("self-test: cannot query the graph", file=sys.stderr)

@@ -69,6 +69,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 CI_HUB_ROOT = os.path.dirname(HERE)
 REPO_ROOT = os.path.dirname(CI_HUB_ROOT)
+# One resolver for the TaskGraph, shared with every other ci-hub consumer.
+sys.path.insert(0, os.path.join(CI_HUB_ROOT, "lib"))
+import taskgraph_db  # noqa: E402
 
 STRONG = {"pr_url", "branch", "head_sha"}
 DEFAULT_REPOS = ["rrnewton/hermit", "rrnewton/reverie"]
@@ -120,9 +123,14 @@ def load_tasks_via_tg() -> list[dict]:
 
 
 def _tg_sql_rows(query: str) -> list[dict]:
+    try:
+        env = taskgraph_db.child_env(taskgraph_db.resolve())
+    except taskgraph_db.TaskGraphUnavailable as error:
+        raise RuntimeError(f"tg sql unavailable: {error}") from error
     cp = subprocess.run(
         ["tg", "sql", query], cwd=REPO_ROOT,
         capture_output=True, text=True, timeout=120,
+        env=env,
     )
     if cp.returncode != 0:
         raise RuntimeError(f"tg sql failed: {cp.stderr.strip()}")

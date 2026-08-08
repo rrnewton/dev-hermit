@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Reject repository instructions that tell implementation agents to self-close."""
+"""Keep repository instructions agreeing that an agent closes its own task.
+
+INVERTED 2026-08-08. This file used to assert the opposite: it forbade any text
+telling an agent to self-close and REQUIRED the coordinator-only closure
+gateway. That policy was unsatisfiable -- the ORC coordinator has no shell and
+so could never invoke `./ci-hub/bin/close-task` -- while the generic ORC
+dispatch preamble told every agent to self-close on every dispatch. This gate
+was therefore actively enforcing the contradiction, and would reject the stock
+ORC preamble as a violation.
+
+The evidence requirement did NOT go away with the gatekeeper, so this file now
+guards the half that is easy to lose: closing is still gated on a recorded
+IMPLEMENTED note, the `implemented` tag still carries landing debt, and
+`./ci-hub/bin/close-task` is still the only writer of the `CLOSURE-VERIFIED`
+note that discharges it.
+"""
 
 from __future__ import annotations
 
@@ -19,18 +34,20 @@ SCAN_ROOTS = (
     ROOT / "ci-hub",
     ROOT / "agent-utils",
 )
+
+# Reinstating any of these would restore the jam: a rule only the coordinator
+# can satisfy, addressed to a coordinator that cannot run commands.
 FORBIDDEN = (
-    re.compile(r"close\s+the\s+task\s+yourself", re.IGNORECASE),
-    re.compile(r"post\s+a\s+summary\s+note\s+and\s+close", re.IGNORECASE),
+    re.compile(r"only\s+the\s+coordinator\s+closes", re.IGNORECASE),
     re.compile(
-        r"when\s+done.{0,400}(?:tg\s+update[^\n]*--status\s+(?:closed|resolved)|"
-        r"close\s+the\s+task)",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"then:\s*`?tg\s+update[^\n]*--status\s+(?:closed|resolved)",
+        r"a\s+working\s+agent\s+NEVER\s+moves\s+a\s+task\s+to\s+a\s+terminal\s+status",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"never\s+use\s+raw\s+`?tg\s+update[^\n]*--status\s+(?:closed|resolved)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"leaves?\s+status\s+`?in_progress`?,?\s+and\s+stops?", re.IGNORECASE),
 )
 
 
@@ -63,50 +80,66 @@ def find_forbidden(roots: tuple[Path, ...]) -> list[str]:
 
 
 class TaskLifecyclePolicyTest(unittest.TestCase):
-    def test_agent_facing_text_has_no_self_close_instruction(self) -> None:
+    def test_no_coordinator_only_closure_rule_survives(self) -> None:
         self.assertEqual([], find_forbidden(SCAN_ROOTS))
 
-    def test_planted_self_close_instruction_reaches_matcher(self) -> None:
+    def test_planted_coordinator_only_rule_reaches_matcher(self) -> None:
+        """NEGATIVE bracket: the matcher is not inert."""
         with tempfile.TemporaryDirectory() as directory:
-            fixture = Path(directory) / "agent-template.md"
+            fixture = Path(directory) / "stale-policy.md"
             fixture.write_text(
-                "When done: post evidence.\n"
-                "Then: tg update example --status " "closed\n",
+                "Only the coordinator closes tasks, and only through the gateway.\n"
+                "Never use raw `tg update <id> --status closed`.\n",
                 encoding="utf-8",
             )
             findings = find_forbidden((fixture,))
 
         self.assertEqual(2, len(findings))
-        self.assertTrue(all("agent-template.md" in finding for finding in findings))
-        self.assertTrue(any("When done" in finding for finding in findings))
-        self.assertTrue(any("Then:" in finding for finding in findings))
+        self.assertTrue(all("stale-policy.md" in finding for finding in findings))
 
-    def test_canonical_policy_explains_the_agent_stop_condition(self) -> None:
+    def test_current_self_close_wording_is_not_flagged(self) -> None:
+        """POSITIVE bracket: the wording the policy now MANDATES must pass.
+
+        Without this, tightening a pattern above could silently start rejecting
+        the correct instruction again -- which is exactly the failure this file
+        was rewritten to end.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "good-policy.md"
+            fixture.write_text(
+                "Post the evidence, then close the task yourself when done: "
+                "`tg update <id> --status closed`.\n",
+                encoding="utf-8",
+            )
+            self.assertEqual([], find_forbidden((fixture,)))
+
+    def test_canonical_policy_states_the_agent_closes_its_own_task(self) -> None:
         policy = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for required in (
-            "A working agent NEVER moves a task to a terminal status",
-            "add the `implemented` tag while leaving status `in_progress`",
-            "(4) stop",
-            "Only the coordinator closes tasks",
+            # The rule itself.
+            "the owning agent closes its own task",
+            "tg update <id> --status closed",
+            # The evidence half, which the gatekeeper's removal must NOT take
+            # with it.
+            "Record the evidence BEFORE you change status",
+            'tg note <id> "IMPLEMENTED:',
+            "tg update <id> --tags <existing-tags>,implemented",
+            # Landing debt still has an owner and a discharge mechanism.
+            "Landing debt rides on the `implemented`\ntag, never on the status",
+            "CLOSURE-VERIFIED",
+            "./ci-hub/bin/close-task",
         ):
             self.assertIn(required, policy)
 
-        rationale = (ROOT / "ai_docs" / "agents-md-policy-rationale.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn(
-            "Phantom closures (a task marked done while its work never landed)",
-            rationale,
-        )
-
+    def test_coordinator_skill_agrees_with_the_canonical_policy(self) -> None:
         coordinator_skill = " ".join(
             (ROOT / ".claude" / "skills" / "hermit-coord" / "SKILL.md")
             .read_text(encoding="utf-8")
             .split()
         )
+        self.assertIn("CLOSES ITS OWN TASK", coordinator_skill)
         self.assertIn(
-            "Closing earlier hides unlanded work from the active drain",
-            coordinator_skill,
+            "Task closure is NOT a coordinator duty", coordinator_skill
         )
 
 

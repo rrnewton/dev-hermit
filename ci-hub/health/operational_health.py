@@ -19,6 +19,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "runners"))
+# The TaskGraph binding is stated, not inherited.  `tg` with no database named
+# reads an empty `tasks` default and returns 0 rows, so an unbound tick would
+# have reported a clean, EMPTY fleet -- the failure mode that reads as health.
+sys.path.insert(0, str(ROOT / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
 
 import github_main_health
 import pr_status
@@ -60,6 +65,7 @@ DEFAULT_QUEUE_GATE_TIMEOUT_SECS = float(
     os.environ.get("CI_HUB_QUEUE_GATE_TIMEOUT", "12")
 )
 DEFAULT_AGENT_SNAPSHOT = ROOT / "ignored" / "ci-hub" / "agent-snapshot.json"
+_AGENT_PANE_RE = re.compile(r"^%\d+$")
 TERMINAL_AGENT_STATES = frozenset(
     (
         "closed",
@@ -86,6 +92,11 @@ class TaskRecord:
     tags: tuple[str, ...]
     # Defaulted so existing fixtures that only describe live work stay valid.
     status: str = "IN_PROGRESS"
+    # True when the verified closure gateway recorded CLOSURE-VERIFIED for this
+    # task, i.e. `ci-hub/bin/close-task` freshly proved the change is reachable
+    # from the target `main`. Defaulted False so fixtures stay valid; an absent
+    # proof means NOT-PROVEN-LANDED, never assumed-landed.
+    landed: bool = False
 
     @property
     def implemented(self) -> bool:
@@ -97,16 +108,43 @@ class TaskRecord:
 
     @property
     def awaiting_landing(self) -> bool:
-        """Finished work whose landing is still owed.
+        """Finished work whose landing is still owed: implemented AND NOT landed.
 
-        TAG FIRST, STATUS SECOND — the same rule `scripts/status-log.rs`
-        `classify_task` already applies. Under the close-on-implemented
-        lifecycle an implemented task is CLOSED immediately, so keying
-        awaiting-landing off `IN_PROGRESS` (as this module used to) reports
-        ~zero while the real population sits in CLOSED. Keying off the tag is
-        correct under BOTH the old and new lifecycles.
+        TAG FIRST, STATUS SECOND still holds — the same rule
+        `scripts/status-log.rs` `classify_task` applies. Under the
+        close-on-implemented lifecycle an implemented task is CLOSED
+        immediately, so keying awaiting-landing off `IN_PROGRESS` reports ~zero
+        while the real population sits in CLOSED. That reasoning is why the
+        entry condition is the TAG and not the status, and it is unchanged.
+
+        WHAT CHANGED, and why the previous version was wrong anyway. This used
+        to be a bare `return self.implemented`, with no exit condition at all.
+        Nothing ever removes the `implemented` tag and there is no `landed` tag
+        anywhere in the corpus, so a task ENTERED this set on completion and
+        could never leave it. The count therefore GREW MONOTONICALLY WITH
+        SUCCESS: every landed task incremented it forever. Measured 2026-08-07
+        it read 1718 (1665 CLOSED, 47 IN_PROGRESS, 6 BACKLOG) and was presented
+        as a queue depth, when the live backlog was ~47. A number that rises
+        when things go RIGHT and can never fall is not a health signal — it
+        cries wolf until someone stops reading it, which is strictly worse than
+        reporting nothing.
+
+        The exit condition is the verified closure gateway's CLOSURE-VERIFIED
+        record, because that is the only place landing is actually PROVEN:
+        `close-task` re-derives ancestry against freshly fetched target `main`.
+        A CLOSED status is NOT the exit — measured, only 291 of those 1718 carry
+        a closure proof, so 1427 were closed with no landing evidence at all.
+        Treating CLOSED as landed would discharge the debt by assertion, which
+        is the phantom-closure failure this whole lifecycle exists to prevent
+        (see `ci-hub/bin/close-task`, and `drain-implemented-to-landed`).
+
+        Consequences worth stating so nobody "fixes" this back:
+          * it can DECREASE — closing a task through the gateway removes it;
+          * `lifecycle_violation` stays a DISTINCT signal. Scoping this to
+            IN_PROGRESS instead would have made the two metrics near-duplicates
+            (47 vs 53, differing only by the BACKLOG rows).
         """
-        return self.implemented
+        return self.implemented and not self.landed
 
     @property
     def lifecycle_violation(self) -> bool:
@@ -200,7 +238,7 @@ def github_main_gate() -> int:
             overall_deadline=github_main_health.DEFAULT_OVERALL_DEADLINE,
         )
         state = github_main_health.overall_state(health)
-        summary = ",".join(
+        per_repo = ",".join(
             f"{repo.repo}:{repo.state if repo.available else 'unavailable'}"
             for repo in health
         )
@@ -208,8 +246,54 @@ def github_main_gate() -> int:
         _emit({"state": "unknown", "summary": _field(error)})
         return 1
 
-    _emit({"state": state, "summary": summary})
-    return 1 if state in {"red", "none", "degraded"} else 0
+    # SILENCE IS NOT EVIDENCE OF GREEN. This gate alarmed on explicit red and
+    # said nothing otherwise, so an authority that never resolved rendered
+    # exactly like a passing one -- and the ci-hub shard authority is absent or
+    # unreported on 9 of the last 25 main commits (36%), because queue-depth-1
+    # concurrency lets a newer push supersede a pending run. Measured 2026-08-08
+    # while this was being written: three main runs sat unresolved at 372s,
+    # 9198s and 15424s, and the gate was silent about all three.
+    #
+    # `stale-pending` now alarms; a FRESH `pending` deliberately does not, because
+    # alarming on pending fires after every push and is an alarm no coordinator
+    # can satisfy -- the anti-pattern removed from three other gates today.
+    stale = github_main_health.DEFAULT_PENDING_STALE_SECS
+    ages = {
+        repo.repo: github_main_health.pending_age_secs(getattr(repo, "runs", ()))
+        for repo in health
+        if repo.available
+    }
+    oldest = max((a for a in ages.values() if a is not None), default=None)
+    fields: dict[str, object] = {"state": state, "per_repo": per_repo}
+    if oldest is not None:
+        fields["oldest_pending_secs"] = int(oldest)
+    fields["pending_stale_after_secs"] = int(stale)
+
+    if state == "stale-pending":
+        named = ", ".join(
+            f"{r} pending {int(a)}s" for r, a in sorted(ages.items())
+            if a is not None and a > stale
+        ) or "unresolved authority with an unreadable creation time"
+        fields["summary"] = (
+            f"main authority has NOT RESOLVED past the {int(stale)}s bound: {named}. "
+            "This is a HOLE, not a green: the run was most likely superseded by a "
+            "newer push under queue-depth-1 concurrency. Re-dispatch the authority "
+            "for the current main head, or confirm a newer run has since reported. "
+            f"Per repo: {per_repo}"
+        )
+    elif state in {"none", "degraded", "unknown"}:
+        fields["summary"] = (
+            f"main authority COULD NOT BE MEASURED ({state}) -- this is not a green "
+            f"and not a red. Per repo: {per_repo}"
+        )
+    else:
+        # red / green / fresh-pending keep the EXACT prior summary contract -- the
+        # bare per-repo list. Prose is added only for the states that did not
+        # previously exist, so no existing consumer of `{summary}` changes shape.
+        fields["summary"] = per_repo
+    _emit(fields)
+    # `pending` (fresh) is the only non-green state that stays quiet.
+    return 1 if state in {"red", "none", "degraded", "stale-pending"} else 0
 
 
 def pull_request_gate() -> int:
@@ -301,7 +385,56 @@ def pull_request_gate() -> int:
     return 1 if (unhealthy or degraded) else 0
 
 
-def primary_snapshot_gate() -> int:
+# How long the gitlink snapshot may keep losing races before it stops being a race
+# and starts being a stuck snapshot.
+#
+# WHY 60 MINUTES. The gate runs every 300s, so this is twelve consecutive failed
+# attempts. Parent main advanced five times in about twenty minutes on 2026-08-08,
+# so any single attempt frequently loses -- but losing twelve in a row is not luck,
+# it means something is holding the snapshot down. The other side of the choice is
+# the cost of waiting: the gitlink snapshot is a reproducibility record, not a
+# correctness gate, and nothing downstream reads it within the hour, so an hour of
+# staleness costs nothing while an hour of quiet buys the fleet freedom from a
+# permanently-firing alarm that would be muted within a day.
+#
+# The threshold is on TIME, not on a commit distance, because commit distance is
+# exactly the moving quantity that made this gate unsatisfiable. Being 30 commits
+# behind a main that thirteen agents are advancing is normal; being unable to
+# publish for an hour is not.
+SNAPSHOT_DEFERRAL_BUDGET_SECS = 3600
+SNAPSHOT_DEFERRAL_STATE = ROOT / ".tick-hub" / "primary-snapshot-deferral.json"
+
+
+def _read_deferral(path: Path) -> float | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    since = value.get("since") if isinstance(value, dict) else None
+    return float(since) if isinstance(since, (int, float)) else None
+
+
+def _write_deferral(path: Path, since: float | None) -> None:
+    try:
+        if since is None:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"since": since}) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        # Losing the deferral clock degrades this to the old "page on the first
+        # lost race" behaviour at worst; it must never take the tick down.
+        pass
+
+
+def primary_snapshot_gate(
+    *,
+    state_path: Path | None = None,
+    now: float | None = None,
+    budget_secs: int = SNAPSHOT_DEFERRAL_BUDGET_SECS,
+) -> int:
     output, errors = StringIO(), StringIO()
     result = primary_checkout.checkout_fresh(
         primary_checkout.default_root(),
@@ -310,14 +443,46 @@ def primary_snapshot_gate() -> int:
         out=output,
         err=errors,
     )
+    path = state_path or SNAPSHOT_DEFERRAL_STATE
+    moment = time.time() if now is None else now
     report = errors.getvalue().strip() or output.getvalue().strip()
-    _emit(
-        {
-            "state": "ok" if result == 0 else "blocked",
-            "summary": report or "primary-snapshot-produced-no-output",
-        }
-    )
-    return result
+
+    if result == primary_checkout.SNAPSHOT_DEFERRED:
+        since = _read_deferral(path)
+        if since is None:
+            since = moment
+            _write_deferral(path, since)
+        waited = max(0.0, moment - since)
+        if waited >= budget_secs:
+            _emit({
+                "state": "blocked",
+                "deferred_mins": round(waited / 60.0, 1),
+                "summary": (
+                    f"gitlink snapshot has been unpublishable for "
+                    f"{waited / 60.0:.0f} min (budget {budget_secs // 60} min); "
+                    "this is no longer a lost race. " + report
+                ),
+            })
+            return 1
+        _emit({
+            "state": "deferred",
+            "deferred_mins": round(waited / 60.0, 1),
+            "summary": (
+                f"snapshot due but not publishable this tick; deferred "
+                f"{waited / 60.0:.0f} of {budget_secs // 60} min budget. " + report
+            ),
+        })
+        return 0
+
+    # Any non-deferred outcome ends the deferral, including a hard block: a block
+    # is reported on its own terms and must not also inherit an aged clock.
+    _write_deferral(path, None)
+    _emit({
+        "state": "ok" if result == 0 else "blocked",
+        "deferred_mins": 0,
+        "summary": report or "primary-snapshot-produced-no-output",
+    })
+    return 0 if result == 0 else 1
 
 
 def queue_health_gate() -> int:
@@ -487,12 +652,62 @@ def _persist_agent_snapshot(
     os.replace(temporary, path)
 
 
+def _assert_plausible_agent_payload(payload: object, *, source: str) -> None:
+    """Refuse a cached snapshot whose CONTENT cannot describe a real fleet.
+
+    FRESHNESS IS NOT PLAUSIBILITY. `_persist_agent_snapshot` stamps
+    `captured_at` on every write regardless of payload, so a bad write is
+    also a MAXIMALLY FRESH one and slips past both existing guards (missing,
+    stale). A one-entry `{"name": "worker"}` stub was observed in production
+    52s old while 18 real tmux panes were running; every real agent then fails
+    `owner not in live_by_name` and is reported ORPHANED. That is how a live
+    agent got named dead while holding the freshest activity timestamp on the
+    box, and under the autonomous-replacement mandate that alarm was wired to
+    a respawn.
+
+    This promotes the environment-independent half of the predicate that
+    `scripts/allocate-worktree.rs::observe_owner_lease` already relies on: a
+    real ORC agent carries a `%NN` pane identity. Its OTHER half -- resolving
+    that pane via `tmux list-panes -a` -- is DELIBERATELY NOT promoted.
+    Measured 2026-08-08: from an agent shell (TMUX_TMPDIR inherited) that
+    lists the 17-pane ORC server, but from `hermit-health-tick.service`, whose
+    unit sets only PATH, it reaches a DIFFERENT 4-pane server under
+    /tmp/tmux-$UID/default with ZERO overlap with the fleet. Promoting it
+    would make the timer-driven tick refuse every REAL snapshot -- permanently
+    blind, strictly worse than the bug it fixes. Structure is checkable from
+    any environment; a server lookup is not. Note this is a plausibility
+    check, NOT a second fleet authority: `tick-hub.yaml` reserves fleet
+    liveness to ORC, and refusing an obviously broken copy does not claim it.
+
+    Known limits, stated rather than implied: a fabricated but well-formed
+    pane id still passes, and a snapshot that is merely INCOMPLETE (an ORC
+    session cannot see a sibling session's agents) still passes -- completeness
+    needs an independent source such as `ci-hub/health/agent_liveness_probe.py`.
+    This catches the failure modes actually observed and is safe everywhere.
+    """
+    if not isinstance(payload, list):
+        raise RuntimeError("agent-snapshot-is-not-a-list")
+    if not payload:
+        # Zero agents is indistinguishable from no observation, so it must read
+        # as could-not-measure -- never as a healthy, empty fleet.
+        raise RuntimeError(f"agent-snapshot-implausible:{source}:zero-agents")
+    for index, raw in enumerate(payload):
+        pane = raw.get("tmux_pane_id") if isinstance(raw, Mapping) else None
+        if not (isinstance(pane, str) and _AGENT_PANE_RE.match(pane)):
+            name = raw.get("name", "?") if isinstance(raw, Mapping) else "?"
+            raise RuntimeError(
+                f"agent-snapshot-implausible:{source}:"
+                f"entry-{index}({name})-has-no-pane-identity"
+            )
+
+
 def load_agent_snapshot(
     snapshot: str | None,
     *,
     snapshot_file: Path = DEFAULT_AGENT_SNAPSHOT,
     max_age_secs: int = DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS,
     now: float | None = None,
+    persist: bool = True,
 ) -> tuple[tuple[AgentRecord, ...], float]:
     observed_at = time.time() if now is None else now
     text = (
@@ -506,7 +721,8 @@ def load_agent_snapshot(
         except json.JSONDecodeError as error:
             raise RuntimeError(f"invalid-agent-snapshot:{error.msg}") from error
         agents = _parse_agents(payload)
-        _persist_agent_snapshot(snapshot_file, payload, captured_at=observed_at)
+        if persist:
+            _persist_agent_snapshot(snapshot_file, payload, captured_at=observed_at)
         return agents, observed_at
 
     try:
@@ -527,7 +743,11 @@ def load_agent_snapshot(
         raise RuntimeError(
             f"agent-snapshot-stale:age={max(0, int(age))}s,max={max_age_secs}s"
         )
-    return _parse_agents(envelope.get("agents")), float(captured_at)
+    agents_payload = envelope.get("agents")
+    # AFTER the staleness check, so a stale snapshot still reports STALE and
+    # keeps its existing, more specific diagnostic.
+    _assert_plausible_agent_payload(agents_payload, source="cache")
+    return _parse_agents(agents_payload), float(captured_at)
 
 
 def cache_agent_snapshot(snapshot: str | None = None) -> int:
@@ -566,7 +786,12 @@ SELECT json_object(
   'title', title,
   'owner', COALESCE(owner, ''),
   'status', status,
-  'tags', json(tags)
+  'tags', json(tags),
+  'landed', EXISTS (
+      SELECT 1 FROM task_notes
+      WHERE task_notes.task_id = tasks.local_id
+        AND task_notes.content LIKE '%CLOSURE-VERIFIED%'
+    )
 ) AS task_json
 FROM tasks
 WHERE status = 'IN_PROGRESS'
@@ -585,7 +810,10 @@ ORDER BY local_id
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=taskgraph_db.child_env(taskgraph_db.resolve()),
             )
+        except taskgraph_db.TaskGraphUnavailable as error:
+            raise RuntimeError(f"taskgraph-query-unavailable:{error}") from error
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as error:
             raise RuntimeError(f"taskgraph-query-unavailable:{error}") from error
         if process.returncode == 0:
@@ -625,6 +853,10 @@ ORDER BY local_id
                 owner=str(raw.get("owner") or "").strip(),
                 tags=tuple(tags),
                 status=str(raw.get("status") or "IN_PROGRESS").strip(),
+                # SQLite EXISTS yields 0/1; anything unexpected is treated as
+                # NOT proven landed, so a schema surprise over-reports debt
+                # rather than silently discharging it.
+                landed=raw.get("landed") == 1,
             )
         )
     count_match = re.search(r"\((\d+) rows\)", process.stdout)
@@ -666,10 +898,13 @@ def reconcile_active_work(
     agents: Sequence[AgentRecord],
 ) -> ActiveWorkReport:
     everything = tuple(sorted(tasks, key=lambda task: task.id))
-    # LANDING DEBT: keyed off the tag, not the status, so it survives the
-    # close-on-implemented lifecycle. These records are CLOSED; they are the
-    # set `drain-implemented-to-landed` enumerates, and ancestry verification
-    # is that tracker's job, not this monitor's.
+    # LANDING DEBT: implemented AND NOT proven landed. Entry is keyed off the
+    # tag, not the status, so it survives the close-on-implemented lifecycle;
+    # EXIT is the gateway's CLOSURE-VERIFIED ancestry proof. The previous
+    # version had entry but no exit and so could only ever rise -- see
+    # `TaskRecord.awaiting_landing`. Ancestry verification is still
+    # `drain-implemented-to-landed`'s job to ACT on; this monitor only reads the
+    # proof the gateway already recorded.
     awaiting_land = tuple(task for task in everything if task.awaiting_landing)
     # LIFECYCLE DEVIATION: implemented but not closed. Reported separately so
     # it is fixable rather than silently absorbed into the landing debt.
@@ -835,6 +1070,7 @@ def active_work_gate(
     json_output: bool = False,
     gate_output: bool = False,
     now: float | None = None,
+    persist: bool = True,
 ) -> int:
     try:
         agents, captured_at = load_agent_snapshot(
@@ -842,6 +1078,7 @@ def active_work_gate(
             snapshot_file=snapshot_file,
             max_age_secs=max_age_secs,
             now=now,
+            persist=persist,
         )
         report = reconcile_active_work(_taskgraph_in_progress(), agents)
     except RuntimeError as error:
@@ -853,7 +1090,11 @@ def active_work_gate(
             )
         else:
             _emit({"state": "unknown", "summary": error})
-        return 1
+        # 2, not 1: could-not-measure must be distinguishable from a measured
+        # drift by exit code alone, the same way unowned_backlog.py separates
+        # `unverifiable` (2) from `alert` (1).  A caller that only checks
+        # nonzero still pages; one that reads the code can tell them apart.
+        return 2
 
     counts = report.counts()
     state = "drift" if report.actionable_count else "ok"
@@ -914,6 +1155,21 @@ def active_work_command(args: Sequence[str]) -> int:
         max_age_secs=parsed.max_snapshot_age,
         json_output=parsed.json,
         gate_output=parsed.gate,
+        # `--agent-snapshot` NAMES A FILE TO READ.  It must never write one.
+        # Before this, the explicit-snapshot branch of `load_agent_snapshot`
+        # persisted the payload to `snapshot_file`, which this caller left at
+        # its default -- the machine-wide `ignored/ci-hub/agent-snapshot.json`.
+        # So `active-work --agent-snapshot /tmp/whatever.json` REPLACED the
+        # fleet's snapshot with `/tmp/whatever.json`, freshly stamped, and the
+        # flag's name gave no hint of it.  `ci-hub/tests/test_operational_bounds.py`
+        # passes a one-entry `{"name": "worker"}` fixture through exactly this
+        # path, so running that suite poisoned the live fleet snapshot; the stub
+        # was observed in production on 2026-08-07 and again on 2026-08-08.
+        # `DEV_HERMIT_PARENT` does not rescue a caller here, because
+        # `DEFAULT_AGENT_SNAPSHOT` derives from `ROOT`, i.e. from `__file__`.
+        # Seeding the cache remains the job of `cache-agents` via
+        # `HERMIT_AGENT_SNAPSHOT_JSON`, which is a separate and explicit path.
+        persist=False,
     )
 
 

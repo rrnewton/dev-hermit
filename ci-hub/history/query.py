@@ -1096,6 +1096,9 @@ def green_time(parent: str, repo: str, since: str | None,
         "no_result_hours": hrs["no_result"],
         "gap_hours": hrs["gap"],
         "authoritative_run_hours": round(authoritative / 3600.0, 2),
+        # The share of the window the percentage actually describes. Carried in
+        # the record so every consumer gets it, not just the human printer.
+        "coverage_pct": round(100.0 * authoritative / total, 2) if total else 0.0,
         "excluded_hours": round((sec["no_result"] + sec["gap"]) / 3600.0,
                                 2),
         "window_hours": round(total / 3600.0, 2),
@@ -1567,9 +1570,20 @@ def main() -> int:
                       + (f"; logged -> {res['appended_log']}"
                          if res.get("appended_log") else ""))
             else:
+                # THE HEADLINE CARRIES ITS COVERAGE, always. A bare "50% green"
+                # reads as a statement about the week; it is a statement about the
+                # fraction of the week that was actually measured. Measured
+                # 2026-08-08: 50.28% described 61.77 authoritative hours of a
+                # 148.32-hour window -- 42% coverage -- and the percentage was being
+                # quoted without that. Coverage belongs in the same sentence as the
+                # number, not on a line underneath it that gets dropped when quoted.
                 print(f"{res['repo']} main green-time (authoritative "
                       f"{res['workflows']}; definition {res['definition_date']}): "
-                      f"{res['green_pct']}% GREEN")
+                      f"{res['green_pct']}% green over "
+                      f"{res['authoritative_run_hours']}h authoritative of "
+                      f"{res['window_hours']}h wall "
+                      f"(coverage {res['authoritative_run_hours']}/"
+                      f"{res['window_hours']} = {res['coverage_pct']}%)")
                 print(f"  denominator: {res['green_hours']}h green / "
                       f"{res['authoritative_run_hours']}h authoritative-run "
                       f"(green + genuine red)")

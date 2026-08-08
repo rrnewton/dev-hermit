@@ -1,6 +1,25 @@
 #!/usr/bin/env python3
 """Derive worktree-slot liveness from the RUNNING SYSTEM, not from an assertion.
 
+NOT A TICK-HUB GATE. UNWIRED 2026-08-08 -- DO NOT RE-WIRE.
+    Owner directive: "tick hub should not be used for interfering with these orc
+    internal matters." This tool answers "is the agent owning this slot gone?",
+    which is ORC's question and ORC's authority. As a standing gate
+    (`worktree_new_dead_owner`, via `--fail-on-new-dead`) it reported an agent as
+    dead while that agent held the freshest activity timestamp on the box, and
+    the coordinator's mandate to replace dead agents without asking would have
+    turned that into a destroyed agent mid-P0.
+
+    The DISK problem it was really hired for -- big slots idling under
+    `worktrees/` forever -- was not dropped. It moved to
+    `ci-hub/health/slot_disk_residue.py`, which asks the disk question directly
+    (on disk, consuming space, no live process inside) and names no agent at all.
+
+    This file survives as an ON-REQUEST audit for a human or coordinator with a
+    specific question. `--fail-on-new-dead` exists solely for that manual use and
+    prints a warning saying so; a recurring caller is a policy violation, not a
+    configuration choice.
+
 `worktree-state.json` records who *claimed* a slot. It has never recorded whether
 that claimant still exists, so a dead owner's `status=active` slot is
 indistinguishable from a live one and stays protected forever while its contents
@@ -335,6 +354,16 @@ def cmd_report(args: argparse.Namespace) -> int:
     report = build_report(root, args.stale_hours)
 
     if args.fail_on_new_dead:
+        # Loud on stderr so a rewiring shows up in whatever log captures it. This
+        # never changes the exit code: the manual audit must keep working.
+        print(
+            "worktree_liveness: WARNING -- --fail-on-new-dead asserts AGENT liveness, "
+            "which ORC owns. It was unwired from tick-hub on 2026-08-08 after a false "
+            "'agent died' alarm. For the disk-reclamation question use "
+            "ci-hub/health/slot_disk_residue.py. Manual/audit use only; do not wire "
+            "this as a recurring gate.",
+            file=sys.stderr,
+        )
         state_path = Path(args.state) if args.state else root / ".tick-hub" / "worktree-liveness-state.json"
         fresh, current = new_dead(report, state_path)
         write_state(state_path, current)

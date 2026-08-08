@@ -571,6 +571,23 @@ struct ReceiptDigestArgs {
     /// canonical digest in one authoritative process.
     #[arg(long)]
     require_qualifying: bool,
+    /// Refuse unless the row satisfies the complete canonical local-receipt
+    /// predicate used by validate-status (including shared policy, typed gate
+    /// completeness, raw result, tree, repository, and run identity).
+    #[arg(long, conflicts_with = "require_qualifying")]
+    require_canonical_qualifying: bool,
+    /// Fresh Hermit main tip for the optional final merge-boundary assertion.
+    #[arg(long, requires_all = ["current_reverie_base", "repo_checkout", "reverie_checkout"])]
+    current_base: Option<String>,
+    /// Fresh Reverie main tip at the same boundary.
+    #[arg(long)]
+    current_reverie_base: Option<String>,
+    /// Hermit object store containing `current_base`.
+    #[arg(long)]
+    repo_checkout: Option<PathBuf>,
+    /// Reverie object store containing `current_reverie_base`.
+    #[arg(long)]
+    reverie_checkout: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -3484,7 +3501,14 @@ fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
             "receipt-digest HistoryRow is not bound to --sha".into(),
         ));
     }
-    if args.require_qualifying
+    if args.require_canonical_qualifying {
+        if qualify_canonical_receipt(&row, &args.sha).is_none() {
+            return Err(CiHubError::ValidateStatus(
+                "receipt-digest HistoryRow does not satisfy the complete canonical qualifying predicate"
+                    .into(),
+            ));
+        }
+    } else if args.require_qualifying
         && !crate::qualifying_receipt::row_qualifies(
             &row,
             &args.sha,
@@ -3494,6 +3518,43 @@ fn run_receipt_digest(args: ReceiptDigestArgs) -> Result<i32, CiHubError> {
         return Err(CiHubError::ValidateStatus(
             "receipt-digest HistoryRow does not satisfy the shared qualifying predicate".into(),
         ));
+    }
+    let boundary_count = [
+        args.current_base.is_some(),
+        args.current_reverie_base.is_some(),
+        args.repo_checkout.is_some(),
+        args.reverie_checkout.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if boundary_count != 0 && boundary_count != 4 {
+        return Err(CiHubError::ValidateStatus(
+            "receipt-digest final merge-boundary verification requires all four base/checkouts arguments".into(),
+        ));
+    }
+    if let (
+        Some(current_base),
+        Some(current_reverie_base),
+        Some(repo_checkout),
+        Some(reverie_checkout),
+    ) = (
+        args.current_base.as_deref(),
+        args.current_reverie_base.as_deref(),
+        args.repo_checkout.as_deref(),
+        args.reverie_checkout.as_deref(),
+    ) {
+        if !crate::qualifying_receipt::shared_base_boundary_accepts(
+            &row,
+            current_base,
+            current_reverie_base,
+            repo_checkout,
+            reverie_checkout,
+        ) {
+            return Err(CiHubError::ValidateStatus(
+                "receipt-digest HistoryRow failed final merge-boundary base verification".into(),
+            ));
+        }
     }
     let (canonical_row, digest) = canonical_row_json_and_sha256(&row).ok_or_else(|| {
         CiHubError::ValidateStatus("cannot canonicalize receipt HistoryRow".into())
@@ -3696,6 +3757,10 @@ fn describe_receipt(receipt: &QualifyingReceipt) -> serde_json::Value {
         "sha": row.commit,
         "commit": row.commit,
         "tree": tree,
+        "base_sha": extra_str(row, "base_sha"),
+        "base_tree": extra_str(row, "base_tree"),
+        "reverie_base_sha": extra_str(row, "reverie_base_sha"),
+        "reverie_base_tree": extra_str(row, "reverie_base_tree"),
         "commit_anchored": row.commit_anchored,
         "tree_dirty": row.tree_dirty,
         "finished_at": row.finished_at,
@@ -4105,12 +4170,23 @@ fn print_newest_green(report: &history_queries::NewestGreenReport, cache_hit: bo
         return;
     }
     println!(
-        "NEWEST-GREEN {} validated={} profile={} selection={} guarantee={}",
+        "NEWEST-GREEN {} validated={} profile={} selection={} coverage={} coverage_satisfied={} coverage_status={}",
         report.green.sha,
         report.green.finished_at.as_deref().unwrap_or("unknown"),
         report.green.profile,
         report.green.selection_mode,
-        report.green.coverage.as_str(),
+        report
+            .green
+            .coverage
+            .as_ref()
+            .map(history_queries::CoverageStrength::as_str)
+            .unwrap_or("unknown"),
+        report
+            .green
+            .coverage_satisfied
+            .map(|satisfied| if satisfied { "true" } else { "false" })
+            .unwrap_or("null"),
+        report.green.coverage_status,
     );
     println!(
         "GATE-SCHEMA {} floor={} eligibility=at-or-after",
@@ -4208,7 +4284,7 @@ fn run_newest_green(root: &Path, args: NewestGreenArgs) -> Result<i32, CiHubErro
     ) {
         NewestGreenOutcome::Found(report) => {
             let cache = NewestGreenCache {
-                schema_version: 4,
+                schema_version: 5,
                 branch: report.branch.clone(),
                 branch_ref: report.branch_ref.clone(),
                 branch_tip: report.branch_tip.clone(),
@@ -4797,6 +4873,252 @@ fn publish_selected_receipt(
         .map_err(CiHubError::ValidateStatus)
 }
 
+#[derive(Debug)]
+struct ImmutableReceiptReference {
+    receipt_commit: String,
+    path: String,
+    artifact_sha256: String,
+}
+
+fn parse_immutable_receipt_reference(
+    output: &[u8],
+    repo: &str,
+    sha: &str,
+) -> Result<ImmutableReceiptReference, String> {
+    let output = std::str::from_utf8(output)
+        .map_err(|error| format!("immutable receipt verifier output is not UTF-8: {error}"))?;
+    let tokens = output.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() != 3 {
+        return Err("immutable receipt verifier did not return exactly three fields".into());
+    }
+    let fields = tokens
+        .into_iter()
+        .map(|field| {
+            field
+                .split_once('=')
+                .ok_or_else(|| format!("malformed immutable receipt verifier field: {field}"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    if fields.len() != 3 {
+        return Err("immutable receipt verifier returned duplicate fields".into());
+    }
+    let receipt_commit = fields
+        .get("receipt_commit")
+        .ok_or_else(|| "immutable receipt verifier omitted receipt_commit".to_string())?;
+    if !is_oid(receipt_commit) || receipt_commit.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        return Err("immutable receipt verifier returned a malformed receipt commit".into());
+    }
+    let artifact_sha256 = fields
+        .get("receipt_sha256")
+        .ok_or_else(|| "immutable receipt verifier omitted receipt_sha256".to_string())?;
+    if !is_sha256(artifact_sha256) {
+        return Err("immutable receipt verifier returned a malformed artifact digest".into());
+    }
+    let path = fields
+        .get("receipt_path")
+        .ok_or_else(|| "immutable receipt verifier omitted receipt_path".to_string())?;
+    let expected_path = format!("validation-receipts/{repo}/{sha}/{artifact_sha256}.json");
+    if *path != expected_path {
+        return Err("immutable receipt verifier returned a noncanonical artifact path".into());
+    }
+    Ok(ImmutableReceiptReference {
+        receipt_commit: (*receipt_commit).to_string(),
+        path: (*path).to_string(),
+        artifact_sha256: (*artifact_sha256).to_string(),
+    })
+}
+
+fn fetch_issue_comments(root: &Path, repo: &str, pr: u64) -> Result<Vec<u8>, CiHubError> {
+    let endpoint = format!("repos/{repo}/issues/{pr}/comments?per_page=100");
+    let comments = gh_command(root, &["api", "--paginate", "--slurp", &endpoint])
+        .output()
+        .map_err(|source| CiHubError::Launch {
+            tool: "gh issue comments".into(),
+            source,
+        })?;
+    if !comments.status.success() {
+        return Err(CiHubError::Gh {
+            context: format!("issue comments #{pr}"),
+            message: String::from_utf8_lossy(&comments.stderr).trim().to_string(),
+        });
+    }
+    Ok(comments.stdout)
+}
+
+fn run_immutable_receipt_verifier(
+    root: &Path,
+    repo: &str,
+    sha: &str,
+    comments: &[u8],
+) -> Result<Option<ImmutableReceiptReference>, String> {
+    let verifier = root.join("ci-hub/validation/verify_receipt.sh");
+    let mut command = Command::new(&verifier);
+    command
+        .args(["--repo", repo, "--sha", sha, "--comments", "/dev/stdin"])
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(config_dir) = gh_config_dir() {
+        command.env("GH_CONFIG_DIR", config_dir);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("cannot launch immutable receipt verifier: {error}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "immutable receipt verifier stdin is unavailable".to_string())?
+        .write_all(&comments)
+        .map_err(|error| format!("cannot write immutable receipt comments: {error}"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("cannot wait for immutable receipt verifier: {error}"))?;
+    if !output.status.success() {
+        if exit_status_code(output.status) == 1 {
+            return Ok(None);
+        }
+        return Err(format!(
+            "immutable receipt verifier exited {}: {}",
+            exit_status_code(output.status),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_immutable_receipt_reference(&output.stdout, repo, sha).map(Some)
+}
+
+fn remove_exact_comment_marker(value: &mut serde_json::Value, marker: &str) -> usize {
+    match value {
+        serde_json::Value::Array(values) => values
+            .iter_mut()
+            .map(|value| remove_exact_comment_marker(value, marker))
+            .sum(),
+        serde_json::Value::Object(fields) => {
+            let mut removed = 0;
+            if let Some(serde_json::Value::String(body)) = fields.get_mut("body") {
+                let lines = body.split('\n').collect::<Vec<_>>();
+                removed = lines.iter().filter(|line| **line == marker).count();
+                if removed > 0 {
+                    *body = lines
+                        .into_iter()
+                        .filter(|line| *line != marker)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                }
+            }
+            removed
+                + fields
+                    .values_mut()
+                    .map(|value| remove_exact_comment_marker(value, marker))
+                    .sum::<usize>()
+        }
+        _ => 0,
+    }
+}
+
+fn fetch_and_verify_immutable_receipt(
+    root: &Path,
+    repo: &str,
+    sha: &str,
+    selected: &QualifyingReceipt,
+    reference: ImmutableReceiptReference,
+) -> Result<VerifiedPublishedReceipt, String> {
+    let endpoint = format!(
+        "repos/{VALIDATION_RECEIPT_REPO}/contents/{}?ref={}",
+        reference.path, reference.receipt_commit
+    );
+    let artifact = gh_command(
+        root,
+        &[
+            "api",
+            "-H",
+            "Accept: application/vnd.github.raw+json",
+            &endpoint,
+        ],
+    )
+    .output()
+    .map_err(|error| format!("cannot fetch immutable receipt artifact: {error}"))?;
+    if !artifact.status.success() {
+        return Err(format!(
+            "cannot fetch immutable receipt artifact: {}",
+            String::from_utf8_lossy(&artifact.stderr).trim()
+        ));
+    }
+    let artifact_body = std::str::from_utf8(&artifact.stdout)
+        .map_err(|error| format!("immutable receipt artifact is not UTF-8 JSON: {error}"))?;
+    // Reuse the same byte/row/run/log checks as a freshly published artifact.
+    // The shell verifier above independently establishes marker authorship,
+    // receipt-commit reachability, producer-definition equality, and the shared
+    // qualifying predicate for these exact immutable bytes.
+    let report = serde_json::json!({
+        "schema_version": 1,
+        "action": "published",
+        "receipt_commit": reference.receipt_commit,
+        "receipt_repository": VALIDATION_RECEIPT_REPO,
+        "receipt_branch": VALIDATION_RECEIPT_BRANCH,
+        "path": reference.path,
+        "receipt_identity_sha256": selected.canonical_sha256,
+        "artifact_sha256": reference.artifact_sha256,
+        "artifact_body": artifact_body,
+    });
+    verify_publisher_report(
+        &serde_json::to_vec(&report)
+            .map_err(|error| format!("cannot encode immutable receipt report: {error}"))?,
+        repo,
+        sha,
+        selected,
+        false,
+    )
+}
+
+/// Reuse a receipt only after the immutable landing verifier accepts its
+/// owner-authored marker and exact receipt commit. Then fetch those exact bytes
+/// and pass them through Rust's publisher-report verifier, which additionally
+/// requires equality with the one canonical ledger row selected above.
+///
+/// A head may have multiple genuine receipts. If the newest accepted marker is
+/// for another qualifying run, remove only that exact marker from the in-memory
+/// verifier input and continue until the Rust-selected canonical row is found.
+/// `Ok(None)` means no marker passed the immutable verifier at all. Every other
+/// failure is returned for diagnostics, but callers still take the existing
+/// fail-closed publisher path rather than treating reuse as required.
+fn reuse_existing_immutable_receipt(
+    root: &Path,
+    repo: &str,
+    pr: u64,
+    sha: &str,
+    selected: &QualifyingReceipt,
+) -> Result<Option<VerifiedPublishedReceipt>, String> {
+    let comments = fetch_issue_comments(root, repo, pr).map_err(|error| error.to_string())?;
+    let mut comments: serde_json::Value = serde_json::from_slice(&comments)
+        .map_err(|error| format!("invalid issue comments JSON: {error}"))?;
+    let mut last_rejection = None;
+    loop {
+        let verifier_input = serde_json::to_vec(&comments)
+            .map_err(|error| format!("cannot encode issue comments: {error}"))?;
+        let Some(reference) = run_immutable_receipt_verifier(root, repo, sha, &verifier_input)?
+        else {
+            return match last_rejection {
+                Some(error) => Err(error),
+                None => Ok(None),
+            };
+        };
+        let marker = format!(
+            "<!-- locally-validated-receipt commit={} path={} sha256={} -->",
+            reference.receipt_commit, reference.path, reference.artifact_sha256
+        );
+        match fetch_and_verify_immutable_receipt(root, repo, sha, selected, reference) {
+            Ok(artifact) => return Ok(Some(artifact)),
+            Err(error) => last_rejection = Some(error),
+        }
+        if remove_exact_comment_marker(&mut comments, &marker) == 0 {
+            return Err(
+                "immutable receipt verifier returned a marker absent from its input".into(),
+            );
+        }
+    }
+}
+
 fn comment_pages_contain_marker(value: &serde_json::Value, marker: &str) -> bool {
     match value {
         serde_json::Value::Array(values) => values
@@ -4825,23 +5147,10 @@ fn bind_verified_receipt_to_pr(
         "<!-- locally-validated-receipt commit={receipt_commit} path={} sha256={} -->",
         artifact.path, artifact.artifact_sha256
     );
-    let endpoint = format!("repos/{repo}/issues/{pr}/comments?per_page=100");
-    let comments = gh_command(root, &["api", "--paginate", "--slurp", &endpoint])
-        .output()
-        .map_err(|source| CiHubError::Launch {
-            tool: "gh issue comments".into(),
-            source,
-        })?;
-    if !comments.status.success() {
-        return Err(CiHubError::Gh {
-            context: format!("issue comments #{pr}"),
-            message: String::from_utf8_lossy(&comments.stderr).trim().to_string(),
-        });
-    }
-    let comments_json: serde_json::Value =
-        serde_json::from_slice(&comments.stdout).map_err(|error| {
-            CiHubError::ValidateStatus(format!("invalid issue comments JSON: {error}"))
-        })?;
+    let comments = fetch_issue_comments(root, repo, pr)?;
+    let comments_json: serde_json::Value = serde_json::from_slice(&comments).map_err(|error| {
+        CiHubError::ValidateStatus(format!("invalid issue comments JSON: {error}"))
+    })?;
     if !comment_pages_contain_marker(&comments_json, &marker) {
         let pr_arg = pr.to_string();
         let body = format!(
@@ -4942,25 +5251,39 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
         }
         let selected = newest_canonical_receipt(&assessment.qualifying)
             .expect("validated implies one selected canonical receipt");
-        // Rust selected and hashed this exact strong row. The Python child is a
-        // mechanical artifact publisher: it receives these canonical bytes on
-        // stdin and has no PR-label/comment capability or second row predicate.
+        // Prefer an already-published immutable artifact only when the existing
+        // landing verifier accepts its exact marker/commit/content and Rust
+        // confirms it embeds this exact selected row. Otherwise preserve the
+        // existing publisher path, including its fail-closed deleted-cwd rule.
         let publisher = root.join("ci-hub/validation/publish_receipt.py");
-        let artifact = match publish_selected_receipt(
-            root,
-            &publisher,
-            &path,
-            &args.repo,
-            &head,
-            selected,
-            args.dry_run,
-        ) {
-            Ok(artifact) => artifact,
-            Err(error) => {
-                eprintln!("ci-hub: apply-local-label: PR #{pr}: {error}");
-                actions.push(serde_json::json!({"pr": pr, "head": head, "action": "receipt-failed", "detail": error.to_string()}));
-                failed += 1;
-                continue;
+        let reuse = reuse_existing_immutable_receipt(root, &args.repo, pr, &head, selected);
+        let (artifact, receipt_source) = match reuse {
+            Ok(Some(artifact)) => (artifact, "reused-immutable"),
+            reuse_unavailable => {
+                match publish_selected_receipt(
+                    root,
+                    &publisher,
+                    &path,
+                    &args.repo,
+                    &head,
+                    selected,
+                    args.dry_run,
+                ) {
+                    Ok(artifact) => (artifact, "published"),
+                    Err(error) => {
+                        let detail = match reuse_unavailable {
+                            Err(reuse_error) => {
+                                format!("{error}; immutable receipt reuse refused: {reuse_error}")
+                            }
+                            Ok(None) => error.to_string(),
+                            Ok(Some(_)) => unreachable!("handled reusable artifact above"),
+                        };
+                        eprintln!("ci-hub: apply-local-label: PR #{pr}: {detail}");
+                        actions.push(serde_json::json!({"pr": pr, "head": head, "action": "receipt-failed", "detail": detail}));
+                        failed += 1;
+                        continue;
+                    }
+                }
             }
         };
         if !args.dry_run {
@@ -4981,6 +5304,7 @@ fn run_apply_local_label(root: &Path, args: ApplyLocalLabelArgs) -> Result<i32, 
             "receipt_identity_sha256": artifact.selected_digest,
             "artifact_sha256": artifact.artifact_sha256,
             "path": artifact.path,
+            "receipt_source": receipt_source,
         }));
         applied += 1;
     }

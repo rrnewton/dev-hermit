@@ -22,6 +22,13 @@ DEFAULT_SUITES = (
     ("ci-hub/runners/tests", 51),
     ("ci-hub/validate/tests", 123),
     ("ci-hub/tests", 66),
+    # compat-envelope's Python tests had no CI caller of their own: their runner
+    # is `compat-envelope/tests/run-all.sh`, reachable only through `make lint`,
+    # and no workflow runs `make lint`. So the guards protecting the scorecard --
+    # including the 18 tier-evidence tests written for a checker that itself had
+    # zero call sites -- were committed, passing, and never executed by CI. Same
+    # defect one level up. 145 discovered / 145 passing when added.
+    ("compat-envelope", 120),
 )
 
 
@@ -146,6 +153,15 @@ def run(suites: Sequence[Suite]) -> int:
                 "--import-mode=importlib",
                 "--strict-config",
                 "--strict-markers",
+                # Make every skip STATE ITSELF. Without this the summary reports
+                # a bare count, and an unnamed skip is indistinguishable from a
+                # test that silently stopped running -- the same shape as an
+                # absent authority reading as green. Measured 2026-08-08: the
+                # green at b5cc56c9 carried "4 skipped" that nobody could
+                # enumerate from the log, and two of the four turned out to be
+                # coverage lost to step ordering rather than a decision anyone
+                # had taken. A skip is a decision; it has to say so.
+                "-rs",
                 *(str(suite.path) for suite in suites),
             ],
             plugins=[plugin],
