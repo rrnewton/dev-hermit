@@ -123,6 +123,21 @@ if [[ -n ${RELEASE_TEST_CONTAINER_LOCK_PATH:-} ]] \
   fi
   exec {container_lock_fd}>&-
 fi
+if [[ ${RELEASE_TEST_FORCE_SUBMODULE_MOVE_REFUSAL:-0} == 1 ]] \
+    && [[ " $* " == *' worktree move '* ]]; then
+  printf '%s\n' 'fatal: working trees containing submodules cannot be moved or removed' >&2
+  exit 128
+fi
+if [[ ${RELEASE_TEST_NONSPECIFIC_MOVE_REFUSAL:-0} == 1 ]] \
+    && [[ " $* " == *' worktree move '* ]]; then
+  printf '%s\n' 'fatal: planted non-submodule move refusal' >&2
+  exit 128
+fi
+if [[ ${RELEASE_TEST_FAKE_REPAIR_SUCCESS:-0} == 1 ]] \
+    && [[ " $* " == *' worktree repair '* ]]; then
+  printf 'zero-without-repair\n' >"$RELEASE_TEST_FAKE_REPAIR_RESULT"
+  exit 0
+fi
 if [[ ${RELEASE_TEST_FAKE_REMOVE_SUCCESS:-0} == 1 ]] \
     && [[ " $* " == *' worktree remove '* ]]; then
   printf 'zero-without-removal\n' >"$RELEASE_TEST_FAKE_REMOVE_RESULT"
@@ -327,6 +342,16 @@ JSON
   write_state "$name" "$target_branch" "worktrees/$name/hermit"
 }
 
+deinitialize_fixture_submodules() {
+  git -C "$target" submodule deinit -q --all
+  test "$(git -C "$target" submodule status --recursive | wc -l)" -eq 1 \
+    || fail "deinitialized fixture did not retain exactly one top-level gitlink: $target"
+  git -C "$target" submodule status --recursive | grep -Eq '^-' \
+    || fail "fixture submodule remains initialized: $target"
+  test -z "$(find "$target/deps/nested" -mindepth 1 -maxdepth 1 -print -quit)" \
+    || fail "deinitialized fixture retained nested worktree content: $target/deps/nested"
+}
+
 run_release() {
   local slot=$1
   shift
@@ -459,6 +484,195 @@ if grep -Fq '"clean-submodule"' "$fixture_root/worktree-state.json"; then
   fail 'clean target survived in registry state after successful release'
 fi
 assert_unrelated_survives
+
+# DEINITIALIZED-SUBMODULE POSITIVE: Git refuses to move this clean linked
+# worktree solely because its exact worktree admin retains deinitialized
+# submodule repositories. The narrow fallback must atomically fence the path,
+# repair and verify the registration, quarantine only that admin, and still
+# reach Git's ordinary non-force removal boundary.
+make_fixture clean-deinitialized-submodule
+deinitialize_fixture_submodules
+deinitialized_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
+test -d "$deinitialized_admin/modules" \
+  || fail 'deinitialized positive lacks retained submodule admin'
+deinitialized_transaction_result="$fixture_root/deinitialized-transaction-result"
+if ! run_release clean-deinitialized-submodule \
+    RELEASE_TEST_TRANSACTION_ADMIN="$deinitialized_admin" \
+    RELEASE_TEST_TRANSACTION_RESULT="$deinitialized_transaction_result"; then
+  cat "$output" >&2
+  fail 'clean fully deinitialized submodule worktree was refused'
+fi
+grep -Fq 'exact submodule-refusal atomic rename + verified git worktree repair' "$output" \
+  || fail 'deinitialized positive did not exercise the narrow atomic fallback'
+grep -Fxq 'active-nonforce' "$deinitialized_transaction_result" \
+  || fail 'deinitialized positive did not retain Git non-force removal authority'
+test ! -e "$target" || fail 'deinitialized positive target survived release'
+assert_unrelated_survives
+
+# ATOMIC-FALLBACK CRASH/RECOVERY POSITIVE: crash after the no-replace rename
+# but before `git worktree repair`. The schema-2 marker plus old registration
+# must let explicit recovery restore the canonical path, repeat every proof,
+# and complete through a fresh fallback transaction.
+make_fixture deinitialized-fallback-rename-crash
+deinitialize_fixture_submodules
+fallback_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
+fallback_rename_crash="$fixture_root/post-fallback-rename-crash"
+: >"$fallback_rename_crash"
+if run_release deinitialized-fallback-rename-crash \
+    HERMIT_RELEASE_TEST_CRASH_AFTER_FALLBACK_RENAME="$fallback_rename_crash"; then
+  fail 'atomic fallback rename crash injection unexpectedly completed cleanup'
+fi
+grep -Fxq 'post-atomic-path-fence-rename crash injected' "$fallback_rename_crash" \
+  || fail 'atomic fallback did not reach the post-rename crash boundary'
+test ! -e "$target" \
+  || fail 'atomic fallback rename crash left the canonical path published'
+fallback_fenced_paths=("$fixture_root/worktrees/deinitialized-fallback-rename-crash"/.hermit.release-worktree-*)
+if test "${#fallback_fenced_paths[@]}" -ne 1 \
+    || test ! -d "${fallback_fenced_paths[0]}"; then
+  fail 'atomic fallback rename crash did not retain one fenced target'
+fi
+grep -Fq '"schema_version":2' "$fallback_admin/release-worktree.path-fence.json" \
+  || fail 'atomic fallback crash marker did not carry schema 2'
+grep -Fq '"phase":"renamed"' "$fallback_admin/release-worktree.path-fence.json" \
+  || fail 'atomic fallback crash marker did not bind the pre-repair phase'
+git -C "$primary" worktree list --porcelain \
+  | grep -Fxq "worktree $target" \
+  || fail 'pre-repair crash unexpectedly changed Git registration'
+if run_release deinitialized-fallback-rename-crash; then
+  fail 'ordinary retry consumed the atomic fallback crash transaction'
+fi
+grep -Fq 'unfinished release journal' "$output" \
+  || fail 'ordinary retry did not retain the atomic fallback journal'
+fallback_recovery_result="$fixture_root/fallback-recovery-transaction-result"
+if ! run_release_recover deinitialized-fallback-rename-crash \
+    RELEASE_TEST_TRANSACTION_ADMIN="$fallback_admin" \
+    RELEASE_TEST_TRANSACTION_RESULT="$fallback_recovery_result"; then
+  cat "$output" >&2
+  fail 'guarded atomic fallback recovery did not complete cleanup'
+fi
+grep -Fq 'recovered path-acquisition fence' "$output" \
+  || fail 'atomic fallback recovery did not report canonical-path restoration'
+grep -Fq 'exact submodule-refusal atomic rename + verified git worktree repair' "$output" \
+  || fail 'atomic fallback recovery did not repeat a fresh exact fallback'
+grep -Fxq 'active-nonforce' "$fallback_recovery_result" \
+  || fail 'atomic fallback recovery did not reach Git non-force removal'
+test ! -e "$target" || fail 'atomic fallback recovered target survived cleanup'
+assert_unrelated_survives
+
+# SUBMODULE-RESIDUE NEGATIVE: an ignored file inside a deinitialized gitlink is
+# invisible to ordinary porcelain status. The fallback's physical emptiness
+# proof must retain it rather than treating "not initialized" as "no work".
+make_fixture deinitialized-ignored-residue
+printf '/deps/nested/hidden.txt\n' >"$target/.gitignore"
+git -C "$target" add .gitignore
+git -C "$target" commit -q -m 'ignore planted deinitialized residue'
+git -C "$target" push -q origin "HEAD:refs/heads/$target_branch"
+deinitialize_fixture_submodules
+printf 'precious ignored residue\n' >"$target/deps/nested/hidden.txt"
+test -z "$(git -C "$target" status --porcelain)" \
+  || fail 'ignored-residue fixture is visible to ordinary status'
+if run_release deinitialized-ignored-residue; then
+  fail 'ignored deinitialized-submodule residue was removed'
+fi
+grep -Fq 'deinitialized submodule path' "$output" \
+  || fail 'ignored residue refusal did not come from the physical submodule proof'
+grep -Fxq 'precious ignored residue' "$target/deps/nested/hidden.txt" \
+  || fail 'ignored deinitialized-submodule residue was lost'
+assert_target_retained deinitialized-ignored-residue
+
+# INITIALIZED-SUBMODULE NEGATIVE: even the exact Git refusal string cannot
+# broaden the fallback. The ordinary initialized cleanup has quarantined its
+# admin, so the fallback must refuse that mismatched state.
+make_fixture initialized-exact-move-refusal
+if run_release initialized-exact-move-refusal \
+    RELEASE_TEST_FORCE_SUBMODULE_MOVE_REFUSAL=1; then
+  fail 'exact refusal string authorized fallback for initialized submodules'
+fi
+grep -Fq 'deinitialized submodule admin' "$output" \
+  || fail 'initialized-submodule fallback refusal did not expose admin mismatch'
+assert_target_retained initialized-exact-move-refusal
+
+# ADMIN-IDENTITY NEGATIVE: a symlinked retained modules admin is not the exact
+# directory proved by the linked-worktree transaction.
+make_fixture deinitialized-admin-alias
+deinitialize_fixture_submodules
+aliased_admin="$(git -C "$target" rev-parse --path-format=absolute --git-dir)"
+mv "$aliased_admin/modules" "$aliased_admin/modules.planted-real"
+ln -s modules.planted-real "$aliased_admin/modules"
+if run_release deinitialized-admin-alias \
+    RELEASE_TEST_FORCE_SUBMODULE_MOVE_REFUSAL=1; then
+  fail 'symlinked deinitialized submodule admin authorized fallback'
+fi
+grep -Fq 'is not an exact directory' "$output" \
+  || fail 'symlinked admin refusal did not come from exact admin identity'
+assert_target_retained deinitialized-admin-alias
+
+# EXACT-ERROR NEGATIVE: an arbitrary worktree-move failure must never enter
+# the atomic fallback, even when the checkout is otherwise deinitialized.
+make_fixture deinitialized-nonspecific-move-refusal
+deinitialize_fixture_submodules
+if run_release deinitialized-nonspecific-move-refusal \
+    RELEASE_TEST_NONSPECIFIC_MOVE_REFUSAL=1; then
+  fail 'non-submodule Git move error authorized atomic fallback'
+fi
+grep -Fq 'planted non-submodule move refusal' "$output" \
+  || fail 'non-specific move refusal was not preserved verbatim'
+if grep -Fq 'atomic rename + verified git worktree repair' "$output"; then
+  fail 'non-specific move refusal entered the atomic fallback'
+fi
+assert_target_retained deinitialized-nonspecific-move-refusal
+
+# REPAIR-POSTCONDITION NEGATIVE + RECOVERY POSITIVE: exit zero from `git
+# worktree repair` is not authority. Retain the fenced transaction when the
+# registration did not move, then let explicit recovery restore and retry it.
+make_fixture deinitialized-false-repair-success
+deinitialize_fixture_submodules
+false_repair_result="$fixture_root/false-repair-result"
+if run_release deinitialized-false-repair-success \
+    RELEASE_TEST_FAKE_REPAIR_SUCCESS=1 \
+    RELEASE_TEST_FAKE_REPAIR_RESULT="$false_repair_result"; then
+  fail 'Git repair exit zero without registration repair authorized release'
+fi
+grep -Fxq 'zero-without-repair' "$false_repair_result" \
+  || fail 'false-repair fixture did not intercept git worktree repair'
+grep -Fq 'post-repair worktree registration mismatch' "$output" \
+  || fail 'release trusted repair exit zero without registration evidence'
+test ! -e "$target" \
+  || fail 'false-repair transaction unexpectedly restored canonical path'
+false_repair_fenced=("$fixture_root/worktrees/deinitialized-false-repair-success"/.hermit.release-worktree-*)
+if test "${#false_repair_fenced[@]}" -ne 1 || test ! -d "${false_repair_fenced[0]}"; then
+  fail 'false-repair transaction did not retain one recoverable fenced path'
+fi
+if ! run_release_recover deinitialized-false-repair-success; then
+  cat "$output" >&2
+  fail 'explicit recovery could not restore false-repair transaction'
+fi
+test ! -e "$target" || fail 'false-repair recovered target survived cleanup'
+assert_unrelated_survives
+
+# FALLBACK PATH-RACE NEGATIVE: a process takes cwd before Git emits the exact
+# refusal. The raw rename follows that cwd just like Git's move, and the same
+# post-fence census must roll back through verified repair without signaling it.
+make_fixture deinitialized-fallback-process-race
+deinitialize_fixture_submodules
+fallback_process_pid_file="$fixture_root/fallback-process.pid"
+fallback_process_log="$fixture_root/fallback-process.log"
+if run_release deinitialized-fallback-process-race \
+    RELEASE_TEST_FENCE_PROCESS_TARGET="$target" \
+    RELEASE_TEST_FENCE_PROCESS_PID="$fallback_process_pid_file" \
+    RELEASE_TEST_FENCE_PROCESS_LOG="$fallback_process_log" \
+    RELEASE_TEST_FENCE_PROC_ROOT="$fixture_root/proc"; then
+  fail 'fallback process that acquired cwd was deleted'
+fi
+fence_pid=$(cat "$fallback_process_pid_file")
+kill -0 "$fence_pid" 2>/dev/null \
+  || fail 'atomic fallback signaled a process it did not own'
+grep -Fq 'post-fence live process ownership' "$output" \
+  || fail 'atomic fallback post-fence census missed racing cwd owner'
+kill "$fence_pid"
+wait "$fence_pid" 2>/dev/null || true
+fence_pid=
+assert_target_retained deinitialized-fallback-process-race
 
 # NEGATIVE: a tracked modification in the parent worktree must still refuse.
 make_fixture dirty-parent
