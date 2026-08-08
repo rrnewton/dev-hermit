@@ -97,6 +97,20 @@ DECLARED_READERS: dict[str, str] = {
     # --- producers / plumbing (write or pass the path, never bucket) ------
     "validate/scan-finalize.sh": "finalizer PRODUCER; appends rows, does not derive a view",
     "health/pr_status.py": "shells out to `ci-hub ledger qualified-rows`",
+    "ledger/import_validate_runs.py": (
+        "ARCHIVER, not a consumer: copies rows verbatim from the machine-local "
+        "ledger into the git-tracked shard. It deliberately does NOT order by "
+        "finished_at and deliberately does NOT drop incomplete/aborted/"
+        "zero-executed rows -- for this path those would be DEFECTS, not "
+        "invariants. Qualification decides which runs support a verdict; "
+        "archiving decides which runs are remembered, and a row dropped here is "
+        "gone from the permanent record with nothing left to notice its absence. "
+        "Routing it through qualified_rows() would silently shrink the durable "
+        "ledger to the green population. It derives no view: no result "
+        "comparison, no bucketing, no aggregation -- the only per-row logic is "
+        "workspace-path redaction and a dedup against what the shard already "
+        "carries, both content-preserving."
+    ),
     # --- tests -------------------------------------------------------------
     "validate/test_finalize_receipt.py": "test fixture",
     "remediation/tests/test_protocol.py": (
