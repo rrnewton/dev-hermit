@@ -176,22 +176,103 @@ class OperationalHealthTest(unittest.TestCase):
         self.assertNotIn("state=ok", output)
 
     def test_pull_request_gate_bounds_each_repo_under_the_guillotine(self) -> None:
-        # The gate MUST pass a per-repo timeout so it resolves before tick-hub's
-        # 30s SubprocessGateRunner kills it (which would erase the reason).
+        # The gate MUST bound each repo so it resolves before tick-hub's 30s
+        # SubprocessGateRunner kills it (which would erase the reason).
+        #
+        # The bound is the SUM over the serial pass, not per-repo * repo count.
+        # This assertion used to read `timeout * 2 <= 30`, which silently encoded
+        # a FLAT budget -- and a flat budget is what starved the large repo. The
+        # invariant being protected (the pass finishes before the guillotine) is
+        # unchanged; only the arithmetic that expresses it is corrected.
         healthy = SimpleNamespace(
             open=0, red=0, green=0, pending=0, real_reds=0, outage_suspected=False
         )
+        repos = ["a/one", "b/two", "c/three"]
         with mock.patch.object(
-            operational_health.pr_status, "DEFAULT_REPOS", ["a/one"]
+            operational_health.pr_status, "DEFAULT_REPOS", repos
         ), mock.patch.object(
             operational_health.pr_status,
             "fetch_repo_status",
             return_value=healthy,
         ) as fetch:
             self.capture(operational_health.pull_request_gate)
-        _, kwargs = fetch.call_args
-        self.assertIn("timeout", kwargs)
-        self.assertLessEqual(kwargs["timeout"] * 2, 30.0)
+        budgets = [call.kwargs["timeout"] for call in fetch.call_args_list]
+        self.assertEqual(len(repos), len(budgets))
+        for budget in budgets:
+            self.assertGreaterEqual(budget, operational_health.PR_GATE_MIN_REPO_BUDGET_SECS)
+        # Every repo returns instantly here, so each sees a near-full envelope;
+        # the guarantee is that no single grant can exceed the whole envelope and
+        # that the envelope itself clears the guillotine.
+        self.assertLessEqual(max(budgets), operational_health.PR_GATE_TOTAL_BUDGET_SECS)
+        self.assertLess(operational_health.PR_GATE_TOTAL_BUDGET_SECS, 30.0)
+
+    def test_the_large_repo_is_not_starved_by_a_flat_budget(self) -> None:
+        """The defect this allocation exists to remove.
+
+        Measured 2026-08-08: hermit's PR-list query costs 11.1-13.1s against the
+        old flat 12s, so it straddled its budget and the tick reported reverie's
+        3 PRs alone as though the queue were nearly drained. The first repo must
+        now receive materially more than that flat number.
+        """
+
+        first = operational_health.pr_gate_repo_budget(0.0, 1)
+        self.assertGreaterEqual(first, 20.0)
+        self.assertGreater(first, 12.0)  # strictly better than the old flat value
+
+    def test_a_slow_first_repo_cannot_starve_a_later_one(self) -> None:
+        # The floor is the whole reason the envelope is safe to share.
+        after_a_greedy_first_repo = operational_health.pr_gate_repo_budget(20.0, 0)
+        self.assertEqual(
+            operational_health.PR_GATE_MIN_REPO_BUDGET_SECS,
+            after_a_greedy_first_repo,
+        )
+        # ...and even an overrun cannot drive the grant negative.
+        self.assertEqual(
+            operational_health.PR_GATE_MIN_REPO_BUDGET_SECS,
+            operational_health.pr_gate_repo_budget(999.0, 0),
+        )
+
+    def test_serial_pass_total_stays_under_the_guillotine(self) -> None:
+        # Simulate the worst case: every repo consumes exactly what it is granted.
+        for repo_count in (1, 2, 3, 5):
+            elapsed = 0.0
+            for index in range(repo_count):
+                elapsed += operational_health.pr_gate_repo_budget(
+                    elapsed, repo_count - index - 1
+                )
+            self.assertLessEqual(
+                elapsed,
+                operational_health.PR_GATE_TOTAL_BUDGET_SECS,
+                f"{repo_count} repos overran the shared envelope",
+            )
+            self.assertLess(elapsed, 30.0)
+
+    def test_budget_fix_does_not_buy_reachability_by_dropping_the_honesty(self) -> None:
+        """A repo that STILL exceeds its (now larger) budget must stay loud.
+
+        The flat-budget defect was only findable because the gate reported
+        `degraded=yes` and NAMED the unreachable repo instead of presenting a
+        clean count from the repos it could reach. Widening the budget must not
+        quietly remove that.
+        """
+
+        healthy = SimpleNamespace(
+            open=2, red=0, green=2, pending=0, real_reds=0, outage_suspected=False
+        )
+        with mock.patch.object(
+            operational_health.pr_status, "DEFAULT_REPOS", ["small/one", "big/two"]
+        ), mock.patch.object(
+            operational_health.pr_status,
+            "fetch_repo_status",
+            side_effect=[healthy, pr_status_unavailable("big/two exceeded 20s")],
+        ):
+            result, output = self.capture(operational_health.pull_request_gate)
+        self.assertEqual(result, 1)
+        self.assertIn("state=degraded", output)
+        self.assertIn("degraded=yes", output)
+        self.assertIn("unavailable=big/two", output)
+        self.assertIn("open=2", output)  # the reachable repo's data survives
+        self.assertNotIn("state=ok", output)
 
     def test_primary_snapshot_failure_is_a_structured_warning(self) -> None:
         def blocked(*_args: object, **kwargs: object) -> int:

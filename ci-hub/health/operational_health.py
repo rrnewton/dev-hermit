@@ -52,9 +52,53 @@ DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS = 10 * 60
 # pr_status emit its own structured
 # degraded/unavailable result (distinguishing "GitHub was slow" from "ci-hub is
 # broken") instead of the gate timing out into a bare, undifferentiated failure.
-DEFAULT_PR_GATE_TIMEOUT_SECS = float(
-    os.environ.get("CI_HUB_PR_GATE_TIMEOUT", "12")
+# WHY THIS IS A SHARED DEADLINE AND NOT A FLAT PER-REPO NUMBER.
+#
+# A flat budget is calibrated for the SMALLEST repo and starves the largest, and
+# the starvation lands exactly where the answer matters most. Measured
+# 2026-08-08: the `gh pr list` GH_FIELDS query costs ~80-90ms per open PR, so
+# rrnewton/reverie (19 PRs) returns in 1.6-1.8s while rrnewton/hermit (143 PRs)
+# takes 11.1-13.1s. Against the old flat 12s the large repo STRADDLED its budget
+# -- sometimes under, sometimes over -- so the tick intermittently reported
+# `open=3` (reverie alone, all green) and read as a nearly-drained queue.
+#
+# The failure is self-worsening at the wrong end: cost grows with the queue, so
+# the gate loses the large repo precisely when there is most to see, and regains
+# it only as the queue drains -- which is the thing the gate exists to measure.
+#
+# So the repos share ONE envelope and each takes what it needs, with a floor
+# reserved for every repo not yet queried so a slow first repo cannot starve a
+# later one. Serial querying (verified 2026-08-08: `pull_request_gate` is a plain
+# `for repo in DEFAULT_REPOS` loop) is what makes a running deadline correct --
+# a concurrent version would need a different allocation.
+#
+# The envelope stays under tick-hub's hard kill, which is real and is 30s
+# (agent-utils `tick_hub/probes.py` DEFAULT_GATE_TIMEOUT_SECS). Worst case here
+# is TOTAL, not TOTAL*repos: the last repo can only ever receive what is left.
+PR_GATE_TOTAL_BUDGET_SECS = float(
+    os.environ.get("CI_HUB_PR_GATE_TOTAL_BUDGET", "24")
 )
+# Floor held back for each repo still unqueried. Reverie needs ~2s, so 4s leaves
+# margin for a small repo while still handing the large one ~20s of a 24s pool.
+PR_GATE_MIN_REPO_BUDGET_SECS = float(
+    os.environ.get("CI_HUB_PR_GATE_MIN_REPO_BUDGET", "4")
+)
+
+
+def pr_gate_repo_budget(
+    elapsed: float, repos_remaining_after_this: int,
+    total: float = PR_GATE_TOTAL_BUDGET_SECS,
+    floor: float = PR_GATE_MIN_REPO_BUDGET_SECS,
+) -> float:
+    """Budget for the repo about to be queried, from the shared envelope.
+
+    Take everything still unspent except a floor reserved for each repo that has
+    not been queried yet. The sum over a serial pass can never exceed ``total``,
+    because each call only ever offers what the clock has left.
+    """
+
+    left = total - elapsed
+    return max(floor, left - floor * max(0, repos_remaining_after_this))
 # Per-gh-call bound for the auto-invoked CI queue-health gate, same rationale as
 # the PR gate above: the gate makes at most two gh calls (run-list + runners API)
 # per repo, so 12s each keeps a single default-repo tick to ~24s worst case,
@@ -300,16 +344,19 @@ def pull_request_gate() -> int:
     # Query each repo under a bounded budget and keep whatever succeeds: one slow
     # or blocked repo must not discard the other's real reds, and the gate must
     # resolve before tick-hub's 30s guillotine so the failure is reported (with a
-    # reason) rather than silently timed out. See DEFAULT_PR_GATE_TIMEOUT_SECS.
+    # reason) rather than silently timed out. The budget is drawn from a shared
+    # running deadline rather than being flat per repo -- see
+    # PR_GATE_TOTAL_BUDGET_SECS for why a flat number starves the large repo.
     statuses: list[pr_status.RepoStatus] = []
     unavailable: list[tuple[str, str]] = []
-    for repo in pr_status.DEFAULT_REPOS:
+    repos = list(pr_status.DEFAULT_REPOS)
+    started = time.monotonic()
+    for index, repo in enumerate(repos):
+        budget = pr_gate_repo_budget(
+            time.monotonic() - started, len(repos) - index - 1
+        )
         try:
-            statuses.append(
-                pr_status.fetch_repo_status(
-                    repo, timeout=DEFAULT_PR_GATE_TIMEOUT_SECS
-                )
-            )
+            statuses.append(pr_status.fetch_repo_status(repo, timeout=budget))
         except RuntimeError as error:
             unavailable.append((repo, _field(error)))
 
