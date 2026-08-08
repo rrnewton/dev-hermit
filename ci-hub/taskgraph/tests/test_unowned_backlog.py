@@ -183,15 +183,27 @@ class UnownedBacklogTest(unittest.TestCase):
         )
         self.assertEqual(1105, len(report["rows"]))
 
-    def test_automatic_health_tick_wiring_runs_every_outer_tick(self) -> None:
+    def test_census_holds_no_standing_tick_authority(self) -> None:
+        """This census must never regain a tick-hub gate.
+
+        It used to have one, and that is exactly what went wrong: reading the
+        TaskGraph through a hardcoded path, it reported a 108-task backlog
+        against a database the orchestrator could not see for a whole session.
+        The gate was withdrawn on 2026-08-08 under the owner directive that
+        tick-hub must not police orc-internal state -- ORC is the authority on
+        tasks and ownership, so a second observer can only manufacture
+        disagreement, and that disagreement reaches a coordinator mandated to
+        close and respawn agents without asking.
+
+        The script stays useful and stays tested; what is withdrawn is its
+        standing authority to interrupt. So this asserts the ABSENCE of the
+        wiring, and that the removal is recorded rather than silently dropped.
+        """
+
         config = TICK_CONFIG.read_text()
-        marker = "  - name: unowned_high_priority_backlog\n"
-        self.assertIn(marker, config)
-        block = config.split(marker, 1)[1].split("\n  - name:", 1)[0]
-        self.assertIn("    cadence_secs: 300\n", block)
-        self.assertIn("cmd: ./ci-hub/taskgraph/unowned_backlog.py --gate", block)
-        self.assertIn("when: failure", block)
-        self.assertIn("capture: true", block)
+        self.assertNotIn("  - name: unowned_high_priority_backlog\n", config)
+        self.assertNotIn("unowned_backlog.py --gate", config)
+        self.assertIn("unowned_high_priority_backlog", config)  # the removal record
 
 
 if __name__ == "__main__":
