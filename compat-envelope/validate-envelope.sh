@@ -100,6 +100,26 @@ if ! python3 "${here}/tier_evidence.py" --root "${here}" \
   fail=1
 fi
 
+# The tier gate above can only check evidence that EXISTS, so this is the half
+# that keeps the evidence honest. `stdout_parity` is a boolean with two SHA-256
+# operands beside it, and at 2026-08-08 the reference operand was populated in 0
+# of 2290 published rows while the candidate was populated in 2068 -- so no reader
+# could tell parity-HELD from parity-DIFFERED from NEVER-ATTEMPTED. This keeps the
+# three states distinct and, above all, refuses the tempting repair: writing a
+# boolean into an empty column would convert a visible gap into an invisible false
+# record, which is strictly worse than the gap.
+#
+# EXPECT `UNMEASURED : 2290` AND rc 0 HERE. Unmeasured is counted and printed, never
+# coerced to a zero or a pass, and never a failure by itself -- an honest blank is
+# not an error, or this gate could not be wired at all. What DOES fail is a row
+# asserting a parity its own operands cannot support, of which there are currently
+# none. The gate exists to keep that count at zero.
+echo "== compat-envelope: a stdout parity verdict must be re-derivable from its row =="
+if ! python3 "${here}/stdout_operands.py" --root "${here}"; then
+  echo "validate-envelope: parity assertion unsupported by its own operands" >&2
+  fail=1
+fi
+
 # A parity boolean is accepted only when the row carries both hashed operands,
 # exact code state, comparison/profile identity, and counted run coverage.  This
 # is the same semantic verifier the renderer calls; labels and cached booleans
