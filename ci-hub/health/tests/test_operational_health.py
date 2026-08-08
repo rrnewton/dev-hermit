@@ -539,9 +539,10 @@ class CloseOnImplementedLifecycleTest(unittest.TestCase):
     """
 
     @staticmethod
-    def _task(tid, *, status="IN_PROGRESS", owner="", tags=()):
+    def _task(tid, *, status="IN_PROGRESS", owner="", tags=(), landed=False):
         return operational_health.TaskRecord(
-            id=tid, title=tid, owner=owner, tags=tuple(tags), status=status
+            id=tid, title=tid, owner=owner, tags=tuple(tags), status=status,
+            landed=landed,
         )
 
     def fixture(self):
@@ -578,6 +579,78 @@ class CloseOnImplementedLifecycleTest(unittest.TestCase):
             ["implemented-unlanded", "implemented-unlanded-2"],
         )
         self.assertEqual(r.counts()["awaiting_land"], 2)
+
+    def test_awaiting_land_moves_in_BOTH_directions(self):
+        """A queue depth that cannot fall is not a queue depth.
+
+        The defect: `awaiting_landing` was a bare `return self.implemented`,
+        with an entry condition and NO exit. Nothing removes the tag and no
+        `landed` tag exists, so every landed task incremented the count
+        forever — it grew monotonically with success and read 1718 while the
+        real backlog was ~47. This asserts the property that was missing, in
+        both directions, because only rising is the whole bug.
+        """
+        base = self.fixture()
+        agents = [operational_health.AgentRecord(
+            name="agent-a", status="running", current_task="active-ready")]
+
+        def depth(tasks):
+            return operational_health.reconcile_active_work(
+                tasks, agents).counts()["awaiting_land"]
+
+        start = depth(base)
+        self.assertEqual(start, 2)
+
+        # UP: tag one more task implemented -> the debt RISES.
+        rose = base + [self._task("newly-implemented", status="CLOSED",
+                                  tags=("implemented",))]
+        self.assertEqual(depth(rose), start + 1,
+                         "tagging implemented must increase the debt")
+
+        # DOWN: that same task lands (gateway records CLOSURE-VERIFIED)
+        # -> the debt FALLS back. This is the direction the old code could
+        # never express.
+        landed = base + [self._task("newly-implemented", status="CLOSED",
+                                    tags=("implemented",), landed=True)]
+        self.assertEqual(depth(landed), start,
+                         "a proven-landed task must leave the debt")
+
+        # And landing the whole original set drains it to zero.
+        all_landed = [
+            self._task(t.id, status=t.status, owner=t.owner, tags=t.tags,
+                       landed=t.implemented)
+            for t in base
+        ]
+        self.assertEqual(depth(all_landed), 0,
+                         "the debt must be able to reach zero")
+
+    def test_closed_status_alone_does_not_discharge_the_debt(self):
+        """CLOSED is not landed, and must not be read as landed.
+
+        Measured 2026-08-07: only 291 of 1718 implemented tasks carried a
+        CLOSURE-VERIFIED proof, so 1427 were closed with no landing evidence.
+        Exiting on status instead of proof would discharge the debt by
+        assertion — the phantom-closure mode the gateway exists to prevent.
+        """
+        closed_unproven = [self._task("closed-no-proof", status="CLOSED",
+                                      tags=("implemented",), landed=False)]
+        r = operational_health.reconcile_active_work(closed_unproven, [])
+        self.assertEqual([t.id for t in r.awaiting_land], ["closed-no-proof"])
+
+    def test_lifecycle_violation_stays_a_distinct_signal(self):
+        """The two metrics must not collapse into near-duplicates.
+
+        Scoping awaiting_land to IN_PROGRESS (the other candidate fix) would
+        have made it `implemented AND NOT closed`, which is exactly
+        `lifecycle_violation`. Here an implemented+landed+open task is a
+        lifecycle deviation but NOT landing debt, so the sets differ.
+        """
+        tasks = [self._task("open-implemented-landed", status="IN_PROGRESS",
+                            owner="a", tags=("implemented",), landed=True)]
+        r = operational_health.reconcile_active_work(tasks, [])
+        self.assertEqual([t.id for t in r.lifecycle_violations],
+                         ["open-implemented-landed"])
+        self.assertEqual([t.id for t in r.awaiting_land], [])
 
     def test_closed_implemented_work_is_never_dispatchable(self):
         """Negative mutation: the landing debt must not leak into any set an

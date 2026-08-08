@@ -86,6 +86,11 @@ class TaskRecord:
     tags: tuple[str, ...]
     # Defaulted so existing fixtures that only describe live work stay valid.
     status: str = "IN_PROGRESS"
+    # True when the verified closure gateway recorded CLOSURE-VERIFIED for this
+    # task, i.e. `ci-hub/bin/close-task` freshly proved the change is reachable
+    # from the target `main`. Defaulted False so fixtures stay valid; an absent
+    # proof means NOT-PROVEN-LANDED, never assumed-landed.
+    landed: bool = False
 
     @property
     def implemented(self) -> bool:
@@ -97,16 +102,43 @@ class TaskRecord:
 
     @property
     def awaiting_landing(self) -> bool:
-        """Finished work whose landing is still owed.
+        """Finished work whose landing is still owed: implemented AND NOT landed.
 
-        TAG FIRST, STATUS SECOND — the same rule `scripts/status-log.rs`
-        `classify_task` already applies. Under the close-on-implemented
-        lifecycle an implemented task is CLOSED immediately, so keying
-        awaiting-landing off `IN_PROGRESS` (as this module used to) reports
-        ~zero while the real population sits in CLOSED. Keying off the tag is
-        correct under BOTH the old and new lifecycles.
+        TAG FIRST, STATUS SECOND still holds — the same rule
+        `scripts/status-log.rs` `classify_task` applies. Under the
+        close-on-implemented lifecycle an implemented task is CLOSED
+        immediately, so keying awaiting-landing off `IN_PROGRESS` reports ~zero
+        while the real population sits in CLOSED. That reasoning is why the
+        entry condition is the TAG and not the status, and it is unchanged.
+
+        WHAT CHANGED, and why the previous version was wrong anyway. This used
+        to be a bare `return self.implemented`, with no exit condition at all.
+        Nothing ever removes the `implemented` tag and there is no `landed` tag
+        anywhere in the corpus, so a task ENTERED this set on completion and
+        could never leave it. The count therefore GREW MONOTONICALLY WITH
+        SUCCESS: every landed task incremented it forever. Measured 2026-08-07
+        it read 1718 (1665 CLOSED, 47 IN_PROGRESS, 6 BACKLOG) and was presented
+        as a queue depth, when the live backlog was ~47. A number that rises
+        when things go RIGHT and can never fall is not a health signal — it
+        cries wolf until someone stops reading it, which is strictly worse than
+        reporting nothing.
+
+        The exit condition is the verified closure gateway's CLOSURE-VERIFIED
+        record, because that is the only place landing is actually PROVEN:
+        `close-task` re-derives ancestry against freshly fetched target `main`.
+        A CLOSED status is NOT the exit — measured, only 291 of those 1718 carry
+        a closure proof, so 1427 were closed with no landing evidence at all.
+        Treating CLOSED as landed would discharge the debt by assertion, which
+        is the phantom-closure failure this whole lifecycle exists to prevent
+        (see `ci-hub/bin/close-task`, and `drain-implemented-to-landed`).
+
+        Consequences worth stating so nobody "fixes" this back:
+          * it can DECREASE — closing a task through the gateway removes it;
+          * `lifecycle_violation` stays a DISTINCT signal. Scoping this to
+            IN_PROGRESS instead would have made the two metrics near-duplicates
+            (47 vs 53, differing only by the BACKLOG rows).
         """
-        return self.implemented
+        return self.implemented and not self.landed
 
     @property
     def lifecycle_violation(self) -> bool:
@@ -566,7 +598,12 @@ SELECT json_object(
   'title', title,
   'owner', COALESCE(owner, ''),
   'status', status,
-  'tags', json(tags)
+  'tags', json(tags),
+  'landed', EXISTS (
+      SELECT 1 FROM task_notes
+      WHERE task_notes.task_id = tasks.local_id
+        AND task_notes.content LIKE '%CLOSURE-VERIFIED%'
+    )
 ) AS task_json
 FROM tasks
 WHERE status = 'IN_PROGRESS'
@@ -625,6 +662,10 @@ ORDER BY local_id
                 owner=str(raw.get("owner") or "").strip(),
                 tags=tuple(tags),
                 status=str(raw.get("status") or "IN_PROGRESS").strip(),
+                # SQLite EXISTS yields 0/1; anything unexpected is treated as
+                # NOT proven landed, so a schema surprise over-reports debt
+                # rather than silently discharging it.
+                landed=raw.get("landed") == 1,
             )
         )
     count_match = re.search(r"\((\d+) rows\)", process.stdout)
@@ -666,10 +707,13 @@ def reconcile_active_work(
     agents: Sequence[AgentRecord],
 ) -> ActiveWorkReport:
     everything = tuple(sorted(tasks, key=lambda task: task.id))
-    # LANDING DEBT: keyed off the tag, not the status, so it survives the
-    # close-on-implemented lifecycle. These records are CLOSED; they are the
-    # set `drain-implemented-to-landed` enumerates, and ancestry verification
-    # is that tracker's job, not this monitor's.
+    # LANDING DEBT: implemented AND NOT proven landed. Entry is keyed off the
+    # tag, not the status, so it survives the close-on-implemented lifecycle;
+    # EXIT is the gateway's CLOSURE-VERIFIED ancestry proof. The previous
+    # version had entry but no exit and so could only ever rise -- see
+    # `TaskRecord.awaiting_landing`. Ancestry verification is still
+    # `drain-implemented-to-landed`'s job to ACT on; this monitor only reads the
+    # proof the gateway already recorded.
     awaiting_land = tuple(task for task in everything if task.awaiting_landing)
     # LIFECYCLE DEVIATION: implemented but not closed. Reported separately so
     # it is fixable rather than silently absorbed into the landing debt.
