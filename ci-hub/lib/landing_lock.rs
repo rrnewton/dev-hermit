@@ -2357,8 +2357,13 @@ pub(crate) fn foreign_box_claim(anchor: &Path, own_cleanup: &Path) -> Option<Str
             }
             other => {
                 let detail = match &other {
-                    CleanupVerification::Unknown { record: Some(r), .. } => {
-                        format!("agent={} operation={} phase={:?}", r.agent, r.operation, r.phase)
+                    CleanupVerification::Unknown {
+                        record: Some(r), ..
+                    } => {
+                        format!(
+                            "agent={} operation={} phase={:?}",
+                            r.agent, r.operation, r.phase
+                        )
                     }
                     _ => "record present".to_string(),
                 };
@@ -4823,7 +4828,13 @@ exit 0
         assert!(git_in(&main, &["commit", "--quiet", "-m", "seed"]));
         assert!(git_in(
             &main,
-            &["worktree", "add", "--detach", "--quiet", linked.to_str().unwrap()]
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                linked.to_str().unwrap()
+            ]
         ));
 
         // The env override must not be in effect for this assertion to mean
@@ -4953,7 +4964,10 @@ exit 0
         // must be admitted. A box with no claims behaves exactly as it did before
         // this mechanism existed -- which is also the whole migration story.
         let (anchor, dir) = claim_fixture("empty");
-        assert_eq!(foreign_box_claim(&anchor, &dir.join("mine.cleanup-required")), None);
+        assert_eq!(
+            foreign_box_claim(&anchor, &dir.join("mine.cleanup-required")),
+            None
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4970,7 +4984,10 @@ exit 0
         let refusal = foreign_box_claim(&anchor, &mine).expect("must refuse");
         assert!(refusal.contains(&theirs.display().to_string()), "{refusal}");
         assert!(refusal.contains("escaped-lander"), "{refusal}");
-        assert!(refusal.contains("reclaim-dead"), "must name the remedy: {refusal}");
+        assert!(
+            refusal.contains("reclaim-dead"),
+            "must name the remedy: {refusal}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4999,13 +5016,23 @@ exit 0
         let mine = dir.join("my-repo/.landing-lock.cleanup-required");
         armed_record_at(&theirs, "lander", "pr:7");
         register_box_claim(&anchor, &theirs, "lander", "pr:7");
-        assert!(foreign_box_claim(&anchor, &mine).is_some(), "must refuse while outstanding");
+        assert!(
+            foreign_box_claim(&anchor, &mine).is_some(),
+            "must refuse while outstanding"
+        );
 
         // The owning repository discharges its record, exactly as reclaim-dead does.
         remove_cleanup_record(&theirs).unwrap();
-        assert_eq!(foreign_box_claim(&anchor, &mine), None, "must admit once discharged");
+        assert_eq!(
+            foreign_box_claim(&anchor, &mine),
+            None,
+            "must admit once discharged"
+        );
         assert!(
-            fs::read_dir(box_claim_dir(&anchor)).unwrap().next().is_none(),
+            fs::read_dir(box_claim_dir(&anchor))
+                .unwrap()
+                .next()
+                .is_none(),
             "the stale claim must be pruned, not merely ignored"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -5035,7 +5062,10 @@ exit 0
         remove_cleanup_record_and_claim(&cleanup, &anchor).unwrap();
         assert!(!cleanup.exists(), "record removed");
         assert!(
-            fs::read_dir(box_claim_dir(&anchor)).unwrap().next().is_none(),
+            fs::read_dir(box_claim_dir(&anchor))
+                .unwrap()
+                .next()
+                .is_none(),
             "claim removed with it"
         );
         let _ = fs::remove_dir_all(&dir);

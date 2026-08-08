@@ -29,14 +29,13 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
-    box_exclusion_anchor_path as box_exclusion_anchor_at, foreign_box_claim,
-    register_box_claim, remove_cleanup_record_and_claim, repository_lock_root,
-    BoxExclusionAnchor,
-    capture_and_freeze_residuals, census_disposition, census_recorded_domain, current_host,
-    enable_child_subreaper, exact_process_liveness, exit_status_code, heartbeat_test_helper_delay,
+    box_exclusion_anchor_path as box_exclusion_anchor_at, capture_and_freeze_residuals,
+    census_disposition, census_recorded_domain, current_host, enable_child_subreaper,
+    exact_process_liveness, exit_status_code, foreign_box_claim, heartbeat_test_helper_delay,
     payload_cgroup_anchor, print_cleanup_record, process_group_exists, process_start_ticks,
-    reap_exited_children, signal_group, spawn_gated_child, suffix,
-    verify_cleanup_record, write_cleanup_record, CleanupPhase, CleanupRecord, CleanupVerification,
+    reap_exited_children, register_box_claim, remove_cleanup_record_and_claim,
+    repository_lock_root, signal_group, spawn_gated_child, suffix, verify_cleanup_record,
+    write_cleanup_record, BoxExclusionAnchor, CleanupPhase, CleanupRecord, CleanupVerification,
     DomainEvidence, GatedChild, ProcessIdentity, ResidualCapture,
 };
 
@@ -3807,7 +3806,13 @@ exit 0
         assert!(git(&main, &["commit", "--quiet", "-m", "seed"]));
         assert!(git(
             &main,
-            &["worktree", "add", "--detach", "--quiet", linked.to_str().unwrap()]
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                linked.to_str().unwrap()
+            ]
         ));
 
         let from_main = LockPaths::for_workspace(&main);
@@ -3861,7 +3866,10 @@ exit 0
         // A SECOND caller -- which in production is a different repository with its
         // own lease file -- is refused, and `acquire`'s non-holding probe sees it.
         let second = BoxExclusionAnchor::take(&anchor, 0).unwrap();
-        assert!(second.is_none(), "a held anchor must refuse the second caller");
+        assert!(
+            second.is_none(),
+            "a held anchor must refuse the second caller"
+        );
         assert!(BoxExclusionAnchor::held_by_another(&anchor));
         assert!(
             BoxExclusionAnchor::describe_holder(&anchor).contains("box-exclusive-v1"),
@@ -3897,7 +3905,10 @@ exit 0
     fn box_anchor_path_is_uid_derived_and_not_workspace_derived() {
         let path = box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR);
         let uid = unsafe { libc::getuid() };
-        assert!(path.is_absolute(), "the anchor must not be relative to a cwd");
+        assert!(
+            path.is_absolute(),
+            "the anchor must not be relative to a cwd"
+        );
         assert_eq!(
             path.file_name().and_then(|n| n.to_str()),
             Some("validate-box.lock")
