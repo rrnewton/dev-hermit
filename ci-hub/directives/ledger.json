@@ -140,7 +140,10 @@
       "owner": "hermit-243",
       "source_row": "6",
       "parent_id": "green-time-percentage",
-      "implementation": null
+      "implementation": {
+        "kind": "commit",
+        "identity": "2e9d93fdfb9dd5d655b21f43fb3418615060587e"
+      }
     },
     {
       "id": "newest-green",
