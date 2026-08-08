@@ -153,6 +153,15 @@ def run(suites: Sequence[Suite]) -> int:
                 "--import-mode=importlib",
                 "--strict-config",
                 "--strict-markers",
+                # Make every skip STATE ITSELF. Without this the summary reports
+                # a bare count, and an unnamed skip is indistinguishable from a
+                # test that silently stopped running -- the same shape as an
+                # absent authority reading as green. Measured 2026-08-08: the
+                # green at b5cc56c9 carried "4 skipped" that nobody could
+                # enumerate from the log, and two of the four turned out to be
+                # coverage lost to step ordering rather than a decision anyone
+                # had taken. A skip is a decision; it has to say so.
+                "-rs",
                 *(str(suite.path) for suite in suites),
             ],
             plugins=[plugin],
