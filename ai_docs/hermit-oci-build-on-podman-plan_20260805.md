@@ -3,7 +3,7 @@
 - **Task:** `research-oci-integration-next-phases` (P2 research, owner-requested "second plan").
 - **Status:** research complete; **not pushed / not linked** — box-wide egress 403 at time of writing (2026-08-05). All work below is local.
 - **Author:** impl agent, claude-opus-5.
-- **Host:** `devbig014.atn7.facebook.com`, CentOS Stream 9, kernel `6.18.39-0_fbk0_hardened_0_ga43d5727b443`, 316 CPUs, btrfs.
+- **Host:** `devbig014`, CentOS Stream 9, kernel `6.18.39-0_fbk0_hardened_0_ga43d5727b443`, 316 CPUs, btrfs.
 - **Tooling measured:** podman `5.8.3` (rootless), buildah `1.43.2`, crun `1.28`, conmon `2.2.1`, netavark `2.0.0`. **No** docker, **no** skopeo, **no** runc on this box.
 - **Hermit measured:** `hermit 0.2.0 (2026-08-04, g0f891e432a75-dirty)` — the primary checkout's `target/debug/hermit`. Read-only use of the primary; no primary mutation.
 

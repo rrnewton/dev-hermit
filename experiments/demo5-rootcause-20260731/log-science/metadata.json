@@ -3,7 +3,7 @@
   "agent": "hermit-237 (log-science)",
   "feeds": "demo5-rigorous-rootcause (lead hermit-226)",
   "date": "2026-07-31",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "cpus": 316,
   "load_avg_at_run": [65.75, 62.53, 58.75],
   "hermit_primary_head_used_for_tools": "1ece0654e39c67fa0555dfde645a8da61eb2f059",

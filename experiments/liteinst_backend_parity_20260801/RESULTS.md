@@ -3,7 +3,7 @@
 Run `liteinst-spst-1785620995` measured landed Hermit
 `464cbd9f9bb43d5505c914783819e1d349630283` with pinned Reverie
 `aa6f1283aeee3efd174c57f6dd8198310bd307e1` on
-`devbig014.atn7.facebook.com` (Linux 6.18.39, x86-64). The Hermit checkout was
+`devbig014` (Linux 6.18.39, x86-64). The Hermit checkout was
 clean.
 
 | scope | denominator | LiteInst parity | LiteInst DETLOG determinism |

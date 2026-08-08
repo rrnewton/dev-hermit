@@ -5,7 +5,7 @@
   "date": "2026-07-27",
   "hermit_sha": "d16b7fc67c190e489cd2f58b0173570d8d39c0ad",
   "hermit_binary": "worktrees/274/hermit/target/release/hermit",
-  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 devbig030.atn3.facebook.com",
+  "host": "Linux 6.17.13-0_fbk0_crackerjackhost_0_g2b4321c50d79 devbig030",
   "qemu": "/usr/local/bin/qemu-system-x86_64",
   "kernel": "ignored/qemu-linux/bzImage",
   "initrd": "ignored/qemu-linux/initramfs-hermit.cpio.gz",

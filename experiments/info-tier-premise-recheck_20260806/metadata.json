@@ -2,7 +2,7 @@
   "question": "Does hermit's shipped --verify-strict on current main already provide the INFO-tier exact comparator that task add_an_info_tier asks to be built?",
   "date": "2026-08-06",
   "agent": "hermit-w2",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "slot": "worktrees/w2/hermit",
   "hermit_sha": "1fadc03779f2a246a9b5af5d4a93533511c837df",
   "hermit_base": "origin/main a8951eff4c259f363a71836e8e93271a6231230a",

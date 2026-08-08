@@ -8,7 +8,7 @@
   "parent_head": "e029ea02ba7e8af7956b78c1441cfd2b30dc15ea",
   "binary": "hermit/target/debug/hermit (prebuilt debug artifact, mtime 2026-08-03T21:42:43-0700; predates current primary HEAD; measurement is about backend architecture which is stable across these SHAs)",
   "command": "hermit --log=info --log-file=<b>.log run --backend <ptrace|liteinst> --strict -- <getpid>",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "toolchain": "cargo/rustc as built into target/debug/hermit; cc/gcc/clang available",
   "seed": "detcore scheduler/user/chaos PRNG all seed 0 (both backends)",
   "measurements": {

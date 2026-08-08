@@ -6,7 +6,7 @@
   "fix_commit_sha": "7c61509c259ea99d75363303c2da352224991462",
   "subject_file": "scripts/release-worktree.rs",
   "subject_lines": "452-500 (--clean remove/prune loop)",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "toolchain": { "git": "2.53.0-Meta", "shell": "bash" },
   "command": "bash mutation-test.sh",
   "n_normal_releases": 5,

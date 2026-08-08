@@ -11,7 +11,7 @@
   "stack": ["#1220 (round-2)", "#1226 (round-3)", "#1231 (round-4)", "#1232 (round-5)", "#1236 (round-6)", "#1240 (round-7)", "#1267 (round-8)", "#1288 (round-9)", "#1294 (round-10)", "#1298 (round-11)"],
   "hermit_pr": "https://github.com/rrnewton/hermit/pull/1298",
   "reverie_e9tool_version": "E9Tool 1.0.1",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "cc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-14)",
   "arch": "x86_64",

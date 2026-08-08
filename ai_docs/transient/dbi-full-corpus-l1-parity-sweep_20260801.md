@@ -70,7 +70,7 @@ output differs from ptrace. Concrete L1 diffs captured:
 
 1. **`c-programs/uname` — real host FQDN leak (ROOT-CAUSED, fixable).**
    - ptrace: `Node name: hermetic-container.local`
-   - DBI:    `Node name: devbig014.atn7.facebook.com`  ← real host leaks
+   - DBI:    `Node name: devbig014`  ← real host leaks
    - DBI *does* route uname through shared Detcore `handle_uname`
      (`detcore/src/syscalls/misc.rs:580`): `release`=5.2.0 and `version` are
      rewritten identically to ptrace. But the nodename/domainname rewrite is

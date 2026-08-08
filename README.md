@@ -68,9 +68,9 @@ that initialization explicitly. These Make targets use `with-proxy`
 automatically when the wrapper is installed and fall back to plain `git`
 elsewhere.
 
-The parent `agent-utils` submodule is separate on-demand tooling, not a product
-or backend source dependency. It stays out of ordinary recursive initialization
-and is materialized by the scripts that require it.
+The parent `agent-utils` submodule is shared development tooling rather than a
+product or backend source dependency. Recursive initialization checks it out at
+the parent repository's pinned revision alongside the product submodules.
 
 `WORKTREES.md` explains the optional paired-worktree layout for working on
 several changes concurrently. Whichever layout you use, do not develop directly

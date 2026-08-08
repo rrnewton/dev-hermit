@@ -12,7 +12,7 @@
     "relaxations": []
   },
   "host": {
-    "name": "devbig014.atn7.facebook.com",
+    "name": "devbig014",
     "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
     "architecture": "x86_64",
     "cpu": "AMD EPYC 9D85 158-Core Processor",

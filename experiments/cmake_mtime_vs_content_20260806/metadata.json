@@ -1,7 +1,7 @@
 {
   "question": "Does CMake/make decide object freshness by mtime rather than content, so a truncated artifact is trusted permanently -- and can content validation fix it without disabling incremental builds?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "toolchain": {
     "make": "GNU Make 4.3",

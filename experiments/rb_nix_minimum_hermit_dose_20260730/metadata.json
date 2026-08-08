@@ -1,7 +1,7 @@
 {
   "question": "For a small serial nix build (nix -j1 --cores 1) run under hermit in rootless podman, what is the MINIMUM hermit relaxation/determinization dose that ROBUSTLY reproduces byte-identical output?",
   "date": "2026-07-30",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "podman": "5.8.3 (rootless)",
   "image": "docker.io/nixos/nix:2.3.16 (sha 3a207e2ae0d1; pre-pidfd; avoids the pidfd_send_signal --strict blocker)",
   "hermit_binary": "hermit/target/release/hermit built 2026-07-30 03:36 (~main 0321a015-era)",

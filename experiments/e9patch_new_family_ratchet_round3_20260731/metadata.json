@@ -12,7 +12,7 @@
   "stacked_on_pr": "https://github.com/rrnewton/hermit/pull/1220",
   "hermit_pr": "https://github.com/rrnewton/hermit/pull/1226",
   "reverie_e9tool_version": "E9Tool 1.0.1",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "cc": "GCC 11.5.0 20240719 (Red Hat 11.5.0-14)",
   "arch": "x86_64",

@@ -5,7 +5,7 @@
   "dirty": false,
   "full_ptrace_verify_denominator": 200,
   "hermit_sha": "464cbd9f9bb43d5505c914783819e1d349630283",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "machine": "x86_64",
   "measured_spst": 128,

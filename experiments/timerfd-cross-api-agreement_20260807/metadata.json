@@ -3,7 +3,7 @@
   "hermit_main_at_measurement": "294e89bfeeebeb0aa4f00bde4b0e1053350d6a5e",
   "probe_binary_build": "590fcc9eeb0339c5cf23f72b84394a63333e88ff (g590fcc9eeb03); timerfd handler region diffs 0 lines vs main",
   "reverie_pin": "6144323c5dab8b521278fce206f8774360c2b05f",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "command": "hermit run --strict --base-env minimal -- tfd_disc <api>",
   "apis": [
     "read",

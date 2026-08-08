@@ -1,7 +1,7 @@
 {
   "question": "Which corpus cells are marked passing/deterministic without ever running --strict --verify?",
   "date_utc": "2026-08-06",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "artifact_audited": "compat-envelope/scorecard.csv (618 rows, written 2026-08-05T00:24)",
   "hermit_origin_main": "2c54dfb5dc9f49423c26fc87c840ebf26570b737",
   "dev_hermit_parent_head": "71d159900a988528ada30cb87f6a15215f641d4a",

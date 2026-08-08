@@ -2,7 +2,7 @@
   "experiment": "multisect_detcore_misc_20260803",
   "question": "Find ALL flip points (pass<->fail) of test.detcore_misc's vfork::vfork_parent_resumes_after_child_exec across hermit commit history, using load-amplified concurrent-stress probes with rate-based (trinary) classification.",
   "date": "2026-08-03",
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "nproc": 316,
   "test": "cargo test -p detcore --test tests_misc  (target: vfork::vfork_parent_resumes_after_child_exec --exact --test-threads=1)",
   "hermit_head_at_task_start": "0ac1c1d7",

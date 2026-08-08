@@ -2,7 +2,7 @@
   "question": "Is exit status / abnormal termination deterministic and faithful across backends?",
   "answer": "Self-consistency mostly holds (15/16 stable at N=3). Fidelity fails: DBI collapses signalled death to exit 1 in 7 of 8 cases and hangs twice; SaBRe hangs on SIGFPE, reports the wrong signal for SIGILL, and is NONDETERMINISTIC on thread-exit; ptrace mistranslates SIGTRAP.",
   "date_utc": "2026-08-06",
-  "host": "devbig014 (devbig014.atn7.facebook.com)",
+  "host": "devbig014 (devbig014)",
   "n_runs_per_cell": 3,
   "cells": "16 modes x 3 backends = 48 (144 hermit runs + 16 native baselines)",
   "backends_tested": ["ptrace","dbi","sabre"],

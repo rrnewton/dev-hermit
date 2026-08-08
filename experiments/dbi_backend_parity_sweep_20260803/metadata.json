@@ -7,7 +7,7 @@
   "pr": "https://github.com/rrnewton/hermit/pull/1549",
   "manifest": "tests/e2e/manifests/backend-parity-c.toml",
   "fixtures": 53,
-  "host": "devbig014.atn7.facebook.com",
+  "host": "devbig014",
   "kernel": "6.18.39-0_fbk0_hardened_0_ga43d5727b443",
   "binary": "target/release/hermit (release)",
   "measure_flags": "--strict --no-virtualize-cpuid --max-timeslice=disabled",
