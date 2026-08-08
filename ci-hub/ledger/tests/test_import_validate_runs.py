@@ -25,6 +25,7 @@ loud: id continuation (a restarted id REPLACES published history, because
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,9 @@ from ledger import read_shard, replay_legacy  # noqa: E402
 # check-portable-paths.sh exempts the generic /home/test fixture home;
 # any other literal owner home would fail the portability gate.
 WORKSPACE = "/home/test/work/dev-hermit"
+# A repository-neutral short hostname: ledger envelopes reject dotted FQDNs,
+# while the portability gate rejects names tied to a specific fleet machine.
+HOST = "hosta"
 
 
 def row(commit: str, finished: str, **extra) -> dict:
@@ -49,7 +53,7 @@ def row(commit: str, finished: str, **extra) -> dict:
     **extra, so a test that omits it plants a genuinely absent key rather than a
     None that would beg the question."""
     base = {
-        "host": "devbig014",
+        "host": HOST,
         "commit": commit,
         "started_at": finished.replace("T0", "T0"),
         "finished_at": finished,
@@ -69,7 +73,7 @@ class ImportValidateRuns(unittest.TestCase):
         # (`host-path-mismatch`), so the fixture must use the real
         # ledger/<team>/<short-host>/<YYYY>-<MM>.jsonl shape. A bare filename
         # fails for a reason unrelated to anything under test.
-        self.shard = self.tmp / "ledger" / "hermit" / "devbig014" / "2026-08.jsonl"
+        self.shard = self.tmp / "ledger" / "hermit" / HOST / "2026-08.jsonl"
         self.shard.parent.mkdir(parents=True, exist_ok=True)
         self.live = self.tmp / "live.jsonl"
 
@@ -86,6 +90,30 @@ class ImportValidateRuns(unittest.TestCase):
 
     def legacy_rows(self) -> list[dict]:
         return replay_legacy(read_shard(self.shard))
+
+    def test_importer_and_fixture_pass_the_portability_gate(self) -> None:
+        """Plant both files in a tracked, repository-neutral checkout fixture."""
+        checkout = self.tmp / "portable-checkout"
+        sources = (IMPORTER, Path(__file__).resolve())
+        relative_paths = [source.relative_to(REPO) for source in sources]
+        for source, relative in zip(sources, relative_paths):
+            destination = checkout / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+        subprocess.run(
+            ["git", "-C", str(checkout), "add", "--", *map(str, relative_paths)],
+            check=True,
+        )
+        proc = subprocess.run(
+            [str(REPO / "scripts" / "check-portable-paths.sh"), str(checkout)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn(".", HOST, "the fixture must remain a short hostname")
+        self.assertEqual(self.shard.parent.name, HOST)
 
     # ------------------------------------------- the three-state distinction --
     def test_absent_null_and_zero_all_survive_distinctly(self) -> None:

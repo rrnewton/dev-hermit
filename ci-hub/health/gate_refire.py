@@ -47,6 +47,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterable, Sequence
 
 GATE_WORKFLOW = "Merge Gate"
@@ -309,7 +310,17 @@ def do_refire(repo: str, verdicts: Sequence[PrVerdict], call_timeout: int = 180)
     return fired
 
 
-DEFAULT_DELTA_STATE = "/home/newton/work/dev-hermit/.tick-hub/gate-refire-due.json"
+def default_delta_state(source: str | Path = __file__) -> Path:
+    """Bind state to the dev-hermit checkout containing this script."""
+    script = Path(source).resolve()
+    root = script.parents[2]
+    expected = root / "ci-hub" / "health" / "gate_refire.py"
+    if script != expected or not (root / ".gitmodules").is_file():
+        raise RuntimeError(f"gate_refire.py is outside a dev-hermit checkout: {script}")
+    return root / ".tick-hub" / "gate-refire-due.json"
+
+
+DEFAULT_DELTA_STATE = default_delta_state()
 
 
 def read_baseline(path):
@@ -322,8 +333,6 @@ def read_baseline(path):
     very next due PR is genuine news and MUST page. Returning set() for both
     makes the first alarm after a fully-drained backlog disappear.
     """
-    from pathlib import Path
-
     try:
         value = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -333,8 +342,6 @@ def read_baseline(path):
 
 
 def write_baseline(path, reported: set) -> None:
-    from pathlib import Path
-
     try:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)

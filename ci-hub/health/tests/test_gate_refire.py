@@ -32,6 +32,32 @@ PRIV = gr.LEG_WORKFLOWS[1]
 DEMO = gr.LEG_WORKFLOWS[2]
 
 
+# ------------------------------------------ checkout-relative state binding
+
+def test_default_delta_state_follows_an_alternate_checkout(tmp_path):
+    root = tmp_path / "alternate-dev-hermit"
+    source = root / "ci-hub" / "health" / "gate_refire.py"
+    source.parent.mkdir(parents=True)
+    source.touch()
+    (root / ".gitmodules").touch()
+
+    assert gr.default_delta_state(source) == (
+        root / ".tick-hub" / "gate-refire-due.json"
+    )
+
+
+def test_default_delta_state_refuses_a_non_checkout_source(tmp_path):
+    source = tmp_path / "gate_refire.py"
+    source.touch()
+
+    try:
+        gr.default_delta_state(source)
+    except RuntimeError as error:
+        assert "outside a dev-hermit checkout" in str(error)
+    else:
+        raise AssertionError("a source outside the repository layout must be refused")
+
+
 # ------------------------------------------------------- the DUE direction
 
 def test_parked_gate_with_all_legs_complete_is_REFIRE_DUE():
