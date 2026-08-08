@@ -39,6 +39,23 @@ or checkout a feature branch on a primary — all validation, testing, and featu
 slots only. After ANY operation touching a primary, verify `git branch --show-current` is `main`; when
 finished, return it to latest main (`git checkout main && with-proxy git pull origin main`).
 
+## Parent Working Tree
+
+**`~/work/dev-hermit` itself is not a workspace.** The invariant above and Hard Invariant 1 bind the PRODUCT
+primaries; neither binds the parent checkout. That gap is why nine agents ran there concurrently on 2026-08-07
+without violating any stated rule.
+
+Reserve the parent tree for the owner's direct asks: **one agent, occasionally.** Every other agent works in a
+registered slot, with `cwd` set by the coordinator at spawn time — allocation is a spawn-time coordinator duty,
+not something an agent arranges on arrival. **Reading the parent is always fine; WRITES caused every incident**:
+a broken worktree linkage, two stale `index.lock`s, a shared-index race that nearly destroyed a 329-line file,
+staged blobs that would have silently reverted landed commits, and a dirty parent that blocked the 0.3 RC.
+
+The parent working tree and its `.git/index` are SHARED MACHINE STATE — concurrent agents stage into one index
+and sweep each other's files into their commits, so always `git commit -- <explicit paths>` (*Commit Hygiene*).
+"No free slot" is never a reason to work in the parent; it is a reason for the coordinator to allocate one. This
+rule holds regardless of `ACTIVE.md`'s accuracy: a registry records ownership and cannot enforce it.
+
 ## Project Overview
 
 `~/work/dev-hermit/` is the multi-agent harness, not product source. Its exact gitlinks are `hermit/`,
@@ -53,7 +70,10 @@ before publishing Reverie work. Stale `integration`/legacy-lead/per-machine pare
 
 ## Vocabulary (full glossary in companion doc)
 
-Primary checkouts are coordinator-owned integration surfaces. A **slot** is a workspace under `worktrees/`:
+**Primary checkouts** are the product submodules `hermit/`, `reverie/`, `liteinst2/` — coordinator-owned
+integration surfaces. The **parent working tree** (`~/work/dev-hermit` itself) is neither a primary nor a slot;
+it has its own rule (see **Parent Working Tree**), so a statement about "a primary checkout" never licenses
+working in the parent. A **slot** is a workspace under `worktrees/`:
 **active** means assigned and registered; **parked** means clean, detached, cache-retained, and omitted from
 `ACTIVE.md`; **legacy** means non-canonical and remove-after-task, never reuse. A shared slot is research-only
 or has explicit disjoint mutating ownership in `ACTIVE.md`. See the companion glossary for all other terms.
@@ -67,7 +87,7 @@ worktree operation; the companion carries the full tree.
 
 ## Hard Invariants
 
-1. Never do feature development in a primary checkout.
+1. Never do feature development in a primary checkout, nor in the parent working tree (**Parent Working Tree**).
 2. Never let two agents mutate the same file or branch. Shared slots require explicit disjoint path ownership in `ACTIVE.md`.
 3. Register every active slot, agent, task, branch, and owned path in `worktrees/ACTIVE.md` before the first edit or commit.
 4. Require clean state before assignment, integration, parking, or pinning.
