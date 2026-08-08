@@ -172,5 +172,101 @@ class DirtyPredicate(unittest.TestCase):
             self.assertTrue(te.is_dirty_sha(sha), sha)
 
 
+class DebtRegister(unittest.TestCase):
+    """The ratchet that lets this gate be WIRED without a day-one red.
+
+    Both directions, because a register that only ever excuses is the silence this
+    checker exists to remove. It must accept known debt, refuse NEW debt, and
+    refuse ITSELF once the debt is gone.
+    """
+
+    def _run(self, rows, entries, *, header=HEADER):
+        import json
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "probe-scorecard.csv").write_text("\n".join((header, *rows)) + "\n")
+        ledger = tmp / "ledger.csv"
+        ledger.write_text("test_id,test_mode,backend,duration_ms,spot_check_utc,"
+                          "hermit_sha,result,detail\n")
+        path = tmp / "baseline.json"
+        path.write_text(json.dumps({"unevidenced_claims": entries}))
+        register = te.load_baseline(path)
+        return te.check(tmp, now=NOW, cadence_days=14, ledger_path=ledger,
+                        baseline=register, baseline_path=path)
+
+    @staticmethod
+    def _entry(name, why="known debt, tracked elsewhere"):
+        return {"file": "probe-scorecard.csv", "test_id": name, "test_mode": "verify",
+                "backend": "ptrace", "tier": FULL, "why": why}
+
+    def test_registered_debt_is_counted_and_printed_but_does_not_fail(self):
+        report = self._run([full_row("g", stdout="")], [self._entry("g")])
+        self.assertEqual(report.claims, 1)
+        self.assertEqual(report.upheld, 0)          # still honestly 0 evidenced
+        self.assertEqual(len(report.registered), 1)  # counted
+        self.assertEqual(report.violations, [])      # but not fatal
+        self.assertEqual(report.stale, [])
+        self.assertIn("registered debt", report.render())
+        self.assertIn("fully evidenced        : 0 of 1", report.render())
+
+    def test_an_UNREGISTERED_unevidenced_claim_still_fails(self):
+        """The ratchet. A seventh claim cannot join the six by appearing."""
+        report = self._run([full_row("g", stdout=""), full_row("h", stdout="")],
+                           [self._entry("g")])
+        self.assertEqual(len(report.registered), 1)
+        self.assertEqual(len(report.violations), 1)
+        self.assertEqual(report.violations[0].test_id, "h")
+
+    def test_an_entry_whose_claim_became_EVIDENCED_is_stale_and_fails(self):
+        """A register must not outlive its reason, or it becomes the new silence."""
+        report = self._run([full_row("g")], [self._entry("g")])
+        self.assertEqual(report.upheld, 1)
+        self.assertEqual(report.registered, [])
+        self.assertEqual(len(report.stale), 1)
+        self.assertIn("now EVIDENCED", report.stale[0])
+
+    def test_an_entry_whose_row_vanished_is_stale_and_fails(self):
+        report = self._run([full_row("other")], [self._entry("deleted-guest")])
+        self.assertEqual(len(report.stale), 1)
+        self.assertIn("no row carries this claim", report.stale[0])
+
+    def test_identity_is_not_the_line_number(self):
+        """Rows are appended and rewritten; keying on a line would re-point debt."""
+        row = {"test_id": "g", "test_mode": "verify", "backend": "ptrace",
+               "comparison_tier": FULL}
+        self.assertEqual(te.claim_identity("s.csv", row),
+                         "s.csv|g|verify|ptrace|" + FULL)
+
+    def test_an_entry_without_a_reason_is_refused(self):
+        import json
+        tmp = Path(tempfile.mkdtemp())
+        path = tmp / "b.json"
+        entry = self._entry("g")
+        del entry["why"]
+        path.write_text(json.dumps({"unevidenced_claims": [entry]}))
+        with self.assertRaises(te.PopulationError):
+            te.load_baseline(path)
+
+    def test_no_baseline_keeps_the_uncompromising_verdict(self):
+        """Bare `tier_evidence.py` must be unchanged by any of this."""
+        report = run([full_row("g", stdout="")])
+        self.assertEqual(len(report.violations), 1)
+        self.assertEqual(report.registered, [])
+        self.assertIsNone(report.baseline)
+
+    def test_the_shipped_register_matches_the_shipped_scorecards(self):
+        """The live register must describe live debt -- no stale entries, and no
+        unregistered claim. This is the assertion that fails if someone lands a new
+        unevidenced claim, or fixes one and forgets to prune the register."""
+        baseline = HERE / "tier-evidence-baseline.json"
+        if not baseline.exists():
+            self.skipTest("no shipped register")
+        register = te.load_baseline(baseline)
+        report = te.check(HERE, now=_dt.datetime.now(_dt.timezone.utc),
+                          cadence_days=14, ledger_path=te._cadence.LEDGER,
+                          baseline=register, baseline_path=baseline)
+        self.assertEqual(report.violations, [], "unregistered unevidenced tier claim")
+        self.assertEqual(report.stale, [], "debt-register entry no longer describes live debt")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

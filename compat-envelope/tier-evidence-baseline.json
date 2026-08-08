@@ -1,0 +1,56 @@
+{
+  "_what": "Debt register for compat-envelope/tier_evidence.py --baseline.",
+  "_read_this_first": "These are tier claims KNOWN to be unevidenced. They are counted and printed on every run; they only withhold the exit code. The register is a RATCHET: an unevidenced claim that is NOT listed here fails the gate, and an entry whose debt is gone (claim now evidenced, or row deleted) ALSO fails the gate. It can shrink; it cannot grow silently and it cannot outlive its reason.",
+  "_measured": "2026-08-08, ai_docs/2026-08-08-compat-envelope-baseline.md. At that commit: 6 qualifying claims across 4 scorecards, 0 evidenced. That 0-of-6 is the correct starting number for this gate -- the first honest measurement, not a regression.",
+  "_sequencing_rule": "Do not expand envelope coverage until these entries are cleared. Growing a claim count whose own checker returns 0-of-6 grows a number nobody can defend.",
+  "unevidenced_claims": [
+    {
+      "file": "scorecard.csv",
+      "test_id": "ptrace-short-full-tier/heapy",
+      "test_mode": "verify",
+      "backend": "ptrace",
+      "tier": "full-stdout-info-stack-heap",
+      "why": "Claims full-stdout-info-stack-heap but carries evidence for only 1 of the 4 components it names. stdout: stdout_parity AND both SHA-256 operands (output_hash, ref_output_hash) are blank, so the comparison is unrecoverable from the row, not merely underived -- a PRODUCER gap. stack/heap: the schema has no stack_parity/heap_parity column; the row carries a single stack_hash and heap_hash with no reference operand, so a parity is inexpressible -- a SCHEMA gap that renaming would not fix. info_log IS evidenced (compared_log_messages, non-empty, equal counts). Registered by task wire-tier-evidence-checker-that-has-zero-callers so the gate can be wired without turning pre-existing debt into a day-one red. Clears when the producer writes the stdout operands and the schema gains stack/heap reference operands; at that point this entry MUST be deleted -- the checker fails on a stale entry."
+    },
+    {
+      "file": "scorecard.csv",
+      "test_id": "ptrace-short-full-tier/name_to_handle_at_eopnotsupp",
+      "test_mode": "verify",
+      "backend": "ptrace",
+      "tier": "full-stdout-info-stack-heap",
+      "why": "Claims full-stdout-info-stack-heap but carries evidence for only 1 of the 4 components it names. stdout: stdout_parity AND both SHA-256 operands (output_hash, ref_output_hash) are blank, so the comparison is unrecoverable from the row, not merely underived -- a PRODUCER gap. stack/heap: the schema has no stack_parity/heap_parity column; the row carries a single stack_hash and heap_hash with no reference operand, so a parity is inexpressible -- a SCHEMA gap that renaming would not fix. info_log IS evidenced (compared_log_messages, non-empty, equal counts). Registered by task wire-tier-evidence-checker-that-has-zero-callers so the gate can be wired without turning pre-existing debt into a day-one red. Clears when the producer writes the stdout operands and the schema gains stack/heap reference operands; at that point this entry MUST be deleted -- the checker fails on a stale entry."
+    },
+    {
+      "file": "scorecard.csv",
+      "test_id": "ptrace-short-full-tier/name_to_handle_directory_eopnotsupp",
+      "test_mode": "verify",
+      "backend": "ptrace",
+      "tier": "full-stdout-info-stack-heap",
+      "why": "Claims full-stdout-info-stack-heap but carries evidence for only 1 of the 4 components it names. stdout: stdout_parity AND both SHA-256 operands (output_hash, ref_output_hash) are blank, so the comparison is unrecoverable from the row, not merely underived -- a PRODUCER gap. stack/heap: the schema has no stack_parity/heap_parity column; the row carries a single stack_hash and heap_hash with no reference operand, so a parity is inexpressible -- a SCHEMA gap that renaming would not fix. info_log IS evidenced (compared_log_messages, non-empty, equal counts). Registered by task wire-tier-evidence-checker-that-has-zero-callers so the gate can be wired without turning pre-existing debt into a day-one red. Clears when the producer writes the stdout operands and the schema gains stack/heap reference operands; at that point this entry MUST be deleted -- the checker fails on a stale entry."
+    },
+    {
+      "file": "scorecard.csv",
+      "test_id": "ptrace-short-full-tier/name_to_handle_empty_path_eopnotsupp",
+      "test_mode": "verify",
+      "backend": "ptrace",
+      "tier": "full-stdout-info-stack-heap",
+      "why": "Claims full-stdout-info-stack-heap but carries evidence for only 1 of the 4 components it names. stdout: stdout_parity AND both SHA-256 operands (output_hash, ref_output_hash) are blank, so the comparison is unrecoverable from the row, not merely underived -- a PRODUCER gap. stack/heap: the schema has no stack_parity/heap_parity column; the row carries a single stack_hash and heap_hash with no reference operand, so a parity is inexpressible -- a SCHEMA gap that renaming would not fix. info_log IS evidenced (compared_log_messages, non-empty, equal counts). Registered by task wire-tier-evidence-checker-that-has-zero-callers so the gate can be wired without turning pre-existing debt into a day-one red. Clears when the producer writes the stdout operands and the schema gains stack/heap reference operands; at that point this entry MUST be deleted -- the checker fails on a stale entry."
+    },
+    {
+      "file": "scorecard.csv",
+      "test_id": "ptrace-short-full-tier/name_to_handle_regular_eopnotsupp",
+      "test_mode": "verify",
+      "backend": "ptrace",
+      "tier": "full-stdout-info-stack-heap",
+      "why": "Claims full-stdout-info-stack-heap but carries evidence for only 1 of the 4 components it names. stdout: stdout_parity AND both SHA-256 operands (output_hash, ref_output_hash) are blank, so the comparison is unrecoverable from the row, not merely underived -- a PRODUCER gap. stack/heap: the schema has no stack_parity/heap_parity column; the row carries a single stack_hash and heap_hash with no reference operand, so a parity is inexpressible -- a SCHEMA gap that renaming would not fix. info_log IS evidenced (compared_log_messages, non-empty, equal counts). Registered by task wire-tier-evidence-checker-that-has-zero-callers so the gate can be wired without turning pre-existing debt into a day-one red. Clears when the producer writes the stdout operands and the schema gains stack/heap reference operands; at that point this entry MUST be deleted -- the checker fails on a stale entry."
+    },
+    {
+      "file": "scorecard.csv",
+      "test_id": "ptrace-short-full-tier/print_memaddrs",
+      "test_mode": "verify",
+      "backend": "ptrace",
+      "tier": "full-stdout-info-stack-heap",
+      "why": "Claims full-stdout-info-stack-heap but carries evidence for only 1 of the 4 components it names. stdout: stdout_parity AND both SHA-256 operands (output_hash, ref_output_hash) are blank, so the comparison is unrecoverable from the row, not merely underived -- a PRODUCER gap. stack/heap: the schema has no stack_parity/heap_parity column; the row carries a single stack_hash and heap_hash with no reference operand, so a parity is inexpressible -- a SCHEMA gap that renaming would not fix. info_log IS evidenced (compared_log_messages, non-empty, equal counts). Registered by task wire-tier-evidence-checker-that-has-zero-callers so the gate can be wired without turning pre-existing debt into a day-one red. Clears when the producer writes the stdout operands and the schema gains stack/heap reference operands; at that point this entry MUST be deleted -- the checker fails on a stale entry."
+    }
+  ]
+}

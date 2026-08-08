@@ -78,6 +78,28 @@ if ! python3 "${here}/check-scorecard-tier.py" --root "${here}"; then
   exit 1
 fi
 
+# The other half of the tier gate, and the reason it needed one. The check above
+# validates the tier VOCABULARY -- is the label in the allowed set -- and never
+# reads an evidence column, so `comparison_tier` was a self-declared string with
+# nothing binding it to the comparison actually performed. `tier_evidence.py` was
+# written to close that, passed 18 tests, and had ZERO CALL SITES; the same defect
+# the determinism gate above carries a comment about. An unwired verifier is a
+# comment.
+#
+# EXPECT `fully evidenced : 0 of 6` HERE. That is the correct starting number, not
+# a regression: it is the first time the claims have been checked at all. The six
+# pre-existing unevidenced claims are named in tier-evidence-baseline.json, which
+# is a RATCHET, not a mute button -- they are counted and printed on every run, a
+# SEVENTH unevidenced claim fails this gate, and an entry whose debt is gone also
+# fails it. `fail=1` rather than `exit 1` so this cannot mask the provenance checks
+# below.
+echo "== compat-envelope: a tier claim must carry evidence for every component it names =="
+if ! python3 "${here}/tier_evidence.py" --root "${here}" \
+      --baseline "${here}/tier-evidence-baseline.json"; then
+  echo "validate-envelope: UNREGISTERED unevidenced tier claim, or a stale debt-register entry" >&2
+  fail=1
+fi
+
 # A parity boolean is accepted only when the row carries both hashed operands,
 # exact code state, comparison/profile identity, and counted run coverage.  This
 # is the same semantic verifier the renderer calls; labels and cached booleans

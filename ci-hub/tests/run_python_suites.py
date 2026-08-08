@@ -22,6 +22,13 @@ DEFAULT_SUITES = (
     ("ci-hub/runners/tests", 51),
     ("ci-hub/validate/tests", 123),
     ("ci-hub/tests", 66),
+    # compat-envelope's Python tests had no CI caller of their own: their runner
+    # is `compat-envelope/tests/run-all.sh`, reachable only through `make lint`,
+    # and no workflow runs `make lint`. So the guards protecting the scorecard --
+    # including the 18 tier-evidence tests written for a checker that itself had
+    # zero call sites -- were committed, passing, and never executed by CI. Same
+    # defect one level up. 145 discovered / 145 passing when added.
+    ("compat-envelope", 120),
 )
 
 
