@@ -40,6 +40,7 @@ PREDICATE = {
         "applies_from_finished_at": None,
         "known": ["hermit-validate-sh"],
     },
+    "base": {"applies_at_schema_min": 5, "branch": "main"},
     "admission": {
         "applies_at_schema_min": 5,
         "required_admission": "ci-hub-validate-lock",
@@ -62,6 +63,10 @@ def _row(**over: object) -> dict:
         "executed_tests": 100,
         "schema_version": 5,
         "producer": "hermit-validate-sh",
+        "base_sha": "b" * 40,
+        "base_tree": "c" * 40,
+        "reverie_base_sha": "d" * 40,
+        "reverie_base_tree": "e" * 40,
         "admission": "ci-hub-validate-lock",
         "concurrent_validates": 0,
         "concurrency_proof": "validate_lock_owner_ancestry",

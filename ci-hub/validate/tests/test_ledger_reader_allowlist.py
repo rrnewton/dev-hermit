@@ -113,6 +113,10 @@ DECLARED_READERS: dict[str, str] = {
     ),
     # --- tests -------------------------------------------------------------
     "validate/test_finalize_receipt.py": "test fixture",
+    "validate/tests/test_start_unit.py": (
+        "test fixture: asserts that refused validation-unit placement creates no "
+        "validate-run ledger; it never opens, orders, filters, or aggregates rows"
+    ),
     "remediation/tests/test_protocol.py": (
         "test fixture: embeds a synthetic ledger path only inside planted "
         "validate-status response JSON; it never opens or orders the ledger"

@@ -366,9 +366,21 @@ class TempParentTest(unittest.TestCase):
                 fh.write(json.dumps(r) + "\n")
 
     def _full_pass_row(self, sha, **over):
-        row = {"commit": sha, "commit_anchored": True, "tree_dirty": False,
+        row = {"schema_version": 5, "commit": sha,
+               "commit_anchored": True, "tree_dirty": False,
                "selection_mode": "full", "profile": "full", "result": "pass",
-               "executed_tests": 42, "filtered_tests": 0}
+               "executed_tests": 42, "filtered_tests": 0,
+               "producer": "hermit-validate-sh",
+               "base_sha": "b" * 40, "base_tree": "c" * 40,
+               "reverie_base_sha": "d" * 40,
+               "reverie_base_tree": "e" * 40,
+               "admission": "ci-hub-validate-lock",
+               "concurrent_validates": 0,
+               "concurrency_proof": "validate_lock_owner_ancestry",
+               "coverage": {"planned_test_nodes": 1,
+                            "executed_test_nodes": 1,
+                            "zero_executed_nodes": [],
+                            "absent_nodes": []}}
         row.update(over)
         return row
 
