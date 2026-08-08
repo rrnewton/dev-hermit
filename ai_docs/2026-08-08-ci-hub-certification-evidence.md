@@ -135,6 +135,15 @@ plus a **second independent clone** at `/home/newton/temp/dev-hermit`, so repo-l
 canonicalization alone would not be box-global. The original `2/2 simultaneous admissions via
 different lock paths` is unrepaired at the authority boundary.
 
+**Scale of the breach, measured (this replaces the single anecdote first cited here).** In
+`ignored/validate-run-ledger.jsonl`, **224 of the 239 rows that record `concurrent_validates`
+show ≥2 simultaneous validates**, max 20, all carrying
+`concurrency_proof=process_group_overlap_monitor`; **104 of them recorded `result=pass`**.
+Still live: 21 such rows dated 2026-08-08, 17 passing, max 18 — including a passing receipt at
+the current hermit main pin under 18-way concurrency. Exclusion is not theoretically
+sidesteppable; it is being sidestepped continuously and is minting green receipts while it
+happens. See the resolved-items section for the full derivation.
+
 Corroborating that exclusion *does* hold on the single canonical path today: an exact-head
 fixture was refused before child launch because the real box lock was held by a live
 `main-green` validation (unit `validate-main-green-f65f74462931-…`). That is the running
@@ -174,14 +183,91 @@ would conclude the bypasses were closed. **This is the precise failure mode
    published. Both hermit lane fixes are tagged `implemented` and both PRs are OPEN.
 4. **CLOSED is not landed, and here it was not even evidenced.** See the phantom closure above.
 
-## UNVERIFIED — recorded rather than assumed
+## RESOLVED 2026-08-08 — all four UNVERIFIED items, by `reconcile-the-fail-open-and-moving-reference-counts`
 
-- "Ten measured fail-open instances across six subsystems" — no enumerating task or note.
-  4 are tracked; 6 are unaccounted for.
-- "Five moving-reference gates" — 1 task exists; the other 4 are untracked.
-- `concurrent_validates=15` at `c71855a`, cited as evidence for the box-global defect —
-  flagged UNVERIFIED by the task's own owner and not dereferenced here either.
-- The R/R lane fix's bracket counts were not re-derived; only its non-landed state was.
+**Retraction first.** The original version of this section read: *"Ten measured fail-open
+instances across six subsystems — no enumerating task or note. 4 are tracked; 6 are
+unaccounted for"* and *"Five moving-reference gates — 1 task exists; the other 4 are
+untracked."* **The "4 tracked" figure was wrong and is retracted.** It came from searching
+task IDs and titles (`local_id LIKE '%fail%open%'`); fail-open findings are recorded in note
+**content**, which returns 22 notes across **13 distinct tasks**. The audit undercounted by
+using a cheap proxy for the question — the same error class this document exists to catch.
+
+**Counting rule:** one instance = one distinct code site whose unavailability or failure
+produced a clean / zero / PASS verdict, and which a task or note records.
+
+### Fail-open — 13 sites across 6 subsystems
+
+| # | Site | Task | State |
+| --- | --- | --- | --- |
+| A1–A4 | the "four previously fail-OPEN paths" (tg DB resolution) | `decide-tg-db-naming-and-avoid-symlink-aliasing` | **LANDED** `a20ca763`+`5ee7959c`; resolver negatives 6/6, positives 5/5, 301 tests |
+| A5 | `orphaned-task-detector.sh` bare invocation | `orphaned_task_detector_fails` | **LANDED** `cda96d60`; 3 of 7 refuse, 4 of 7 measure |
+| A6 | `ci-hub/directives/check.py` | `directive-checker-reads-wrong-db-and-collapses-task-not-found` | UNFIXED |
+| A7 | seven unwired `tg` callers (4 hardcoded filename) | `complete_the_taskgraph_resolver` | UNFIXED — counted as **one** grouped item; individually the total is 19 |
+| B | Rust validate driver | `rust-validate-driver-fails-open-…` | bracketed, **NOT LANDED** (PR #1635) |
+| C | R/R lane | `rr-lane-lost-its-verdict-…` | bracketed, **NOT LANDED** (PR #1971) |
+| D | validate hosted-cgroup lane | `validate-1635-hosted-cgroup-allowance-fix` | UNFIXED |
+| E | reverie pin repair tool returns rc0 with 16 stale occurrences | `reverie-pin-repair-tool-leaves-16-stale-occurrences-and-returns-rc0` | UNFIXED |
+| F1, F2 | `producer` declared but INERT; admission provenance unenforced | `receipt-predicates-must-require-admission-provenance` | UNFIXED |
+
+**"Ten across six subsystems" is CONSERVATIVE on instances and exact on subsystems.**
+Landed and bracketed 5/13; bracketed but unlanded 2/13; unfixed 6/13.
+
+### Moving-reference gates — 3 recorded, not 5
+
+1. `primary-checkout-snapshot-gate-chases-a-moving-reference` — **FIXED** `0e145592`, 3 negative / 3 positive, 13 tests.
+2. `containment-gate-and-newest-green-policy-are-unsatisfiable` — CLOSED as **analysis + proposal, no patch**; its finding is that newest-green is *also* a moving reference, so swapping one for the other "only moves the race".
+3. `receipts-record-no-base-sha-so-containment-evidence-is-discarded` — **OPEN**.
+
+Independent check: of the 13 tick-hub gate tools, only `ci-hub/main-metrics/wall_series.py`
+references `origin/main`, as a default `ref=` parameter to `main_commits()` — a membership
+lookup, not a verdict bound to a moving reference. **3 is a floor, not a ceiling:** the merge
+gate and landing path were not scanned, so gates outside the tick-hub set are unexamined
+rather than absent. The figure 5 is not substantiated.
+
+### `concurrent_validates=15` at `c71855a` — VERIFIED, and the finding is larger
+
+Two agents flagged it UNVERIFIED and were right to; it had never been dereferenced. It is
+real. Exact rows in `ignored/validate-run-ledger.jsonl`:
+
+```
+2026-08-08T03:46:21Z  concurrent_validates=11  result=no_result  profile=full  schema 4
+2026-08-08T04:48:27Z  concurrent_validates=15  result=fail       profile=full  schema 4
+```
+
+**Across that ledger: 224 of the 239 rows that record the field show ≥2 simultaneous
+validates** (735 rows total; 496 record nothing). Max 20. All 224 carry
+`concurrency_proof=process_group_overlap_monitor`, so this is measured overlap, not a
+missing field. **104 of the 224 recorded `result=pass`.** It is not historical: 21 rows dated
+2026-08-08 show ≥2, 17 of them passing, today's max 18 — including `f65f74462` at 18
+concurrent, `result=pass`, finished 05:42:25Z, i.e. a passing receipt at the current hermit
+main pin produced under 18-way concurrency.
+
+**Second defect, found in passing:** the field is recorded only in the **gitignored**
+`ignored/validate-run-ledger.jsonl`. In the git-**tracked** `ledger/hermit/devbig014/2026-08.jsonl`
+it is `None` on all 654 rows. A consumer reading the durable ledger cannot distinguish "no
+concurrency" from "not recorded" — an ambiguous zero in the permanent record.
+
+### R/R lane bracket counts — now re-derived
+
+Negative **10** (five producer-shaped reports: absent, no_result, diverged, stripped,
+zero-counts; plus five shape attacks: truthy non-boolean, non-object, whitespace-only,
+truncated, two-document). Positive **2** (a genuine parity report, and one whose guest exited
+3) — explicitly the non-vacuity guard, since a predicate that refuses everything satisfies
+all ten negatives while destroying the lane. Coverage: all **139** real R/R nodes must carry
+both flag and predicate, with a zero-node lane refused explicitly; 0 of 191 strict nodes
+acquired a report nothing writes. Non-vacuity by mutation: **4 mutants, 4 caught**. The
+author's own predicate had the same bug class and the bracket caught it pre-commit.
+**Still NOT LANDED** — PR #1971 is OPEN.
+
+### One static-scan candidate examined and REFUTED
+
+A scan of 56 non-test gate/tool files found 38 swallow-to-empty sites. That is a **candidate
+list, not an instance count**, and reporting it as one would repeat the error above.
+Spot-check: `ci-hub/health/pr_status.py:867` returns `{}` on an unreadable ledger, which looks
+fail-open but is **fail-closed** — the map can only *demote* a red, so degrading it loses
+demotions and leaves the GitHub verdict standing. `ci-hub/health/github_main_health.py:284`
+remains an unexamined candidate (it drops a `self_timeout` enrichment on fetch failure).
 
 ## Live exposure found while auditing (not a certification finding)
 
