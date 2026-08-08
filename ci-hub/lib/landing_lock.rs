@@ -34,6 +34,10 @@ const GUARD_WAIT_SECONDS: u64 = 30;
 const DEFAULT_CHILD_DEADLINE_SECONDS: u64 = 2_160;
 /// Exit code reported when a `run` child is killed for exceeding its deadline.
 const CHILD_DEADLINE_EXIT_CODE: i32 = 124;
+/// Exit code when the box-global anchor refuses admission. Deliberately the SAME
+/// 1 that `acquire` already returns on TIMEOUT: to every existing caller this is
+/// the familiar "you did not get the lock", not a new failure mode to handle.
+const REFUSED_EXIT_CODE: i32 = 1;
 /// Grace period between SIGTERM and SIGKILL when terminating a timed-out child.
 const CHILD_TERM_GRACE_SECONDS: u64 = 5;
 /// Interval at which `run` polls a live child for completion or deadline breach.
@@ -691,6 +695,12 @@ impl LandLockError {
     }
 }
 
+/// Anchor filename for LANDING. Distinct from the validate anchor on purpose:
+/// this module's contract is that a validate must never block a lander and vice
+/// versa, so the two are box-global with respect to their own kind and invisible
+/// to each other.
+pub(crate) const LANDING_BOX_ANCHOR: &str = "landing-box.lock";
+
 #[derive(Clone, Debug)]
 struct LockPaths {
     lock: PathBuf,
@@ -698,18 +708,47 @@ struct LockPaths {
     queue: PathBuf,
     owner: PathBuf,
     cleanup: PathBuf,
+    /// The box-global exclusion anchor. Carried here rather than read from a
+    /// global so it is CONSTRUCTOR-SCOPED: production builds it from the uid, and
+    /// each test builds its own beside its own temp lease. A test binary must
+    /// never contend with the live box.
+    anchor: PathBuf,
 }
 
 impl LockPaths {
     fn for_workspace(root: &Path) -> Self {
+        // THE LEASE PATH IS CANONICALIZED TO THE REPOSITORY'S MAIN WORKTREE.
+        // `workspace_root()` (ci-hub.rs) returns the git toplevel of the running
+        // `ci-hub.rs`, so every linked worktree used to derive its own private
+        // `.landing-lock` and land independently. Measured 2026-08-08: 46
+        // worktrees of ~/work/dev-hermit, all 46 with a runnable `ci-hub/ci-hub`,
+        // and two of them ran concurrent landings 2/2.
+        //
+        // `CI_HUB_LANDING_LOCK` STILL SELECTS THE LEASE, and that is a considered
+        // difference from `validate_lock.rs`, where the equivalent variable was
+        // compiled out of production at c6767e06. There it had ZERO consumers, so
+        // gating it was free. Here it has THREE, two of them MUTATING:
+        // `ci-hub/tests/test_operational_bounds.py` runs the real binary through
+        // `land-lock acquire/release/run/reclaim-dead` against an isolated lease.
+        // Ignoring the variable would point those harnesses at the PRODUCTION
+        // landing lease — a test suite acquiring the live landing mutex, which is
+        // worse than the defect it would be fixing.
+        //
+        // The escape it used to buy is closed anyway, and by construction rather
+        // than by convention: the anchor below is NOT redirectable, so moving the
+        // lease no longer buys a second concurrent landing. Measured both ways in
+        // the commit that added this. The variable is now bookkeeping isolation,
+        // not an exclusion control, and `execute` says so out loud when it is set.
         let lock = env::var_os("CI_HUB_LANDING_LOCK")
+            .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| root.join(".landing-lock"));
+            .unwrap_or_else(|| repository_lock_root(root).join(".landing-lock"));
         Self {
             guard: suffix(&lock, ".guard"),
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
+            anchor: box_exclusion_anchor_path(LANDING_BOX_ANCHOR),
             lock,
         }
     }
@@ -730,8 +769,32 @@ pub fn execute(root: &Path, args: LandLockArgs) -> Result<i32, LandLockError> {
     let lock = LandingLock {
         paths: LockPaths::for_workspace(root),
     };
+    // Say it out loud. An operator who exported this expects a sandbox; they must
+    // not also believe it bought them a way past box exclusion, because it does
+    // not — the anchor is uid-derived and cannot be redirected.
+    if env::var_os("CI_HUB_LANDING_LOCK").is_some_and(|value| !value.is_empty()) {
+        eprintln!(
+            "land-lock: NOTICE: CI_HUB_LANDING_LOCK selects the lease RECORD only \
+             ({}). Box exclusion is enforced by the uid-derived anchor {}, which \
+             this variable cannot move.",
+            lock.paths.lock.display(),
+            lock.paths.anchor.display()
+        );
+    }
     match args.command {
-        LandLockCommand::Acquire(args) => lock.acquire(&args),
+        LandLockCommand::Acquire(args) => {
+            // `acquire` cannot HOLD the anchor (see `held_by_another`), but it must
+            // not hand out a lease while another repository's landing owns the box.
+            if BoxExclusionAnchor::held_by_another(&lock.paths.anchor) {
+                eprintln!(
+                    "REFUSED: box-exclusive landing anchor held by {}; this box \
+                     lands one PR at a time across ALL checkouts and clones",
+                    BoxExclusionAnchor::describe_holder(&lock.paths.anchor)
+                );
+                return Ok(REFUSED_EXIT_CODE);
+            }
+            lock.acquire(&args)
+        }
         LandLockCommand::Renew(args) => {
             lock.renew(&args.agent, args.hold, true)?;
             Ok(0)
@@ -1479,6 +1542,41 @@ impl LandingLock {
         enable_child_subreaper().map_err(|source| {
             io_error("enable child subreaper at", Path::new("/proc/self"), source)
         })?;
+
+        // BOX-GLOBAL ANCHOR, TAKEN OUTERMOST AND HELD FOR THE WHOLE RUN.
+        //
+        // Before this, landing exclusion was per selected lease file, so two
+        // checkouts — or one checkout naming two paths — landed 2/2 concurrently.
+        // The anchor is taken BEFORE any lease work so a loser waits without
+        // holding its own repository's lease, and `_box_anchor` lives until `run`
+        // returns; the kernel drops the flock if this supervisor dies, which is
+        // why it can never wedge the box the way a stale record can.
+        //
+        // RESIDUE, stated rather than papered over: the flock spans the
+        // SUPERVISOR, so an escaped payload that outlives its supervisor releases
+        // the anchor early. Within a repository that case is still covered by the
+        // durable cleanup quarantine, which is unchanged and still consulted
+        // below; ACROSS repositories it is not. Closing that needs a box-global
+        // durable record, which is a different change from this one.
+        let _box_anchor = match BoxExclusionAnchor::take(&self.paths.anchor, args.wait)
+            .map_err(|source| io_error("take box exclusion anchor", &self.paths.anchor, source))?
+        {
+            Some(anchor) => anchor,
+            None => {
+                eprintln!(
+                    "REFUSED: box-exclusive landing anchor held by {}; this box \
+                     lands one PR at a time across ALL checkouts and clones, not \
+                     one per lock file",
+                    BoxExclusionAnchor::describe_holder(&self.paths.anchor)
+                );
+                return Ok(REFUSED_EXIT_CODE);
+            }
+        };
+        eprintln!(
+            "landing-lock: box-global anchor held at {}",
+            _box_anchor.path().display()
+        );
+
         let acquire = AcquireArgs {
             agent: args.agent.clone(),
             pr: args.pr.clone(),
@@ -2696,6 +2794,179 @@ fn io_error(action: &'static str, path: &Path, source: io::Error) -> LandLockErr
     }
 }
 
+// ---------------------------------------------------------------------------
+// Box-global exclusion, shared by BOTH locks.
+//
+// These two helpers live HERE, in the lower module, for the same reason the pure
+// lease primitives above do: `validate_lock.rs` already reuses this module's
+// stateless helpers "rather than copy tricky code", and `landing_lock` cannot
+// import from `validate_lock`. They were first written on the validate side
+// (dev-hermit 25d251e5) and are MOVED here rather than copied, so there is one
+// implementation, not two. Each lock passes its OWN anchor filename: the module
+// contract is that a validate must never block a lander and vice versa, so they
+// are box-global with respect to their own kind and invisible to each other.
+// ---------------------------------------------------------------------------
+
+/// The directory whose lock state governs `root`'s repository.
+///
+/// A linked worktree and its main worktree are ONE repository sharing ONE
+/// checkout of the box's compute; they must share one lease. `git rev-parse
+/// --git-common-dir` is the identity that is stable across every worktree of a
+/// repository (each worktree's `--git-dir` differs; the COMMON dir does not), and
+/// its parent is the main working tree.
+///
+/// Measured on this box 2026-08-08 before the fix: 46 worktrees of
+/// `~/work/dev-hermit`, every one of them carrying a runnable `ci-hub/ci-hub`,
+/// so every one derived its own private lock and admitted independently — two of
+/// them ran concurrent landings 2/2.
+///
+/// Falls back to `root` — the previous behaviour — whenever that identity cannot
+/// be established (no git, a bare repo, a submodule whose common dir is
+/// `…/.git/modules/<name>`). Falling back is safe in the only direction that
+/// matters: it can leave two roots un-merged, which is the status quo ante, but
+/// it can never point a live lease at a directory that is not a working tree.
+pub(crate) fn repository_lock_root(root: &Path) -> PathBuf {
+    let Ok(output) = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+    else {
+        return root.to_path_buf();
+    };
+    if !output.status.success() {
+        return root.to_path_buf();
+    }
+    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    if common.file_name().and_then(|name| name.to_str()) != Some(".git") {
+        return root.to_path_buf();
+    }
+    match common.parent() {
+        Some(main_worktree) if main_worktree.is_dir() => main_worktree.to_path_buf(),
+        _ => root.to_path_buf(),
+    }
+}
+
+/// Path of a box-global exclusion anchor, derived from the calling **uid alone**
+/// — no environment, no argument, no workspace, nothing a caller can redirect.
+///
+/// `/run/user/<uid>` is per-user, 0700 and tmpfs; the `/tmp` form is the fallback
+/// for a box without logind. `kind` names the anchor file, so the landing anchor
+/// and the validate anchor are distinct and never block one another.
+pub(crate) fn box_exclusion_anchor_path(kind: &str) -> PathBuf {
+    let uid = unsafe { libc::getuid() };
+    let runtime = PathBuf::from(format!("/run/user/{uid}"));
+    let dir = if runtime.is_dir() {
+        runtime.join("ci-hub")
+    } else {
+        PathBuf::from(format!("/tmp/ci-hub-box-exclusion.{uid}"))
+    };
+    dir.join(kind)
+}
+
+/// Box-global exclusion anchor: ONE per box, per uid, for every repository.
+///
+/// Canonicalizing to the main worktree merges the worktrees of one repository. It
+/// does NOT merge two repositories, and this box has two (`~/work/dev-hermit` and
+/// `~/temp/dev-hermit`, measured 2026-08-08). Two repositories mean two lease
+/// files, and the exclusive property is about the BOX, not about a repository.
+///
+/// The value of an flock here is exactly that it is NOT state anyone has to
+/// maintain: the kernel releases it when the holder dies, so it can never strand
+/// the box the way a stale record can, and it needs no migration of the lease and
+/// quarantine files other tooling already reads in the workspace.
+///
+/// It is strictly ADDITIVE. Every existing check still runs — the FIFO queue, the
+/// lease, the cleanup quarantine, the evidence-based dead-owner reclaim. This is
+/// one more necessary condition on top, never a replacement, and it is taken
+/// OUTERMOST so a loser waits before touching any lease.
+pub(crate) struct BoxExclusionAnchor {
+    #[allow(dead_code)]
+    file: File,
+    path: PathBuf,
+}
+
+impl BoxExclusionAnchor {
+    /// Take the anchor, waiting up to `wait_seconds` (0 = do not wait).
+    ///
+    /// `Ok(None)` means another holder has it and we are not waiting, so the
+    /// caller can print the same REFUSED shape as a held lease rather than crash.
+    /// Errors are raw `io::Error` so each lock can wrap them in its own type;
+    /// this helper deliberately knows nothing about either error enum.
+    pub(crate) fn take(path: &Path, wait_seconds: u64) -> io::Result<Option<Self>> {
+        let path = path.to_path_buf();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        let deadline = Instant::now() + Duration::from_secs(wait_seconds);
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => {
+                    // Record who holds it. DIAGNOSTIC ONLY -- the flock is the
+                    // authority, so a truncated or stale body can never grant or
+                    // deny anything. It exists so a waiting agent can name the
+                    // holder instead of staring at an anonymous block.
+                    let mut handle = &file;
+                    let _ = handle.set_len(0);
+                    let _ = writeln!(
+                        handle,
+                        "pid={} host={} anchor=box-exclusive-v1",
+                        std::process::id(),
+                        current_host()
+                    );
+                    return Ok(Some(Self { file, path }));
+                }
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                    thread::sleep(Duration::from_millis(POLL_SECONDS * 100));
+                }
+                Err(source) => return Err(source),
+            }
+        }
+    }
+
+    /// Who currently holds the anchor, for a refusal message. Best effort.
+    pub(crate) fn describe_holder(path: &Path) -> String {
+        match fs::read_to_string(path) {
+            Ok(body) if !body.trim().is_empty() => body.trim().replace('\n', " "),
+            _ => format!("another process (anchor {})", path.display()),
+        }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Is the anchor currently held by SOMEONE ELSE? Tests without taking it.
+    ///
+    /// For `acquire`, whose lease outlives the process: this cannot HOLD the
+    /// anchor (a flock dies with its process, so holding it here would release the
+    /// instant the command exits and would be a lie), but it can and must refuse
+    /// while another box-exclusive payload is live. Unreadable/unopenable is NOT
+    /// treated as held: the anchor must never be able to wedge every repository on
+    /// a filesystem hiccup, and the per-repository lease is still a full gate.
+    pub(crate) fn held_by_another(path: &Path) -> bool {
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
+            return false;
+        };
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                let _ = FileExt::unlock(&file);
+                false
+            }
+            Err(source) => source.kind() == io::ErrorKind::WouldBlock,
+        }
+    }
+}
+
 /// How a supervised `run` child ended.
 enum ChildOutcome {
     /// The child exited on its own with this status.
@@ -3148,6 +3419,10 @@ mod tests {
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
+            // PER-TEST anchor beside the per-test lease. Every `run`-path test
+            // therefore exercises the real anchor CODE while touching neither the
+            // live box anchor nor any sibling test's.
+            anchor: suffix(&lock, ".box-anchor"),
             lock,
         }
     }
@@ -4319,5 +4594,143 @@ exit 0
         ));
         lock.release("live-lander", false).unwrap();
         let _ = fs::remove_dir_all(paths.lock.parent().unwrap());
+    }
+
+    // --- box-global landing exclusion: one lease per REPOSITORY, one anchor per BOX ---
+
+    fn git_in(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn every_worktree_of_one_repository_shares_one_landing_lease() {
+        // THE DEFECT, at unit scale. `workspace_root()` hands `for_workspace` the
+        // git toplevel of the running ci-hub.rs, so before this each linked
+        // worktree derived a private `.landing-lock` and landed independently.
+        let base = env::temp_dir().join(format!(
+            "ci-hub-llock-repo-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        let main = base.join("main");
+        let linked = base.join("linked");
+        fs::create_dir_all(&main).unwrap();
+        if !git_in(&main, &["init", "--quiet"]) {
+            return; // no usable git on this host; the live bracket covers it
+        }
+        let _ = git_in(&main, &["config", "user.email", "t@example.invalid"]);
+        let _ = git_in(&main, &["config", "user.name", "t"]);
+        fs::write(main.join("seed"), b"seed").unwrap();
+        assert!(git_in(&main, &["add", "seed"]));
+        assert!(git_in(&main, &["commit", "--quiet", "-m", "seed"]));
+        assert!(git_in(
+            &main,
+            &["worktree", "add", "--detach", "--quiet", linked.to_str().unwrap()]
+        ));
+
+        // The env override must not be in effect for this assertion to mean
+        // anything; it is process-global, so read it rather than set it.
+        if env::var_os("CI_HUB_LANDING_LOCK").is_some() {
+            return;
+        }
+        let from_main = LockPaths::for_workspace(&main);
+        let from_linked = LockPaths::for_workspace(&linked);
+        assert_eq!(
+            from_linked.lock,
+            main.join(".landing-lock"),
+            "a linked worktree must resolve to the main worktree's lease"
+        );
+        assert_eq!(from_main.lock, from_linked.lock);
+        assert_eq!(from_main.guard, from_linked.guard);
+        assert_eq!(from_main.cleanup, from_linked.cleanup);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_non_repository_root_falls_back_to_itself_for_landing() {
+        // Fail-SAFE direction: without a resolvable repository identity we keep the
+        // previous behaviour rather than pointing a live lease somewhere invented.
+        let root = env::temp_dir().join(format!(
+            "ci-hub-llock-norepo-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(repository_lock_root(&root), root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // No environment and no shared state: the anchor path is a PARAMETER, so this
+    // test is isolated by construction and can never touch the live box anchor.
+    #[test]
+    fn landing_box_anchor_admits_one_and_refuses_the_second() {
+        let dir = env::temp_dir().join(format!(
+            "ci-hub-llock-anchor-{}-{}",
+            std::process::id(),
+            epoch_seconds().unwrap()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let anchor = dir.join("landing-box.lock");
+
+        // Nothing held: the FIRST caller is admitted (the mechanism is not inert).
+        assert!(!BoxExclusionAnchor::held_by_another(&anchor));
+        let first = BoxExclusionAnchor::take(&anchor, 0).unwrap();
+        assert!(first.is_some(), "an unheld anchor must be granted");
+
+        // A SECOND caller -- in production a different repository, or the same one
+        // with CI_HUB_LANDING_LOCK pointed elsewhere -- is refused, and
+        // `acquire`'s non-holding probe sees it.
+        assert!(
+            BoxExclusionAnchor::take(&anchor, 0).unwrap().is_none(),
+            "a held anchor must refuse the second caller"
+        );
+        assert!(BoxExclusionAnchor::held_by_another(&anchor));
+        assert!(
+            BoxExclusionAnchor::describe_holder(&anchor).contains("box-exclusive-v1"),
+            "the refusal must be able to name the holder"
+        );
+
+        // Released by dropping the holder -- no record to clean, so a dead holder
+        // can never strand the box.
+        //
+        // Re-TAKE with a bound rather than asserting an instantaneous release, and
+        // the reason is a real property of `flock` + `fork`, not test flake. An
+        // flock belongs to the OPEN FILE DESCRIPTION, and `fork` shares
+        // descriptions. `O_CLOEXEC` (which Rust sets) closes the inherited fd at
+        // EXEC, not at fork, so any sibling thread of this multithreaded test
+        // binary that is between fork and exec while we hold the anchor is also
+        // holding the description. Production is unaffected -- the supervisor
+        // holds the anchor across its whole run, so the fork window is inside the
+        // hold, never after it.
+        drop(first);
+        assert!(
+            BoxExclusionAnchor::take(&anchor, 5).unwrap().is_some(),
+            "dropping the holder must release the box within the fork/exec window"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn landing_and_validate_anchors_are_distinct() {
+        // The module contract is that a validate must never block a lander and
+        // vice versa. Same box-global mechanism, deliberately different files.
+        let landing = box_exclusion_anchor_path(LANDING_BOX_ANCHOR);
+        let validate = box_exclusion_anchor_path("validate-box.lock");
+        assert_ne!(landing, validate);
+        assert!(landing.is_absolute() && validate.is_absolute());
+        let uid = unsafe { libc::getuid() };
+        assert!(
+            landing.to_string_lossy().contains(&uid.to_string()),
+            "the anchor must be keyed on the uid, got {}",
+            landing.display()
+        );
+        // Stable across calls, and never a function of the workspace.
+        assert_eq!(box_exclusion_anchor_path(LANDING_BOX_ANCHOR), landing);
     }
 }

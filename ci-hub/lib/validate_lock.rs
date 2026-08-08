@@ -29,6 +29,8 @@ use thiserror::Error;
 // code. None of these carry a LandLockError or print a `landing-lock:` message,
 // so they are safe to share verbatim across both locks.
 use crate::landing_lock::{
+    box_exclusion_anchor_path as box_exclusion_anchor_at, repository_lock_root,
+    BoxExclusionAnchor,
     capture_and_freeze_residuals, census_disposition, census_recorded_domain, current_host,
     enable_child_subreaper, exact_process_liveness, exit_status_code, heartbeat_test_helper_delay,
     payload_cgroup_anchor, print_cleanup_record, process_group_exists, process_start_ticks,
@@ -74,6 +76,10 @@ const ADMIT_PREFLIGHT_CMD_ENV: &str = "CI_HUB_ADMIT_PREFLIGHT_CMD";
 /// TEST-BUILD-ONLY override of the box-exclusive lockfile base path. Production
 /// always uses `<repository main worktree>/.validate-lock`.
 const VALIDATE_LOCK_PATH_ENV: &str = "CI_HUB_VALIDATE_LOCK";
+/// Anchor filename for VALIDATE. Distinct from `landing_lock::LANDING_BOX_ANCHOR`
+/// on purpose: a validate must never block a lander and vice versa, so the two
+/// are box-global with respect to their own kind and invisible to each other.
+const VALIDATE_BOX_ANCHOR: &str = "validate-box.lock";
 
 /// Read a TEST-BUILD-ONLY environment override.
 ///
@@ -559,165 +565,8 @@ impl LockPaths {
             queue: suffix(&lock, ".queue"),
             owner: suffix(&lock, ".owner"),
             cleanup: suffix(&lock, ".cleanup-required"),
-            anchor: box_exclusion_anchor_path(),
+            anchor: box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR),
             lock,
-        }
-    }
-}
-
-/// The directory whose `.validate-lock*` state governs `root`'s repository.
-///
-/// A linked worktree and its main worktree are ONE repository sharing ONE
-/// checkout of the box's compute; they must share one lease. `git rev-parse
-/// --git-common-dir` is the identity that is stable across every worktree of a
-/// repository (each worktree's `--git-dir` differs; the COMMON dir does not), and
-/// its parent is the main working tree.
-///
-/// Falls back to `root` — the previous behaviour — whenever that identity cannot
-/// be established (no git, a bare repo, a submodule whose common dir is
-/// `…/.git/modules/<name>`). Falling back is safe in the only direction that
-/// matters: it can leave two roots un-merged, which is the status quo ante, but it
-/// can never point a live lease at a directory that is not a working tree.
-fn repository_lock_root(root: &Path) -> PathBuf {
-    let Ok(output) = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-    else {
-        return root.to_path_buf();
-    };
-    if !output.status.success() {
-        return root.to_path_buf();
-    }
-    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    if common.file_name().and_then(|name| name.to_str()) != Some(".git") {
-        return root.to_path_buf();
-    }
-    match common.parent() {
-        Some(main_worktree) if main_worktree.is_dir() => main_worktree.to_path_buf(),
-        _ => root.to_path_buf(),
-    }
-}
-
-/// Box-global exclusion anchor: ONE per box, per uid, for every repository.
-///
-/// Canonicalizing to the main worktree (above) merges the 46 worktrees of one
-/// repository. It does NOT merge two repositories, and this box has two —
-/// `~/work/dev-hermit` and `~/temp/dev-hermit` (measured 2026-08-08; a third
-/// candidate, `~/.local/state/hermit-main-tooling/trees/<sha>`, is not a git repo,
-/// so `workspace_root()` fails there and it cannot derive a lease at all). Two
-/// repositories mean two lease files, and the box-exclusive property is about the
-/// BOX, not about a repository.
-///
-/// So admission additionally takes an exclusive `flock` on a path derived from
-/// the calling **uid alone** — no environment, no argument, no workspace, nothing
-/// a caller can point elsewhere. `/run/user/<uid>` is per-user, 0700 and tmpfs;
-/// `/tmp/ci-hub-validate-box.<uid>` is the fallback for a box without logind. The
-/// value here is exactly that the lock is NOT state anyone has to maintain: the
-/// kernel releases it when the holder dies, so it can never strand the box the way
-/// a stale record can, and it needs no migration of the lease/quarantine files
-/// that other tooling already reads in the workspace.
-///
-/// It is strictly ADDITIVE. Every existing check still runs — the FIFO queue, the
-/// lease, the cleanup quarantine, the evidence-based dead-owner reclaim. This is
-/// one more necessary condition on top, never a replacement, and it is taken
-/// OUTERMOST so a loser waits before touching any lease.
-struct BoxExclusionAnchor {
-    #[allow(dead_code)]
-    file: File,
-    path: PathBuf,
-}
-
-fn box_exclusion_anchor_path() -> PathBuf {
-    let uid = unsafe { libc::getuid() };
-    let runtime = PathBuf::from(format!("/run/user/{uid}"));
-    let dir = if runtime.is_dir() {
-        runtime.join("ci-hub")
-    } else {
-        PathBuf::from(format!("/tmp/ci-hub-validate-box.{uid}"))
-    };
-    dir.join("validate-box.lock")
-}
-
-impl BoxExclusionAnchor {
-    /// Take the box-global anchor, waiting up to `wait_seconds` (0 = do not wait).
-    ///
-    /// Returns `Ok(None)` when another holder has it and we are not waiting, so the
-    /// caller can print the same REFUSED shape as a held lease rather than crash.
-    fn take(path: &Path, wait_seconds: u64) -> Result<Option<Self>, ValidateLockError> {
-        let path = path.to_path_buf();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|source| io_error("create box anchor dir", parent, source))?;
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|source| io_error("open box anchor", &path, source))?;
-        let deadline = Instant::now() + Duration::from_secs(wait_seconds);
-        loop {
-            match file.try_lock_exclusive() {
-                Ok(()) => {
-                    // Record who holds it. This is DIAGNOSTIC ONLY -- the flock is
-                    // the authority, so a truncated or stale body can never grant
-                    // or deny anything. It exists so a waiting agent can name the
-                    // holder instead of staring at an anonymous block.
-                    let mut handle = &file;
-                    let _ = handle.set_len(0);
-                    let _ = writeln!(
-                        handle,
-                        "pid={} host={} anchor=validate-box-exclusive-v1",
-                        std::process::id(),
-                        current_host()
-                    );
-                    return Ok(Some(Self { file, path }));
-                }
-                Err(source) if source.kind() == io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return Ok(None);
-                    }
-                    thread::sleep(Duration::from_millis(POLL_SECONDS * 100));
-                }
-                Err(source) => return Err(io_error("lock box anchor", &path, source)),
-            }
-        }
-    }
-
-    /// Who currently holds the anchor, for a refusal message. Best effort.
-    fn describe_holder(path: &Path) -> String {
-        match fs::read_to_string(path) {
-            Ok(body) if !body.trim().is_empty() => body.trim().replace('\n', " "),
-            _ => format!("another process (anchor {})", path.display()),
-        }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Is the anchor currently held by SOMEONE ELSE? Tests without taking it.
-    ///
-    /// For `acquire`, whose lease outlives the process: this cannot HOLD the
-    /// anchor (a flock dies with its process, so holding it here would release the
-    /// instant the command exits and would be a lie), but it can and must refuse
-    /// while another box-exclusive payload is live. Unreadable/unopenable is NOT
-    /// treated as held: the box-global anchor must never be able to wedge every
-    /// repository on a filesystem hiccup, and the per-repository lease below is
-    /// still a full gate on its own.
-    fn held_by_another(path: &Path) -> bool {
-        let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
-            return false;
-        };
-        match file.try_lock_exclusive() {
-            Ok(()) => {
-                let _ = FileExt::unlock(&file);
-                false
-            }
-            Err(source) => source.kind() == io::ErrorKind::WouldBlock,
         }
     }
 }
@@ -1807,7 +1656,9 @@ impl ValidateLock {
         // repositories it is not. Closing that needs a box-global durable record,
         // which is a different change from this one.
         let wait_budget = if args.no_wait { 0 } else { args.wait };
-        let _box_anchor = match BoxExclusionAnchor::take(&self.paths.anchor, wait_budget)? {
+        let _box_anchor = match BoxExclusionAnchor::take(&self.paths.anchor, wait_budget)
+            .map_err(|source| io_error("take box exclusion anchor", &self.paths.anchor, source))?
+        {
             Some(anchor) => anchor,
             None => {
                 eprintln!(
@@ -3985,7 +3836,7 @@ exit 0
         assert!(second.is_none(), "a held anchor must refuse the second caller");
         assert!(BoxExclusionAnchor::held_by_another(&anchor));
         assert!(
-            BoxExclusionAnchor::describe_holder(&anchor).contains("validate-box-exclusive-v1"),
+            BoxExclusionAnchor::describe_holder(&anchor).contains("box-exclusive-v1"),
             "the refusal must be able to name the holder"
         );
 
@@ -4016,7 +3867,7 @@ exit 0
 
     #[test]
     fn box_anchor_path_is_uid_derived_and_not_workspace_derived() {
-        let path = box_exclusion_anchor_path();
+        let path = box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR);
         let uid = unsafe { libc::getuid() };
         assert!(path.is_absolute(), "the anchor must not be relative to a cwd");
         assert_eq!(
@@ -4029,7 +3880,7 @@ exit 0
             "the anchor must be keyed on the uid, got {text}"
         );
         // Stable across calls, and never a function of the workspace.
-        assert_eq!(box_exclusion_anchor_path(), path);
+        assert_eq!(box_exclusion_anchor_at(VALIDATE_BOX_ANCHOR), path);
         // The PRODUCTION constructor wires that uid-derived path in; only the
         // test constructor (`paths_at`) substitutes a per-test one.
         let workspace = env::temp_dir().join("ci-hub-vlock-anchor-prod-probe");
