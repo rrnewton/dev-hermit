@@ -611,6 +611,7 @@ def load_agent_snapshot(
     snapshot_file: Path = DEFAULT_AGENT_SNAPSHOT,
     max_age_secs: int = DEFAULT_AGENT_SNAPSHOT_MAX_AGE_SECS,
     now: float | None = None,
+    persist: bool = True,
 ) -> tuple[tuple[AgentRecord, ...], float]:
     observed_at = time.time() if now is None else now
     text = (
@@ -624,7 +625,8 @@ def load_agent_snapshot(
         except json.JSONDecodeError as error:
             raise RuntimeError(f"invalid-agent-snapshot:{error.msg}") from error
         agents = _parse_agents(payload)
-        _persist_agent_snapshot(snapshot_file, payload, captured_at=observed_at)
+        if persist:
+            _persist_agent_snapshot(snapshot_file, payload, captured_at=observed_at)
         return agents, observed_at
 
     try:
@@ -968,6 +970,7 @@ def active_work_gate(
     json_output: bool = False,
     gate_output: bool = False,
     now: float | None = None,
+    persist: bool = True,
 ) -> int:
     try:
         agents, captured_at = load_agent_snapshot(
@@ -975,6 +978,7 @@ def active_work_gate(
             snapshot_file=snapshot_file,
             max_age_secs=max_age_secs,
             now=now,
+            persist=persist,
         )
         report = reconcile_active_work(_taskgraph_in_progress(), agents)
     except RuntimeError as error:
@@ -1051,6 +1055,21 @@ def active_work_command(args: Sequence[str]) -> int:
         max_age_secs=parsed.max_snapshot_age,
         json_output=parsed.json,
         gate_output=parsed.gate,
+        # `--agent-snapshot` NAMES A FILE TO READ.  It must never write one.
+        # Before this, the explicit-snapshot branch of `load_agent_snapshot`
+        # persisted the payload to `snapshot_file`, which this caller left at
+        # its default -- the machine-wide `ignored/ci-hub/agent-snapshot.json`.
+        # So `active-work --agent-snapshot /tmp/whatever.json` REPLACED the
+        # fleet's snapshot with `/tmp/whatever.json`, freshly stamped, and the
+        # flag's name gave no hint of it.  `ci-hub/tests/test_operational_bounds.py`
+        # passes a one-entry `{"name": "worker"}` fixture through exactly this
+        # path, so running that suite poisoned the live fleet snapshot; the stub
+        # was observed in production on 2026-08-07 and again on 2026-08-08.
+        # `DEV_HERMIT_PARENT` does not rescue a caller here, because
+        # `DEFAULT_AGENT_SNAPSHOT` derives from `ROOT`, i.e. from `__file__`.
+        # Seeding the cache remains the job of `cache-agents` via
+        # `HERMIT_AGENT_SNAPSHOT_JSON`, which is a separate and explicit path.
+        persist=False,
     )
 
 
