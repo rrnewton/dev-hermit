@@ -32,8 +32,10 @@ conclusion is that **this is self-authored monitoring that issues instructions t
 coordinator operating under an autonomous close-and-respawn mandate, with no record
 of who authorized any of it.**
 
-The whole surface is 6 days old. It accreted fast, unreviewed, and — as the four
-defects below show — faster than it was verified.
+The whole surface is 6 days old. It accreted fast, unreviewed, and faster than it
+was verified. (This audit is not exempt: §3a records a claim it got wrong by
+reading a stale copy, and the correction that followed from measuring the live
+one.)
 
 Commit map:
 
@@ -59,15 +61,17 @@ Bold = removed 2026-08-08 (`119aa11`).
 
 ## 2. Four failure shapes
 
-Three were known when this audit was commissioned. The fourth was found during it
-and is the most damaging.
+Three were known when this audit was commissioned; the fourth was found during it.
+Shape 3 as originally written here was **wrong and has been corrected** — see §3a.
+The genuinely damaging finding is §3b, which is independent of it.
 
 1. **Bound to a moving reference it cannot catch.** `primary_checkout_snapshot`
    demanded the parent equal a live-queried `origin/main` while 13 agents push it.
 2. **Alarms on a condition the recipient cannot clear.** `merge_gate_refire_due`
    paged every 30 min for a backlog it deliberately does not auto-drain.
-3. **The process outlives its own report.** See §3 — this is universal to the
-   harness, not a property of any one gate.
+3. **The process outlives its own report.** See §3 — **partially retracted**:
+   the timeout path was already fixed on 2026-08-05 and is correct. The residual
+   gap is the *success* path, which never reaps the group.
 4. **Mutation under a read-shaped name.** `unpushed_parent_commits` sounds like a
    report and performs remote pushes; `primary_checkout_snapshot` sounds like a
    snapshot read and commits + pushes to parent `main`.
@@ -84,27 +88,57 @@ Three antidotes already exist in-tree and are now each in use: **DELTA**
 
 ---
 
-## 3. Shape 3 is universal, and it has a live high-impact instance
+## 3. Shape 3: what was claimed, what is actually true, and the live instance
 
-### 3a. Every gate can outlive its report
+### 3a. CORRECTED 2026-08-08 — the timeout path was already fixed; the success path is the real gap
 
-`tick_hub/probes.py:34` runs each gate with
-`subprocess.run(["bash","-c",cmd], timeout=30)`. On timeout Python kills **the
-direct child only** — the `bash -c`. It does not signal the process group. Every
-grandchild (the python gate script, its `git`/`gh` subprocesses) survives,
-reparents to init, and keeps running.
+> **This section originally claimed the runner kills only the gate's direct child
+> on timeout, and generalised that to "all 17 gates can outlive their report".
+> That claim was WRONG and is retracted.** It was read from
+> `hermit/agent-utils/py/tick_hub/probes.py` — hermit's own nested pin at
+> `a6f4232`, **114 commits behind** and dated 2026-08-04. That is not the copy
+> tick-hub executes. `ci-hub/bin/agent-tool` runs `$ROOT/agent-utils` at the
+> parent's pinned gitlink, and the correction below is measured against that.
 
-So the tick prints `timed out after 30s`, records could-not-measure, and moves on
-**while the work continues detached**. For a read-only gate that costs some CPU and
-API quota. For a *mutating* gate the survivor performs writes after the tick
-believed it failed.
+**What the live runner actually does.** At dev-hermit's pinned agent-utils commit
+`961f9fd`, `py/tick_hub/probes.py` already spawns with
+`start_new_session=(os.name == "posix")` and, on `TimeoutExpired` or `OSError`,
+calls `_terminate()` → `os.killpg(proc.pid, SIGKILL)`. It even ships a test named
+`test_gate_timeout_kills_background_descendants`. The process-group teardown
+landed in `5ef91c5`, 2026-08-05.
 
-Measured live during this audit: two orphaned
-`unpushed_parent_commits.py --scope all --rescue` process trees at `ppid=1`,
-running from `/tmp/post-commit-lock-test.AECFbV/{fixed,legacy}/`. Those belong to
-another agent's A/B harness, not to the production tick — but their existence, and
-the `timeout --signal=TERM --kill-after=30 240` wrapper in the `fixed` arm, show
-this bug is already being chased from another direction.
+**Bracketed empirically against the live module, both directions:**
+
+| Scenario (gate backgrounds `sleep 40` via `( … & )`) | Gate result | Background child survives? |
+|---|---|---|
+| **A** — gate exceeds its budget | `ok=False rc=-1 "timed out after 3s"` | **NO** — killed with the group |
+| **B** — gate exits 0 having backgrounded the child | `ok=True rc=0` | **YES** |
+
+So the defect is not the one filed. **The timeout path is correct. The SUCCESS
+path never reaps the group**, because `_terminate()` is only reached from the
+timeout and OSError branches. Scenario B is exactly the post-commit shape: the
+gate finishes quickly and successfully, and the rescue pusher it backgrounded
+keeps running — which, combined with §3b's fd inheritance, is the real mechanism
+behind the wedged mutex.
+
+**Exposure of the stale copy: none.** `hermit/agent-utils` lacks the fix
+(`5ef91c5` is not an ancestor of `a6f4232`), but nothing in hermit invokes
+`tick_hub` — hermit uses agent-utils only for `safe-ci-dag-runner`. No workflow or
+script runs the old runner.
+
+**No runner change is recommended, and that is a deliberate call.** Killing the
+process group on the *success* path would destroy deliberately-detached work: the
+post-commit hook backgrounds the rescue pusher precisely so a commit is not
+blocked on a network push, and truncating it would lose the rescue of unpushed
+commits — a data-safety feature — automatically and unattended on a 14-agent box.
+The actual harm is the *mutex*, not the survival, and §3b fixes that surgically
+with `9>&-`. Building a kill-on-success path on a refuted premise would be the
+same pathology this audit documents.
+
+Two orphaned `unpushed_parent_commits --scope all --rescue` trees were observed at
+`ppid=1` during the audit, from `/tmp/post-commit-lock-test.AECFbV/{fixed,legacy}`.
+Those are another agent's A/B harness, run by hand — **not** tick-hub timeouts, and
+they are not evidence of a runner defect.
 
 ### 3b. The serialized parent-main lock is held by inherited fd 9, not by its owner
 
@@ -255,9 +289,12 @@ blast radius. **No gate was removed for watching something real.**
 1. **`9>&-` at the post-commit hook's background launch** (§3b). Highest value on
    the board: it unblocks parent-main writes fleet-wide. Owner:
    whoever owns `/tmp/post-commit-lock-test`.
-2. **Kill the process *group* on gate timeout**, not just the child
-   (`start_new_session=True` + `killpg`) — `tick_hub/probes.py`. This closes shape 3
-   generally rather than per-gate. Lives in `rrnewton/agent-utils`.
+2. ~~Kill the process *group* on gate timeout~~ — **WITHDRAWN, already done.**
+   `start_new_session` + `killpg` landed in agent-utils `5ef91c5` (2026-08-05) and
+   is live at dev-hermit's pin. Verified empirically; see §3a. The residual
+   success-path gap is deliberately NOT being fixed in the runner — killing
+   deliberately-detached work unattended is worse than the leak, and §3b addresses
+   the actual harm.
 3. **Rename mutating gates to say so**, or split them. `unpushed_parent_commits`
    and `primary_checkout_snapshot` both read as reports and both write.
 4. **`rescope-agent-container-reclaim-to-process-evidence`** — filed; restore
@@ -280,4 +317,6 @@ gate:
 To which this audit adds a third, from §3:
 
 3. **Can this gate's work outlive its own report, and does it mutate?** If both,
-   it needs process-group teardown and must not hold a shared lock.
+   it must not hold a shared lock — see §3a/§3b. Note the runner already tears down
+   the process group on *timeout*; the surviving case is a gate that exits
+   successfully having backgrounded work.
