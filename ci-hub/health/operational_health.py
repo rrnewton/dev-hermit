@@ -65,6 +65,7 @@ DEFAULT_QUEUE_GATE_TIMEOUT_SECS = float(
     os.environ.get("CI_HUB_QUEUE_GATE_TIMEOUT", "12")
 )
 DEFAULT_AGENT_SNAPSHOT = ROOT / "ignored" / "ci-hub" / "agent-snapshot.json"
+_AGENT_PANE_RE = re.compile(r"^%\d+$")
 TERMINAL_AGENT_STATES = frozenset(
     (
         "closed",
@@ -605,6 +606,55 @@ def _persist_agent_snapshot(
     os.replace(temporary, path)
 
 
+def _assert_plausible_agent_payload(payload: object, *, source: str) -> None:
+    """Refuse a cached snapshot whose CONTENT cannot describe a real fleet.
+
+    FRESHNESS IS NOT PLAUSIBILITY. `_persist_agent_snapshot` stamps
+    `captured_at` on every write regardless of payload, so a bad write is
+    also a MAXIMALLY FRESH one and slips past both existing guards (missing,
+    stale). A one-entry `{"name": "worker"}` stub was observed in production
+    52s old while 18 real tmux panes were running; every real agent then fails
+    `owner not in live_by_name` and is reported ORPHANED. That is how a live
+    agent got named dead while holding the freshest activity timestamp on the
+    box, and under the autonomous-replacement mandate that alarm was wired to
+    a respawn.
+
+    This promotes the environment-independent half of the predicate that
+    `scripts/allocate-worktree.rs::observe_owner_lease` already relies on: a
+    real ORC agent carries a `%NN` pane identity. Its OTHER half -- resolving
+    that pane via `tmux list-panes -a` -- is DELIBERATELY NOT promoted.
+    Measured 2026-08-08: from an agent shell (TMUX_TMPDIR inherited) that
+    lists the 17-pane ORC server, but from `hermit-health-tick.service`, whose
+    unit sets only PATH, it reaches a DIFFERENT 4-pane server under
+    /tmp/tmux-$UID/default with ZERO overlap with the fleet. Promoting it
+    would make the timer-driven tick refuse every REAL snapshot -- permanently
+    blind, strictly worse than the bug it fixes. Structure is checkable from
+    any environment; a server lookup is not. Note this is a plausibility
+    check, NOT a second fleet authority: `tick-hub.yaml` reserves fleet
+    liveness to ORC, and refusing an obviously broken copy does not claim it.
+
+    Known limits, stated rather than implied: a fabricated but well-formed
+    pane id still passes, and a snapshot that is merely INCOMPLETE (an ORC
+    session cannot see a sibling session's agents) still passes -- completeness
+    needs an independent source such as `ci-hub/health/agent_liveness_probe.py`.
+    This catches the failure modes actually observed and is safe everywhere.
+    """
+    if not isinstance(payload, list):
+        raise RuntimeError("agent-snapshot-is-not-a-list")
+    if not payload:
+        # Zero agents is indistinguishable from no observation, so it must read
+        # as could-not-measure -- never as a healthy, empty fleet.
+        raise RuntimeError(f"agent-snapshot-implausible:{source}:zero-agents")
+    for index, raw in enumerate(payload):
+        pane = raw.get("tmux_pane_id") if isinstance(raw, Mapping) else None
+        if not (isinstance(pane, str) and _AGENT_PANE_RE.match(pane)):
+            name = raw.get("name", "?") if isinstance(raw, Mapping) else "?"
+            raise RuntimeError(
+                f"agent-snapshot-implausible:{source}:"
+                f"entry-{index}({name})-has-no-pane-identity"
+            )
+
+
 def load_agent_snapshot(
     snapshot: str | None,
     *,
@@ -647,7 +697,11 @@ def load_agent_snapshot(
         raise RuntimeError(
             f"agent-snapshot-stale:age={max(0, int(age))}s,max={max_age_secs}s"
         )
-    return _parse_agents(envelope.get("agents")), float(captured_at)
+    agents_payload = envelope.get("agents")
+    # AFTER the staleness check, so a stale snapshot still reports STALE and
+    # keeps its existing, more specific diagnostic.
+    _assert_plausible_agent_payload(agents_payload, source="cache")
+    return _parse_agents(agents_payload), float(captured_at)
 
 
 def cache_agent_snapshot(snapshot: str | None = None) -> int:

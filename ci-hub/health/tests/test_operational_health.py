@@ -399,8 +399,14 @@ class OperationalHealthTest(unittest.TestCase):
     def test_agent_snapshot_cache_is_freshness_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "agents.json"
+            # Carries a pane id because the cached-read path now requires one:
+            # this test round-trips through the CACHE, and a cached entry with
+            # no `%NN` identity is refused as implausible. The subject of this
+            # test is freshness bounding, which the assertions below still
+            # exercise unchanged.
             agents, captured_at = operational_health.load_agent_snapshot(
-                '[{"name":"worker","status":"busy","current_task":"task"}]',
+                '[{"name":"worker","status":"busy","current_task":"task",'
+                '"tmux_pane_id":"%1"}]',
                 snapshot_file=path,
                 now=1000,
             )
