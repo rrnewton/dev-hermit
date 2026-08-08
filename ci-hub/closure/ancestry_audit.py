@@ -49,7 +49,10 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-DEFAULT_DB = Path.home() / ".tg" / "hermit.db"
+# Resolved, never hardcoded: this literal named the predecessor's frozen
+# database.  See ci-hub/lib/taskgraph_db.py.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import taskgraph_db  # noqa: E402
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 #: repo key -> (checkout path relative to root, gh repo slug or None)
@@ -277,7 +280,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    ap.add_argument("--db", type=Path, default=None)
     ap.add_argument("--pr-limit", type=int, default=2000,
                     help="gh pr list --limit. Audit FAILS CLOSED if the API returns "
                          "exactly this many rows (truncated window). Default 2000.")
@@ -289,6 +292,15 @@ def main() -> int:
     ap.add_argument("--agents", type=int, default=0,
                     help="fleet size, to print the implemented-unlanded : agents ratio")
     args = ap.parse_args()
+
+    # Bind the TaskGraph before any network work: an unresolvable database is
+    # could-not-measure, and finding that out after a full fetch wastes it.
+    try:
+        db = taskgraph_db.resolve(args.db)
+    except taskgraph_db.TaskGraphUnavailable as error:
+        print(f"ancestry-audit: UNVERIFIABLE: {error}", file=sys.stderr)
+        return 2
+    print(f"ancestry-audit: taskgraph {db.basis}")
 
     print(f"ancestry-audit: pr-limit={args.pr_limit} (fails closed on truncation)")
     bases = {}
@@ -313,7 +325,7 @@ def main() -> int:
             print(f"  {r:12s} {len(rows)} PRs in window (< limit, so not truncated)")
 
     anc = Ancestry(args.root)
-    results = [classify(item, prs, anc) for item in pile(args.db)]
+    results = [classify(item, prs, anc) for item in pile(db.path)]
     counts = Counter(r["bucket"] for r in results)
 
     print("\n=== buckets ===")

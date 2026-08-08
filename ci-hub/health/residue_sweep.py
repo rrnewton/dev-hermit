@@ -22,6 +22,9 @@ from typing import Iterable, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
+
 TASK_ID = "periodic-residue-sweep-correct-refusals-leave-unowned-work"
 OWNER_QUEUE = "owner-decision-queue-2026-08-04"
 ORPHAN_DETECTOR = ROOT / "scripts" / "orphaned-task-detector.sh"
@@ -82,12 +85,27 @@ class Residue:
 
 
 def run_checked(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    """Run a child bound to the resolved TaskGraph, or refuse.
+
+    Every child here reaches the graph through `tg` -- directly, or inside
+    scripts/orphaned-task-detector.sh.  `tg` with no database named reads an
+    empty `tasks` default and returns 0 rows, which this sweep would have
+    reported as a clean, ownerless-work-free fleet.  Binding the child
+    explicitly is what makes that unrepresentable: unresolvable is
+    could-not-measure, never zero.
+    """
+
+    try:
+        env = taskgraph_db.child_env(taskgraph_db.resolve())
+    except taskgraph_db.TaskGraphUnavailable as error:
+        raise SweepUnavailable(str(error)) from error
     return subprocess.run(
         argv,
         cwd=ROOT,
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
 
 

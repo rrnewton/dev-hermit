@@ -19,6 +19,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "runners"))
+# The TaskGraph binding is stated, not inherited.  `tg` with no database named
+# reads an empty `tasks` default and returns 0 rows, so an unbound tick would
+# have reported a clean, EMPTY fleet -- the failure mode that reads as health.
+sys.path.insert(0, str(ROOT / "ci-hub" / "lib"))
+import taskgraph_db  # noqa: E402
 
 import github_main_health
 import pr_status
@@ -622,7 +627,10 @@ ORDER BY local_id
                 capture_output=True,
                 text=True,
                 timeout=60,
+                env=taskgraph_db.child_env(taskgraph_db.resolve()),
             )
+        except taskgraph_db.TaskGraphUnavailable as error:
+            raise RuntimeError(f"taskgraph-query-unavailable:{error}") from error
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as error:
             raise RuntimeError(f"taskgraph-query-unavailable:{error}") from error
         if process.returncode == 0:
@@ -897,7 +905,11 @@ def active_work_gate(
             )
         else:
             _emit({"state": "unknown", "summary": error})
-        return 1
+        # 2, not 1: could-not-measure must be distinguishable from a measured
+        # drift by exit code alone, the same way unowned_backlog.py separates
+        # `unverifiable` (2) from `alert` (1).  A caller that only checks
+        # nonzero still pages; one that reads the code can tell them apart.
+        return 2
 
     counts = report.counts()
     state = "drift" if report.actionable_count else "ok"

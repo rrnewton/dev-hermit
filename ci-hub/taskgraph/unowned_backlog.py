@@ -24,12 +24,13 @@ from pathlib import Path
 from typing import Sequence
 
 
-# Phase 1 (2026-08-08): repointed off the predecessor's ``hermit.db``, which is
-# shut down and frozen, so this census reported a fixed 108 that could never
-# clear.  Named explicitly rather than through any ``hermit.db`` compatibility
-# symlink: a symlink would leave the wrong literal here, working by accident.
-# Phase 2 replaces this literal with the shared ci-hub TaskGraph resolver.
-DEFAULT_DB = Path.home() / ".tg" / "hermit2.db"
+# The database is resolved, never hardcoded.  A literal here pointed at the
+# predecessor's frozen ``hermit.db`` for a whole session, reporting a fixed 108
+# that could never clear.  ci-hub/lib/taskgraph_db.py is the one resolver every
+# consumer calls; its refusal maps onto this module's could-not-measure state.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import taskgraph_db  # noqa: E402
+
 CLASSES = (
     "ACTIONABLE",
     "BLOCKED",
@@ -268,7 +269,7 @@ def _emit_human(report: CensusReport) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument("--db", type=Path, default=None)
     parser.add_argument("--json", action="store_true", help="emit the complete typed report")
     parser.add_argument(
         "--gate", action="store_true", help="emit tick-hub fields and fail on UNCLASSIFIED"
@@ -276,8 +277,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        report = load_report(args.db)
-    except CensusUnavailable as error:
+        report = load_report(taskgraph_db.resolve(args.db).path)
+    except (CensusUnavailable, taskgraph_db.TaskGraphUnavailable) as error:
         if args.gate:
             print("state=unverifiable")
             print(f"summary={error}")
