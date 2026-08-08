@@ -113,6 +113,55 @@ def registered_producer() -> dict[str, str]:
     return registered
 
 
+def resolution_repositories(row: dict[str, Any]) -> list[Path]:
+    """Repositories that may durably hold the validated commit, most specific first.
+
+    WHAT THE CONSUMER ACTUALLY NEEDS is a git object store containing the SHA --
+    the producer blobs are "a property of the commit that was validated", as
+    `producer_definition` says. What it USED was `row["cwd"]`, the directory the
+    run happened to execute in. That is a correlated handle standing in for the
+    real requirement, and it only worked while the run and the work shared a
+    directory.
+
+    MEASURED 2026-08-08, which is why this is not fixed on the producer side:
+    of 124 qualified rows, 72 (58%) already pointed at a directory that no longer
+    exists -- and only 2 of those were temp checkouts. The rest were RECLAIMED
+    SLOTS (worktrees/227b/hermit x24, 238b x6, sabre x6, ...). So recording the
+    slot instead of the temp dir is not a fix; it is the status quo that already
+    fails, on a slower clock. Every path is ephemeral here; only the half-life
+    differs.
+
+    `cwd` is also load-bearing elsewhere and must keep meaning what it says:
+    `start_unit.assert_row_readable_from_canonical_ledger` binds a receipt by
+    commit AND cwd precisely so that "a row matching on commit alone could be
+    some other run of the same SHA" cannot pass. Rewriting it to a shared slot
+    would make two concurrent runs from one slot indistinguishable.
+
+    So the recorded cwd is still tried FIRST -- it is the most specific answer
+    and preserves existing behaviour when the directory survives -- and a durable
+    repository is the fallback rather than the replacement.
+    """
+    candidates: list[Path] = []
+    recorded = row.get("cwd")
+    if recorded and Path(recorded).is_dir():
+        candidates.append(Path(recorded))
+    override = os.environ.get("PRODUCER_DEFINITION_REPO")
+    if override:
+        candidates.append(Path(override))
+    # The durable primary. Both registered producers (`validate.sh`,
+    # `.github/workflows/ci-portable.yml`) are Hermit paths.
+    candidates.append(Path(__file__).resolve().parents[2] / "hermit")
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen or not candidate.is_dir():
+            continue
+        seen.add(key)
+        ordered.append(candidate)
+    return ordered
+
+
 def producer_definition(row: dict[str, Any], sha: str) -> dict[str, Any]:
     """Identify the check definition that produced this row.
 
@@ -123,27 +172,36 @@ def producer_definition(row: dict[str, Any], sha: str) -> dict[str, Any]:
     a receipt that cannot name its producer must not be minted at all, because a
     producer-less receipt is exactly what the consumer now refuses.
     """
-    checkout = row.get("cwd")
-    if not checkout or not Path(checkout).is_dir():
-        fail(
-            "ledger row has no usable `cwd`, so the producing check definition "
-            f"cannot be resolved for {sha}"
-        )
-    definition: dict[str, str] = {}
-    for relative in sorted(registered_producer()):
-        result = subprocess.run(
-            ["git", "-C", str(checkout), "rev-parse", f"{sha}:{relative}"],
-            text=True,
-            capture_output=True,
-        )
-        blob = result.stdout.strip()
-        if result.returncode != 0 or len(blob) != 40:
-            fail(
-                f"cannot resolve producer blob for {relative} at {sha} in {checkout}: "
-                f"{result.stderr.strip() or 'no output'}"
+    attempted: list[str] = []
+    failures: list[str] = []
+    for checkout in resolution_repositories(row):
+        attempted.append(str(checkout))
+        definition: dict[str, str] = {}
+        problem: str | None = None
+        for relative in sorted(registered_producer()):
+            result = subprocess.run(
+                ["git", "-C", str(checkout), "rev-parse", f"{sha}:{relative}"],
+                text=True,
+                capture_output=True,
             )
-        definition[relative] = blob
-    return {"resolved_from": str(checkout), "definition": definition}
+            blob = result.stdout.strip()
+            if result.returncode != 0 or len(blob) != 40:
+                problem = (
+                    f"{checkout}: cannot resolve {relative} at {sha} "
+                    f"({result.stderr.strip() or 'no output'})"
+                )
+                break
+            definition[relative] = blob
+        if problem is None:
+            return {"resolved_from": str(checkout), "definition": definition}
+        failures.append(problem)
+    # REFUSED, never silently skipped. A label step that quietly applies nothing
+    # is the fail-open shape wearing a green tick.
+    detail = "; ".join(failures) if failures else "no candidate repository existed"
+    fail(
+        f"cannot resolve the producing check definition for {sha} in any repository "
+        f"that durably holds it. Tried: {', '.join(attempted) or '(none)'}. {detail}"
+    )
 
 
 def build_receipt(

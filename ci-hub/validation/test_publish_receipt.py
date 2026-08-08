@@ -151,6 +151,78 @@ class ReceiptTests(unittest.TestCase):
             self.assertTrue(Path(receipt["durable_log_file"]).is_file())
             self.assertEqual(hashlib.sha256(body).hexdigest(), artifact_digest)
 
+    def test_a_dead_cwd_resolves_from_a_durable_repository(self):
+        """THE REGRESSION, and the 58% of the ledger that predates it.
+
+        Directive #3 made validate run in a temp checkout that is deleted after
+        the run, so every new receipt's `cwd` is dead on arrival. But measured
+        2026-08-08, 72 of 124 qualified rows ALREADY pointed at a directory that
+        no longer existed, and only 2 of those were temp checkouts -- the rest
+        were reclaimed slots. The consumer needs an object store holding the
+        commit, not the directory the run happened to execute in.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            repo, sha = make_producer_checkout(Path(directory))
+            row = self.row(Path(directory))
+            row["commit"] = sha
+            # Dead on arrival: exactly what a deleted temp checkout leaves.
+            row["cwd"] = str(Path(directory) / "validate-fresh-deleted")
+            durable = Path(directory) / "durable.log"
+            durable.write_text("log\n")
+            with mock.patch.dict(os.environ, {"PRODUCER_DEFINITION_REPO": str(repo)}):
+                receipt, _, _ = MODULE.build_receipt(
+                    "rrnewton/hermit", sha, row, durable,
+                    selected_digest=hashlib.sha256(self.canonical_row(row)).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                )
+            self.assertEqual(str(repo), receipt["producer"]["resolved_from"])
+            definition = receipt["producer"]["definition"]
+            self.assertEqual(sorted(definition), sorted(MODULE.registered_producer()))
+            for blob in definition.values():
+                self.assertRegex(blob, r"^[0-9a-f]{40}$")
+
+    def test_a_live_cwd_is_still_preferred_over_the_fallback(self):
+        """The recorded cwd is the most specific answer and stays first, so this
+        is a fallback rather than a replacement."""
+        with tempfile.TemporaryDirectory() as directory:
+            repo, sha = make_producer_checkout(Path(directory))
+            other, _ = make_producer_checkout(Path(directory) / "other")
+            row = self.row(Path(directory))
+            row["commit"] = sha
+            row["cwd"] = str(repo)
+            durable = Path(directory) / "durable.log"
+            durable.write_text("log\n")
+            with mock.patch.dict(os.environ, {"PRODUCER_DEFINITION_REPO": str(other)}):
+                receipt, _, _ = MODULE.build_receipt(
+                    "rrnewton/hermit", sha, row, durable,
+                    selected_digest=hashlib.sha256(self.canonical_row(row)).hexdigest(),
+                    canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                )
+            self.assertEqual(str(repo), receipt["producer"]["resolved_from"])
+
+    def test_unresolvable_anywhere_is_REFUSED_not_silently_skipped(self):
+        """THE NEGATIVE THAT MATTERS. A label step that quietly applies nothing
+        is the fail-open shape wearing a green tick. If no repository holds the
+        commit, minting must abort and say what it tried."""
+        with tempfile.TemporaryDirectory() as directory:
+            repo, sha = make_producer_checkout(Path(directory))
+            empty = Path(directory) / "empty-repo"
+            empty.mkdir()
+            subprocess.run(["git", "init", "-q", str(empty)], check=True)
+            row = self.row(Path(directory))
+            row["commit"] = sha
+            row["cwd"] = str(Path(directory) / "validate-fresh-deleted")
+            durable = Path(directory) / "durable.log"
+            durable.write_text("log\n")
+            with mock.patch.dict(os.environ, {"PRODUCER_DEFINITION_REPO": str(empty)}):
+                with self.assertRaises(SystemExit) as caught:
+                    MODULE.build_receipt(
+                        "rrnewton/hermit", sha, row, durable,
+                        selected_digest=hashlib.sha256(self.canonical_row(row)).hexdigest(),
+                        canonicalization=MODULE.RECEIPT_CANONICALIZATION,
+                    )
+            self.assertNotEqual(0, caught.exception.code)
+
     def test_receipt_carries_the_producing_definition(self):
         # Mint-side half of the producer binding: the receipt must name WHICH
         # check definition produced it, and each blob must be the one git
