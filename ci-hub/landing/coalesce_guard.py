@@ -50,6 +50,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 class Disposition(Enum):
@@ -141,9 +142,67 @@ def classify(candidate: Candidate) -> Verdict:
     )
 
 
-def screen(candidates):
+#: Hand-classified dispositions for closes whose comment alone is not decisive.
+#: Written by reading the FULL thread; see the file header for the method.
+_ANNOTATIONS = Path(__file__).with_name("closed_pr_dispositions.tsv")
+
+
+def load_annotations(path: Path | None = None) -> dict[int, tuple[str, str, str]]:
+    """Read the hand-classified dispositions as {pr: (disposition, successor, reason)}.
+
+    Kept as data rather than more regex because the remaining cases are not
+    pattern-matchable: #1626 is superseded in one half and REJECTED in the other,
+    #1637 names a successor that was itself closed on the merits, and #1703's
+    closing rationale sits above a later reply. A human read those; the guard
+    should consume that judgement, not re-derive it badly.
+    """
+    src = path or _ANNOTATIONS
+    out: dict[int, tuple[str, str, str]] = {}
+    if not src.exists():
+        return out
+    for line in src.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        out[int(parts[0])] = (parts[1], parts[2], parts[3])
+    return out
+
+
+def classify_with_annotations(candidate: Candidate, annotations=None) -> Verdict:
+    """`classify`, but let a hand-classified disposition settle an UNKNOWN.
+
+    An annotation may only resolve an UNKNOWN. It can never overturn a
+    REFUSE_MERITS derived from the close text itself -- otherwise a stale or
+    mistaken row in a data file could re-authorise work an owner rejected, which
+    is the exact failure this guard exists to prevent.
+    """
+    verdict = classify(candidate)
+    if verdict.disposition is not Disposition.REFUSE_UNKNOWN:
+        return verdict
+    ann = load_annotations() if annotations is None else annotations
+    row = ann.get(candidate.number)
+    if not row:
+        return verdict
+    disposition, successor, reason = row
+    if disposition == "SUPERSEDED":
+        return Verdict(
+            candidate.number,
+            Disposition.ALLOW_SUPERSEDED,
+            f"annotated successor {successor or '(unnamed)'}: {reason}",
+        )
+    if disposition == "MERITS":
+        return Verdict(
+            candidate.number, Disposition.REFUSE_MERITS, f"annotated merits: {reason}"
+        )
+    return Verdict(candidate.number, Disposition.REFUSE_UNKNOWN, f"annotated: {reason}")
+
+
+def screen(candidates, use_annotations: bool = True):
     """Split a proposed constituent list into (allowed, refused) verdicts."""
-    verdicts = [classify(c) for c in candidates]
+    decide = classify_with_annotations if use_annotations else classify
+    verdicts = [decide(c) for c in candidates]
     return (
         [v for v in verdicts if v.allowed],
         [v for v in verdicts if not v.allowed],

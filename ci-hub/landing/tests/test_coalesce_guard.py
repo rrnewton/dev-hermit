@@ -117,5 +117,61 @@ class GuardBothDirectionsTest(unittest.TestCase):
         self.assertIn("#1633", v.reason)
 
 
+
+class AnnotationTest(unittest.TestCase):
+    """The hand-classified dispositions must resolve UNKNOWNs, and only those.
+
+    These 45 were the adoption cost of the guard: enabling it while they all read
+    UNKNOWN would have refused a third of the closed corpus, and whoever hit that
+    would have turned the guard off.
+    """
+
+    def setUp(self) -> None:
+        from coalesce_guard import load_annotations
+
+        self.ann = load_annotations()
+
+    def test_all_45_are_annotated_and_none_lost(self) -> None:
+        from collections import Counter
+
+        counts = Counter(d for d, _s, _r in self.ann.values())
+        self.assertEqual(len(self.ann), 45)
+        self.assertEqual(counts["SUPERSEDED"], 15)
+        self.assertEqual(counts["MERITS"], 27)
+        self.assertEqual(counts["UNKNOWN"], 3)
+        self.assertEqual(sum(counts.values()), 45, "a classification that loses rows")
+
+    def test_annotation_resolves_an_unknown_both_ways(self) -> None:
+        from coalesce_guard import classify_with_annotations
+
+        # #1630 landed via #1644/#1647 -> foldable.
+        v = classify_with_annotations(closed(1630, "Closing."), self.ann)
+        self.assertIs(v.disposition, Disposition.ALLOW_SUPERSEDED)
+        # #1469 clamps PMU overshoot -- sacred-time blunting -> never.
+        v = classify_with_annotations(closed(1469, "Closing."), self.ann)
+        self.assertIs(v.disposition, Disposition.REFUSE_MERITS)
+
+    def test_genuinely_unknown_rows_stay_refused(self) -> None:
+        from coalesce_guard import classify_with_annotations
+
+        for pr in (1637, 1534, 1486):
+            with self.subTest(pr=pr):
+                v = classify_with_annotations(closed(pr, "Closing."), self.ann)
+                self.assertIs(v.disposition, Disposition.REFUSE_UNKNOWN)
+
+    def test_an_annotation_can_never_overturn_a_merits_close(self) -> None:
+        """A stale data row must not re-authorise rejected work.
+
+        Annotations only settle UNKNOWNs. If a row said SUPERSEDED for a PR whose
+        own close text says "without landing", the text wins.
+        """
+        from coalesce_guard import classify_with_annotations
+
+        forged = {1726: ("SUPERSEDED", "#9999", "forged row")}
+        v = classify_with_annotations(
+            closed(1726, "Closing this vacuous aggregate without landing."), forged
+        )
+        self.assertIs(v.disposition, Disposition.REFUSE_MERITS)
+
 if __name__ == "__main__":
     unittest.main()
